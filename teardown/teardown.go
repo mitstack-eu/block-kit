@@ -206,8 +206,12 @@ func skipReason(id adopt.Identity, r Resource) (string, bool) {
 // and plain HTTP. Being generous here is safe: a false positive means we treat
 // an existing resource as reclaimed, which the next sweep re-discovers — while a
 // false negative turns a benign race into a failed teardown.
+// `not[ -]?found` rather than `NotFound`: AWS says NotFound, Kubernetes says
+// `... "app" not found`, and the space cost a real bug — the Crossplane twin's
+// absent-claim teardown still 422'd because the kit only matched the
+// concatenated spelling. Found by USING this, not by reading it.
 var notFoundPattern = regexp.MustCompile(
-	`(?i)(NotFound|NoSuchBucket|NoSuchEntity|NoSuchKey|ResourceNotFoundException|` +
+	`(?i)(not[ -]?found|NoSuchBucket|NoSuchEntity|NoSuchKey|ResourceNotFoundException|` +
 		`does not exist|cannot be found|404)`)
 
 // IsNotFound reports whether err means the resource is already gone — which is

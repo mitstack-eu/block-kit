@@ -252,3 +252,22 @@ func TestIsNotFound(t *testing.T) {
 		t.Error("IsNotFound(nil) must be false")
 	}
 }
+
+func TestIsNotFound_MatchesKubernetesSpelling(t *testing.T) {
+	// AWS says NotFound; Kubernetes says `... "app" not found`. The space is not
+	// cosmetic: it cost the Crossplane twin's absent-claim teardown a 422, so
+	// the per-app control plane survived and the consumer kept paying for it.
+	for _, msg := range []string{
+		`claims.aws.mitstack.dev "app" not found`,
+		"Error from server (NotFound): pods not found",
+		"secret not-found",
+	} {
+		if !teardown.IsNotFound(errors.New(msg)) {
+			t.Errorf("IsNotFound(%q) = false, want true", msg)
+		}
+	}
+	// Still not over-reaching: a real failure is not absence.
+	if teardown.IsNotFound(errors.New("DependencyViolation: resource is attached")) {
+		t.Error("a dependency violation is not absence")
+	}
+}
