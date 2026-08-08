@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 
 	"github.com/mitstack-eu/operator-kit/safe"
 )
@@ -198,7 +199,7 @@ func (c *Client) baseCommit(ctx context.Context, repo string) (commitSHA, treeSH
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&refObj); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(&refObj); err != nil {
 		return "", "", false, fmt.Errorf("ghapi: decode ref: %w", err)
 	}
 
@@ -221,7 +222,7 @@ func (c *Client) baseCommit(ctx context.Context, repo string) (commitSHA, treeSH
 			SHA string `json:"sha"`
 		} `json:"tree"`
 	}
-	if err := json.NewDecoder(cresp.Body).Decode(&cObj); err != nil {
+	if err := json.NewDecoder(io.LimitReader(cresp.Body, 8<<10)).Decode(&cObj); err != nil {
 		return "", "", false, fmt.Errorf("ghapi: decode commit: %w", err)
 	}
 	return refObj.Object.SHA, cObj.Tree.SHA, true, nil
@@ -260,12 +261,23 @@ func (c *Client) patch(ctx context.Context, path string, payload any) error {
 }
 
 // SetVariable idempotently sets (creates or updates) an Actions repo
-// variable. A create (POST) that reports <300 is done; a 409 or 422 (GitHub
-// reports the variable already exists — the Actions variables API is not
-// itself idempotent) falls back to PATCH .../actions/variables/{name}.
-// Any other status is an error.
+// variable. name is validated against GitHub's Actions-variable naming rule
+// (SafeVariableName) BEFORE any HTTP call — this is also what keeps a
+// malformed name out of the PATCH fallback's concatenated URL path. A create
+// (POST) that reports <300 is done; a 409 always falls back to PATCH
+// .../actions/variables/{name} (GitHub reports the variable already exists —
+// the Actions variables API is not itself idempotent). A 422 is ambiguous —
+// it can mean "already exists" OR "invalid name/value" — so the upstream
+// JSON body's "message" field is inspected: only a message containing
+// "already exists" (case-insensitive) falls back to PATCH; anything else,
+// including an unparseable body, fails safe (no PATCH). Any other status is
+// an error.
 func (c *Client) SetVariable(ctx context.Context, repoFullName, name, value string) error {
 	repo, err := SafeRepo(repoFullName)
+	if err != nil {
+		return err
+	}
+	name, err = SafeVariableName(name)
 	if err != nil {
 		return err
 	}
@@ -284,6 +296,15 @@ func (c *Client) SetVariable(ctx context.Context, repoFullName, name, value stri
 	if resp.StatusCode != http.StatusConflict && resp.StatusCode != http.StatusUnprocessableEntity {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		return fmt.Errorf("ghapi: github POST /repos/%s/actions/variables returned %d: %s", repo, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
+	}
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		var body struct {
+			Message string `json:"message"`
+		}
+		if jsonErr := json.Unmarshal(raw, &body); jsonErr != nil || !strings.Contains(strings.ToLower(body.Message), "already exists") {
+			return fmt.Errorf("ghapi: github POST /repos/%s/actions/variables returned 422: %s", repo, safe.LogSafe(string(raw), c.Token))
+		}
 	}
 
 	return c.patch(ctx, "/repos/"+repo+"/actions/variables/"+name, map[string]any{
