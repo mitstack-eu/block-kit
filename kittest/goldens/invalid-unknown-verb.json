@@ -1,0 +1,34 @@
+{
+  "operation": "reticulate",
+  "subscriptionId": "sub_a1b2c3d4e5",
+  "idempotencyKey": "sub_a1b2c3d4e5:reticulate:unknown-verb",
+  "blockId": "blk_aws_app_infra",
+  "blockVersion": "1.0.0",
+  "orgId": "org_acme",
+  "appId": "app_webapp01",
+  "params": {
+    "appName": "myapp",
+    "domain": "myapp.apps.mitstack.dev",
+    "repo": "acme/myapp"
+  },
+  "instances": {
+    "aws": {
+      "name": "Consumer AWS",
+      "endpoint": "https://aws.example.com",
+      "config": {
+        "region": "eu-west-1"
+      }
+    }
+  },
+  "secrets": {},
+  "obo": "eyJvcmdfaWQiOiJvcmdfYWNtZSJ9.c2lnbmF0dXJlLXBsYWNlaG9sZGVy",
+  "bindings": {},
+  "bindingsAll": {},
+  "cloudIdentity": {
+    "provider": "aws",
+    "roleArn": "arn:aws:iam::123456789012:role/MitstackFederatedRole",
+    "webIdentityToken": "wi-token-placeholder"
+  },
+  "createdAt": "2026-07-15T21:15:06Z",
+  "nonce": "n0nce-unknown-verb-0005"
+}

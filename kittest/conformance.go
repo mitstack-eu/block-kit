@@ -1,13 +1,28 @@
 package kittest
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// goldensFS embeds the kit's own copy of the contract goldens (MIT-1585).
+// api/internal/lifecycle/contract/goldens/ remains the SOURCE OF TRUTH; this
+// is a committed, syncable mirror kept in lockstep by
+// scripts/check-kittest-goldens-sync.sh in the required lint job. Embedding
+// means every function in this file works from ANY caller working
+// directory — a package inside this monorepo, a generated block in a temp
+// dir, or an operator in a genuinely external repo importing this module.
+//
+//go:embed goldens/*.json
+var goldensFS embed.FS
+
+const goldensFSDir = "goldens"
 
 // Conformance harness for the engine→operator webhook contract (MIT-1135).
 //
@@ -26,20 +41,50 @@ import (
 // latter would be a byte-parity gate on a struct, and MIT-1466 is the argument
 // against that.
 
-// GoldensDir locates the committed contract goldens relative to an operator
-// module. Operators live at examples/<stack>/<operator>, so the goldens are four
-// levels up. It fails the test rather than skipping: a conformance harness that
-// silently finds nothing is the vacuous pass this package exists to prevent.
-func GoldensDir(t *testing.T) string {
+// goldenEntries lists the embedded golden files, failing the test rather
+// than skipping: a conformance harness that silently finds nothing is the
+// vacuous pass this package exists to prevent.
+func goldenEntries(t *testing.T) []fs.DirEntry {
 	t.Helper()
-	dir := filepath.Join("..", "..", "..", "api", "internal", "lifecycle", "contract", "goldens")
-	entries, err := os.ReadDir(dir)
+	entries, err := fs.ReadDir(goldensFS, goldensFSDir)
 	if err != nil {
-		t.Fatalf("kittest: cannot read contract goldens at %s: %v\n"+
-			"The goldens are the contract; a conformance test that cannot find them proves nothing.", dir, err)
+		t.Fatalf("kittest: cannot read embedded contract goldens: %v\n"+
+			"The goldens are the contract; a conformance test that cannot find them proves nothing.", err)
 	}
 	if len(entries) == 0 {
-		t.Fatalf("kittest: contract goldens at %s are empty — this harness would pass vacuously", dir)
+		t.Fatalf("kittest: embedded contract goldens are empty — this harness would pass vacuously")
+	}
+	return entries
+}
+
+// readGolden reads one embedded golden file by its full name (with the
+// .json suffix).
+func readGolden(t *testing.T, name string) []byte {
+	t.Helper()
+	raw, err := goldensFS.ReadFile(goldensFSDir + "/" + name)
+	if err != nil {
+		t.Fatalf("kittest: reading embedded golden %q: %v", name, err)
+	}
+	return raw
+}
+
+// GoldensDir materializes the embedded contract goldens into a real
+// directory (t.TempDir()) and returns its path. This is a shim kept for any
+// caller reading the directory directly (os.ReadDir / os.ReadFile) rather
+// than through Golden/ValidGoldens — it keeps working from any working
+// directory, since MIT-1585 the fixtures no longer live on disk relative to
+// the caller at all.
+func GoldensDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, e := range goldenEntries(t) {
+		if e.IsDir() {
+			continue
+		}
+		raw := readGolden(t, e.Name())
+		if err := os.WriteFile(filepath.Join(dir, e.Name()), raw, 0o600); err != nil {
+			t.Fatalf("kittest: materializing embedded golden %s to %s: %v", e.Name(), dir, err)
+		}
 	}
 	return dir
 }
@@ -47,11 +92,7 @@ func GoldensDir(t *testing.T) string {
 // Golden reads one golden envelope by name (without the .json suffix).
 func Golden(t *testing.T, name string) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(GoldensDir(t), name+".json"))
-	if err != nil {
-		t.Fatalf("kittest: reading golden %q: %v", name, err)
-	}
-	return raw
+	return readGolden(t, name+".json")
 }
 
 // ValidGoldens returns the goldens representing well-formed envelopes an
@@ -59,17 +100,12 @@ func Golden(t *testing.T, name string) []byte {
 func ValidGoldens(t *testing.T) map[string][]byte {
 	t.Helper()
 	out := map[string][]byte{}
-	entries, _ := os.ReadDir(GoldensDir(t))
-	for _, e := range entries {
+	for _, e := range goldenEntries(t) {
 		name := e.Name()
 		if !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, "invalid-") {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(GoldensDir(t), name))
-		if err != nil {
-			t.Fatalf("kittest: reading golden %s: %v", name, err)
-		}
-		out[strings.TrimSuffix(name, ".json")] = raw
+		out[strings.TrimSuffix(name, ".json")] = readGolden(t, name)
 	}
 	if len(out) == 0 {
 		t.Fatal("kittest: no valid goldens found — this harness would pass vacuously")
@@ -116,7 +152,7 @@ func AssertDecodesEveryValidGolden(t *testing.T, decode func([]byte) error, requ
 func AssertRejectsMalformed(t *testing.T, accepts func([]byte) bool) {
 	t.Helper()
 
-	entries, _ := os.ReadDir(GoldensDir(t))
+	entries := goldenEntries(t)
 	checked := 0
 	for _, e := range entries {
 		name := e.Name()
@@ -124,10 +160,7 @@ func AssertRejectsMalformed(t *testing.T, accepts func([]byte) bool) {
 			continue
 		}
 		checked++
-		raw, err := os.ReadFile(filepath.Join(GoldensDir(t), name))
-		if err != nil {
-			t.Fatalf("kittest: reading %s: %v", name, err)
-		}
+		raw := readGolden(t, name)
 		t.Run(strings.TrimSuffix(name, ".json"), func(t *testing.T) {
 			if accepts(raw) {
 				t.Errorf("operator ACCEPTED %s — the contract marks this envelope invalid, "+
