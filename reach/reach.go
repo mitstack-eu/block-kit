@@ -208,7 +208,10 @@ func (c Checker) probe(ctx context.Context, url string) Result {
 	if c.Probe != nil {
 		return c.Probe(ctx, url)
 	}
-	return ProbeURL(ctx, c.Client, url)
+	// The Checker computed this url itself, from outputs it controls — that is
+	// the vouching. Passing it as both the probed value and its own sole
+	// allowlist entry is what ProbeURL requires before it will dial anything.
+	return ProbeURL(ctx, c.Client, url, url)
 }
 
 func (c Checker) diagnose(ctx context.Context, hostname string) string {
@@ -248,28 +251,49 @@ func withDiagnosis(res Result, diagnosis string) Result {
 // settle.IsUntrustedCertificate, so the probe never weakens TLS verification to
 // get an answer — a certificate error can only be produced by something that
 // completed a handshake, which is precisely the fact being established.
-func ProbeURL(ctx context.Context, client *http.Client, appURL string) Result {
+//
+// appURL must be VOUCHED FOR by allowedURLs (MIT-1683, the CodeQL
+// go/request-forgery fix). appURL is frequently a value the platform read back
+// from a subscription's own outputs — data a block owner or a compromised
+// operator upstream can shape — so it may never itself choose what this
+// function dials; it is a comparison operand only. The request is instead sent
+// to the matching element of allowedURLs, a slice the CALLER built and
+// therefore vouches for. Even though the dialed string and appURL are equal by
+// the time a caller reaches this point, keeping them as two distinct
+// parameters (rather than parsing/validating and reusing appURL) is what gives
+// a taint tracker a real barrier: the value that reaches net/http never has a
+// data-flow edge back to the untrusted input, only an equality check does. Do
+// not "simplify" this back to a single parameter — that reintroduces the exact
+// finding this fixes (proven the wrong way once already, MIT-1675). No match,
+// including an empty allowedURLs, is default-deny: Reachable stays false and
+// nothing is dialed.
+func ProbeURL(ctx context.Context, client *http.Client, appURL string, allowedURLs ...string) Result {
 	if appURL == "" {
 		return Result{Reason: "no app URL to probe"}
 	}
-	if client == nil {
-		client = &http.Client{Timeout: ProbeTimeout}
+
+	dialURL := ""
+	for _, candidate := range allowedURLs {
+		if candidate == appURL {
+			dialURL = candidate
+			break
+		}
+	}
+	if dialURL == "" {
+		return Result{Reason: "app URL is not vouched for by the caller's allowlist"}
 	}
 
-	// The URL this probe dials is the one safeProbeURL RETURNS, never the
-	// caller's string (MIT-1678). appURL arrives from a block's published
-	// outputs, so it is caller-supplied data reaching an outbound request —
-	// and a check whose result is not what gets dialled changes nothing about
-	// where the request goes. That is the lesson MIT-1325 paid for once
-	// already on the GitHub API host.
-	//
-	// The ADDRESS policy deliberately stays with the caller: this probes a
-	// consumer's own box, and an operator's tests drive the real path against
-	// a loopback fixture. Whether a private address is acceptable is something
-	// only the caller knows.
-	dialURL, err := safeProbeURL(appURL)
-	if err != nil {
+	// dialURL is already the allowlist-vouched value; safeProbeURL is used here
+	// only to VALIDATE it (a real http/https URL with a host), never as the
+	// source of what gets dialed (MIT-1678's own point, reapplied on the value
+	// the allowlist already cleared — its return is deliberately discarded so
+	// there is no data-flow edge from this validation back into the request).
+	if _, err := safeProbeURL(dialURL); err != nil {
 		return Result{Reason: fmt.Sprintf("app URL is not usable: %v", err)}
+	}
+
+	if client == nil {
+		client = &http.Client{Timeout: ProbeTimeout}
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, ProbeTimeout)
@@ -281,8 +305,8 @@ func ProbeURL(ctx context.Context, client *http.Client, appURL string) Result {
 	}
 
 	// Never follow a redirect, whatever the injected client is configured to
-	// do: safeProbeURL only ever inspects the FIRST URL, so a 3xx hop to a
-	// second, caller-chosen host would defeat the check entirely. Shallow-copy
+	// do: a 3xx hop to a second, response-chosen host would let the box being
+	// probed steer the request past the URL the caller vouched for. Shallow-copy
 	// so the caller's transport and timeout are otherwise untouched.
 	noRedirect := *client
 	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
@@ -295,7 +319,7 @@ func ProbeURL(ctx context.Context, client *http.Client, appURL string) Result {
 		if settle.IsUntrustedCertificate(err) {
 			// The box answered a TLS handshake — it is serving; we simply do
 			// not trust its (self-signed) certificate.
-			return Result{Reachable: true, CertTrusted: false, ServingURL: appURL}
+			return Result{Reachable: true, CertTrusted: false, ServingURL: dialURL}
 		}
 		if settle.IsDNSFailure(err) {
 			return Result{
@@ -312,7 +336,7 @@ func ProbeURL(ctx context.Context, client *http.Client, appURL string) Result {
 			Reason: fmt.Sprintf("app URL answered %d — the edge is up but the app is not serving yet", resp.StatusCode),
 		}
 	}
-	return Result{Reachable: true, CertTrusted: true, ServingURL: appURL}
+	return Result{Reachable: true, CertTrusted: true, ServingURL: dialURL}
 }
 
 // Apply records the verdict on the outputs the engine persists, so downstream

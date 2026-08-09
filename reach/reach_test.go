@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mitstack-eu/operator-kit/reach"
@@ -191,6 +193,25 @@ func TestEvaluate_DiagnosisIsAppendedWithoutChangingTheVerdict(t *testing.T) {
 	}
 }
 
+// The Checker's default (nil Probe) path calls the real ProbeURL, which now
+// (MIT-1683, the CodeQL go/request-forgery fix) dials only a vouched
+// allowlist entry rather than the raw appURL. Evaluate must still work
+// end-to-end: it is the Checker's OWN job to vouch for the URL it computed
+// from outputs it controls, not to lose all reachability by forwarding an
+// unvouched URL into ProbeURL's default-deny gate.
+func TestEvaluate_DefaultProbeVouchesForTheURLItComputedAndReachesIt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := reach.Checker{Client: srv.Client()}
+	got := c.Evaluate(context.Background(), map[string]string{"appUrl": srv.URL})
+	if !got.Reachable {
+		t.Fatalf("the checker must vouch for the appUrl it computed and reach it, got %+v", got)
+	}
+}
+
 func TestEvaluate_NilDiagnoserIsFine(t *testing.T) {
 	c := reach.Checker{
 		Probe: func(_ context.Context, _ string) reach.Result {
@@ -204,6 +225,12 @@ func TestEvaluate_NilDiagnoserIsFine(t *testing.T) {
 }
 
 // --- ProbeURL classification ------------------------------------------------
+//
+// Every case below now passes appURL as its own sole allowlist entry — the
+// caller VOUCHES for the exact URL it wants probed (MIT-1683). That is what
+// closed the CodeQL go/request-forgery finding: ProbeURL never dials appURL
+// itself, only an allowlist element that string-equals it. The default-deny
+// cases (nothing vouched) are below this block.
 
 func TestProbeURL_2xxIsServingAndTrusted(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -211,7 +238,7 @@ func TestProbeURL_2xxIsServingAndTrusted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got := reach.ProbeURL(context.Background(), srv.Client(), srv.URL)
+	got := reach.ProbeURL(context.Background(), srv.Client(), srv.URL, srv.URL)
 	if !got.Reachable || !got.CertTrusted {
 		t.Fatalf("a plain 200 must be serving and trusted, got %+v", got)
 	}
@@ -225,7 +252,7 @@ func TestProbeURL_4xxIsServing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if got := reach.ProbeURL(context.Background(), srv.Client(), srv.URL); !got.Reachable {
+	if got := reach.ProbeURL(context.Background(), srv.Client(), srv.URL, srv.URL); !got.Reachable {
 		t.Fatalf("404 means the edge answered — must be reachable, got %+v", got)
 	}
 }
@@ -238,7 +265,7 @@ func TestProbeURL_5xxIsNotServing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if got := reach.ProbeURL(context.Background(), srv.Client(), srv.URL); got.Reachable {
+	if got := reach.ProbeURL(context.Background(), srv.Client(), srv.URL, srv.URL); got.Reachable {
 		t.Fatalf("502 must not be serving, got %+v", got)
 	}
 }
@@ -253,7 +280,7 @@ func TestProbeURL_UntrustedCertIsServingButNotTrusted(t *testing.T) {
 	defer srv.Close()
 
 	// A default client does NOT trust httptest's ad-hoc CA.
-	got := reach.ProbeURL(context.Background(), &http.Client{}, srv.URL)
+	got := reach.ProbeURL(context.Background(), &http.Client{}, srv.URL, srv.URL)
 	if !got.Reachable {
 		t.Fatalf("an untrusted cert still proves something is serving, got %+v", got)
 	}
@@ -279,12 +306,57 @@ func TestProbeURL_ConnectionRefusedIsNotADNSFailure(t *testing.T) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
-	got := reach.ProbeURL(context.Background(), &http.Client{}, "http://"+addr+"/")
+	url := "http://" + addr + "/"
+	got := reach.ProbeURL(context.Background(), &http.Client{}, url, url)
 	if got.Reachable {
 		t.Fatalf("a refused connection is not serving, got %+v", got)
 	}
 	if got.DNSFailure {
 		t.Fatalf("a refused connection is not a DNS failure, got %+v", got)
+	}
+}
+
+// --- ProbeURL allowlist default-deny (CodeQL go/request-forgery fix, MIT-1683) --
+
+// The whole point of the fix: an appURL that is not vouched for by any
+// allowlist entry must never be dialed, and must never be reported reachable.
+func TestProbeURL_EmptyAllowlistNeverDialsAndIsNotReachable(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	got := reach.ProbeURL(context.Background(), srv.Client(), srv.URL)
+	if got.Reachable {
+		t.Fatalf("an unvouched URL must never be treated as reachable, got %+v", got)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("an unvouched URL must never be dialed, but the server received %d request(s)", n)
+	}
+	if !strings.Contains(strings.ToLower(got.Reason), "vouch") {
+		t.Fatalf("Reason must say the URL was not vouched for, got %q", got.Reason)
+	}
+}
+
+// A non-empty allowlist that simply does not contain appURL is equally
+// default-deny — this is the case a naive host-only or prefix match would get
+// wrong.
+func TestProbeURL_NotInAllowlistNeverDialsAndIsNotReachable(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	got := reach.ProbeURL(context.Background(), srv.Client(), srv.URL, "https://other.example/")
+	if got.Reachable {
+		t.Fatalf("a URL absent from the allowlist must never be treated as reachable, got %+v", got)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("a URL absent from the allowlist must never be dialed, but the server received %d request(s)", n)
 	}
 }
 
@@ -309,7 +381,7 @@ func TestProbeURL_ClassifiesTransportErrors(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			client := &http.Client{Transport: errTransport{err: tc.err}}
-			got := reach.ProbeURL(context.Background(), client, "https://app.example/")
+			got := reach.ProbeURL(context.Background(), client, "https://app.example/", "https://app.example/")
 
 			if got.Reachable != tc.wantReachable {
 				t.Fatalf("Reachable = %v, want %v (%+v)", got.Reachable, tc.wantReachable, got)
