@@ -1,0 +1,5 @@
+{
+  "name": "no-status",
+  "request": { "method": "GET", "path": "/v1/status" },
+  "response": {}
+}

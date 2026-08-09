@@ -1,0 +1,5 @@
+{
+  "name": "charlie",
+  "request": { "method": "GET", "path": "/v1/charlie" },
+  "response": { "status": 200, "body": { "which": "charlie" } }
+}

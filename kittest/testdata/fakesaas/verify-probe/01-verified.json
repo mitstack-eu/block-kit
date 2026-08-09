@@ -1,0 +1,13 @@
+{
+  "name": "verified",
+  "request": {
+    "method": "POST",
+    "path": "/v1/verify",
+    "headers": { "Authorization": "Bearer good-token" }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "body": { "status": "verified", "account": "acme-corp" }
+  }
+}

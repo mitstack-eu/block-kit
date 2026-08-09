@@ -1,0 +1,13 @@
+{
+  "name": "rejected",
+  "request": {
+    "method": "POST",
+    "path": "/v1/verify",
+    "headers": { "Authorization": "Bearer bad-token" }
+  },
+  "response": {
+    "status": 401,
+    "headers": { "Content-Type": "application/json" },
+    "body": { "status": "rejected", "reason": "invalid credential" }
+  }
+}
