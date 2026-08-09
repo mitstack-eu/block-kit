@@ -46,8 +46,10 @@ package reach
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/mitstack-eu/operator-kit/settle"
@@ -254,13 +256,39 @@ func ProbeURL(ctx context.Context, client *http.Client, appURL string) Result {
 		client = &http.Client{Timeout: ProbeTimeout}
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, ProbeTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, appURL, nil)
+	// The URL this probe dials is the one safeProbeURL RETURNS, never the
+	// caller's string (MIT-1678). appURL arrives from a block's published
+	// outputs, so it is caller-supplied data reaching an outbound request —
+	// and a check whose result is not what gets dialled changes nothing about
+	// where the request goes. That is the lesson MIT-1325 paid for once
+	// already on the GitHub API host.
+	//
+	// The ADDRESS policy deliberately stays with the caller: this probes a
+	// consumer's own box, and an operator's tests drive the real path against
+	// a loopback fixture. Whether a private address is acceptable is something
+	// only the caller knows.
+	dialURL, err := safeProbeURL(appURL)
 	if err != nil {
 		return Result{Reason: fmt.Sprintf("app URL is not usable: %v", err)}
 	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, ProbeTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, dialURL, nil)
+	if err != nil {
+		return Result{Reason: fmt.Sprintf("app URL is not usable: %v", err)}
+	}
+
+	// Never follow a redirect, whatever the injected client is configured to
+	// do: safeProbeURL only ever inspects the FIRST URL, so a 3xx hop to a
+	// second, caller-chosen host would defeat the check entirely. Shallow-copy
+	// so the caller's transport and timeout are otherwise untouched.
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	client = &noRedirect
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -325,4 +353,24 @@ func BoolString(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// safeProbeURL parses a caller-supplied app URL and returns the URL to dial,
+// rebuilt from the components that were checked.
+//
+// Only http and https are accepted, and that refusal is the one that matters:
+// a file: or gopher: URL turns "probe the consumer's app" into a read of
+// whatever the process can reach, and no app URL has ever needed one.
+func safeProbeURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", errors.New("app URL must be http or https")
+	}
+	if u.Host == "" {
+		return "", errors.New("app URL has no host")
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path, RawQuery: u.RawQuery}).String(), nil
 }
