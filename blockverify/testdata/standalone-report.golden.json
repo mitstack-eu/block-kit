@@ -1,0 +1,40 @@
+{
+  "suiteVersion": "1.0.0",
+  "kitVersion": "v0.1.0",
+  "mode": "standalone",
+  "manifestDigest": "sha256:f99a1d28387ccc1af4b6e8f15d5689aedbcd45961ad9921842e8d063242f571c",
+  "verdict": "pass",
+  "resultsDigest": "sha256:9464ad02a74b1d0b7179ffb668f4c8e7a33c81dcda4b0591e1050a8fa5aeeda1",
+  "suites": [
+    {
+      "name": "trust-plumbing",
+      "status": "pass",
+      "detail": "depends on github.com/mitstack-eu/operator-kit at or above the floor v0.1.0, kitshim.go present, no kit-owned symbol redeclared, manifest.yaml present"
+    },
+    {
+      "name": "contract",
+      "status": "pass",
+      "detail": "TestContract_* accepts every valid golden and rejects the malformed ones"
+    },
+    {
+      "name": "secret-safety",
+      "status": "pass",
+      "detail": "TestNoSecretLeak (+ the /logs variant where /logs is served) passes"
+    },
+    {
+      "name": "teardown",
+      "status": "pass",
+      "detail": "TestUnsubscribeDeletes* proves unsubscribe deletes what subscribe created"
+    },
+    {
+      "name": "deliverable",
+      "status": "pass",
+      "detail": "own Dockerfile exists and assumes no monorepo build context"
+    },
+    {
+      "name": "capability-parity",
+      "status": "skipped",
+      "detail": "capability-parity compares multiple providers of one capability — not meaningful for a single standalone target"
+    }
+  ]
+}

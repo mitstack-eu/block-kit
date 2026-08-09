@@ -1,0 +1,116 @@
+// Command blockverify is the standalone conformance-suite runner for a
+// mitstack block that lives OUTSIDE this monorepo (MIT-1626 AC#3,
+// MIT-1586/1588). An external author's own CI invokes it as:
+//
+//	go run github.com/mitstack-eu/operator-kit/blockverify@<tag> \
+//	  --json --standalone .
+//
+// # One truth, two doors
+//
+// scripts/block-verify.sh remains THE tool for verifying blocks that live
+// inside this repository (repo mode: scans this repo's own examples/ tree,
+// no <target> or a <target> under this repo, --standalone not passed). This
+// command is its external-repo twin — same suites, same report shape, same
+// verdict semantics — for the case scripts/block-verify.sh cannot reach at
+// all: an author's block has no checkout of this monorepo and no access to
+// its scripts/. That is the same one-truth caveat package ghapi documents
+// for its own host-allowlist decision — the CONTRACT (report shape, suite
+// set, run order, digest algorithms) is single-sourced in
+// scripts/block-verify.sh's header comment, and this command is a
+// from-scratch REIMPLEMENTATION of its standalone-mode behaviour in Go, not
+// a wrapper around the shell script (which this module cannot invoke — it
+// has no access to a checkout of this repo either). Anything that changes
+// the standalone contract must change both.
+//
+// blockverify supports ONLY standalone mode. It refuses (exit 2, naming
+// scripts/block-verify.sh) if --standalone is not supplied, or if
+// --standalone is supplied with no target directory — there is no
+// "guess repo mode" fallback here, because there is no repo to guess.
+//
+// # What it checks, in run order
+//
+//  1. trust-plumbing — reimplements scripts/check-operator-kit-pin.sh: the
+//     target's go.mod requires the operator-kit module at or above the
+//     kit-pin floor version, kitshim.go exists, and no other non-test,
+//     non-shim .go file redeclares a kit-owned symbol (a purely TEXTUAL/
+//     static check, so it still produces a meaningful failure on a target
+//     whose module does not compile — e.g. because it redeclares a
+//     kit-owned symbol, which is itself a build error). This suite also
+//     requires manifest.yaml to exist (a standalone target has no other
+//     suite positioned to catch that).
+//  2. contract — reimplements scripts/check-operator-contract-tests.sh: an
+//     explicit PRESENCE check for both TestContract_DecodesEveryValidGolden
+//     and TestContract_RejectsMalformedGoldens BEFORE running
+//     `go test -run TestContract_ ./...` in the target — presence is
+//     checked first because `go test -run` with zero matching tests exits 0
+//     (a vacuous pass), which is exactly the gap that presence check
+//     exists to close.
+//  3. secret-safety — reimplements scripts/check-operator-secret-leak-tests.sh:
+//     presence of TestNoSecretLeak (+ the TestNoSecretLeak_LogsEndpoint
+//     variant when the target serves the /logs ring buffer), and — unlike
+//     that script, which is presence-only — actually RUNS the test(s).
+//  4. teardown — reimplements scripts/check-operator-teardown-tests.sh:
+//     presence of TestUnsubscribeDeletes* AND a real run of it (MIT-1124's
+//     teardown contract; a broken teardown test must fail this gate, not
+//     merely be absent).
+//  5. deliverable — the target's OWN Dockerfile must exist and must not
+//     COPY a monorepo-relative build context (examples/operator-kit) it
+//     does not have as a standalone repository.
+//  6. capability-parity — ALWAYS skipped: comparing several providers of one
+//     capability is not meaningful for a single standalone target. It still
+//     always appears in the report, with a non-empty Detail explaining why
+//     — a suite that silently disappeared would be indistinguishable from a
+//     bug.
+//
+// Every suite RUNS what it checks rather than merely detecting its
+// presence, in the two places that matters (contract, secret-safety,
+// teardown) — a rotted conformance test that always passes reports coverage
+// that does not exist, which is worse than no test at all. A PARTIAL pass
+// is a FAIL: there is no "passed with exceptions", because "skipped" is a
+// third, non-failing status reserved for a suite that is honestly not
+// applicable here (capability-parity), never a caveated partial pass.
+//
+// # Report contract
+//
+// With --json, Run emits exactly one JSON object on stdout:
+//
+//	{
+//	  "suiteVersion":   "1.0.0",
+//	  "kitVersion":     "v0.1.0",
+//	  "mode":           "standalone",
+//	  "manifestDigest": "sha256:<hex of <target>/manifest.yaml's raw bytes>",
+//	  "verdict":        "pass" | "fail",
+//	  "resultsDigest":  "sha256:<hex>",
+//	  "suites": [
+//	    {"name": "trust-plumbing",    "status": "pass"|"fail",          "detail": "..."},
+//	    {"name": "contract",          "status": "pass"|"fail",          "detail": "..."},
+//	    {"name": "secret-safety",     "status": "pass"|"fail",          "detail": "..."},
+//	    {"name": "teardown",          "status": "pass"|"fail",          "detail": "..."},
+//	    {"name": "deliverable",       "status": "pass"|"fail",          "detail": "..."},
+//	    {"name": "capability-parity", "status": "skipped",              "detail": "..."}
+//	  ]
+//	}
+//
+// resultsDigest is sha256 over the compact JSON array
+// [{"name":...,"status":...}, ...] in run order (detail EXCLUDED, so a
+// wording change to a detail message never moves the digest) —
+// byte-identical to `jq -c '[.suites[] | {name, status}]' | sha256sum`, so a
+// downstream consumer (api/internal/conformance.Mint, which this report
+// shape feeds) can recompute and verify it independently. Without --json,
+// the same information is rendered as a human-readable suite-by-suite
+// report on stdout.
+//
+// # Exit codes
+//
+//	0 — the target is fully conformant (verdict "pass")
+//	1 — the target failed one or more suites (verdict "fail") — a
+//	    target-specific problem, never a usage error
+//	2 — a usage error: no --standalone flag, or --standalone with no
+//	    target, or any other unrecognised invocation. The message on stdout
+//	    always names scripts/block-verify.sh as the tool to use instead for
+//	    repo-mode verification.
+//
+// All output goes through the io.Writer passed to Run — main() itself is
+// nothing but `os.Exit(Run(os.Args[1:], os.Stdout))` — so the whole command
+// is testable without touching the real process streams.
+package main
