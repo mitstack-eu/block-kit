@@ -48,6 +48,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -502,7 +503,72 @@ func vouchBarrierCheckedURL(candidate string) (string, error) {
 	if dial, err := TrustedAppURL(candidate); err == nil {
 		return dial, nil
 	}
+	if dial, err := publicUnicastIPCheckedURL(candidate); err == nil {
+		return dial, nil
+	}
 	return neverRoutableCheckedURL(candidate)
+}
+
+// publicUnicastIPCheckedURL is vouchBarrierCheckedURL's second alternative: a
+// literal, globally-routable unicast IP address.
+//
+// It exists because the DNS fallback has no other address to probe. When an app
+// hostname does not resolve, the only thing left to ask is the box itself, at
+// the address the provisioner recorded in its own outputs — and that address is
+// always a bare public IP, which clears neither of the other two alternatives.
+// Without this the fallback is unreachable code, and an app whose hostname does
+// not resolve can never settle (MIT-1703).
+//
+// It admits strictly less than the apps-domain alternative already does. That
+// one accepts any host under a suffix; this one accepts a single address, and
+// only after net/netip has PARSED it — loopback, link-local (so the cloud
+// metadata endpoint 169.254.169.254 is refused), private, multicast,
+// unspecified and interface-local addresses are all rejected no matter what the
+// caller vouches for.
+//
+// Parsing rather than pattern-matching is what makes this a barrier rather than
+// a validation, and the returned URL is REBUILT from the parsed address — never
+// the caller's string — for the same reason TrustedAppURL rebuilds: a checked
+// value that hands back its input carries the input's taint with it.
+func publicUnicastIPCheckedURL(candidate string) (string, error) {
+	u, err := url.Parse(candidate)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("reach: vouched URL %q is not usable", candidate)
+	}
+
+	// net.ParseIP rather than netip.ParseAddr: this repo has MEASURED which
+	// shapes CodeQL accepts as a `go/request-forgery` barrier (MIT-1677), and
+	// ParseIP is one of them. netip is not, and a barrier the analyzer does not
+	// recognise turns the codeql job red, which skips deploy and wedges every
+	// delivery on main — the failure MIT-1686 was filed for.
+	ip := net.ParseIP(u.Hostname()) // Hostname strips the port and IPv6 brackets
+	if ip == nil {
+		// Not an IP literal at all — a name belongs to one of the other
+		// alternatives, which resolve it against their own rules.
+		return "", fmt.Errorf("reach: vouched URL %q is not an IP address", candidate)
+	}
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return "", fmt.Errorf("reach: vouched URL %q is not a public unicast address", candidate)
+	}
+
+	// Host comes from ip.String(), never from the candidate: a checked value
+	// that hands back its input carries the input's taint with it. JoinHostPort
+	// brackets an IPv6 literal for us.
+	host := ip.String()
+	if port := u.Port(); port != "" {
+		host = net.JoinHostPort(host, port)
+	} else if ip.To4() == nil {
+		host = "[" + host + "]"
+	}
+	rebuilt := &url.URL{
+		Scheme:   strings.ToLower(u.Scheme),
+		Host:     host,
+		Path:     u.Path,
+		RawQuery: u.RawQuery,
+	}
+	return rebuilt.String(), nil
 }
 
 // neverRoutableCheckedURL validates candidate against neverRoutableURLPattern

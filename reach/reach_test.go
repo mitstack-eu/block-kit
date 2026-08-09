@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/operator-kit/reach"
 )
@@ -402,3 +403,107 @@ func TestProbeURL_ClassifiesTransportErrors(t *testing.T) {
 type errTransport struct{ err error }
 
 func (t errTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, t.err }
+
+/* ─── the fallback's own address must be dialable (MIT-1703) ── */
+
+// Every test above that exercises the fallback injects `Probe`, so the
+// fallback URL never reaches the real barrier. That is why a barrier which
+// refuses every bare IP shipped without a failing test: the fallback works
+// perfectly against a fake probe and is refused by the real one.
+//
+// The fallback's ONLY purpose is to probe the box's own public address when
+// the hostname does not resolve. If the barrier cannot dial a public IP, the
+// fallback is unreachable code and an app whose hostname does not resolve can
+// never settle.
+
+func TestProbeURL_VouchedPublicIPIsDialledRatherThanRefused(t *testing.T) {
+	// 203.0.113.0/24 is TEST-NET-3: routable as far as address classification
+	// is concerned, and guaranteed never to answer. So a dial attempt fails —
+	// but it must fail as a DIAL, not as a refusal before one.
+	const ip = "https://203.0.113.9/"
+	got := reach.ProbeURL(context.Background(), &http.Client{Timeout: 300 * time.Millisecond}, ip, ip)
+
+	if got.Reachable {
+		t.Fatal("TEST-NET-3 cannot answer — a reachable verdict would mean the probe never ran")
+	}
+	if strings.Contains(got.Reason, "clears neither") {
+		t.Fatalf("the fallback address was refused before any dial, so the fallback is dead code: %s", got.Reason)
+	}
+}
+
+func TestProbeURL_VouchedCloudMetadataAddressIsStillRefused(t *testing.T) {
+	const metadata = "http://169.254.169.254/latest/meta-data/"
+	got := reach.ProbeURL(context.Background(), &http.Client{Timeout: 300 * time.Millisecond}, metadata, metadata)
+
+	if got.Reachable {
+		t.Fatal("the cloud metadata endpoint must never be reachable through this probe")
+	}
+	if !strings.Contains(got.Reason, "clears neither") {
+		t.Fatalf("link-local must be refused BEFORE a dial, whatever the caller vouches for; got %q", got.Reason)
+	}
+}
+
+func TestProbeURL_VouchedPrivateAndUnspecifiedAddressesAreStillRefused(t *testing.T) {
+	for _, u := range []string{
+		"https://10.0.0.5/",
+		"https://192.168.1.10/",
+		"https://172.16.4.4/",
+		"https://0.0.0.0/",
+		"https://[fe80::1]/",
+		"https://[fd00::1]/",
+	} {
+		got := reach.ProbeURL(context.Background(), &http.Client{Timeout: 300 * time.Millisecond}, u, u)
+		if !strings.Contains(got.Reason, "clears neither") {
+			t.Errorf("%s must be refused before a dial; got %q", u, got.Reason)
+		}
+	}
+}
+
+func TestProbeURL_UnvouchedPublicIPIsStillRefused(t *testing.T) {
+	got := reach.ProbeURL(context.Background(), &http.Client{Timeout: 300 * time.Millisecond},
+		"https://203.0.113.9/", "https://203.0.113.10/")
+
+	if !strings.Contains(got.Reason, "not vouched for") {
+		t.Fatalf("the vouch requirement is unchanged — an unvouched address is refused first; got %q", got.Reason)
+	}
+}
+
+// recordingTransport reports which URLs actually reached the network. The
+// barrier refuses BEFORE the transport is invoked, so "was it dialled" is the
+// only observable that distinguishes a refusal from a failed connection —
+// asserting on the returned Reason cannot, because Evaluate deliberately keeps
+// the more actionable DNS reason when the fallback also fails.
+type recordingTransport struct{ dialled []string }
+
+func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.dialled = append(rt.dialled, req.URL.String())
+	// The hostname must fail the way a real unresolvable name does, or Evaluate
+	// returns before the fallback and the test proves nothing.
+	if host := req.URL.Hostname(); net.ParseIP(host) == nil {
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+	return nil, errors.New("no listener in this test")
+}
+
+// The end-to-end shape: no injected Probe, so Evaluate runs the real barrier
+// on both the hostname and the fallback. The verdict is not the point — that
+// the fallback was ATTEMPTED is.
+func TestEvaluate_FallbackIsActuallyDialledThroughTheRealProbe(t *testing.T) {
+	rt := &recordingTransport{}
+	c := reach.Checker{Client: &http.Client{Transport: rt, Timeout: 300 * time.Millisecond}}
+
+	c.Evaluate(context.Background(), map[string]string{
+		"appUrl":   "https://nothing.invalid/",
+		"publicIp": "203.0.113.9",
+	})
+
+	var sawFallback bool
+	for _, u := range rt.dialled {
+		if strings.Contains(u, "203.0.113.9") {
+			sawFallback = true
+		}
+	}
+	if !sawFallback {
+		t.Fatalf("the box address was never dialled, so the fallback is dead code; dialled=%v", rt.dialled)
+	}
+}
