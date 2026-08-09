@@ -536,11 +536,6 @@ func publicUnicastIPCheckedURL(candidate string) (string, error) {
 		return "", fmt.Errorf("reach: vouched URL %q is not usable", candidate)
 	}
 
-	// net.ParseIP rather than netip.ParseAddr: this repo has MEASURED which
-	// shapes CodeQL accepts as a `go/request-forgery` barrier (MIT-1677), and
-	// ParseIP is one of them. netip is not, and a barrier the analyzer does not
-	// recognise turns the codeql job red, which skips deploy and wedges every
-	// delivery on main — the failure MIT-1686 was filed for.
 	ip := net.ParseIP(u.Hostname()) // Hostname strips the port and IPv6 brackets
 	if ip == nil {
 		// Not an IP literal at all — a name belongs to one of the other
@@ -562,14 +557,41 @@ func publicUnicastIPCheckedURL(candidate string) (string, error) {
 	} else if ip.To4() == nil {
 		host = "[" + host + "]"
 	}
-	rebuilt := &url.URL{
+	rebuilt := (&url.URL{
 		Scheme:   strings.ToLower(u.Scheme),
 		Host:     host,
 		Path:     u.Path,
 		RawQuery: u.RawQuery,
+	}).String()
+
+	// The ParseIP predicates above are what make this SAFE; this match is what
+	// makes the safety VISIBLE to the taint analyzer. CodeQL's
+	// go/request-forgery query recognises a regexp match as a barrier guard for
+	// the value passed to it, and recognises no boolean predicate — so a
+	// semantically airtight check that returns a value the query still considers
+	// tainted reports the sink anyway, turns the codeql job red, and skips
+	// deploy. That is not theoretical: this function first shipped with the
+	// ParseIP checks alone and wedged main's delivery on exactly that.
+	//
+	// Both sibling alternatives use the same shape for the same reason — see
+	// trustedAppURLPattern's comment.
+	if !publicUnicastURLPattern.MatchString(rebuilt) {
+		return "", fmt.Errorf("reach: vouched URL %q is not usable", candidate)
 	}
-	return rebuilt.String(), nil
+	return rebuilt, nil
 }
+
+// publicUnicastURLPattern matches the exact URL shape publicUnicastIPCheckedURL
+// rebuilds: http or https on a literal IPv4 dotted quad or a bracketed IPv6
+// address, with an optional port and an unconstrained path/query — the
+// destination is decided by the host alone.
+//
+// It deliberately does NOT try to express "public unicast". Encoding the
+// reserved ranges as a regexp would be unreadable and wrong at the edges;
+// ParseIP has already rejected them by the time this runs. This pattern's only
+// job is to be the barrier guard the analyzer understands.
+var publicUnicastURLPattern = regexp.MustCompile(
+	`^https?://(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\])(?::\d+)?(?:/.*)?$`)
 
 // neverRoutableCheckedURL validates candidate against neverRoutableURLPattern
 // and returns the URL rebuilt from its parsed components. It is
