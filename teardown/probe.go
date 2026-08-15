@@ -43,7 +43,12 @@ type Presence struct {
 	Absent bool
 	// Remaining lists what is still there and ours.
 	Remaining []Resource
-	// Unsearched lists classes whose discovery failed.
+	// Unsearched lists classes we could not clear — either Find itself
+	// failed, or Find succeeded but returned a resource with no owner tag,
+	// so we could not attribute it to this app or rule it out (MIT-1949).
+	// Both facts mean the same thing to a caller: not provably absent. An
+	// entry here does NOT imply a discovery error — check the returned error
+	// for that, never infer it from this field being non-empty.
 	Unsearched []string
 }
 
@@ -54,10 +59,19 @@ type Presence struct {
 // including validates against a live, healthy subscription, so a probe with a
 // side effect would tear an app down merely by being asked how it is.
 //
-// A discovery failure is never absent, and it also returns an error, so a
-// caller that ignores the error still cannot mistake "we could not look" for
-// "there is nothing there". That is the false all-clear this package exists to
+// A Find failure is never absent, and it also returns an error, so a caller
+// that ignores the error still cannot mistake "we could not look" for "there
+// is nothing there". That is the false all-clear this package exists to
 // prevent, arrived at from the reporting side instead of the reclaiming side.
+//
+// An unattributable resource reaches Unsearched by the SAME "not provably
+// absent" logic but WITHOUT an error (MIT-1949, see skipCannotTell below) —
+// Absent:false is the only signal, deliberately, because of what the error
+// channel does downstream: verifyTeardownAndSettle fails OPEN on any probe
+// error it does not specifically recognise and settles the subscription
+// anyway. An error here would settle a teardown over infrastructure we could
+// not even attribute — the exact false all-clear this comment starts with,
+// reached through the error channel instead of the absence one.
 func Probe(ctx context.Context, id adopt.Identity, classes []Class) (Presence, error) {
 	var p Presence
 
@@ -77,19 +91,55 @@ func Probe(ctx context.Context, id adopt.Identity, classes []Class) (Presence, e
 			continue
 		}
 
+		// classUnprovable is set once any resource in THIS class came back
+		// untagged. One flag per class, checked after the resource loop, so
+		// several untagged resources from the same class add "unsearched"
+		// only once instead of once per resource.
+		classUnprovable := false
+
 		for _, r := range found {
 			if r.Kind == "" {
 				r.Kind = c.Kind()
 			}
 			// The SAME ownership rule the sweep applies, from the same
-			// function — a resource the sweep would refuse to delete because
-			// it belongs to another app says nothing about whether ours is
-			// gone, and counting it would keep a finished teardown looking
-			// unfinished forever.
-			if _, skipped := skipReason(id, r); skipped {
-				continue
+			// function (MIT-1949) — but the three refusal kinds it can
+			// return are not equivalent evidence for a caller answering
+			// "is our app gone", so each is read on its own terms instead of
+			// being uniformly dropped:
+			switch _, kind := skipReason(id, r); kind {
+			case skipForeign:
+				// Belongs to another app, or another platform's ManagedBy.
+				// Says nothing about OUR app, so it is dropped exactly as
+				// the sweep drops it — counting it would keep a finished
+				// teardown looking unfinished forever.
+			case skipCannotTell:
+				// No owner tag at all: we cannot prove this is or is not
+				// ours. That is the Unsearched fact in a different shape —
+				// reporting it as absence would be the false all-clear this
+				// package exists to prevent, arrived at through a resource
+				// instead of a discovery failure.
+				//
+				// This deliberately does NOT append to errs. The only signal
+				// is Absent:false via Unsearched; Probe must return a nil
+				// error for this case alone. verifyTeardownAndSettle fails
+				// OPEN on any probe error it does not specifically
+				// recognise and settles the subscription regardless — so
+				// surfacing an error here would settle a teardown over a
+				// resource we could not even attribute, which is the false
+				// all-clear this whole change exists to close, reopened
+				// through the error channel instead of the absence one.
+				classUnprovable = true
+			default:
+				// notSkipped (ours, not in use — the sweep would delete it)
+				// or skipOwnStillStanding (ours, in use — the sweep leaves
+				// it standing). Either way it exists right now, which is
+				// affirmative evidence our app is not gone yet.
+				p.Remaining = append(p.Remaining, r)
 			}
-			p.Remaining = append(p.Remaining, r)
+		}
+
+		if classUnprovable {
+			p.Unsearched = append(p.Unsearched, c.Kind())
 		}
 	}
 

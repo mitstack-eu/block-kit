@@ -158,7 +158,7 @@ func Sweep(ctx context.Context, id adopt.Identity, classes []Class) (Report, err
 
 			// ONE selection rule, applied here — not re-derived per class, so a
 			// class cannot disagree with the sweep about what is ours (MIT-1126).
-			if reason, ok := skipReason(id, r); ok {
+			if reason, kind := skipReason(id, r); kind != notSkipped {
 				rep.Skipped = append(rep.Skipped, Skip{Resource: r, Reason: reason})
 				continue
 			}
@@ -183,23 +183,54 @@ func Sweep(ctx context.Context, id adopt.Identity, classes []Class) (Report, err
 	return rep, nil
 }
 
-// skipReason decides whether a discovered resource must be left alone. Every
-// branch here is a case where deleting would be worse than leaking.
-func skipReason(id adopt.Identity, r Resource) (string, bool) {
+// skipKind classifies WHY skipReason refused a resource, so a second caller
+// (Probe, MIT-1949) can tell "we could not identify this" apart from
+// "this is provably not ours" apart from "this is ours and still standing" —
+// three different facts that Sweep itself does not need to distinguish,
+// since every one of them means the same thing to a reclaimer: don't touch it.
+type skipKind int
+
+const (
+	// notSkipped means skipReason found nothing to refuse on — Sweep will
+	// attempt the delete.
+	notSkipped skipKind = iota
+	// skipCannotTell means the resource carries no owner tag at all. This is
+	// NOT the same as "belongs to someone else": the absence of a tag proves
+	// nothing about identity either way, so a caller answering "is our app
+	// gone" must treat it as un-provable rather than as a vote for absence.
+	skipCannotTell
+	// skipOwnStillStanding means the resource IS ours (AppId + ManagedBy both
+	// match) and is currently in use. Sweep leaves it alone because deleting
+	// a live resource is worse than the leak, but its existence is
+	// affirmative evidence that our app has not finished tearing down.
+	skipOwnStillStanding
+	// skipForeign means the resource is provably NOT ours — another app's
+	// AppId, or a ManagedBy tag naming another platform. It says nothing
+	// about our own app's state, which is why every caller drops it.
+	skipForeign
+)
+
+// skipReason decides whether a discovered resource must be left alone, and
+// classifies why. Every branch here is a case where deleting would be worse
+// than leaking; the classification lets Probe (MIT-1949) tell "we could not
+// identify this" apart from "this is provably not ours" apart from "this is
+// ours and still standing" — a distinction Sweep does not need, since all
+// three mean "don't touch it", but a caller answering "is our app gone" does.
+func skipReason(id adopt.Identity, r Resource) (string, skipKind) {
 	owner := r.Tags[adopt.TagAppID]
 	switch {
 	case owner == "":
-		return "untagged — no identity, so it cannot be proven ours", true
+		return "untagged — no identity, so it cannot be proven ours", skipCannotTell
 	case owner != id.AppID:
-		return "belongs to " + owner, true
+		return "belongs to " + owner, skipForeign
 	}
 	if mb, ok := r.Tags[adopt.TagManagedBy]; ok && mb != adopt.ManagedByValue {
-		return "managed by " + mb, true
+		return "managed by " + mb, skipForeign
 	}
 	if r.InUse {
-		return "in use", true
+		return "in use", skipOwnStillStanding
 	}
-	return "", false
+	return "", notSkipped
 }
 
 // notFoundPattern matches the "it is already gone" family across AWS services
