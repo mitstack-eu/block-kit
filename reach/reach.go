@@ -156,6 +156,13 @@ type Checker struct {
 	Probe Prober
 	// Diagnose optionally explains a resolution failure. Nil is fine.
 	Diagnose Diagnoser
+	// ExtraSuffixes widens TrustedAppURL's barrier for THIS evaluation only —
+	// normally the output of VerifiedCustomDomain, never a raw, unverified
+	// claim (MIT-1688). It is set per call, not on a shared Checker value: two
+	// evaluations for two different subscriptions must never bleed trust into
+	// each other, which is also why TrustedAppURL itself has no package-level
+	// allowlist to accumulate into.
+	ExtraSuffixes []string
 }
 
 // Evaluate probes the appUrl in a set of outputs and returns the verdict.
@@ -214,7 +221,11 @@ func (c Checker) probe(ctx context.Context, url string) Result {
 	// The Checker computed this url itself, from outputs it controls — that is
 	// the vouching. Passing it as both the probed value and its own sole
 	// allowlist entry is what ProbeURL requires before it will dial anything.
-	return ProbeURL(ctx, c.Client, url, url)
+	// c.ExtraSuffixes rides alongside as the barrier's per-call widening —
+	// probeURL, not the public ProbeURL, is what actually threads it through,
+	// since ProbeURL's exported signature has no room for it (see probeURL's
+	// doc comment).
+	return probeURL(ctx, c.Client, url, c.ExtraSuffixes, url)
 }
 
 func (c Checker) diagnose(ctx context.Context, hostname string) string {
@@ -327,6 +338,66 @@ func trustedAppURLPattern(extraSuffixes []string) *regexp.Regexp {
 	return regexp.MustCompile(`^https://(?:` + hostAlt + `)(?::\d+)?(?:/.*)?$`)
 }
 
+// Resolver looks up the addresses a hostname resolves to. *net.Resolver
+// satisfies this directly (its LookupHost has the identical signature), so
+// production needs no adapter; tests inject a fixed table instead of
+// touching a real resolver.
+type Resolver interface {
+	LookupHost(ctx context.Context, host string) ([]string, error)
+}
+
+// VerifiedCustomDomain proves that a consumer-claimed custom domain (an
+// unbounded, attacker-influenceable string — MIT-1805's `customDomain` param)
+// actually points at infrastructure THIS subscription provisioned, and
+// returns the domain unchanged so the caller can pass it straight to
+// TrustedAppURL as an extra suffix. It is the missing half of MIT-1686's
+// barrier: the allowlist has always had room for an operator-supplied extra
+// suffix, but nothing could earn one for a custom domain without reopening
+// the SSRF the barrier exists to close. Resolving the domain and comparing
+// the answer against the address the operator itself created is a real proof
+// of control, not a restatement of the claim — and per MIT-1677's measured
+// CodeQL behaviour, a resolver-based check is what actually clears
+// go/request-forgery; a suffix or regexp check on the claim alone does not.
+//
+// domain must be a bare hostname — no scheme, port or path. Those shapes are
+// refused before resolver.LookupHost is ever called, so a malformed claim
+// costs nothing and touches no network.
+//
+// Verification succeeds the moment ANY resolved address is in expectedAddrs,
+// not only when every resolved address is. This is deliberate: an app behind
+// round-robin or multi-AZ A records is a legitimate, ordinary shape, and this
+// subscription's own address is necessarily just one entry among several —
+// requiring all of them to match would fail a domain that is genuinely under
+// the consumer's control.
+//
+// A resolver error is always a refusal, never a success — VerifiedCustomDomain
+// returns "" in that case so a caller cannot mistake a failed lookup for an
+// empty-but-verified suffix. Nothing here is cached: a verified result is
+// trusted again only by being explicitly re-passed as an extra suffix on the
+// next call, never by a global allowlist a later, unrelated evaluation could
+// inherit from.
+func VerifiedCustomDomain(ctx context.Context, resolver Resolver, domain string, expectedAddrs []string) (string, error) {
+	if domain == "" || strings.ContainsAny(domain, ":/") {
+		return "", fmt.Errorf("reach: custom domain %q is not a bare hostname", domain)
+	}
+
+	addrs, err := resolver.LookupHost(ctx, domain)
+	if err != nil {
+		return "", fmt.Errorf("reach: custom domain %q did not resolve: %w", domain, err)
+	}
+
+	for _, addr := range addrs {
+		for _, want := range expectedAddrs {
+			if addr == want {
+				return domain, nil
+			}
+		}
+	}
+	return "", fmt.Errorf(
+		"reach: custom domain %q resolved to %v, which does not match any address this subscription provisioned (%v)",
+		domain, addrs, expectedAddrs)
+}
+
 // ProbeURL performs ONE bounded GET of a public URL and classifies the answer.
 //
 // Serving means: the edge answered with a status below 500, OR the TLS
@@ -384,11 +455,23 @@ func trustedAppURLPattern(extraSuffixes []string) *regexp.Regexp {
 // get an answer — a certificate error can only be produced by something that
 // completed a handshake, which is precisely the fact being established.
 func ProbeURL(ctx context.Context, client *http.Client, appURL string, allowedURLs ...string) Result {
+	return probeURL(ctx, client, appURL, nil, allowedURLs...)
+}
+
+// probeURL is ProbeURL's implementation, plus the one thing ProbeURL's
+// exported signature has no room for: extraSuffixes, the per-call barrier
+// widening a verified custom domain earns (MIT-1688). It cannot be added to
+// ProbeURL itself — allowedURLs is already the trailing variadic parameter,
+// so a new parameter ahead of it would shift every existing positional call
+// site. Checker.probe is the only caller that ever passes a non-nil
+// extraSuffixes; ProbeURL's own callers keep the exact behaviour they had
+// before this function existed.
+func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuffixes []string, allowedURLs ...string) Result {
 	if appURL == "" {
 		return Result{Reason: "no app URL to probe"}
 	}
 
-	dialURL, err := resolveDialURL(appURL, allowedURLs)
+	dialURL, err := resolveDialURL(appURL, allowedURLs, extraSuffixes)
 	if err != nil {
 		return Result{Reason: err.Error()}
 	}
@@ -457,7 +540,11 @@ func ProbeURL(ctx context.Context, client *http.Client, appURL string, allowedUR
 //
 // No match — including an empty allowedURLs, or a vouched value that fails
 // the barrier — is default-deny: nothing is dialled.
-func resolveDialURL(appURL string, allowedURLs []string) (string, error) {
+//
+// extraSuffixes widens the barrier half only (MIT-1688) — it never
+// substitutes for the vouch, which stays a plain equality against
+// allowedURLs regardless of what extraSuffixes contains.
+func resolveDialURL(appURL string, allowedURLs []string, extraSuffixes []string) (string, error) {
 	vouched := false
 	for _, candidate := range allowedURLs {
 		if candidate == appURL {
@@ -471,7 +558,7 @@ func resolveDialURL(appURL string, allowedURLs []string) (string, error) {
 			appURL)
 	}
 
-	dial, err := vouchBarrierCheckedURL(appURL)
+	dial, err := vouchBarrierCheckedURL(appURL, extraSuffixes)
 	if err != nil {
 		return "", fmt.Errorf(
 			"reach: app URL %q is vouched for but clears neither the platform apps domain (%s) nor a loopback/non-production host (MIT-1686): %v",
@@ -499,8 +586,12 @@ func resolveDialURL(appURL string, allowedURLs []string) (string, error) {
 // Both alternatives return a value REBUILT from parsed, regexp-matched
 // components — never the raw candidate string — for the same reason
 // TrustedAppURL does; see its doc comment.
-func vouchBarrierCheckedURL(candidate string) (string, error) {
-	if dial, err := TrustedAppURL(candidate); err == nil {
+//
+// extraSuffixes rides straight into the first alternative's TrustedAppURL
+// call — it never applies to the loopback/reserved-TLD alternative, which
+// has no notion of an operator-supplied suffix.
+func vouchBarrierCheckedURL(candidate string, extraSuffixes []string) (string, error) {
+	if dial, err := TrustedAppURL(candidate, extraSuffixes...); err == nil {
 		return dial, nil
 	}
 	if dial, err := publicUnicastIPCheckedURL(candidate); err == nil {
