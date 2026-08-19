@@ -119,6 +119,21 @@ type Result struct {
 	// carries credentials (the URL is a public address).
 	Reason string
 
+	// EdgeUp reports whether the front door answered at all — any HTTP status,
+	// including a 5xx, or a TLS handshake that got far enough to fail only on
+	// trust. It is a fact about the INFRASTRUCTURE in front of the app, which is
+	// what a provisioning block actually owns; Reachable is a fact about the
+	// app, which such a block does not put there.
+	//
+	// The two were the same field until 2026-08-19, and conflating them
+	// deadlocked the Plain stack: aws-app-infra withheld `active` until the app
+	// answered, the app needed a database, and the database block could not
+	// provision until aws-app-infra was active. A provider that waits on its own
+	// consumer is a cycle no number of retries can break — five self-heal rounds
+	// spent seven hours proving it. Settle gates read EdgeUp; Reachable stays the
+	// honest answer to "does the app serve", published on the outputs either way.
+	EdgeUp bool
+
 	// DNSFailure marks the one failure mode that is the PLATFORM's fault
 	// rather than the app's: the advertised hostname does not resolve at all.
 	// Distinguishing it from "the app is down" is what lets Evaluate fall back
@@ -174,7 +189,7 @@ type Checker struct {
 func (c Checker) Evaluate(ctx context.Context, outputs map[string]string) Result {
 	appURL := outputs[OutputAppURL]
 	if appURL == "" {
-		return Result{Reachable: true, CertTrusted: false}
+		return Result{Reachable: true, CertTrusted: false, EdgeUp: true}
 	}
 
 	res := c.probe(ctx, appURL)
@@ -207,6 +222,7 @@ func (c Checker) Evaluate(ctx context.Context, outputs map[string]string) Result
 	return withDiagnosis(Result{
 		Reachable:   true,
 		CertTrusted: false, // a bare-IP URL can only carry a self-signed cert
+		EdgeUp:      true,
 		ServingURL:  fallbackURL,
 		Reason: fmt.Sprintf(
 			"serving on %s; the app hostname does not resolve yet, so the platform is advertising the box address instead",
@@ -503,7 +519,7 @@ func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuff
 		if settle.IsUntrustedCertificate(err) {
 			// The box answered a TLS handshake — it is serving; we simply do
 			// not trust its (self-signed) certificate.
-			return Result{Reachable: true, CertTrusted: false, ServingURL: dialURL}
+			return Result{Reachable: true, CertTrusted: false, EdgeUp: true, ServingURL: dialURL}
 		}
 		if settle.IsDNSFailure(err) {
 			return Result{
@@ -516,11 +532,15 @@ func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuff
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= http.StatusInternalServerError {
+		// The status came FROM the edge, so the edge is up — see EdgeUp's doc
+		// comment for why a settle gate must be able to tell that apart from
+		// silence.
 		return Result{
+			EdgeUp: true,
 			Reason: fmt.Sprintf("app URL answered %d — the edge is up but the app is not serving yet", resp.StatusCode),
 		}
 	}
-	return Result{Reachable: true, CertTrusted: true, ServingURL: dialURL}
+	return Result{Reachable: true, CertTrusted: true, EdgeUp: true, ServingURL: dialURL}
 }
 
 // resolveDialURL decides the exact string ProbeURL is allowed to dial: the
