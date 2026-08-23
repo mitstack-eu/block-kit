@@ -383,6 +383,22 @@ func contractAccepts(raw []byte) bool {
 }
 `
 
+// contractResponseTestGo is the response half of the webhook contract
+// (MIT-1136). It is deliberately trivial: the fixture exists to prove
+// blockverify ACCEPTS a conformant module, so this file only has to satisfy
+// the presence requirement and pass deterministically. What a real operator
+// puts here is asserted by that operator's own suite, not by this fixture.
+const contractResponseTestGo = `package main
+
+import "testing"
+
+func TestContract_EmitsConformingResponse(t *testing.T) {
+	if 1+1 != 2 {
+		t.Fatal("fixture arithmetic broke")
+	}
+}
+`
+
 const secretsLeakTestGo = `package main
 
 import (
@@ -481,6 +497,7 @@ func goldenFixtureFiles(t *testing.T) map[string]string {
 		"main.go":                      mainGo,
 		"testhelpers_test.go":          testHelpersGo,
 		"contract_conformance_test.go": contractConformanceTestGo,
+		"contract_response_test.go":    contractResponseTestGo,
 		"secrets_leak_test.go":         secretsLeakTestGo,
 		"teardown_test.go":             teardownTestGo,
 		"manifest.yaml":                manifestYAML,

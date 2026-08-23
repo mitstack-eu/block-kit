@@ -5,15 +5,19 @@ import (
 	"strings"
 )
 
-// contractRequiredTests are the two tests every block must define — see
-// scripts/check-operator-contract-tests.sh's required_tests.
+// contractRequiredTests are the tests every block must define — see
+// scripts/check-operator-contract-tests.sh's required_tests, which this list
+// mirrors exactly. A block author outside this repo runs block-verify instead
+// of the shell gate, so a stale entry here means a real operator passes
+// verification with a requirement nobody checked.
 var contractRequiredTests = []string{
 	"TestContract_DecodesEveryValidGolden",
 	"TestContract_RejectsMalformedGoldens",
+	"TestContract_EmitsConformingResponse",
 }
 
 // contractSuite reimplements scripts/check-operator-contract-tests.sh
-// against target alone: an explicit PRESENCE check for both required
+// against target alone: an explicit PRESENCE check for every required
 // TestContract_* functions BEFORE running `go test -run TestContract_
 // ./...` — zero tests matching that pattern exits 0 (a vacuous pass), which
 // is exactly the gap the presence check closes.

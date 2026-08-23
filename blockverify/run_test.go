@@ -293,6 +293,37 @@ func TestRun_MissingContractTests_FailsContract(t *testing.T) {
 	}
 }
 
+// TestRun_MissingResponseContractTest_FailsContract is the response-side twin
+// of the case above, and the behavioural half of contract_mirror_test.go's
+// list comparison: that test proves blockverify KNOWS about
+// TestContract_EmitsConformingResponse, this one proves it ACTS on it. Both
+// are needed — a name present in contractRequiredTests but never reached by
+// the presence check would satisfy the list comparison and still let a module
+// with no response coverage through.
+func TestRun_MissingResponseContractTest_FailsContract(t *testing.T) {
+	dir := t.TempDir()
+	files := goldenFixtureFiles(t)
+	delete(files, "contract_response_test.go")
+	writeFixture(t, dir, files)
+
+	stdout, exit := runBlockverify(t, "--json", "--standalone", dir)
+	if exit != 1 {
+		t.Fatalf("want exit 1 when TestContract_EmitsConformingResponse is missing, got %d\nstdout:\n%s", exit, stdout)
+	}
+
+	r := decodeReport(t, stdout)
+	if r.Verdict != "fail" {
+		t.Errorf("verdict = %q, want %q", r.Verdict, "fail")
+	}
+	c := suiteByName(t, r, "contract")
+	if c.Status != "fail" {
+		t.Errorf("contract status = %q, want %q — the response half of the webhook contract is required of every operator (the engine's decoder discards its unmarshal error, so a non-conforming response loses the whole payload silently)", c.Status, "fail")
+	}
+	if !strings.Contains(c.Detail, "TestContract_EmitsConformingResponse") {
+		t.Errorf("contract detail = %q, want it to name the missing TestContract_EmitsConformingResponse", c.Detail)
+	}
+}
+
 // --- 3. Determinism ---------------------------------------------------
 
 func TestRun_ResultsDigest_DeterministicAcrossRuns(t *testing.T) {
