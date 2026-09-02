@@ -16,10 +16,28 @@ import (
 
 // runSSH writes h.Credential to a private temp file, then runs script on
 // h.Target over ssh with the script delivered on the subprocess's stdin.
-func runSSH(ctx context.Context, h Host, script string) (err error) {
+func runSSH(ctx context.Context, h Host, script string) error {
+	_, err := runSSHCommand(ctx, h, script, false)
+	return err
+}
+
+// runSSHOutput runs script exactly as runSSH does, additionally capturing
+// the subprocess's stdout. A non-zero exit returns ("", err) — never the
+// partial output the script may have printed before failing.
+func runSSHOutput(ctx context.Context, h Host, script string) (string, error) {
+	return runSSHCommand(ctx, h, script, true)
+}
+
+// runSSHCommand writes h.Credential to a private temp file, then runs
+// script on h.Target over ssh with the script delivered on the
+// subprocess's stdin. It is shared by runSSH and runSSHOutput so the
+// identity-file lifecycle and the ssh argv/error handling are not
+// duplicated between them; captureOutput selects whether the returned
+// string carries the subprocess's trimmed stdout or is always empty.
+func runSSHCommand(ctx context.Context, h Host, script string, captureOutput bool) (stdout string, err error) {
 	keyFile, err := writeIdentityFile(h.Credential)
 	if err != nil {
-		return fmt.Errorf("hostexec: %w", err)
+		return "", fmt.Errorf("hostexec: %w", err)
 	}
 	// A failed removal leaves the PEM on disk, against this package's own
 	// stated invariant, so it must not be silently dropped — but it must
@@ -28,6 +46,7 @@ func runSSH(ctx context.Context, h Host, script string) (err error) {
 		if rmErr := os.Remove(keyFile); rmErr != nil {
 			if err == nil {
 				err = fmt.Errorf("hostexec: ssh: remove identity file %s: %w", keyFile, rmErr)
+				stdout = ""
 			} else {
 				fmt.Fprintf(os.Stderr, "hostexec: ssh: remove identity file %s: %v\n", keyFile, rmErr)
 			}
@@ -45,29 +64,39 @@ func runSSH(ctx context.Context, h Host, script string) (err error) {
 	cmd.Stdin = strings.NewReader(script)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	// A killed ssh may leave a grandchild it spawned holding the stderr
-	// pipe's write end open; WaitDelay caps how long Wait keeps draining
-	// that pipe after cancellation, so Run still returns promptly.
+	var stdoutBuf strings.Builder
+	if captureOutput {
+		cmd.Stdout = &stdoutBuf
+	}
+	// A killed ssh may leave a grandchild it spawned holding the write end
+	// of either output pipe open; WaitDelay caps how long Wait keeps
+	// draining them after cancellation, so the call still returns promptly.
 	cmd.WaitDelay = subprocessWaitDelay
 
-	if err := cmd.Run(); err != nil {
+	if runErr := cmd.Run(); runErr != nil {
 		// A cancelled context killed the subprocess; that is why it failed,
 		// not whatever exit status the kill produced.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return fmt.Errorf("hostexec: ssh: %w", ctxErr)
+			return "", fmt.Errorf("hostexec: ssh: %w", ctxErr)
 		}
 		// A leaked grandchild holding the stderr pipe open past WaitDelay
 		// produces exec.ErrWaitDelay even when ssh itself exited zero; that
 		// is not a failure of the run this call cares about.
-		if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
-			return nil
+		if errors.Is(runErr, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+			if captureOutput {
+				return strings.TrimSpace(stdoutBuf.String()), nil
+			}
+			return "", nil
 		}
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return fmt.Errorf("hostexec: ssh: %w: %s", err, msg)
+			return "", fmt.Errorf("hostexec: ssh: %w: %s", runErr, msg)
 		}
-		return fmt.Errorf("hostexec: ssh: %w", err)
+		return "", fmt.Errorf("hostexec: ssh: %w", runErr)
 	}
-	return nil
+	if captureOutput {
+		return strings.TrimSpace(stdoutBuf.String()), nil
+	}
+	return "", nil
 }
 
 // writeIdentityFile writes pem to a new temp file with mode 0600 and

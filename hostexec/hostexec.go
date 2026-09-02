@@ -93,23 +93,63 @@ var SSMPollTimeout = 10 * time.Minute
 // Region on the ssm driver are all rejected up front rather than falling
 // back to a default or a partially-started subprocess.
 func Run(ctx context.Context, h Host, script string) error {
-	if strings.TrimSpace(h.Target) == "" {
-		return fmt.Errorf("hostexec: Target is required (kind %q)", h.Kind)
-	}
-	if strings.HasPrefix(h.Target, "-") {
-		return fmt.Errorf("hostexec: Target %q begins with \"-\" — neither ssh nor the aws CLI has an end-of-options marker, so this would be parsed as an option rather than a host", h.Target)
+	if err := validateHost(h); err != nil {
+		return err
 	}
 	switch h.Kind {
 	case KindSSM:
-		if strings.TrimSpace(h.Region) == "" {
-			return fmt.Errorf("hostexec: Region is required for the %q driver — it is never defaulted", KindSSM)
-		}
 		return runSSM(ctx, h, script)
 	case KindSSH:
 		return runSSH(ctx, h, script)
 	default:
 		return fmt.Errorf("hostexec: unrecognised host kind %q", h.Kind)
 	}
+}
+
+// RunOutput executes script on h exactly as Run does, but additionally
+// captures and returns its stdout once it reaches a terminal state, with
+// only the OUTER whitespace trimmed — internal newlines round-trip
+// verbatim. A failed send, a poll that never reaches a terminal state, a
+// terminal state other than Success, or a non-zero ssh exit all return
+// ("", err); RunOutput never hands back partial output alongside an error.
+//
+// RunOutput shares Run's validation and, for the ssm driver, Run's own
+// send/poll path (sendSSMCommand and waitForSSMTerminalStatus), so it sends
+// script into AWS-RunShellScript's "commands" parameter exactly as Run
+// does — and AWS records that same script in CloudTrail. A caller using the
+// ssm driver must therefore never embed a secret in script here either, for
+// exactly the reason given on Run: pass a reference the host resolves
+// itself once it is already running, never the secret value. The ssh
+// driver instead reads the stdout its own subprocess already produced;
+// script itself still travels only on that subprocess's stdin, never argv.
+func RunOutput(ctx context.Context, h Host, script string) (string, error) {
+	if err := validateHost(h); err != nil {
+		return "", err
+	}
+	switch h.Kind {
+	case KindSSM:
+		return runSSMOutput(ctx, h, script)
+	case KindSSH:
+		return runSSHOutput(ctx, h, script)
+	default:
+		return "", fmt.Errorf("hostexec: unrecognised host kind %q", h.Kind)
+	}
+}
+
+// validateHost applies the up-front checks shared by Run and RunOutput: an
+// empty or dash-prefixed Target, or (for the ssm driver) a missing Region,
+// are all rejected before anything is spawned.
+func validateHost(h Host) error {
+	if strings.TrimSpace(h.Target) == "" {
+		return fmt.Errorf("hostexec: Target is required (kind %q)", h.Kind)
+	}
+	if strings.HasPrefix(h.Target, "-") {
+		return fmt.Errorf("hostexec: Target %q begins with \"-\" — neither ssh nor the aws CLI has an end-of-options marker, so this would be parsed as an option rather than a host", h.Target)
+	}
+	if h.Kind == KindSSM && strings.TrimSpace(h.Region) == "" {
+		return fmt.Errorf("hostexec: Region is required for the %q driver — it is never defaulted", KindSSM)
+	}
+	return nil
 }
 
 // setCmdEnv applies Host.Env to cmd. A nil or empty env leaves cmd.Env unset

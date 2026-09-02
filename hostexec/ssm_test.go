@@ -294,6 +294,129 @@ func shrinkSSMPolling(t *testing.T) {
 	})
 }
 
+// --- RunOutput (MIT-2507) --------------------------------------------------
+
+func TestSSMRunOutput_SuccessReturnsCapturedStdout(t *testing.T) {
+	shrinkSSMPolling(t)
+	dir, _, _ := fakeSSMOutput(t, "cmd-1", []string{"Success"}, 0, "READY=0")
+	setPath(t, dir)
+
+	out, err := hostexec.RunOutput(context.Background(), ssmHost(), "true")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "READY=0" {
+		t.Errorf("RunOutput() = %q, want %q", out, "READY=0")
+	}
+}
+
+func TestSSMRunOutput_MultilineStdoutIsPreservedVerbatim(t *testing.T) {
+	// A probe's captured stdout can legitimately span multiple lines — exactly
+	// the shape HealthCheck's own "READY=$?" plus a captured file produces —
+	// so a single TrimSpace at the edges must not collapse the internal
+	// newline.
+	shrinkSSMPolling(t)
+	want := "READY=0\npg_isready output line"
+	dir, _, _ := fakeSSMOutput(t, "cmd-1", []string{"Success"}, 0, want)
+	setPath(t, dir)
+
+	out, err := hostexec.RunOutput(context.Background(), ssmHost(), "true")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != want {
+		t.Errorf("RunOutput() = %q, want %q — internal newlines must round-trip intact", out, want)
+	}
+}
+
+func TestSSMRunOutput_OutputQueryFollowsTerminalStatus(t *testing.T) {
+	// The ssm driver must read the output from a SECOND
+	// get-command-invocation call, issued only once the poll loop has
+	// already seen a terminal status — never interleaved with, or ahead of,
+	// the Status polls themselves.
+	shrinkSSMPolling(t)
+	dir, argvRecord, _ := fakeSSMOutput(t, "cmd-1", []string{"InProgress", "InProgress", "Success"}, 0, "READY=0")
+	setPath(t, dir)
+
+	out, err := hostexec.RunOutput(context.Background(), ssmHost(), "true")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "READY=0" {
+		t.Errorf("RunOutput() = %q, want %q", out, "READY=0")
+	}
+
+	queries := ssmQueryOrder(t, argvRecord)
+	if len(queries) < 2 {
+		t.Fatalf("get-command-invocation was called %d time(s), want at least 2 (a Status poll, then a StandardOutputContent read)", len(queries))
+	}
+	last := len(queries) - 1
+	if queries[last] != "StandardOutputContent" {
+		t.Errorf("last get-command-invocation query = %q, want %q — the output must be read only after the poll settles", queries[last], "StandardOutputContent")
+	}
+	for _, q := range queries[:last] {
+		if q != "Status" {
+			t.Errorf("query %q appears before the terminal StandardOutputContent read, want every earlier get-command-invocation call to be a Status poll", q)
+		}
+	}
+}
+
+func TestSSMRunOutput_FailedSendCommandReturnsErrorAndNoOutput(t *testing.T) {
+	shrinkSSMPolling(t)
+	dir, _, _ := fakeSSMOutput(t, "", []string{"Success"}, 0, "should never be read")
+	setPath(t, dir)
+
+	out, err := hostexec.RunOutput(context.Background(), ssmHost(), "true")
+	if err == nil {
+		t.Fatal("RunOutput must fail when send-command returns no CommandId — polling and reading an unknown invocation is worse than failing fast")
+	}
+	if out != "" {
+		t.Errorf("RunOutput() output = %q on a failed send, want empty — an unreadable host must not be confused with one whose output happens to be the zero value", out)
+	}
+}
+
+func TestSSMRunOutput_PollTimeoutReturnsErrorAndNoOutput(t *testing.T) {
+	dir, _, _ := fakeSSMOutput(t, "cmd-1", []string{"InProgress"}, 0, "should never be read")
+	setPath(t, dir)
+
+	origInterval, origTimeout := hostexec.SSMPollInterval, hostexec.SSMPollTimeout
+	hostexec.SSMPollInterval = time.Millisecond
+	hostexec.SSMPollTimeout = 20 * time.Millisecond
+	t.Cleanup(func() {
+		hostexec.SSMPollInterval = origInterval
+		hostexec.SSMPollTimeout = origTimeout
+	})
+
+	out, err := hostexec.RunOutput(context.Background(), ssmHost(), "true")
+	if err == nil {
+		t.Fatal("RunOutput must fail once the poll deadline passes without a terminal status")
+	}
+	if out != "" {
+		t.Errorf("RunOutput() output = %q on a poll timeout, want empty", out)
+	}
+}
+
+func TestSSMRunOutput_TerminalFailureStatusReturnsErrorAndNoOutput(t *testing.T) {
+	for _, status := range []string{"Failed", "Cancelled", "TimedOut", "Delivery Timed Out"} {
+		t.Run(status, func(t *testing.T) {
+			shrinkSSMPolling(t)
+			dir, _, _ := fakeSSMOutput(t, "cmd-1", []string{status}, 0, "should never be read")
+			setPath(t, dir)
+
+			out, err := hostexec.RunOutput(context.Background(), ssmHost(), "true")
+			if err == nil {
+				t.Fatalf("RunOutput() succeeded on terminal status %q, want an error", status)
+			}
+			if !strings.Contains(err.Error(), status) {
+				t.Errorf("error = %v, want it to name the terminal status %q", err, status)
+			}
+			if out != "" {
+				t.Errorf("RunOutput() output = %q on terminal status %q, want empty", out, status)
+			}
+		})
+	}
+}
+
 func TestSSMRun_ScriptWithSpecialCharactersRoundTripsThroughTheCommandsJSONParameter(t *testing.T) {
 	// commands is documented by AWS-RunShellScript as a list of commands —
 	// the shape the original runShellOnInstance received — so the wire form

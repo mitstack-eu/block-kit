@@ -94,6 +94,43 @@ func TestNoSecretLeak_SSHPrivateKeyNeverReachesTheCommandLine(t *testing.T) {
 	}
 }
 
+// TestNoSecretLeak_SSHScriptSecretNeverAppearsInReturnedOutput extends the
+// argv/stdin split above to RunOutput's third channel: the captured stdout it
+// hands back to the caller. A secret piped to the ssh subprocess on stdin must
+// not reappear in that returned string any more than it may in argv — a
+// probe's captured output is itself something a caller may log or return to a
+// user, so a driver that echoed a secret it never printed itself would leak it
+// one hop later.
+func TestNoSecretLeak_SSHScriptSecretNeverAppearsInReturnedOutput(t *testing.T) {
+	dir, _, stdinRecord, _, _ := fakeSSH(t, "cat >/dev/null; printf 'ok\\n'")
+	setPath(t, dir)
+
+	script := "export PGPASSWORD=" + leakScriptSecret + "\npsql -c 'select 1'"
+	out, err := hostexec.RunOutput(context.Background(), sshHost(leakPEM), script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The fake never echoes either secret, so an out == "ok" that still
+	// leaked one would be a driver bug, not a fixture artefact — this proves
+	// the assertions below are checking a real return value, not a vacuous
+	// empty string.
+	if out != "ok" {
+		t.Fatalf("RunOutput() = %q, want %q — the fixture's own captured output, so the no-leak assertions below are checking something real", out, "ok")
+	}
+
+	kittest.AssertNoSecret(t, "ssh RunOutput return value", out, leakScriptSecret)
+	kittest.AssertNoSecret(t, "ssh RunOutput return value", out, leakPEM)
+
+	stdin, err := os.ReadFile(stdinRecord)
+	if err != nil {
+		t.Fatalf("reading fake ssh stdin record: %v", err)
+	}
+	if !strings.Contains(string(stdin), leakScriptSecret) {
+		t.Error("the script secret must arrive over the ssh subprocess's stdin — its absence there means RunOutput never actually ran the script, which would make the no-leak assertion above vacuous")
+	}
+}
+
 // TestSSMRun_ScriptIsRecordedInTheCommandLineSoItMustNeverCarryASecret pins the
 // one place the two drivers genuinely differ, rather than letting the package
 // doc's blanket "never as a command-line argument" claim go unchecked for the

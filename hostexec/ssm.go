@@ -23,6 +23,23 @@ func runSSM(ctx context.Context, h Host, script string) error {
 	return waitForSSMTerminalStatus(ctx, h, commandID)
 }
 
+// runSSMOutput sends script exactly as runSSM does — sharing sendSSMCommand
+// and waitForSSMTerminalStatus rather than duplicating that send/poll path —
+// and, only once the poll has already reached Success, issues a second
+// get-command-invocation call to read the captured stdout. Run itself must
+// never take this extra call, which is why it stays a separate function
+// rather than folding into runSSM.
+func runSSMOutput(ctx context.Context, h Host, script string) (string, error) {
+	commandID, err := sendSSMCommand(ctx, h, script)
+	if err != nil {
+		return "", err
+	}
+	if err := waitForSSMTerminalStatus(ctx, h, commandID); err != nil {
+		return "", err
+	}
+	return ssmCommandOutput(ctx, h, commandID)
+}
+
 // sendSSMCommand issues the send-command call and returns the resulting
 // CommandId. The argv order is exact — a caller depends on the document
 // name, instance id and region arriving in precisely this sequence.
@@ -148,6 +165,46 @@ func ssmCommandStatus(ctx context.Context, h Host, commandID string) (string, er
 			}
 		}
 		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ssmCommandOutput reads the captured stdout of commandID via a second
+// get-command-invocation call, issued only once waitForSSMTerminalStatus
+// has already found commandID Success — never before, and never interleaved
+// with the Status polls themselves.
+func ssmCommandOutput(ctx context.Context, h Host, commandID string) (string, error) {
+	cmd := exec.CommandContext(ctx, "aws",
+		"ssm", "get-command-invocation",
+		"--command-id", commandID,
+		"--instance-id", h.Target,
+		"--region", h.Region,
+		"--query", "StandardOutputContent",
+		"--output", "text",
+	)
+	setCmdEnv(cmd, h.Env)
+	cmd.WaitDelay = subprocessWaitDelay
+
+	out, err := cmd.Output()
+	if err != nil {
+		// A leaked grandchild holding this call's own stderr pipe open past
+		// WaitDelay must not turn an otherwise-successful read into a
+		// spurious failure.
+		if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+			return strings.TrimSpace(string(out)), nil
+		}
+		// A cancelled context killed the subprocess; that is why it failed,
+		// not whatever exit status the kill produced.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("hostexec: ssm get-command-invocation (output): %w", ctxErr)
+		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			if msg := strings.TrimSpace(string(ee.Stderr)); msg != "" {
+				return "", fmt.Errorf("hostexec: ssm get-command-invocation (output): %w: %s", err, msg)
+			}
+		}
+		return "", fmt.Errorf("hostexec: ssm get-command-invocation (output): %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

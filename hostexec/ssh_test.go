@@ -51,6 +51,34 @@ func TestSSHRun_NonZeroExitReturnsAnErrorCarryingCapturedStderr(t *testing.T) {
 	}
 }
 
+// --- RunOutput (MIT-2507) --------------------------------------------------
+
+func TestSSHRunOutput_SuccessReturnsCapturedStdout(t *testing.T) {
+	dir, _, _, _, _ := fakeSSH(t, `printf 'READY=0\n'`)
+	setPath(t, dir)
+
+	out, err := hostexec.RunOutput(context.Background(), sshHost("PEM-DATA"), "true")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "READY=0" {
+		t.Errorf("RunOutput() = %q, want %q", out, "READY=0")
+	}
+}
+
+func TestSSHRunOutput_NonZeroExitReturnsErrorAndNoOutput(t *testing.T) {
+	dir, _, _, _, _ := fakeSSH(t, `printf 'partial output\n'; echo "Permission denied (publickey)" >&2; exit 255`)
+	setPath(t, dir)
+
+	out, err := hostexec.RunOutput(context.Background(), sshHost("PEM-DATA"), "true")
+	if err == nil {
+		t.Fatal("expected an error when the ssh subprocess exits non-zero")
+	}
+	if out != "" {
+		t.Errorf("RunOutput() output = %q on a failed run, want empty — a caller must not mistake a probe's partial stdout before the failure for a completed read", out)
+	}
+}
+
 func TestSSHRun_ContextCancellationIsHonoured(t *testing.T) {
 	dir, _, _, _, _ := fakeSSH(t, "sleep 5")
 	setPath(t, dir)

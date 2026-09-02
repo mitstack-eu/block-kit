@@ -131,3 +131,98 @@ done
 func sshHost(credential string) hostexec.Host {
 	return hostexec.Host{Kind: hostexec.KindSSH, Target: "deploy@10.0.0.5", Credential: credential}
 }
+
+// fakeSSMOutput is fakeSSM's stub `aws` plus a second get-command-invocation
+// response: RunOutput issues that call twice, once with --query Status (the
+// existing poll loop) and once with --query StandardOutputContent, and
+// fakeSSM's argv-position dispatch ("${2:-}" alone) cannot tell those two
+// apart. This fake inspects the --query VALUE instead: a StandardOutputContent
+// query always serves stdout, unconditionally and without consuming a poll
+// slot, while a Status query keeps fakeSSM's own pollFailures / statuses
+// behaviour untouched.
+func fakeSSMOutput(t *testing.T, sendCommandID string, statuses []string, pollFailures int, stdout string) (dir, argvRecord, stdinRecord string) {
+	t.Helper()
+	dir = t.TempDir()
+	argvRecord = filepath.Join(dir, "argv")
+	stdinRecord = filepath.Join(dir, "stdin")
+	countFile := filepath.Join(dir, "count")
+
+	quoted := make([]string, len(statuses))
+	for i, s := range statuses {
+		quoted[i] = shQuote(s)
+	}
+
+	script := fmt.Sprintf(`#!/usr/bin/env bash
+set -u
+for a in "$@"; do printf '%%s\n' "$a" >> %[1]s; done
+printf -- '---\n' >> %[1]s
+cat >> %[2]s
+printf -- '---\n' >> %[2]s
+
+if [ "${2:-}" = "send-command" ]; then
+  printf '%%s\n' %[3]s
+  exit 0
+fi
+
+if [ "${2:-}" = "get-command-invocation" ]; then
+  query=""
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--query" ]; then query="$a"; fi
+    prev="$a"
+  done
+  if [ "$query" = "StandardOutputContent" ]; then
+    printf '%%s\n' %[7]s
+    exit 0
+  fi
+  n=0
+  [ -f %[4]s ] && n=$(cat %[4]s)
+  echo $((n+1)) > %[4]s
+  if [ "$n" -lt %[5]d ]; then
+    echo "fake ssm: transient poll failure" >&2
+    exit 1
+  fi
+  idx=$((n - %[5]d))
+  STATUSES=(%[6]s)
+  last=$((${#STATUSES[@]} - 1))
+  if [ "$idx" -gt "$last" ]; then idx=$last; fi
+  printf '%%s\n' "${STATUSES[$idx]}"
+  exit 0
+fi
+
+echo "fake aws: unrecognised subcommand: $*" >&2
+exit 2
+`, argvRecord, stdinRecord, shQuote(sendCommandID), countFile, pollFailures, strings.Join(quoted, " "), shQuote(stdout))
+
+	bin := filepath.Join(dir, "aws")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake aws: %v", err)
+	}
+	return dir, argvRecord, stdinRecord
+}
+
+// ssmQueryOrder returns the --query value of every get-command-invocation
+// call recorded in argvRecord, in call order, so a test can assert the
+// StandardOutputContent read genuinely happens only after every earlier call
+// was a Status poll — not merely that both queries happened at some point.
+func ssmQueryOrder(t *testing.T, argvRecord string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(argvRecord)
+	if err != nil {
+		t.Fatalf("reading fake aws argv record: %v", err)
+	}
+	var queries []string
+	for _, inv := range strings.Split(string(raw), "---\n") {
+		lines := strings.Split(strings.TrimRight(inv, "\n"), "\n")
+		if len(lines) < 2 || lines[0] != "ssm" || lines[1] != "get-command-invocation" {
+			continue
+		}
+		for i, l := range lines {
+			if l == "--query" && i+1 < len(lines) {
+				queries = append(queries, lines[i+1])
+				break
+			}
+		}
+	}
+	return queries
+}
