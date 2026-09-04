@@ -507,3 +507,289 @@ func TestEvaluate_FallbackIsActuallyDialledThroughTheRealProbe(t *testing.T) {
 		t.Fatalf("the box address was never dialled, so the fallback is dead code; dialled=%v", rt.dialled)
 	}
 }
+
+/* ─── the hostname must be promoted back once it resolves (MIT-2618) ── */
+//
+// Apply's own comment claims "the next apply promotes it back automatically
+// once the name resolves". Nothing did: Evaluate returns at its first `if`
+// the instant the box address it was handed answers, and appHostname is never
+// even read. faswq's app kept https://52.57.246.147/ advertised forever after
+// one DNS window, and every consumer inherited it — a delivery check building
+// a URL no certificate can match, the console's "Open app" link leading to an
+// interstitial. These pin the fix as the shared contract every provider of
+// this capability gets from the one implementation (MIT-1595): there is
+// nothing left in this tree to wire a fix into per-operator, so this suite
+// IS the parity check for all three.
+
+// The incident's exact shape: appUrl already rewritten to the box address,
+// appHostname carrying the intended name, and the name now resolves and
+// serves. It must be advertised again — not kept as a bare address for the
+// app's lifetime.
+func TestEvaluate_PromotesBackToHostnameOnceItServes(t *testing.T) {
+	var probed []string
+	c := reach.Checker{
+		Probe: func(_ context.Context, url string) reach.Result {
+			probed = append(probed, url)
+			switch url {
+			case "https://52.57.246.147/":
+				return reach.Result{Reachable: true, EdgeUp: true, CertTrusted: false}
+			case "https://app.example/":
+				return reach.Result{Reachable: true, EdgeUp: true, CertTrusted: true}
+			}
+			t.Fatalf("unexpected probe of %q", url)
+			return reach.Result{}
+		},
+	}
+
+	got := c.Evaluate(context.Background(), map[string]string{
+		"appUrl":      "https://52.57.246.147/",
+		"appHostname": "https://app.example/",
+		"publicIp":    "52.57.246.147",
+	})
+
+	if !got.Reachable {
+		t.Fatalf("the hostname is serving — must be reachable, got %+v", got)
+	}
+	if got.ServingURL != "https://app.example/" {
+		t.Fatalf("ServingURL = %q, want the hostname promoted back once it resolves and serves", got.ServingURL)
+	}
+	if !got.CertTrusted {
+		t.Fatal("the hostname's own probe reported a trusted certificate — CertTrusted must follow the promoted address, not the box fallback's false")
+	}
+
+	var sawHostname bool
+	for _, u := range probed {
+		if u == "https://app.example/" {
+			sawHostname = true
+		}
+	}
+	if !sawHostname {
+		t.Fatalf("the hostname was never actually probed, so the promotion is a guess rather than a verified promote; probed=%v", probed)
+	}
+}
+
+// The hostname resolving is not enough — it has to actually serve. A 5xx or a
+// refused connection at the name must leave the box address advertised,
+// exactly as before promotion existed.
+func TestEvaluate_HostnameRespondsButNotServing_StaysOnBoxAddress(t *testing.T) {
+	c := reach.Checker{
+		Probe: func(_ context.Context, url string) reach.Result {
+			switch url {
+			case "https://52.57.246.147/":
+				return reach.Result{Reachable: true, EdgeUp: true}
+			case "https://app.example/":
+				// The edge answers — DNS is fine now — but with a 5xx: the app
+				// itself is not serving there yet.
+				return reach.Result{Reachable: false, EdgeUp: true}
+			}
+			t.Fatalf("unexpected probe of %q", url)
+			return reach.Result{}
+		},
+	}
+
+	got := c.Evaluate(context.Background(), map[string]string{
+		"appUrl":      "https://52.57.246.147/",
+		"appHostname": "https://app.example/",
+		"publicIp":    "52.57.246.147",
+	})
+
+	if !got.Reachable {
+		t.Fatalf("the box is still serving — must stay reachable, got %+v", got)
+	}
+	if got.ServingURL != "" {
+		t.Fatalf("no promotion should happen — ServingURL must stay empty (appUrl unchanged), got %q", got.ServingURL)
+	}
+}
+
+// The hostname still not resolving at all must leave the box address
+// advertised AND keep explaining why, so a consumer reading only the verdict
+// still learns the platform is on a fallback rather than reading a bare,
+// unexplained success.
+func TestEvaluate_HostnameStillUnresolved_StaysOnBoxAddressAndKeepsReason(t *testing.T) {
+	c := reach.Checker{
+		Probe: func(_ context.Context, url string) reach.Result {
+			switch url {
+			case "https://52.57.246.147/":
+				// A real dial to a serving box carries no Reason of its own —
+				// any explanation for why the platform is STILL on this
+				// address has to come from the promotion check itself.
+				return reach.Result{Reachable: true, EdgeUp: true}
+			case "https://app.example/":
+				return reach.Result{DNSFailure: true, Reason: "no such host"}
+			}
+			t.Fatalf("unexpected probe of %q", url)
+			return reach.Result{}
+		},
+	}
+
+	got := c.Evaluate(context.Background(), map[string]string{
+		"appUrl":      "https://52.57.246.147/",
+		"appHostname": "https://app.example/",
+		"publicIp":    "52.57.246.147",
+	})
+
+	if !got.Reachable {
+		t.Fatalf("the box is still serving — must stay reachable, got %+v", got)
+	}
+	if got.ServingURL != "" {
+		t.Fatalf("no promotion — the hostname still doesn't resolve, got ServingURL=%q", got.ServingURL)
+	}
+	if got.Reason == "" || !strings.Contains(got.Reason, "does not resolve") {
+		t.Fatalf("Reason = %q, want it to keep explaining that the hostname still does not resolve", got.Reason)
+	}
+}
+
+// appHostname absent is the common, healthy-app path — today's behaviour must
+// not change at all, and in particular must not gain a second outbound call
+// per Evaluate: a promotion check that runs when there is nothing to promote
+// would double every health poll's outbound calls.
+func TestEvaluate_NoAppHostname_HealthyPathProbesExactlyOnce(t *testing.T) {
+	calls := 0
+	c := reach.Checker{
+		Probe: func(_ context.Context, _ string) reach.Result {
+			calls++
+			return reach.Result{Reachable: true, EdgeUp: true, CertTrusted: true}
+		},
+	}
+	got := c.Evaluate(context.Background(), map[string]string{"appUrl": "https://app.example/"})
+
+	if !got.Reachable || !got.CertTrusted {
+		t.Fatalf("a directly-serving app must stay reachable and trusted, got %+v", got)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want exactly 1 — nothing to promote must not add a probe", calls)
+	}
+}
+
+// appHostname equal to appUrl is the no-op shape (nothing was ever rewritten,
+// or a caller set both to the same value) — it must not be treated as
+// something to promote, and must not add a dial or rewrite the outputs.
+func TestEvaluate_AppHostnameEqualsAppURL_NoPromotionNoChurn(t *testing.T) {
+	calls := 0
+	c := reach.Checker{
+		Probe: func(_ context.Context, _ string) reach.Result {
+			calls++
+			return reach.Result{Reachable: true, EdgeUp: true, CertTrusted: true}
+		},
+	}
+	got := c.Evaluate(context.Background(), map[string]string{
+		"appUrl":      "https://app.example/",
+		"appHostname": "https://app.example/",
+	})
+
+	if calls != 1 {
+		t.Fatalf("calls = %d, want exactly 1 — appHostname equal to appUrl is nothing to promote", calls)
+	}
+	if got.ServingURL != "" {
+		t.Fatalf("ServingURL = %q, want empty — no churn when there is nothing to promote", got.ServingURL)
+	}
+}
+
+// The trust flag must be RECOMPUTED from the hostname's own probe, not
+// carried over from the fallback's false. A hostname that resolves and serves
+// but still carries a self-signed certificate must still promote — promotion
+// is about reachability — while correctly reporting the cert as untrusted,
+// proving the false here comes from the hostname's own probe and not merely
+// a hardcoded carry-over from the box fallback.
+func TestEvaluate_PromotionRecomputesCertTrusted_UntrustedHostnameCert(t *testing.T) {
+	c := reach.Checker{
+		Probe: func(_ context.Context, url string) reach.Result {
+			switch url {
+			case "https://52.57.246.147/":
+				return reach.Result{Reachable: true, EdgeUp: true, CertTrusted: false}
+			case "https://app.example/":
+				return reach.Result{Reachable: true, EdgeUp: true, CertTrusted: false}
+			}
+			t.Fatalf("unexpected probe of %q", url)
+			return reach.Result{}
+		},
+	}
+	got := c.Evaluate(context.Background(), map[string]string{
+		"appUrl":      "https://52.57.246.147/",
+		"appHostname": "https://app.example/",
+		"publicIp":    "52.57.246.147",
+	})
+
+	if got.ServingURL != "https://app.example/" {
+		t.Fatalf("the hostname serves — it must still be promoted even without a trusted cert, got ServingURL=%q", got.ServingURL)
+	}
+	if got.CertTrusted {
+		t.Fatal("the hostname's own certificate is untrusted — promotion must not claim trust it did not observe")
+	}
+}
+
+// Multi-tenancy: Checker is a value type reused across every Evaluate call in
+// the settle loop, so the promotion probe it adds must read only from the
+// outputs map it was handed. One app's hostname must never be probed for
+// another's outputs.
+func TestEvaluate_PromotionNeverProbesAnotherAppsHostname(t *testing.T) {
+	var probedForA, probedForB []string
+
+	var c reach.Checker
+
+	c.Probe = func(_ context.Context, url string) reach.Result {
+		probedForA = append(probedForA, url)
+		switch url {
+		case "https://203.0.113.9/", "https://a.example/":
+			return reach.Result{Reachable: true, EdgeUp: true, CertTrusted: true}
+		}
+		t.Fatalf("app A's evaluate probed %q, which belongs to app B", url)
+		return reach.Result{}
+	}
+	c.Evaluate(context.Background(), map[string]string{
+		"appUrl":      "https://203.0.113.9/",
+		"appHostname": "https://a.example/",
+		"publicIp":    "203.0.113.9",
+	})
+
+	c.Probe = func(_ context.Context, url string) reach.Result {
+		probedForB = append(probedForB, url)
+		switch url {
+		case "https://198.51.100.7/", "https://b.example/":
+			return reach.Result{Reachable: true, EdgeUp: true, CertTrusted: true}
+		}
+		t.Fatalf("app B's evaluate probed %q, which belongs to app A", url)
+		return reach.Result{}
+	}
+	c.Evaluate(context.Background(), map[string]string{
+		"appUrl":      "https://198.51.100.7/",
+		"appHostname": "https://b.example/",
+		"publicIp":    "198.51.100.7",
+	})
+
+	for _, u := range probedForA {
+		if strings.Contains(u, "b.example") || strings.Contains(u, "198.51.100.7") {
+			t.Fatalf("app A's evaluate probed app B's address: %v", probedForA)
+		}
+	}
+	for _, u := range probedForB {
+		if strings.Contains(u, "a.example") || strings.Contains(u, "203.0.113.9") {
+			t.Fatalf("app B's evaluate probed app A's address: %v", probedForB)
+		}
+	}
+}
+
+// End to end: once Evaluate reports a promotion, Apply must advertise the
+// hostname again — and must not leave a stale duplicate behind. Decision
+// pinned here: appHostname existed only to preserve the intended name while
+// appUrl pointed at the box: once appUrl IS that name again, the field is
+// removed rather than left duplicating appUrl or — worse, under the
+// unfixed rewrite rule that treats any ServingURL change as a fresh
+// fallback — overwritten with the box address it just left.
+func TestApply_PromotionAdvertisesHostnameAndLeavesNoStaleDuplicate(t *testing.T) {
+	outputs := map[string]string{
+		"appUrl":      "https://52.57.246.147/",
+		"appHostname": "https://app.example/",
+		"publicIp":    "52.57.246.147",
+	}
+	res := reach.Result{Reachable: true, CertTrusted: true, ServingURL: "https://app.example/"}
+
+	out := reach.Apply(outputs, res)
+
+	if out["appUrl"] != "https://app.example/" {
+		t.Fatalf("appUrl = %q, want the promoted hostname advertised again", out["appUrl"])
+	}
+	if v, present := out["appHostname"]; present {
+		t.Fatalf("appHostname must not survive a promotion (no stale duplicate, and never the old box address), got %q", v)
+	}
+}

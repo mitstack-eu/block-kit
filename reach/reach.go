@@ -194,7 +194,7 @@ func (c Checker) Evaluate(ctx context.Context, outputs map[string]string) Result
 
 	res := c.probe(ctx, appURL)
 	if res.Reachable || !res.DNSFailure {
-		return res
+		return c.promote(ctx, outputs, appURL, res)
 	}
 
 	// The hostname does not resolve. Find out WHY before anything else: a zone
@@ -228,6 +228,44 @@ func (c Checker) Evaluate(ctx context.Context, outputs map[string]string) Result
 			"serving on %s; the app hostname does not resolve yet, so the platform is advertising the box address instead",
 			fallbackURL),
 	}, diagnosis)
+}
+
+// promote re-probes a preserved appHostname when the currently-advertised
+// address just served, and switches the verdict back to it once it genuinely
+// resolves and serves (MIT-2618). Apply's own comment always claimed this
+// happens automatically; nothing did, because the healthy path above returns
+// the moment the box address answers, and a name that starts resolving again
+// after its DNS window was never asked.
+//
+// Gated on appHostname being present AND different from appUrl, so the
+// common case — no rewrite ever happened — costs nothing beyond the map
+// lookup: no second probe, no change to res (MIT-1291's healthy-path probe
+// count is a load-bearing test, not an incidental one).
+func (c Checker) promote(ctx context.Context, outputs map[string]string, appURL string, res Result) Result {
+	hostname := outputs[OutputAppHostname]
+	if hostname == "" || hostname == appURL {
+		return res
+	}
+
+	hres := c.probe(ctx, hostname)
+	if hres.Reachable {
+		// CertTrusted must come from THIS probe, not the box fallback's —
+		// the whole point of promoting is that the hostname's own
+		// certificate is what the platform now vouches for.
+		hres.ServingURL = hostname
+		return hres
+	}
+
+	// Not ready yet: still on the box address, exactly as before promotion
+	// existed. Only the reason changes, so a consumer reading just the
+	// verdict still learns a fallback is in force rather than a bare,
+	// unexplained success.
+	if hres.DNSFailure {
+		res.Reason = fmt.Sprintf(
+			"serving on %s; the app hostname still does not resolve, so the platform is staying on the box address",
+			appURL)
+	}
+	return res
 }
 
 func (c Checker) probe(ctx context.Context, url string) Result {
@@ -755,11 +793,23 @@ func Apply(outputs map[string]string, res Result) map[string]string {
 	merged[OutputReachable] = BoolString(res.Reachable)
 	merged[OutputCertTrusted] = BoolString(res.CertTrusted)
 
-	// When the probe had to fall back to the box address, advertise THAT url
-	// (MIT-1291). The consumer's "Open app" CTA must lead somewhere that
-	// answers; the intended hostname is preserved so the surface can show it,
-	// and the next apply promotes it back automatically once the name resolves.
-	if res.ServingURL != "" && res.ServingURL != merged[OutputAppURL] {
+	switch {
+	case res.ServingURL != "" && res.ServingURL == merged[OutputAppHostname]:
+		// Promotion (MIT-2618): Evaluate re-probed the hostname preserved
+		// below and it now serves. Advertise it again and drop the
+		// preserved field entirely — it existed only to remember the
+		// intended name while appUrl pointed at the box, and now that appUrl
+		// IS the hostname again there is nothing left for it to preserve.
+		// Leaving it behind would either duplicate appUrl or, worse, read as
+		// a fresh fallback on the very next Apply.
+		merged[OutputAppURL] = res.ServingURL
+		delete(merged, OutputAppHostname)
+	case res.ServingURL != "" && res.ServingURL != merged[OutputAppURL]:
+		// Fallback (MIT-1291): the probe had to answer at a different
+		// address than the one advertised. Advertise THAT url — the
+		// consumer's "Open app" CTA must lead somewhere that answers — and
+		// preserve the intended hostname so the surface can show it and
+		// Evaluate can probe it again on the next call.
 		merged[OutputAppHostname] = merged[OutputAppURL]
 		merged[OutputAppURL] = res.ServingURL
 	}
