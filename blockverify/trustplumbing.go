@@ -14,9 +14,14 @@ import (
 // must depend on (MIT-1466).
 const kitModulePath = "github.com/mitstack-eu/operator-kit"
 
-// kitVersionFloor is the minimum kit version every block must pin — mirrors
-// scripts/check-operator-kit-pin.sh's `floor`. Bump it in the same commit
-// that ships a kit change blocks must pick up.
+// kitVersionFloor is the minimum kit version every block must pin — the
+// third copy of the ENFORCED floor scripts/check-operator-kit-pin.sh gates
+// on and api/internal/scaffold's KitVersionFloor mirrors. This module
+// cannot import that package (the kit must compile standalone, outside the
+// monorepo), so a Go test holds this constant textually equal to
+// scaffold.KitVersionFloor instead, and the two copies cannot drift apart
+// silently. Bump it in the same commit that ships a deliberate floor raise,
+// never as a side effect of a new kit tag landing.
 const kitVersionFloor = "v0.1.0"
 
 // kitShimFile is the thin binding every block must carry, byte-identical in
