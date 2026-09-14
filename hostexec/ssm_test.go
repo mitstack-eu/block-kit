@@ -265,6 +265,27 @@ func decodedCommandsParameter(t *testing.T, argvRecord string) []string {
 	return nil
 }
 
+// rawCommandsParameterValue returns the undecoded --parameters commands=...
+// value exactly as it appears in argv, so a test can inspect the JSON text
+// itself — whether it carries a literal '>' or its HTML-escaped form
+// (the six characters backslash, u, 0, 0, 3, e) — rather than only what
+// json.Unmarshal reverses back out of either form.
+func rawCommandsParameterValue(t *testing.T, argvRecord string) string {
+	t.Helper()
+	raw, err := os.ReadFile(argvRecord)
+	if err != nil {
+		t.Fatalf("reading fake aws argv record: %v", err)
+	}
+	elems := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+	for _, e := range elems {
+		if strings.HasPrefix(e, "commands=") {
+			return strings.TrimPrefix(e, "commands=")
+		}
+	}
+	t.Fatal("fake aws argv never carried a commands= parameter")
+	return ""
+}
+
 func stringSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

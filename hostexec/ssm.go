@@ -4,6 +4,7 @@ package hostexec
 // runShellOnInstance and pollCommandInvocation.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,10 +45,17 @@ func runSSMOutput(ctx context.Context, h Host, script string) (string, error) {
 // CommandId. The argv order is exact — a caller depends on the document
 // name, instance id and region arriving in precisely this sequence.
 func sendSSMCommand(ctx context.Context, h Host, script string) (string, error) {
-	commandsJSON, err := json.Marshal(strings.Split(script, "\n"))
-	if err != nil {
+	// The aws CLI's shorthand parser decodes only \" and \\ inside the
+	// commands list, so the JSON handed to it must carry <, > and & literally:
+	// json.Marshal's HTML escapes (\u003e and friends) would reach the host
+	// as text and turn every redirect into an argument.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(strings.Split(script, "\n")); err != nil {
 		return "", fmt.Errorf("hostexec: ssm: encoding script as commands JSON: %w", err)
 	}
+	commandsJSON := strings.TrimSuffix(buf.String(), "\n")
 
 	cmd := exec.CommandContext(ctx, "aws",
 		"ssm", "send-command",
@@ -56,7 +64,7 @@ func sendSSMCommand(ctx context.Context, h Host, script string) (string, error) 
 		"--region", h.Region,
 		"--query", "Command.CommandId",
 		"--output", "text",
-		"--parameters", "commands="+string(commandsJSON),
+		"--parameters", "commands="+commandsJSON,
 	)
 	setCmdEnv(cmd, h.Env)
 	cmd.WaitDelay = subprocessWaitDelay
