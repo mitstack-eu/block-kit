@@ -77,10 +77,9 @@ func VerbSeamsOverHandler(t *testing.T, h http.Handler, s *Signer, f *FakeResour
 		},
 
 		Upgrade: func() (bool, error) {
-			// The CONTRACT's own note: a preservation check over an empty
-			// output set passes without observing anything, so an
-			// upgrade seam seeds one marker output when the fake carries
-			// none.
+			// A preservation check over an empty output set passes
+			// without observing anything, so the seam seeds one marker
+			// output when the fake carries none.
 			if len(f.Outputs) == 0 {
 				f.Outputs = map[string]string{"verbseam-marker": "present"}
 			}
