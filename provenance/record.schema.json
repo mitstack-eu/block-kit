@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mitstack.dev/schemas/block-provenance-record.json",
+  "title": "Block provenance record",
+  "version": "1.0.0",
+  "description": "A publisher-signed statement of where a block's published image and manifest came from: the manifest bytes, their sha256, the kit version, the conformance result and the source commit, signed by the publishing repository's own GitHub Actions OIDC identity.",
+  "type": "object",
+  "required": ["payload", "token"],
+  "additionalProperties": false,
+  "properties": {
+    "payload": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "blockId",
+        "blockVersion",
+        "imageRef",
+        "imageDigest",
+        "manifest",
+        "manifestSha256",
+        "kitVersion",
+        "conformance",
+        "sourceRepository",
+        "sourceCommit",
+        "issuedAt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "blockId": { "type": "string", "minLength": 1 },
+        "blockVersion": { "type": "string", "minLength": 1 },
+        "imageRef": { "type": "string", "minLength": 1 },
+        "imageDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "manifest": { "type": "string", "contentEncoding": "base64" },
+        "manifestSha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "kitVersion": { "type": "string", "minLength": 1 },
+        "conformance": {
+          "type": "object",
+          "required": ["suiteVersion", "verdict", "resultsDigest", "runUrl"],
+          "additionalProperties": false,
+          "properties": {
+            "suiteVersion": { "type": "string", "minLength": 1 },
+            "verdict": { "type": "string", "enum": ["pass", "fail"] },
+            "resultsDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "runUrl": { "type": "string", "format": "uri" }
+          }
+        },
+        "sourceRepository": { "type": "string", "minLength": 1 },
+        "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "issuedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "token": {
+      "type": "string",
+      "description": "A GitHub Actions OIDC RS256 JWT, three base64url segments joined by '.', whose aud claim is Audience(payload) and IS the record's signature."
+    }
+  }
+}

@@ -1,0 +1,299 @@
+# Reusable block-publish workflow (MIT-3097). A block's own ci.yml calls
+# this with `uses:` rather than inlining its own conformance and publish
+# steps, so the provenance record every block writes beside its image comes
+# from one implementation. Migrating an existing block's ci.yml to call this
+# is separate work: adding the workflow here is additive.
+#
+# Two jobs, and the ordering IS the acceptance criterion: `publish` needs
+# `conformance`, so a red conformance run never starts a publish, and
+# `blockprov build` refuses a non-pass verdict a second time regardless.
+name: publish-block
+
+on:
+  workflow_call:
+    inputs:
+      block-id:
+        required: true
+        type: string
+      ecr-repository:
+        required: true
+        type: string
+      aws-region:
+        required: false
+        type: string
+        default: eu-central-1
+      kit-ref:
+        required: false
+        type: string
+        default: main
+      go-version:
+        required: false
+        type: string
+        default: "1.26.8"
+      runs-on:
+        required: false
+        type: string
+        default: '["ubicloud-standard-2"]'
+
+# A workflow-level default is a ceiling rather than a floor: each job below
+# re-grants what it actually needs.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  conformance:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # A short-lived GitHub App installation token, downscoped to
+      # contents:read on operator-kit, so `go mod download` can fetch the
+      # private module this block depends on. Credentials live in prod SSM,
+      # reached over this repo's own per-block AWS OIDC role.
+      - name: Mint kit token
+        id: kit_token
+        run: |
+          set -euo pipefail
+          APP_ID=$(aws ssm get-parameter --with-decryption --name /mitstack/MITSTACK_GITHUB_APP_ID --query Parameter.Value --output text)
+          aws ssm get-parameter --with-decryption --name /mitstack/MITSTACK_GITHUB_APP_PRIVATE_KEY --query Parameter.Value --output text | sed 's/\\n/\n/g' > /tmp/app-key.pem
+          chmod 600 /tmp/app-key.pem
+
+          b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          NOW=$(date +%s)
+          JWT_HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+          JWT_PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW-60))" "$((NOW+540))" "$APP_ID" | b64url)
+          JWT_SIG=$(printf '%s.%s' "$JWT_HEADER" "$JWT_PAYLOAD" | openssl dgst -sha256 -sign /tmp/app-key.pem -binary | b64url)
+          JWT="$JWT_HEADER.$JWT_PAYLOAD.$JWT_SIG"
+          rm -f /tmp/app-key.pem
+
+          INSTALLATION_ID=$(curl -fsSL -H "Authorization: Bearer $JWT" https://api.github.com/app/installations \
+            | jq -r '.[] | select(.account.login == "mitstack-eu") | .id')
+          TOKEN=$(curl -fsSL -X POST \
+            -H "Authorization: Bearer $JWT" \
+            -H "Accept: application/vnd.github+json" \
+            -d '{"repositories":["operator-kit"],"permissions":{"contents":"read"}}' \
+            "https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens" \
+            | jq -r .token)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          echo "GOPRIVATE=github.com/mitstack-eu" >> "$GITHUB_ENV"
+
+      - name: go vet
+        run: go vet ./...
+
+      # This is where the block's own kittest goldens and verb-semantics
+      # suite run — the block's go.mod, not the kit's.
+      - name: go test
+        run: go test ./...
+
+      # The kit repository is private, so blockverify is built from a
+      # checkout minted with the same App token rather than a `go run` of a
+      # released tag — this keeps the reusable workflow independent of
+      # whether a given kit-ref has been tagged yet.
+      - name: Checkout operator-kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mitstack-eu/operator-kit
+          ref: ${{ inputs.kit-ref }}
+          token: ${{ steps.kit_token.outputs.token }}
+          path: operator-kit
+
+      - name: Build blockverify
+        working-directory: operator-kit
+        run: go build -o ../blockverify ./blockverify
+
+      - name: blockverify (standalone contract check)
+        run: |
+          set -euo pipefail
+          ./blockverify --standalone --json . > blockverify-report.json
+          cat blockverify-report.json
+          verdict=$(jq -r .verdict blockverify-report.json)
+          if [ "$verdict" != "pass" ]; then
+            echo "blockverify verdict was '$verdict', expected 'pass'" >&2
+            exit 1
+          fi
+
+      # A failing run's report is exactly the one that must not be lost.
+      - name: Upload blockverify report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: blockverify-report
+          path: blockverify-report.json
+
+  publish:
+    needs: conformance
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # See the conformance job's identical step for the comment on scope.
+      - name: Mint kit token
+        id: kit_token
+        run: |
+          set -euo pipefail
+          APP_ID=$(aws ssm get-parameter --with-decryption --name /mitstack/MITSTACK_GITHUB_APP_ID --query Parameter.Value --output text)
+          aws ssm get-parameter --with-decryption --name /mitstack/MITSTACK_GITHUB_APP_PRIVATE_KEY --query Parameter.Value --output text | sed 's/\\n/\n/g' > /tmp/app-key.pem
+          chmod 600 /tmp/app-key.pem
+
+          b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          NOW=$(date +%s)
+          JWT_HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+          JWT_PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW-60))" "$((NOW+540))" "$APP_ID" | b64url)
+          JWT_SIG=$(printf '%s.%s' "$JWT_HEADER" "$JWT_PAYLOAD" | openssl dgst -sha256 -sign /tmp/app-key.pem -binary | b64url)
+          JWT="$JWT_HEADER.$JWT_PAYLOAD.$JWT_SIG"
+          rm -f /tmp/app-key.pem
+
+          INSTALLATION_ID=$(curl -fsSL -H "Authorization: Bearer $JWT" https://api.github.com/app/installations \
+            | jq -r '.[] | select(.account.login == "mitstack-eu") | .id')
+          TOKEN=$(curl -fsSL -X POST \
+            -H "Authorization: Bearer $JWT" \
+            -H "Accept: application/vnd.github+json" \
+            -d '{"repositories":["operator-kit"],"permissions":{"contents":"read"}}' \
+            "https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens" \
+            | jq -r .token)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          echo "GOPRIVATE=github.com/mitstack-eu" >> "$GITHUB_ENV"
+
+      - name: Write kit token to a secret file for the docker build
+        env:
+          KIT_TOKEN: ${{ steps.kit_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$KIT_TOKEN" > /tmp/kit-token
+          chmod 600 /tmp/kit-token
+
+      - name: Checkout operator-kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mitstack-eu/operator-kit
+          ref: ${{ inputs.kit-ref }}
+          token: ${{ steps.kit_token.outputs.token }}
+          path: operator-kit
+
+      - name: Build blockverify and blockprov
+        working-directory: operator-kit
+        run: |
+          go build -o ../blockverify ./blockverify
+          go build -o ../blockprov ./blockprov
+
+      - name: Log in to ECR
+        run: |
+          set -euo pipefail
+          REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ inputs.aws-region }}.amazonaws.com"
+          echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Build and push image
+        run: |
+          set -euo pipefail
+          VERSION=$(awk '$1=="version:"{print $2; exit}' manifest.yaml)
+          DOCKER_BUILDKIT=1 docker build \
+            --secret id=kit_token,src=/tmp/kit-token \
+            -t "${REGISTRY}/${{ inputs.ecr-repository }}:v${VERSION}" \
+            -t "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}" \
+            .
+          docker push "${REGISTRY}/${{ inputs.ecr-repository }}:v${VERSION}"
+          docker push "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}"
+          IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}" | cut -d@ -f2)
+          echo "IMAGE_DIGEST=$IMAGE_DIGEST" >> "$GITHUB_ENV"
+
+      # The kit-ref input names which kit BUILT the tools above; it says
+      # nothing about which kit THIS BLOCK compiles against. The record's
+      # kitVersion must be the second fact, read the same way
+      # check-operator-kit-pin.sh reads it — accepting either the current
+      # module path or the legacy one it also still accepts while the fleet
+      # migrates — and this fails loudly rather than handing Build an empty
+      # value it would refuse anyway with a less useful error.
+      - name: Determine the kit version pinned in go.mod
+        run: |
+          set -euo pipefail
+          KIT_VERSION=$(grep -oE 'github\.com/mitstack-eu/(operator-kit|mitstack/examples/operator-kit) v[0-9]+\.[0-9]+\.[0-9]+' go.mod | head -1 | awk '{print $2}')
+          if [ -z "$KIT_VERSION" ]; then
+            echo "no operator-kit version pin found in go.mod (checked both the current and legacy module paths)" >&2
+            exit 1
+          fi
+          echo "KIT_VERSION=$KIT_VERSION" >> "$GITHUB_ENV"
+
+      # A second gate over the same fact `needs: conformance` already
+      # enforces: blockprov build refuses to sign anything but a fresh pass.
+      - name: blockverify (standalone, for blockprov build's report)
+        run: ./blockverify --standalone --json . > blockverify-report.json
+
+      - name: blockprov build
+        run: |
+          ./blockprov build \
+            --manifest manifest.yaml \
+            --report blockverify-report.json \
+            --block-id ${{ inputs.block-id }} \
+            --block-version "$(awk '$1=="version:"{print $2; exit}' manifest.yaml)" \
+            --image-ref "${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST}" \
+            --image-digest "$IMAGE_DIGEST" \
+            --kit-version "$KIT_VERSION" \
+            --repository "${{ github.repository }}" \
+            --commit "${GITHUB_SHA}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --token-url "$ACTIONS_ID_TOKEN_REQUEST_URL" \
+            --token-request-token "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            --out record.json
+
+      # Masked and handed to the next step as an env var, never as an
+      # argument — see that step's own comment for why.
+      - name: Fetch ECR password
+        id: ecr_password
+        run: |
+          set -euo pipefail
+          PASSWORD=$(aws ecr get-login-password --region ${{ inputs.aws-region }})
+          echo "::add-mask::$PASSWORD"
+          echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
+
+      # The credential is read from the environment, never argv, so it never
+      # sits in /proc or a stray `set -x` trace.
+      - name: blockprov push
+        env:
+          ECR_PASSWORD: ${{ steps.ecr_password.outputs.password }}
+        run: |
+          ./blockprov push \
+            --record record.json \
+            --registry "$REGISTRY" \
+            --repo "${{ inputs.ecr-repository }}" \
+            --image-digest "$IMAGE_DIGEST" \
+            --username AWS \
+            --password-env ECR_PASSWORD
+
+      - name: Clean up the kit token file
+        if: always()
+        run: rm -f /tmp/kit-token
