@@ -36,9 +36,20 @@
 // record itself. So the record's payload is canonically encoded, sha256'd,
 // and that digest becomes the requested audience:
 // "mitstack-provenance:sha256:<hex>". Verifying the token's aud claim against
-// a freshly recomputed Audience(payload) is therefore what ties GitHub's
-// signature to these precise bytes — change one byte of the payload and the
-// audience no longer matches, and Verify reports ErrRecordTampered.
+// a freshly recomputed Audience(payload) ties GitHub's signature to every
+// VALUE the schema declares — change a byte belonging to a declared field
+// and the audience no longer matches, and Verify reports ErrRecordTampered.
+//
+// That binding alone does not cover a field the JSON carries that no struct
+// field claims: decoding into Payload silently drops it, so re-encoding the
+// decoded struct reproduces the original signed bytes and the audience
+// still matches, even though the raw JSON on the wire carries an extra,
+// attacker-controlled key. Decode is the other half of this guarantee: it
+// refuses any field the shape does not declare, at the record's own top
+// level, inside payload, and inside payload.conformance. Every caller that
+// turns record bytes into a Record — blockprov verify included — must go
+// through Decode, never a bare json.Unmarshal, before Verify ever sees the
+// result. Audience catches a changed byte; Decode catches an added one.
 //
 // # Why exp is deliberately not checked, and the consequence
 //
@@ -73,6 +84,24 @@
 // computes the tag itself and never calls the referrers API or needs the
 // extra ECR permission that API implies. artifactType stays on the manifest
 // so the media type alone still says what it is.
+//
+// # What the platform's reader does
+//
+// The platform does not reimplement any of this: it imports
+// provenance.Decode and provenance.Verify and supplies a KeyResolver over
+// GitHub's own JWKS at
+// https://token.actions.githubusercontent.com/.well-known/jwks — the same
+// relationship platform/api/internal/conformance holds with this kit's
+// attest package, importing attest.Verify rather than repeating Ed25519
+// itself. What the platform DOES have to write is the JWKS fetch and
+// cache — platform/api/internal/sso/jwks.go is the existing shape for
+// fetching and caching a remote JWKS document, and this reader's cache is
+// the same kind of thing pointed at GitHub's document instead. Both halves
+// stay proven against one shared set of bytes: goldens/record.golden.json
+// together with goldens/record.golden.jwks.json is the artefact this
+// package's own writer tests reproduce and its own reader tests accept, and
+// the platform's reader tests check against that identical pair rather than
+// a fixture invented on that side.
 //
 // # Distinct from package attest
 //

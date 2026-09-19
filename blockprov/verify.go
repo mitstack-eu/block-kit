@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -32,9 +31,13 @@ func runVerify(args []string, stdout io.Writer) int {
 		fmt.Fprintf(stdout, "blockprov verify: reading record: %v\n", err)
 		return 1
 	}
-	var rec provenance.Record
-	if err := json.Unmarshal(recordRaw, &rec); err != nil {
-		fmt.Fprintf(stdout, "blockprov verify: record is not valid JSON: %v\n", err)
+	// Decode, not json.Unmarshal: a plain Unmarshal silently drops any field
+	// Record and Payload do not declare, so a record carrying an
+	// attacker-added field alongside its original, still-valid token would
+	// verify clean. Decode refuses that field instead.
+	rec, err := provenance.Decode(recordRaw)
+	if err != nil {
+		fmt.Fprintf(stdout, "blockprov verify: record is not valid: %v\n", err)
 		return 1
 	}
 

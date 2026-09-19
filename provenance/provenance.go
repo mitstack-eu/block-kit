@@ -1,6 +1,7 @@
 package provenance
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -86,6 +87,10 @@ var (
 	// ErrManifestChanged is returned when manifestSha256 does not match the
 	// sha256 of the base64-decoded manifest bytes.
 	ErrManifestChanged = errors.New("provenance: manifest sha256 does not match the decoded manifest bytes")
+	// ErrUnknownField is returned by Decode when the raw JSON carries a field
+	// the record's shape does not declare, at the record's own top level,
+	// inside payload, or inside payload.conformance.
+	ErrUnknownField = errors.New("provenance: record contains a field its shape does not declare")
 )
 
 // Conformance is the block-verify result a record attests.
@@ -120,6 +125,34 @@ type Record struct {
 	Token   string  `json:"token"`
 }
 
+// Decode reads a record from raw JSON and refuses any field its shape does
+// not declare, at the record's own top level, inside payload, or inside
+// payload.conformance. This is the strict counterpart to Canonical: a plain
+// json.Unmarshal into Record silently drops a key neither struct declares,
+// so Canonical(decoded) reproduces the original signed bytes and the
+// audience still matches — an attacker's field then rides inside what still
+// LOOKS like a signed payload to anything that reads the stored JSON
+// directly, or to any field the platform's reader learns before this
+// struct does. Every caller that turns record bytes into a Record must go
+// through Decode rather than json.Unmarshal.
+//
+// Decode does not require the stored bytes to equal Canonical(decoded)
+// exactly — reordered keys and reformatted whitespace are accepted, because
+// they change no value the audience covers, only its incidental
+// presentation on the wire. Only an undeclared field is refused.
+func Decode(raw []byte) (Record, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var rec Record
+	if err := dec.Decode(&rec); err != nil {
+		if strings.Contains(err.Error(), "unknown field") {
+			return Record{}, fmt.Errorf("%w: %v", ErrUnknownField, err)
+		}
+		return Record{}, fmt.Errorf("provenance: decoding record: %w", err)
+	}
+	return rec, nil
+}
+
 // Canonical encodes a payload deterministically. One encoder, used by both
 // the writer and the reader — Go's default struct field order is stable, and
 // relying on that explicitly (rather than re-sorting keys) is the same
@@ -145,6 +178,8 @@ func Audience(p Payload) (string, error) {
 // record must carry to mean anything.
 func requiredFieldsPresent(p Payload) error {
 	switch {
+	case p.SchemaVersion == "":
+		return fmt.Errorf("%w: schemaVersion", ErrIncomplete)
 	case p.BlockID == "":
 		return fmt.Errorf("%w: blockId", ErrIncomplete)
 	case p.BlockVersion == "":

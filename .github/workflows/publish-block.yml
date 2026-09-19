@@ -241,7 +241,11 @@ jobs:
       - name: Determine the kit version pinned in go.mod
         run: |
           set -euo pipefail
-          KIT_VERSION=$(grep -oE 'github\.com/mitstack-eu/(operator-kit|mitstack/examples/operator-kit) v[0-9]+\.[0-9]+\.[0-9]+' go.mod | head -1 | awk '{print $2}')
+          # `|| true` keeps a no-match grep from tripping `set -e` under
+          # `pipefail` before the check below ever runs — the failure is
+          # still reported, just by that explicit check and its message
+          # rather than a bare, undiagnosed pipeline abort.
+          KIT_VERSION=$(grep -oE 'github\.com/mitstack-eu/(operator-kit|mitstack/examples/operator-kit) v[0-9]+\.[0-9]+\.[0-9]+' go.mod | head -1 | awk '{print $2}' || true)
           if [ -z "$KIT_VERSION" ]; then
             echo "no operator-kit version pin found in go.mod (checked both the current and legacy module paths)" >&2
             exit 1

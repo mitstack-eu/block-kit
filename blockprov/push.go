@@ -136,6 +136,14 @@ type ociClient struct {
 	http     *http.Client
 }
 
+// drainAndClose reads body to completion before closing it, so the
+// transport can reuse the underlying connection for the next request
+// instead of tearing it down.
+func drainAndClose(body io.ReadCloser) {
+	_, _ = io.Copy(io.Discard, body)
+	body.Close()
+}
+
 func (c *ociClient) do(method, rawURL string, body []byte, contentType string) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
@@ -165,7 +173,7 @@ func (c *ociClient) uploadBlob(data []byte) (digest string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("starting blob upload: %w", err)
 	}
-	startResp.Body.Close()
+	drainAndClose(startResp.Body)
 	if startResp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("starting blob upload: registry returned %d", startResp.StatusCode)
 	}
@@ -187,7 +195,7 @@ func (c *ociClient) uploadBlob(data []byte) (digest string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("completing blob upload: %w", err)
 	}
-	defer putResp.Body.Close()
+	defer drainAndClose(putResp.Body)
 	if putResp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("completing blob upload: registry returned %d", putResp.StatusCode)
 	}
@@ -201,7 +209,7 @@ func (c *ociClient) putManifest(tag string, manifest []byte) error {
 	if err != nil {
 		return fmt.Errorf("pushing manifest: %w", err)
 	}
-	defer resp.Body.Close()
+	defer drainAndClose(resp.Body)
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("pushing manifest: registry returned %d", resp.StatusCode)
 	}
