@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mitstack.dev/schemas/lifecycle/response.schema.json",
+  "title": "mitstack lifecycle webhook response",
+  "description": "Versioned wire-shape contract for the JSON body a block owner's registered webhook endpoint returns to mitstack's lifecycle engine for a subscribe/unsubscribe/upgrade/validate call (MIT-1136, the response half of the bidirectional contract envelope.schema.json pins on the request side). Mirrors api/internal/lifecycle.webhookResponse byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional response field never breaks an existing operator or this contract test. Nothing is required: a verb with nothing to report legitimately answers {}.",
+  "version": "1.0.0",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "outputs": {
+      "description": "Manifest-declared, non-secret outputs the operator produced (T-473). A Go nil map encodes to JSON null, and shipping operators emit exactly that on a verb with nothing to return, so null is tolerated alongside an object of string values.",
+      "type": ["object", "null"],
+      "additionalProperties": { "type": "string" }
+    },
+    "secretOutputs": {
+      "description": "Secret outputs the operator produced, resolved server-side into the org secret store. Same null tolerance as outputs.",
+      "type": ["object", "null"],
+      "additionalProperties": { "type": "string" }
+    },
+    "error": {
+      "description": "Human-readable failure message surfaced on a 4xx/5xx response.",
+      "type": "string"
+    },
+    "pending": {
+      "description": "True when an async operator's resource is still converging (T-473 finalize) — the engine keeps polling validate instead of settling active with possibly-incomplete outputs.",
+      "type": "boolean"
+    },
+    "statusDetail": {
+      "description": "Additive human-readable progress detail (T-576), e.g. what an async operator is doing while pending.",
+      "type": "string"
+    },
+    "lastError": {
+      "description": "Additive human-readable detail of the most recent transient failure (T-576).",
+      "type": "string"
+    },
+    "absent": {
+      "description": "The explicit teardown-verify marker (MIT-1125, AbsenceProber). A POINTER-shaped field: true/false means the operator explicitly reported whether the resource is gone; the field's absence (never present in the JSON at all) means the operator does not implement the marker and the engine fails open. Because JSON has no way to distinguish \"absent from the object\" from \"explicitly null\" once decoded into a nullable Go pointer, null is accepted here too and carries the same fail-open meaning as omitting the field.",
+      "type": ["boolean", "null"]
+    }
+  }
+}

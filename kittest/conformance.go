@@ -1,7 +1,6 @@
 package kittest
 
 import (
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -9,44 +8,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mitstack-eu/operator-kit/contract"
 )
-
-// goldensFS embeds the kit's own copy of the contract goldens (MIT-1585).
-// api/internal/lifecycle/contract/goldens/ remains the SOURCE OF TRUTH; this
-// is a committed, syncable mirror kept in lockstep by
-// scripts/check-kittest-goldens-sync.sh in the required lint job. Embedding
-// means every function in this file works from ANY caller working
-// directory — a package inside this monorepo, a generated block in a temp
-// dir, or an operator in a genuinely external repo importing this module.
-//
-//go:embed goldens/*.json
-var goldensFS embed.FS
-
-const goldensFSDir = "goldens"
 
 // Conformance harness for the engine→operator webhook contract (MIT-1135).
 //
-// The contract is a set of committed golden envelopes in
-// api/internal/lifecycle/contract/goldens/. The engine is tested to EMIT
-// conforming payloads; the other half — that every operator ACCEPTS them, and
-// rejects the malformed ones — was never enforced. `contract_golden_test.go`
-// covered 3 of 13 operators and had no lint gate, and each operator hand-copied
-// its own `request` struct, so "conforming" meant thirteen slightly different
-// things.
+// The contract is the set of committed golden envelopes the contract
+// package embeds (MIT-3068, ADR 0068 decision 5: this repository owns the
+// goldens, and kittest re-exports them rather than keeping its own copy).
+// The engine is tested to EMIT conforming payloads; the other half — that
+// every operator ACCEPTS them, and rejects the malformed ones — is what
+// this file enforces.
 //
-// This is the operator-side half, as a helper an operator calls with its own
-// decoder. It deliberately does NOT define the request type: an operator's
-// struct is its own, and the contract is that it can DECODE the golden and see
-// the fields it needs — not that it declares identical Go types. Requiring the
-// latter would be a byte-parity gate on a struct, and MIT-1466 is the argument
-// against that.
+// This is the operator-side half, as a helper an operator calls with its
+// own decoder. It deliberately does NOT define the request type: an
+// operator's struct is its own, and the contract is that it can DECODE the
+// golden and see the fields it needs — not that it declares identical Go
+// types.
 
 // goldenEntries lists the embedded golden files, failing the test rather
 // than skipping: a conformance harness that silently finds nothing is the
 // vacuous pass this package exists to prevent.
 func goldenEntries(t *testing.T) []fs.DirEntry {
 	t.Helper()
-	entries, err := fs.ReadDir(goldensFS, goldensFSDir)
+	entries, err := fs.ReadDir(contract.Goldens, contract.GoldensDir)
 	if err != nil {
 		t.Fatalf("kittest: cannot read embedded contract goldens: %v\n"+
 			"The goldens are the contract; a conformance test that cannot find them proves nothing.", err)
@@ -61,7 +47,7 @@ func goldenEntries(t *testing.T) []fs.DirEntry {
 // .json suffix).
 func readGolden(t *testing.T, name string) []byte {
 	t.Helper()
-	raw, err := goldensFS.ReadFile(goldensFSDir + "/" + name)
+	raw, err := contract.Goldens.ReadFile(contract.GoldensDir + "/" + name)
 	if err != nil {
 		t.Fatalf("kittest: reading embedded golden %q: %v", name, err)
 	}
@@ -72,8 +58,8 @@ func readGolden(t *testing.T, name string) []byte {
 // directory (t.TempDir()) and returns its path. This is a shim kept for any
 // caller reading the directory directly (os.ReadDir / os.ReadFile) rather
 // than through Golden/ValidGoldens — it keeps working from any working
-// directory, since MIT-1585 the fixtures no longer live on disk relative to
-// the caller at all.
+// directory, since the fixtures live embedded in the contract package
+// rather than on disk relative to the caller.
 func GoldensDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -102,7 +88,7 @@ func ValidGoldens(t *testing.T) map[string][]byte {
 	out := map[string][]byte{}
 	for _, e := range goldenEntries(t) {
 		name := e.Name()
-		if !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, "invalid-") {
+		if !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, contract.InvalidPrefix) {
 			continue
 		}
 		out[strings.TrimSuffix(name, ".json")] = readGolden(t, name)
@@ -156,7 +142,7 @@ func AssertRejectsMalformed(t *testing.T, accepts func([]byte) bool) {
 	checked := 0
 	for _, e := range entries {
 		name := e.Name()
-		if !strings.HasPrefix(name, "invalid-") {
+		if !strings.HasPrefix(name, contract.InvalidPrefix) {
 			continue
 		}
 		checked++

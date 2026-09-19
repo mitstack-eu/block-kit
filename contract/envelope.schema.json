@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
+  "title": "mitstack lifecycle webhook envelope",
+  "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
+  "version": "1.0.0",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "operation",
+    "nonce",
+    "createdAt",
+    "subscriptionId",
+    "blockId",
+    "orgId"
+  ],
+  "properties": {
+    "operation": {
+      "type": "string",
+      "description": "The lifecycle verb being dispatched.",
+      "enum": ["subscribe", "unsubscribe", "upgrade", "validate"]
+    },
+    "subscriptionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "blockId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "blockVersion": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "appId": {
+      "type": "string",
+      "description": "The consuming app that owns the subscription (m-7). Additive: operators that predate app-ownership simply ignore it."
+    },
+    "params": {
+      "type": "object",
+      "description": "Manifest-declared, non-secret param values, resolved server-side.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "instances": {
+      "type": "object",
+      "description": "Resolved tool instances keyed by capability, scoped to the block's requires[] (T-062).",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "config": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "description": "Plaintext secrets resolved server-side, keyed by capability then by secret name. Redacted before any audit log.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "obo": {
+      "type": "string",
+      "description": "On-behalf-of token minted by the engine (T-095), signed with the block's lifecycle secret, encoding org/app/subscription identity."
+    },
+    "secretInputs": {
+      "type": "object",
+      "description": "Resolved plaintext for manifest-declared secret params (T-122), keyed by param name.",
+      "additionalProperties": { "type": "string" }
+    },
+    "bindings": {
+      "type": "object",
+      "description": "Outputs from the first active provider subscription of a required capability, keyed by capability (T-153).",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "bindingsAll": {
+      "type": "object",
+      "description": "Outputs from EVERY active provider of a required capability, keyed by capability (fan-in, m-55).",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "cloudIdentity": {
+      "description": "Federated cloud-account identity for an org with a CONNECTED cloud_connection (m-24 / T-193). Nil/omitted when no connected connection exists.",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["provider", "roleArn", "webIdentityToken"],
+      "properties": {
+        "provider": { "type": "string" },
+        "roleArn": {
+          "type": "string",
+          "description": "Provider-specific federated identity: an IAM role ARN (aws), the WIF pool/provider resource (gcp), or a \"<tenantId>/<clientId>\" composite (azure)."
+        },
+        "webIdentityToken": { "type": "string" },
+        "accountRef": {
+          "type": "string",
+          "description": "Additional account reference (T-464) — e.g. the gcp impersonation service-account email."
+        }
+      }
+    },
+    "priorOutputs": {
+      "type": "object",
+      "description": "The subscription's own previously-recorded outputs, handed back to the operator that produced them (MIT-1950). Present only on the teardown direction — unsubscribe, and a validate call issued as part of a teardown's absence probe — never on a validate/subscribe/upgrade call issued as part of ordinary provisioning or polling. Account-identifying values are deliberately not here: those travel via secrets, exactly like any other teardown call.",
+      "additionalProperties": { "type": "string" }
+    },
+    "buildRequest": {
+      "type": "object",
+      "description": "The app's newest done build request, present only on subscribe and upgrade for a block that provides generated-source, so it can publish the result ref without reading it back from the platform. Absent for every other block and every other verb.",
+      "additionalProperties": true,
+      "required": ["id", "sourceBranch", "sourceSha"],
+      "properties": {
+        "id": { "type": "string" },
+        "sourceBranch": { "type": "string" },
+        "sourceSha": { "type": "string" },
+        "summary": {
+          "type": "object",
+          "description": "The build agent's optional free-form summary of what it changed.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "description": "RFC 3339 timestamp set by the engine per delivery attempt; anchors OBO expiry checks and, with nonce, bounds replay skew (T-357).",
+      "format": "date-time"
+    },
+    "nonce": {
+      "type": "string",
+      "description": "Fresh random value regenerated for every delivery attempt, covered by the Ed25519 signature, so a captured signed request cannot be replayed (T-357).",
+      "minLength": 1
+    }
+  }
+}
