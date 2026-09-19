@@ -1,10 +1,13 @@
 package handler_test
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/operator-kit/contract"
 	"github.com/mitstack-eu/operator-kit/handler"
@@ -95,5 +98,105 @@ func TestServe_UpgradeBudgetExhaustedAnswersPendingNeverError(t *testing.T) {
 	resp := decodeResponse(t, raw)
 	if !resp.Pending {
 		t.Error("Pending = false, want true for an upgrade whose resource never settles to Present")
+	}
+}
+
+// --- The settle loops stop when the caller has gone (MIT-3070 review) -------
+//
+// Neither poll loop checks ctx.Err(), and defaultSleep returns at once when
+// the context is done, so a cancelled request fires its whole remaining
+// budget back to back with no pacing, against a cloud API, for an answer
+// nobody will read. The fix makes both loops break as soon as ctx.Err() is
+// non-nil.
+
+// cancelAfterNObserves cancels its own test's context from inside Observe,
+// once Observe has been called cancelAfter times, and always reports
+// reportState — a state that is never the target the loop is polling for,
+// so the loop can only ever stop for one of two reasons: the budget ran out,
+// or it noticed the context was cancelled. VerbBudget is set far larger than
+// cancelAfter in every test using this fake, so a low final ObserveCalls
+// count can only mean the loop honoured cancellation.
+type cancelAfterNObserves struct {
+	mu           sync.Mutex
+	observeCalls int
+	cancelAfter  int
+	cancel       context.CancelFunc
+	reportState  contract.State
+}
+
+func (c *cancelAfterNObserves) Ensure(context.Context, contract.Desired) error { return nil }
+func (c *cancelAfterNObserves) Delete(context.Context, contract.Identity) error { return nil }
+
+func (c *cancelAfterNObserves) Observe(context.Context, contract.Identity) (contract.Observation, error) {
+	c.mu.Lock()
+	c.observeCalls++
+	n := c.observeCalls
+	c.mu.Unlock()
+	if n == c.cancelAfter {
+		c.cancel()
+	}
+	return contract.Observation{State: c.reportState}, nil
+}
+
+func (c *cancelAfterNObserves) calls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.observeCalls
+}
+
+// TestServe_SubscribeSettleStopsEarlyWhenContextIsCancelled pins the
+// settlePresent loop: once the request's context is cancelled mid-poll, the
+// handler must return well short of spending its whole VerbBudget on Observe
+// calls nobody will read the answer to.
+func TestServe_SubscribeSettleStopsEarlyWhenContextIsCancelled(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	const budget = 1000
+	r := &cancelAfterNObserves{cancelAfter: 2, cancel: cancel, reportState: contract.Absent}
+	h := newHandler(t, r, s, func(c *handler.Config) { c.VerbBudget = budget })
+
+	done := make(chan struct{})
+	go func() {
+		postHookWithContext(t, h, s, envelope("nonce-settle-cancel-sub", nil), ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after its context was cancelled — it kept spending the settle budget")
+	}
+
+	if calls := r.calls(); calls >= budget {
+		t.Errorf("ObserveCalls = %d, want strictly under the %d budget — the settle loop must stop as soon as ctx is cancelled", calls, budget)
+	}
+}
+
+// TestServe_UnsubscribeSettleStopsEarlyWhenContextIsCancelled mirrors the
+// above for settleAbsent: the fix document is explicit that both poll loops
+// need the same ctx.Err() check.
+func TestServe_UnsubscribeSettleStopsEarlyWhenContextIsCancelled(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	const budget = 1000
+	r := &cancelAfterNObserves{cancelAfter: 2, cancel: cancel, reportState: contract.Present}
+	h := newHandler(t, r, s, func(c *handler.Config) { c.VerbBudget = budget })
+
+	done := make(chan struct{})
+	go func() {
+		postHookWithContext(t, h, s, envelope("nonce-settle-cancel-unsub", map[string]any{"operation": "unsubscribe"}), ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after its context was cancelled — it kept spending the settle budget")
+	}
+
+	if calls := r.calls(); calls >= budget {
+		t.Errorf("ObserveCalls = %d, want strictly under the %d budget — the settle loop must stop as soon as ctx is cancelled", calls, budget)
 	}
 }

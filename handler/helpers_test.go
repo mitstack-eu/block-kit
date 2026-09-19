@@ -36,12 +36,16 @@ func baseConfig(t *testing.T, r handler.Resource, s *kittest.Signer) handler.Con
 	}
 }
 
-// newHandler builds a Handler from a fresh Signer and FakeResource, applying
+// newHandler builds a Handler from a fresh Signer and a Resource, applying
 // mutate (if any) to the Config before calling handler.New, and fails the
-// test if New errors — for tests where New is expected to succeed.
-func newHandler(t *testing.T, f *kittest.FakeResource, s *kittest.Signer, mutate ...func(*handler.Config)) *handler.Handler {
+// test if New errors — for tests where New is expected to succeed. r takes
+// the handler.Resource interface rather than *kittest.FakeResource
+// specifically, so a test that needs a Resource kittest does not provide
+// (a blocking or context-cancelling fake, say) still goes through this one
+// shared constructor instead of hand-rolling handler.New.
+func newHandler(t *testing.T, r handler.Resource, s *kittest.Signer, mutate ...func(*handler.Config)) *handler.Handler {
 	t.Helper()
-	cfg := baseConfig(t, f, s)
+	cfg := baseConfig(t, r, s)
 	for _, m := range mutate {
 		m(&cfg)
 	}
@@ -75,6 +79,18 @@ func postHook(t *testing.T, h http.Handler, s *kittest.Signer, body []byte) (int
 	t.Helper()
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, s.HookRequest(t, "/hook", body))
+	return w.Code, w.Body.Bytes()
+}
+
+// postHookWithContext is postHook with the request's context replaced by
+// ctx, so a test can cancel the context a verb runs under — the settle-loop
+// cancellation proofs need this; postHook alone always runs on a live
+// background context.
+func postHookWithContext(t *testing.T, h http.Handler, s *kittest.Signer, body []byte, ctx context.Context) (int, []byte) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r := s.HookRequest(t, "/hook", body).WithContext(ctx)
+	h.ServeHTTP(w, r)
 	return w.Code, w.Body.Bytes()
 }
 
