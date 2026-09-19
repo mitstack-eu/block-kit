@@ -103,8 +103,10 @@ type Config struct {
 	// platform signing key from. Required.
 	JWKSURL string
 
-	// PublicKey resolves a signing key by kid. Optional; defaults to a kit
-	// KeyCache over JWKSURL.
+	// PublicKey resolves a signing key by kid, over the keys JWKSURL serves.
+	// Optional; defaults to a kit KeyCache over JWKSURL. It is not an
+	// alternative to JWKSURL: webhook.AuthenticateHook rejects every request
+	// when JWKSURL is empty before it ever consults PublicKey.
 	PublicKey func(kid string) (ed25519.PublicKey, error)
 
 	// Replay is the nonce/skew guard for POST /hook. Optional; defaults to
@@ -152,12 +154,17 @@ type Handler struct {
 
 // New builds a Handler from cfg, applying every default the CONTRACT pins
 // and refusing a configuration that would let a block override an
-// invariant: a nil Resource, a hook registered under an unknown name, a hook
-// not declared in the manifest, or Hooks set with no Manifest to check it
-// against.
+// invariant: a nil Resource, an empty JWKSURL (webhook.AuthenticateHook
+// rejects every request on that before it ever consults PublicKey, so a
+// resolver configured without a JWKSURL would build and then answer 401 to
+// everything), a hook registered under an unknown name, a hook not declared
+// in the manifest, or Hooks set with no Manifest to check it against.
 func New(cfg Config) (*Handler, error) {
 	if cfg.Resource == nil {
 		return nil, errNilResource
+	}
+	if cfg.JWKSURL == "" {
+		return nil, errEmptyJWKSURL
 	}
 	if err := validateHooks(cfg); err != nil {
 		return nil, err

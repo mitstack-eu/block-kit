@@ -15,9 +15,13 @@ import (
 
 // dispatchRequest is the second half of the POST /hook pipeline: everything
 // after the trust boundary and envelope decode have already succeeded. It
-// stashes the events envelope on ctx, replays a cached idempotent response
-// without touching the Resource, and otherwise emits progress/completed/
-// failed around the verb dispatch (ADR 0042).
+// stashes the events envelope on ctx, then runs the verb through the
+// idempotency cache: a repeat delivery of the same key replays the first
+// call's response without touching the Resource again, and a delivery that
+// finds its key already in flight waits for that call and shares its
+// response rather than running the verb a second time. An empty
+// idempotencyKey skips the cache entirely, so it is never stored or
+// single-flighted.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := secretsFor(req)
 
@@ -32,43 +36,60 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 		Callback:       callback,
 	})
 
-	key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey}
-	if req.IdempotencyKey != "" {
-		if entry, ok := h.idempotency.get(h.now(), key); ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(entry.status)
-			_, _ = w.Write(entry.body)
-			return
+	run := func() (int, []byte) {
+		status, resp := h.dispatchVerb(ctx, req, secrets)
+		h.emitVerbEvent(ctx, req.Operation, status, resp)
+
+		raw, err := json.Marshal(resp)
+		if err != nil {
+			raw, _ = json.Marshal(contract.Response{Error: "handler: encoding response failed: " + err.Error()})
+			return http.StatusInternalServerError, raw
 		}
+		return status, raw
 	}
 
-	_ = events.EmitProgress(ctx, req.Operation+" starting")
-
-	status, resp := h.dispatchVerb(ctx, req, secrets)
-
-	if status >= 200 && status < 300 {
-		_ = events.EmitCompleted(ctx)
+	var status int
+	var raw []byte
+	if req.IdempotencyKey != "" {
+		key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey}
+		status, raw = h.idempotency.do(h.now(), key, run)
 	} else {
-		detail := resp.Error
-		if detail == "" {
-			detail = resp.StatusDetail
-		}
-		_ = events.EmitFailed(ctx, detail)
-	}
-
-	raw, err := json.Marshal(resp)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "handler: encoding response failed: "+err.Error())
-		return
-	}
-
-	if req.IdempotencyKey != "" {
-		h.idempotency.put(h.now(), key, status, raw)
+		status, raw = run()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(raw)
+}
+
+// emitVerbEvent emits at most one event for one verb call: none for
+// validate, since a probe is not a lifecycle operation and a terminal event
+// on one asks the engine for another probe (ProbeHealth dispatches validate
+// in answer to a terminal event, so a validate that emits completed would
+// loop). For subscribe, upgrade and unsubscribe it keys the choice off the
+// literal contract.Response.Pending field: completed on a settled 2xx,
+// progress when Pending is true, failed (carrying the detail) on 4xx/5xx.
+// There is no start event for any verb — an event log's partial unique
+// index on (subscriptionId, idempotencyKey) for progress/completed/
+// unhealthy would drop the terminal event under a start event that already
+// took its slot.
+func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status int, resp contract.Response) {
+	if operation == "validate" {
+		return
+	}
+	if status >= 200 && status < 300 {
+		if resp.Pending {
+			_ = events.EmitProgress(ctx, resp.StatusDetail)
+		} else {
+			_ = events.EmitCompleted(ctx)
+		}
+		return
+	}
+	detail := resp.Error
+	if detail == "" {
+		detail = resp.StatusDetail
+	}
+	_ = events.EmitFailed(ctx, detail)
 }
 
 // dispatchVerb calls the Resource and its declared hooks for req.Operation.
@@ -134,25 +155,35 @@ func (h *Handler) deleteAndSettle(ctx context.Context, id contract.Identity, sec
 // settlePresent polls Observe up to VerbBudget times, stopping early on
 // Present. Present within budget answers 200 with the block's own
 // Observation.Response(). Budget exhaustion while Absent or Unknown answers
-// 200 {"pending":true} — pending is never an error (MIT-1293).
+// 200 {"pending":true} — pending is never an error (MIT-1293). It also
+// stops as soon as ctx.Err() is non-nil, checked before every attempt, and
+// answers with what it has observed so far: defaultSleep returns at once
+// once ctx is done, so without this check a cancelled request would spend
+// its whole remaining budget on Observe calls back to back, unpaced,
+// against a cloud API, for an answer nobody will read.
 func (h *Handler) settlePresent(ctx context.Context, id contract.Identity, secrets []string) (int, contract.Response) {
 	var last contract.Observation
-	for attempt := 1; attempt <= h.verbBudget; attempt++ {
+	attempts := 0
+	for attempts < h.verbBudget {
+		if ctx.Err() != nil {
+			break
+		}
 		obs, err := h.resource.Observe(ctx, id)
 		if err != nil {
 			return h.errorResponse(err, secrets)
 		}
+		attempts++
 		last = obs
 		if obs.State == contract.Present {
 			return http.StatusOK, scrubResponse(obs.Response(), secrets)
 		}
-		if attempt < h.verbBudget {
+		if attempts < h.verbBudget {
 			h.sleep(ctx, h.pollInterval)
 		}
 	}
 	return http.StatusOK, contract.Response{
 		Pending:      true,
-		StatusDetail: safe.Scrub(fmt.Sprintf("still %s after %d attempts", last.State, h.verbBudget), secrets...),
+		StatusDetail: safe.Scrub(fmt.Sprintf("still %s after %d attempts", last.State, attempts), secrets...),
 	}
 }
 
@@ -160,14 +191,21 @@ func (h *Handler) settlePresent(ctx context.Context, id contract.Identity, secre
 // Absent. Unlike settlePresent (and unlike validate), it always answers a
 // definite boolean: Absent within budget is absent:true, and anything else
 // — including Unknown — is absent:false with a detail, never an omitted
-// marker.
+// marker. Like settlePresent, it stops as soon as ctx.Err() is non-nil,
+// checked before every attempt, and answers with what it has observed so
+// far rather than spending the remaining budget unpaced.
 func (h *Handler) settleAbsent(ctx context.Context, id contract.Identity, secrets []string) (int, contract.Response) {
 	var last contract.Observation
-	for attempt := 1; attempt <= h.verbBudget; attempt++ {
+	attempts := 0
+	for attempts < h.verbBudget {
+		if ctx.Err() != nil {
+			break
+		}
 		obs, err := h.resource.Observe(ctx, id)
 		if err != nil {
 			return h.errorResponse(err, secrets)
 		}
+		attempts++
 		last = obs
 		if obs.State == contract.Absent {
 			absent := true
@@ -177,14 +215,14 @@ func (h *Handler) settleAbsent(ctx context.Context, id contract.Identity, secret
 				StatusDetail: safe.Scrub(obs.StatusDetail, secrets...),
 			}
 		}
-		if attempt < h.verbBudget {
+		if attempts < h.verbBudget {
 			h.sleep(ctx, h.pollInterval)
 		}
 	}
 	absent := false
 	return http.StatusOK, contract.Response{
 		Absent:       &absent,
-		StatusDetail: safe.Scrub(fmt.Sprintf("observed %s after %d attempts", last.State, h.verbBudget), secrets...),
+		StatusDetail: safe.Scrub(fmt.Sprintf("observed %s after %d attempts", last.State, attempts), secrets...),
 	}
 }
 
