@@ -200,6 +200,7 @@ fi
 if ! in_repo push "$remote" "refs/tags/$next_tag"; then
   in_repo tag -d "$next_tag" > /dev/null 2>&1
   echo "::error::$remote refused $next_tag, so the published tag stays where it is." >&2
+  emit_output "released=false"
   exit 1
 fi
 
