@@ -1,13 +1,12 @@
-// verbseams_over_handler_test.go pins kittest.VerbSeamsOverHandler
-// (MIT-3070): it drives a real handler.Handler over signed webhook requests
-// against a kittest.FakeResource and adapts the outcome into
-// kittest.VerbSeams, so CheckVerbSemantics can judge a real handler exactly
-// as it judges any operator's own hand-written seams.
+// verbseams_over_handler_test.go pins kittest.VerbSeamsOverHandler: it
+// drives a real handler.Handler over signed webhook requests against a
+// kittest.FakeResource and adapts the outcome into kittest.VerbSeams, so
+// CheckVerbSemantics can judge a real handler exactly as it judges any
+// operator's own hand-written seams.
 //
-// This file imports handler because the TEST needs a real Handler to drive;
-// kittest's own production code (verbs.go, fakes.go) still imports no
-// handler package, which is what the CONTRACT requires and is proven by
-// fakeresource_test.go's silence on the subject.
+// Only this test file imports handler, because only a test needs a real
+// Handler to drive. kittest's own production code imports no handler
+// package, which is what keeps the two importable in either direction.
 //
 // A harness is only worth having if it FAILS on the defects it claims to
 // catch (see verbs_test.go's own note) — so this file proves BOTH halves:

@@ -1,8 +1,8 @@
 // fakeresource_test.go pins kittest.FakeResource, the Resource whose
-// behaviour a test dictates (MIT-3070). Its method set matches
-// handler.Resource structurally, so this file — and the production
-// FakeResource it drives red until written — imports no handler package,
-// exactly as the CONTRACT requires.
+// behaviour a test dictates. Its method set matches handler.Resource
+// structurally rather than by declaration, so neither this file nor the
+// FakeResource it exercises imports the handler package, and kittest stays
+// importable from a handler test without a cycle.
 package kittest_test
 
 import (

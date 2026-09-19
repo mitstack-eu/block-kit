@@ -3,11 +3,6 @@
 // sequence and wire response bytes out. Every helper here builds
 // requests and handlers the same way so a defect shows up as a red test,
 // not a fixture divergence between test files.
-//
-// None of handler.New, handler.Handler, handler.Resource, handler.Hook,
-// handler.Config, handler.Refused, handler.Refuse or handler.RefusedClass
-// exists yet, so every file in this package fails to compile until the
-// handler package is written — that is the intended red.
 package handler_test
 
 import (
