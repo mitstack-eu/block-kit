@@ -231,6 +231,24 @@ func TestRun_Verify_OtherIdentityExitsNonZeroAndNamesTheMismatch(t *testing.T) {
 	}
 }
 
+// TestRun_Verify_UnknownFieldExitsNonZero pins the actual failure a live
+// probe against HEAD found: `blockprov verify` decoded a record with
+// json.Unmarshal, which silently drops any key Payload does not declare, so
+// a record carrying an attacker-added field alongside its original,
+// still-valid token printed "record accepted" and exited 0. Verify must go
+// through provenance.Decode (which enforces no unknown fields), not
+// json.Unmarshal, so this exact record is rejected instead.
+func TestRun_Verify_UnknownFieldExitsNonZero(t *testing.T) {
+	stdout, exit := runBlockprov(t, "verify",
+		"--record", "../provenance/goldens/invalid-unknown-field.json",
+		"--jwks", "../provenance/goldens/record.golden.jwks.json",
+		"--repository", "mitstack-eu/postgres-db",
+	)
+	if exit == 0 {
+		t.Fatalf("want non-zero exit verifying a record with an unknown payload field, got 0 (blockprov verify must decode through provenance.Decode, not json.Unmarshal)\nstdout:\n%s", stdout)
+	}
+}
+
 // --- push -----------------------------------------------------------------
 
 // ociServer fakes just enough of the OCI distribution API for `push`: a

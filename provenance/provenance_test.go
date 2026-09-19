@@ -681,3 +681,137 @@ func TestGoldenRecord_CarriesEveryAcceptanceCriterionField(t *testing.T) {
 		t.Error("golden must carry the source commit")
 	}
 }
+
+// --- Decode rejects any field the schema does not declare -------------------
+//
+// json.Unmarshal into Record silently drops a key neither Record nor Payload
+// declares: Canonical(decoded) then reproduces the original bytes, the
+// audience still matches, and Verify has nothing left to object to. That
+// lets attacker-controlled data ride inside a payload that still looks
+// signed to anything reading the stored JSON directly, or to any future
+// field the platform's reader knows before this struct does. Decode is the
+// strict entry point that closes that hole: it must refuse a record whose
+// JSON carries anything the shape does not declare, at any of the three
+// places a field could hide — the record's own top level, the payload's top
+// level, and inside conformance.
+//
+// Judgement call: Decode does NOT require the stored bytes to equal
+// Canonical(decoded) exactly. That stricter rule would also catch reordered
+// keys and incidental whitespace, but a record is JSON that an intermediary
+// (a registry, a formatter, a human editing it by hand) may legitimately
+// reformat, and the audience binding already covers every VALUE the schema
+// declares — reordering or reformatting changes no value. Rejecting unknown
+// fields closes the actual hole (attacker-controlled data smuggled in
+// alongside the declared shape) without also rejecting harmless reformatting
+// the signature was never meant to pin. TestDecode_AcceptsReorderedKeysAndExtraWhitespace
+// pins that this is deliberate, not an oversight.
+
+// loadGoldenRaw reads a fixture's raw bytes, unmodified — needed wherever a
+// test must inspect or mutate the JSON as bytes, since json.Unmarshal into
+// Record would itself silently drop the very field under test.
+func loadGoldenRaw(t *testing.T, name string) []byte {
+	t.Helper()
+	raw, err := provenance.Goldens.ReadFile(provenance.GoldensDir + "/" + name)
+	if err != nil {
+		t.Fatalf("reading golden %q: %v", name, err)
+	}
+	return raw
+}
+
+// injectField decodes raw generically, adds key=value at path (an empty
+// path means the record's own top level; "payload" or "payload.conformance"
+// reaches inside it), and re-encodes — used to construct a record carrying
+// exactly one field the schema does not declare, with nothing else changed.
+func injectField(t *testing.T, raw []byte, path, key string, value interface{}) []byte {
+	t.Helper()
+	var doc map[string]interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decoding fixture generically: %v", err)
+	}
+	target := doc
+	if path != "" {
+		for _, segment := range strings.Split(path, ".") {
+			next, ok := target[segment].(map[string]interface{})
+			if !ok {
+				t.Fatalf("fixture has no object at %q", segment)
+			}
+			target = next
+		}
+	}
+	target[key] = value
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("re-encoding mutated fixture: %v", err)
+	}
+	return out
+}
+
+func TestDecode_AcceptsTheGoldenRecordUnchanged(t *testing.T) {
+	want := loadGolden(t, "record.golden.json")
+	rec, err := provenance.Decode(loadGoldenRaw(t, "record.golden.json"))
+	if err != nil {
+		t.Fatalf("Decode(golden) = %v, want nil — strictness must not break the artefact both halves share", err)
+	}
+	if rec != want {
+		t.Errorf("Decode(golden) = %+v, want %+v", rec, want)
+	}
+}
+
+func TestDecode_RejectsUnknownFieldAtPayloadTopLevel(t *testing.T) {
+	raw := injectField(t, loadGoldenRaw(t, "record.golden.json"), "payload", "evilExtraField", "attacker-controlled")
+	if _, err := provenance.Decode(raw); !errors.Is(err, provenance.ErrUnknownField) {
+		t.Errorf("err = %v, want ErrUnknownField for an unknown key at payload's top level", err)
+	}
+}
+
+func TestDecode_RejectsUnknownFieldInsideConformance(t *testing.T) {
+	raw := injectField(t, loadGoldenRaw(t, "record.golden.json"), "payload.conformance", "evilExtraField", "attacker-controlled")
+	if _, err := provenance.Decode(raw); !errors.Is(err, provenance.ErrUnknownField) {
+		t.Errorf("err = %v, want ErrUnknownField for an unknown key inside conformance", err)
+	}
+}
+
+func TestDecode_RejectsUnknownFieldAtRecordTopLevel(t *testing.T) {
+	raw := injectField(t, loadGoldenRaw(t, "record.golden.json"), "", "evilExtraField", "attacker-controlled")
+	if _, err := provenance.Decode(raw); !errors.Is(err, provenance.ErrUnknownField) {
+		t.Errorf("err = %v, want ErrUnknownField for an unknown key beside payload and token", err)
+	}
+}
+
+// TestDecode_RejectsTheUnknownFieldGolden is the golden-based twin of the
+// three unit tests above: invalid-unknown-field.json is the committed
+// golden with one extra payload key and the ORIGINAL token kept, exactly
+// the probe that found this hole (imageDigest swapped was caught; an added
+// field was not, because Canonical(decode(raw)) reproduced the original
+// bytes and the audience still matched).
+func TestDecode_RejectsTheUnknownFieldGolden(t *testing.T) {
+	raw := loadGoldenRaw(t, "invalid-unknown-field.json")
+	if _, err := provenance.Decode(raw); !errors.Is(err, provenance.ErrUnknownField) {
+		t.Errorf("err = %v, want ErrUnknownField", err)
+	}
+}
+
+// TestDecode_AcceptsReorderedKeysAndExtraWhitespace pins the judgement call
+// above as deliberate: Decode rejects an unknown FIELD, not a reformatting.
+// Reordering the record's top-level keys and reformatting the whitespace
+// must not trip ErrUnknownField, because no value the schema declares has
+// changed — only its incidental presentation on the wire.
+func TestDecode_AcceptsReorderedKeysAndExtraWhitespace(t *testing.T) {
+	want := loadGolden(t, "record.golden.json")
+	payloadJSON, err := json.Marshal(want.Payload)
+	if err != nil {
+		t.Fatalf("marshalling payload: %v", err)
+	}
+	// token BEFORE payload (the struct declares the opposite order) and
+	// spread across extra lines and indentation the golden itself does not
+	// use.
+	reordered := []byte(fmt.Sprintf("{\n\n  \"token\":   %q  ,\n\n  \"payload\":\n%s\n\n}\n", want.Token, payloadJSON))
+
+	rec, err := provenance.Decode(reordered)
+	if err != nil {
+		t.Fatalf("Decode must accept reordered keys and extra whitespace when every field is one the schema declares: %v", err)
+	}
+	if rec != want {
+		t.Errorf("Decode(reordered) = %+v, want %+v", rec, want)
+	}
+}
