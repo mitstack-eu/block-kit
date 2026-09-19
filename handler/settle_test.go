@@ -124,7 +124,7 @@ type cancelAfterNObserves struct {
 	reportState  contract.State
 }
 
-func (c *cancelAfterNObserves) Ensure(context.Context, contract.Desired) error { return nil }
+func (c *cancelAfterNObserves) Ensure(context.Context, contract.Desired) error  { return nil }
 func (c *cancelAfterNObserves) Delete(context.Context, contract.Identity) error { return nil }
 
 func (c *cancelAfterNObserves) Observe(context.Context, contract.Identity) (contract.Observation, error) {
