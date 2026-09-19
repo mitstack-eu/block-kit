@@ -57,9 +57,12 @@ func TestFakeSTS_CanSimulateAFailure(t *testing.T) {
 	f := kittest.NewFakeSTS(t)
 	f.FailWith = "AccessDenied"
 
-	resp, _ := http.PostForm(f.URL, map[string][]string{
+	resp, err := http.PostForm(f.URL, map[string][]string{
 		"Action": {"AssumeRoleWithWebIdentity"}, "RoleArn": {"arn:x"},
 	})
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusForbidden {

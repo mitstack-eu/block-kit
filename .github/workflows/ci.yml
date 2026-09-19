@@ -1,0 +1,52 @@
+name: ci
+
+# Every pull request, and every push to main so the release job below has
+# something to run after.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: test
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+      - run: go vet ./...
+      - run: go test ./...
+
+  # This repository IS the kit, so a change reaching main without a tag is
+  # unreachable to every block importing it. A thin caller by design: the
+  # script owns the decision and the version arithmetic, and no copy of
+  # either lives here.
+  release:
+    name: kit release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
+    # The job's own grant. A workflow-level default is a ceiling rather than a
+    # floor, so a job that never re-grants runs with metadata read alone and
+    # cannot push the tag it computed.
+    permissions:
+      contents: write
+    concurrency:
+      group: kit-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the version scan reads tags, and a shallow checkout has none
+      - name: Cut the kit tag when the tree changed
+        # The shell is named because the default run shell leaves pipefail
+        # off, and a pipeline's status is its last command's. The tee would
+        # then return 0 over every failing exit the script has, so a refused
+        # push or a failed verify would report green.
+        shell: bash
+        # No --base: the script resolves the base from the newest kit tag, so
+        # a run that was skipped or red does not lose its release. The next
+        # push picks it up, even when that push touched nothing itself.
+        run: bash scripts/release-operator-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"

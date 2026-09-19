@@ -1,37 +1,28 @@
 package kittest
 
 import (
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
+
+	"github.com/mitstack-eu/operator-kit/contract"
 )
-
-// respGoldensFS embeds the kit's own copy of the RESPONSE contract goldens
-// (MIT-1136, the response half of the MIT-1585 embed model above). The
-// source of truth stays api/internal/lifecycle/contract/response-goldens/ —
-// the engine's own contract tests (response_schema_test.go,
-// response_contract_test.go) read it directly. This is a committed,
-// syncable mirror kept in lockstep by scripts/check-kittest-goldens-sync.sh
-// (invoked a second time, with this pair of directories, from the required
-// lint job). Embedding, rather than resolving a path relative to the
-// caller's working directory, is what keeps this usable from an operator
-// living in a genuinely external repository, exactly as it does for the
-// request-side goldens above (MIT-1585).
-//
-//go:embed response-goldens/*.json
-var respGoldensFS embed.FS
-
-const respGoldensFSDir = "response-goldens"
 
 // respGoldenEntries lists the embedded response golden files, failing the
 // test rather than skipping: a harness that silently finds nothing proves
 // nothing.
+//
+// The response goldens (MIT-1136) live in the contract package (MIT-3068,
+// ADR 0068 decision 5: this repository owns them), which the engine's own
+// contract tests also import. Embedding there rather than resolving a path
+// relative to the caller's working directory is what keeps this usable
+// from an operator living in a genuinely external repository, exactly as
+// it does for the request-side goldens above.
 func respGoldenEntries(t *testing.T) []fs.DirEntry {
 	t.Helper()
-	entries, err := fs.ReadDir(respGoldensFS, respGoldensFSDir)
+	entries, err := fs.ReadDir(contract.ResponseGoldens, contract.ResponseGoldensDir)
 	if err != nil {
 		t.Fatalf("kittest: cannot read embedded response contract goldens: %v\n"+
 			"The goldens are the contract; a conformance test that cannot find them proves nothing.", err)
@@ -44,7 +35,7 @@ func respGoldenEntries(t *testing.T) []fs.DirEntry {
 
 func readRespGolden(t *testing.T, name string) []byte {
 	t.Helper()
-	raw, err := respGoldensFS.ReadFile(respGoldensFSDir + "/" + name)
+	raw, err := contract.ResponseGoldens.ReadFile(contract.ResponseGoldensDir + "/" + name)
 	if err != nil {
 		t.Fatalf("kittest: reading embedded response golden %q: %v", name, err)
 	}
