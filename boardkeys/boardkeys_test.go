@@ -1,13 +1,10 @@
-// Package boardkeys_test pins the delivered-key contract (MIT-3118): a
-// verbatim port of platform's scripts/tracker-delivered-keys.sh and the
-// board's own tracker/ghsync_parse.go. A commit delivers a key only when the
-// key sits in a LEADING key list in the commit subject, terminated by a
-// literal ':', or in a whole-line `Jira:` trailer in the body. Everything
-// else — a key elsewhere in the subject, any other body line — is prose and
-// delivers nothing.
-//
-// boardkeys does not exist yet, so every reference below fails to compile
-// until code-author adds the package. That is the intended RED signal.
+// Package boardkeys_test pins the delivered-key contract: a verbatim port of
+// platform's scripts/tracker-delivered-keys.sh and the board's own
+// tracker/ghsync_parse.go. A commit delivers a key only when the key sits in
+// a LEADING key list in the commit subject, terminated by a literal ':', or
+// in a whole-line `Jira:` trailer in the body. Everything else — a key
+// elsewhere in the subject, any other body line — is prose and delivers
+// nothing.
 package boardkeys_test
 
 import (

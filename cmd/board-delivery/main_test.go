@@ -1,8 +1,8 @@
 package main
 
-// main_test.go pins the CONTRACT for the `board-delivery` command
-// (MIT-3118): the CLI a push-to-main CI job calls to derive which board
-// keys the push delivered and record them once. The seam under test is
+// main_test.go pins the CONTRACT for the `board-delivery` command: the CLI
+// a push-to-main CI job calls to derive which board keys the push delivered
+// and record them once. The seam under test is
 // Run(args []string, stdout io.Writer) int, following the kit's own
 // blockprov.Run idiom: the whole command is testable without a real
 // process, and TRACKER_BASE_URL / TRACKER_API_TOKEN are read from the
@@ -13,10 +13,6 @@ package main
 // board-synced anchor tag's push can be observed without any network
 // access or dependence on the real operator-kit repository's history. The
 // HTTP half runs against httptest.
-//
-// Run, and the board-synced anchor-tag mechanism it drives, do not exist
-// yet, so every reference below fails to compile until code-author adds
-// them. That is the intended RED signal.
 
 import (
 	"bytes"

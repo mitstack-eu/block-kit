@@ -1,14 +1,11 @@
 package main
 
-// workflow_test.go is a structural guard over ../../.github/workflows/ci.yml
-// (MIT-3118): a Go test, not a shell script, following blockprov/workflow_test.go's
+// workflow_test.go is a structural guard over ../../.github/workflows/ci.yml:
+// a Go test, not a shell script, following blockprov/workflow_test.go's
 // idiom — indentation-based parsing with plain string handling, no YAML
 // library, since the kit is stdlib-only. Duplicated here rather than shared
 // because blockprov's helpers live inside its own package main and cannot be
 // imported.
-//
-// The record-delivery job asserted below does not exist yet, so every test
-// fails until code-author adds it. That is the intended RED signal.
 
 import (
 	"os"
@@ -233,5 +230,28 @@ func TestWorkflow_RecordDeliveryHasNoContinueOnError(t *testing.T) {
 	job := recordDeliveryBlock(t, text)
 	if strings.Contains(job, "continue-on-error") {
 		t.Errorf("%s job must not carry continue-on-error — a failed board write must be a red run, not a silent one", recordDeliveryJob)
+	}
+}
+
+// TestWorkflow_RecordDeliveryHasConcurrencyGroupThatDoesNotCancel guards
+// against two overlapping pushes to main running record-delivery at once:
+// both would read the board-synced anchor tag before either advances it,
+// both would derive overlapping ranges and re-post already-delivered keys to
+// the board, and both would then race to push the anchor tag, so whichever
+// push loses the race can leave the anchor behind the repository's real
+// position. cancel-in-progress must be false specifically, not merely
+// present: a run that has already posted to the board but not yet advanced
+// the anchor must run to completion rather than be cancelled mid-way, since
+// a cancelled run leaves the anchor further behind than a serialized one
+// ever would — the opposite of what the concurrency group is for.
+func TestWorkflow_RecordDeliveryHasConcurrencyGroupThatDoesNotCancel(t *testing.T) {
+	text := readCIWorkflow(t)
+	job := recordDeliveryBlock(t, text)
+	concurrency := ciBlock(job, "concurrency")
+	if concurrency == "" {
+		t.Fatalf("%s job has no concurrency: block — two overlapping pushes to main can race the board-synced anchor tag, job block:\n%s", recordDeliveryJob, job)
+	}
+	if !strings.Contains(concurrency, "cancel-in-progress: false") {
+		t.Errorf("%s job's concurrency block must set cancel-in-progress: false — cancelling a run that already posted to the board but has not yet advanced the anchor would leave the anchor behind its real position, concurrency block:\n%s", recordDeliveryJob, concurrency)
 	}
 }
