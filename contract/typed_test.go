@@ -617,6 +617,131 @@ func TestRequestDesired_UnsubscribeGolden(t *testing.T) {
 	}
 }
 
+// --- Identity carries the resolved tool instances ---------------------------
+
+// decodeGolden decodes the named valid request golden, failing the test when
+// the golden set has no such entry or it does not decode.
+func decodeGolden(t *testing.T, name string) contract.Request {
+	t.Helper()
+	valid, err := contract.ValidGoldens()
+	if err != nil {
+		t.Fatalf("contract.ValidGoldens(): %v", err)
+	}
+	raw, ok := valid[name]
+	if !ok {
+		t.Fatalf("contract.ValidGoldens() has no %q entry", name)
+	}
+	req, err := contract.DecodeRequest(raw)
+	if err != nil {
+		t.Fatalf("DecodeRequest(%s): %v", name, err)
+	}
+	return req
+}
+
+// assertSameInstances compares two instance maps entry for entry, naming
+// what diverged.
+func assertSameInstances(t *testing.T, what string, got, want map[string]contract.InstanceConfig) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("%s has %d entries, want %d", what, len(got), len(want))
+	}
+	for key, wi := range want {
+		gi, ok := got[key]
+		if !ok {
+			t.Errorf("%s is missing key %q", what, key)
+			continue
+		}
+		if gi.Name != wi.Name {
+			t.Errorf("%s[%q].Name = %q, want %q", what, key, gi.Name, wi.Name)
+		}
+		if gi.Endpoint != wi.Endpoint {
+			t.Errorf("%s[%q].Endpoint = %q, want %q", what, key, gi.Endpoint, wi.Endpoint)
+		}
+		if len(gi.Config) != len(wi.Config) {
+			t.Errorf("%s[%q].Config has %d entries, want %d", what, key, len(gi.Config), len(wi.Config))
+		}
+		for ck, cv := range wi.Config {
+			if gi.Config[ck] != cv {
+				t.Errorf("%s[%q].Config[%q] = %q, want %q", what, key, ck, gi.Config[ck], cv)
+			}
+		}
+	}
+}
+
+// TestRequestIdentity_GoldensCarryInstances pins that the resolved tool
+// instances reach Identity. Observe and Delete are handed an Identity and
+// nothing else, so a block scoped to a region reads that region here or
+// not at all.
+func TestRequestIdentity_GoldensCarryInstances(t *testing.T) {
+	for _, name := range []string{"subscribe", "unsubscribe", "upgrade", "validate"} {
+		t.Run(name, func(t *testing.T) {
+			req := decodeGolden(t, name)
+			if len(req.Instances) == 0 {
+				t.Fatalf("the %s golden carries no instances — every valid golden must, "+
+					"or this test proves nothing about what Identity carries", name)
+			}
+
+			assertSameInstances(t, "Identity().Instances", req.Identity().Instances, req.Instances)
+		})
+	}
+}
+
+// TestRequestIdentity_UnsubscribeGolden_CarriesInstanceRegion pins the one
+// value the unsubscribe path turns on: the region a region-scoped block's
+// Delete addresses its resource by.
+func TestRequestIdentity_UnsubscribeGolden_CarriesInstanceRegion(t *testing.T) {
+	req := decodeGolden(t, "unsubscribe")
+
+	id := req.Identity()
+	if len(id.Instances) == 0 {
+		t.Fatal("Identity().Instances is empty — the unsubscribe golden's instances must reach Identity")
+	}
+	if got, want := id.Instances["aws"].Config["region"], "eu-west-1"; got != want {
+		t.Errorf("Identity().Instances[aws].Config[region] = %q, want %q", got, want)
+	}
+}
+
+// TestRequestDesired_InstancesPromotedThroughIdentity pins the promotion
+// round-trip: with Instances living on Identity, d.Instances inside a
+// block's Ensure still resolves, and resolves to the same value the
+// embedded Identity carries.
+func TestRequestDesired_InstancesPromotedThroughIdentity(t *testing.T) {
+	for _, name := range []string{"subscribe", "unsubscribe"} {
+		t.Run(name, func(t *testing.T) {
+			req := decodeGolden(t, name)
+			d := req.Desired()
+
+			assertSameInstances(t, "Desired().Instances", d.Instances, req.Instances)
+			assertSameInstances(t, "Desired().Identity.Instances", d.Identity.Instances, req.Instances)
+
+			if got, want := d.Instances["aws"].Config["region"], "eu-west-1"; got != want {
+				t.Errorf("Desired().Instances[aws].Config[region] = %q, want %q", got, want)
+			}
+			if got, want := d.Identity.Instances["aws"].Config["region"], "eu-west-1"; got != want {
+				t.Errorf("Desired().Identity.Instances[aws].Config[region] = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestRequestIdentity_NoInstancesLeavesTheMapNil pins the legitimate
+// "provisioned nothing" case: a request with no instances gives a block a
+// nil map, which reads as an empty region rather than panicking.
+func TestRequestIdentity_NoInstancesLeavesTheMapNil(t *testing.T) {
+	req := contract.Request{Operation: "unsubscribe", SubscriptionID: "sub-1", BlockID: "block-1", OrgID: "org-1"}
+
+	id := req.Identity()
+	if id.Instances != nil {
+		t.Errorf("Identity().Instances = %v, want nil when the request carries none", id.Instances)
+	}
+	if got := id.Instances["aws"].Config["region"]; got != "" {
+		t.Errorf("Identity().Instances[aws].Config[region] = %q, want an empty string", got)
+	}
+	if d := req.Desired(); d.Instances != nil {
+		t.Errorf("Desired().Instances = %v, want nil when the request carries none", d.Instances)
+	}
+}
+
 // --- Observation.Response() -------------------------------------------------
 
 func TestObservationResponse_PresentStateSetsAbsentFalse(t *testing.T) {
