@@ -35,13 +35,19 @@ does the same for a `contract.Response`, decoded against response.schema.json;
 a field of the wrong type fails the same way, naming the field.
 
 `Request.Identity()` returns a `contract.Identity`: the subset of a request
-that names which subscription an operation targets — subscription, block,
-org, app, its prior outputs, and its cloud identity — independent of what it
-should converge to. `Request.Desired()` returns a `contract.Desired`, which
-embeds `Identity` and adds the params, secrets, instances and bindings that
-describe what an operator should converge its resource to. Splitting a
-request this way lets a validate/unsubscribe handler read only `Identity`,
-without pulling in fields a teardown call never needs.
+that names which subscription an operation targets and where its resource
+lives — subscription, block, org, app, its resolved tool instances, its
+prior outputs, and its cloud identity — independent of what it should
+converge to. The instances belong here because a teardown has to address
+the resource where it was provisioned: a block scoped to an AWS region
+reads that region out of `Identity.Instances`, and `Delete` and `Observe`
+are handed an `Identity` and nothing else. `Request.Desired()` returns a
+`contract.Desired`, which embeds `Identity` and adds the params, secrets
+and bindings that describe what an operator should converge its resource
+to, so `d.Instances` inside `Ensure` resolves through the embedded
+`Identity` to the same map a teardown sees. Splitting a request this way
+lets a validate/unsubscribe handler read only `Identity`, without pulling in
+fields a teardown call never needs.
 
 `contract.Observation` is what a validate or unsubscribe check found: a
 `contract.State` (`Present`, `Absent`, or `Unknown`) plus whatever outputs
