@@ -98,13 +98,20 @@ type Response struct {
 }
 
 // Identity is the subset of a Request that names which subscription an
-// operation targets, independent of what it should converge to.
+// operation targets and where its resource lives, independent of what it
+// should converge to. Instances carries the resolved tool instances,
+// because a teardown or an observation has to address the resource where it
+// was provisioned — a region-scoped block reads that region here, on the
+// only value Delete and Observe are handed. It is nil when the request
+// carries no instances, which reads as an unset config rather than
+// panicking.
 type Identity struct {
 	SubscriptionID string
 	BlockID        string
 	BlockVersion   string
 	OrgID          string
 	AppID          string
+	Instances      map[string]InstanceConfig
 	PriorOutputs   map[string]string
 	CloudIdentity  *CloudIdentity
 }
@@ -112,14 +119,16 @@ type Identity struct {
 // Desired is the subset of a Request describing what an operator should
 // converge a subscription's resource to. It embeds Identity, since knowing
 // what is desired is meaningless without knowing which subscription it is
-// desired for.
+// desired for and where its resource lives, and adds the params, secrets
+// and bindings that describe the target state. The instances reach a block
+// through the embedded Identity, so d.Instances inside Ensure resolves to
+// the same map Delete and Observe are handed.
 type Desired struct {
 	Identity
 
 	Params       map[string]string
 	SecretInputs map[string]string
 	AppSecrets   map[string]string
-	Instances    map[string]InstanceConfig
 	Secrets      map[string]map[string]string
 	Bindings     map[string]map[string]string
 	BindingsAll  map[string][]map[string]string
@@ -262,7 +271,7 @@ func wrapDecodeError(kind string, err error) error {
 }
 
 // Identity returns the subset of r that names which subscription it
-// targets.
+// targets and where that subscription's resource lives.
 func (r Request) Identity() Identity {
 	return Identity{
 		SubscriptionID: r.SubscriptionID,
@@ -270,20 +279,21 @@ func (r Request) Identity() Identity {
 		BlockVersion:   r.BlockVersion,
 		OrgID:          r.OrgID,
 		AppID:          r.AppID,
+		Instances:      r.Instances,
 		PriorOutputs:   r.PriorOutputs,
 		CloudIdentity:  r.CloudIdentity,
 	}
 }
 
 // Desired returns the subset of r describing what an operator should
-// converge its resource to.
+// converge its resource to. The instances arrive through the embedded
+// Identity, which is why no field here repeats them.
 func (r Request) Desired() Desired {
 	return Desired{
 		Identity:     r.Identity(),
 		Params:       r.Params,
 		SecretInputs: r.SecretInputs,
 		AppSecrets:   r.AppSecrets,
-		Instances:    r.Instances,
 		Secrets:      r.Secrets,
 		Bindings:     r.Bindings,
 		BindingsAll:  r.BindingsAll,

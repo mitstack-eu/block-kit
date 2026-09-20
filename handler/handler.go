@@ -50,19 +50,25 @@ type Resource interface {
 
 	// Observe reports what the resource identified by id actually is right
 	// now. The Handler polls this after Ensure and after Delete to settle a
-	// verb, and calls it once, unpolled, for validate.
+	// verb, and calls it once, unpolled, for validate. The id carries the
+	// request's instance config, so a block scoped to a region addresses
+	// the resource where it lives.
 	Observe(ctx context.Context, id contract.Identity) (contract.Observation, error)
 
-	// Delete tears the resource down. Absence is success: Delete must not
-	// error when nothing was ever provisioned.
+	// Delete tears the resource down. The id carries the request's instance
+	// config, the same way Observe's does, so a teardown addresses the
+	// resource where it was provisioned. Absence is success: Delete must
+	// not error when nothing was ever provisioned.
 	Delete(ctx context.Context, id contract.Identity) error
 }
 
 // Hook is a declared extension point a block registers at one of the four
 // HookXxx points. One signature serves all four: an ensure-side hook and a
 // delete-side hook both receive a Desired, the delete-side value carrying
-// only its Identity, since tearing a subscription down needs no desired
-// params.
+// only its Identity, since tearing a subscription down needs to know where
+// the resource lives rather than what it should converge to. The instance
+// config rides on that Identity, so a delete-side hook that has to reach a
+// region-scoped API can.
 type Hook func(ctx context.Context, d contract.Desired) error
 
 // The closed set of hook points the Handler calls. A hook registered under
