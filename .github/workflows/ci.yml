@@ -50,3 +50,47 @@ jobs:
         # a run that was skipped or red does not lose its release. The next
         # push picks it up, even when that push touched nothing itself.
         run: bash scripts/release-operator-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # This repository has no other mechanism that reaches the board, so a
+  # ticket delivered here never reached Done. needs: [test, release] only
+  # requires both to have SUCCEEDED — never released's outputs.released —
+  # because a docs-only push that cut no tag still delivers its keys.
+  record-delivery:
+    name: record delivery
+    needs: [test, release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
+    # The job's own grant. A workflow-level default is a ceiling rather than a
+    # floor, so a job that never re-grants runs with metadata read alone and
+    # cannot push the anchor tag it advances.
+    permissions:
+      contents: write
+    # Two pushes to main close together would otherwise both read the
+    # board-synced anchor tag before either advances it, derive overlapping
+    # ranges, and race the tag push, leaving the anchor behind the
+    # repository's real position. cancel-in-progress stays false: a run
+    # cancelled between the board write and the tag advance would leave the
+    # anchor further behind than a serialized run ever would.
+    concurrency:
+      group: record-delivery
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # range resolution reads the board-synced tag and history a shallow checkout has neither
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+      - name: Record this push's delivered board keys
+        # No shell override: this step is a single go run with no pipe, so
+        # naming bash would only add pipefail, which has nothing to act on
+        # here. The default shell's -e already fails the step, so a rejected
+        # board write or a git push failure already turns this run red.
+        env:
+          TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}
+          TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
+        run: |
+          go run ./cmd/board-delivery \
+            --repo . \
+            --before "${{ github.event.before }}" \
+            --after "${{ github.sha }}"

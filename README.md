@@ -68,3 +68,23 @@ Every push to main that changes the tree cuts the next patch tag
 and each raise zeroes the levels below it. A skipped or failed release run is
 not lost: the next push resolves the base from the newest tag and cuts the
 release the earlier push owed.
+
+## Recording a delivery on the board
+
+Every push to main also records which board issues it delivered, through
+`cmd/board-delivery`. The `boardkeys` package derives the keys a commit
+delivers: a key counts only when it sits in a leading key list in the
+commit's subject, terminated by a colon, or in a whole-line `Jira:` trailer
+in the body. A key anywhere else in a subject, or in an ordinary body line,
+is prose and delivers nothing.
+
+`board-delivery` reads a local `board-synced` git tag as the anchor for its
+range: the commits since that tag, or since the push event's `before` sha
+when no tag exists yet, or the single pushed commit when neither is usable.
+It posts the derived keys to the board's `/v1/delivered` endpoint once, and
+only after that write succeeds does it move the `board-synced` tag to the
+pushed commit and push it, so the next run picks up exactly where this one
+left off. A push whose commits deliver no keys records nothing and still
+succeeds. A push with keys but no `TRACKER_BASE_URL` configured fails the
+run, since a delivery that silently skips the board looks the same as one
+that reached it.
