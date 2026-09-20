@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/mitstack-eu/operator-kit/boardkeys"
@@ -77,46 +75,17 @@ func Run(args []string, stdout io.Writer) int {
 
 // deliveredKeys reads every commit's subject and body in rng and returns
 // the board keys they deliver together: boardkeys.Message per commit,
-// merged, deduped and sorted numerically across the whole range.
+// merged, deduped and sorted numerically across the whole range by
+// boardkeys.Merge — the package's single definition of that rule, so it is
+// never re-implemented here.
 func deliveredKeys(repo, rng string) ([]string, error) {
 	commits, err := commitsInRange(repo, rng)
 	if err != nil {
 		return nil, err
 	}
-	var all []string
-	for _, c := range commits {
-		all = append(all, boardkeys.Message(c.Subject, c.Body)...)
+	perCommit := make([][]string, len(commits))
+	for i, c := range commits {
+		perCommit[i] = boardkeys.Message(c.Subject, c.Body)
 	}
-	return dedupeSortedKeys(all), nil
-}
-
-// dedupeSortedKeys merges keys drawn from several commits: deduped and
-// sorted numerically by the digits after the hyphen, mirroring
-// tracker-delivered-keys.sh's `sort -u -t- -k2,2n`.
-func dedupeSortedKeys(keys []string) []string {
-	if len(keys) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool, len(keys))
-	var out []string
-	for _, k := range keys {
-		if seen[k] {
-			continue
-		}
-		seen[k] = true
-		out = append(out, k)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return keyNumber(out[i]) < keyNumber(out[j])
-	})
-	return out
-}
-
-// keyNumber parses the digits after "MIT-" for numeric sorting.
-func keyNumber(key string) int {
-	n, err := strconv.Atoi(strings.TrimPrefix(key, "MIT-"))
-	if err != nil {
-		return 0
-	}
-	return n
+	return boardkeys.Merge(perCommit...), nil
 }

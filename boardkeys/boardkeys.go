@@ -45,11 +45,24 @@ func Subject(line string) []string {
 // deliver: Subject's leading key list, plus every key on a whole-line
 // `Jira:` trailer in the body, merged, deduped and sorted numerically.
 func Message(subject, body string) []string {
-	keys := Subject(subject)
+	var trailerKeys []string
 	for _, line := range jiraTrailer.FindAllString(body, -1) {
-		keys = append(keys, keyPattern.FindAllString(line, -1)...)
+		trailerKeys = append(trailerKeys, keyPattern.FindAllString(line, -1)...)
 	}
-	return dedupeSorted(keys)
+	return Merge(Subject(subject), trailerKeys)
+}
+
+// Merge combines several key lists — such as one per commit in a range —
+// into one: deduplicated and sorted numerically by the digits after the
+// hyphen, the same rule Subject and Message already apply on their own. It
+// is the package's single definition of that rule, for any caller that
+// merges key lists drawn from more than one source.
+func Merge(sets ...[]string) []string {
+	var all []string
+	for _, s := range sets {
+		all = append(all, s...)
+	}
+	return dedupeSorted(all)
 }
 
 // dedupeSorted deduplicates keys and sorts them numerically by the digits
