@@ -254,6 +254,7 @@ func TestBuild_RefusesNonPassVerdict(t *testing.T) {
 
 func TestBuild_RefusesIncompletePayload(t *testing.T) {
 	cases := map[string]func(*provenance.Payload){
+		"schemaVersion":    func(p *provenance.Payload) { p.SchemaVersion = "" },
 		"blockId":          func(p *provenance.Payload) { p.BlockID = "" },
 		"blockVersion":     func(p *provenance.Payload) { p.BlockVersion = "" },
 		"imageRef":         func(p *provenance.Payload) { p.ImageRef = "" },
@@ -447,6 +448,33 @@ func TestVerify_RejectsWrongIssuer(t *testing.T) {
 
 	if err := provenance.Verify(rec, resolverFor(kid, pub), provenance.Expect{Repository: p.SourceRepository}); !errors.Is(err, provenance.ErrUntrustedIssuer) {
 		t.Errorf("err = %v, want ErrUntrustedIssuer", err)
+	}
+}
+
+func TestVerify_RejectsIncompletePayloadMissingSchemaVersion(t *testing.T) {
+	priv, pub := newTestRSAKey(t)
+	const kid = "test-kid-missing-schema-version"
+	p := validPayload()
+	p.SchemaVersion = ""
+	aud, err := provenance.Audience(p)
+	if err != nil {
+		t.Fatalf("Audience: %v", err)
+	}
+	claims := map[string]interface{}{
+		"iss":        provenance.Issuer,
+		"aud":        aud,
+		"repository": p.SourceRepository,
+		"sha":        p.SourceCommit,
+		"iat":        time.Now().UTC().Unix(),
+	}
+	rec := provenance.Record{Payload: p, Token: signTestToken(t, priv, kid, claims)}
+
+	err = provenance.Verify(rec, resolverFor(kid, pub), provenance.Expect{Repository: p.SourceRepository})
+	if !errors.Is(err, provenance.ErrIncomplete) {
+		t.Fatalf("err = %v, want ErrIncomplete", err)
+	}
+	if !strings.Contains(err.Error(), "schemaVersion") {
+		t.Errorf("err = %v, want it to name schemaVersion as the missing field", err)
 	}
 }
 
