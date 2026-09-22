@@ -97,13 +97,12 @@ func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status in
 // four cases here are exhaustive.
 func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secrets []string) (int, contract.Response) {
 	desired := req.Desired()
-	id := req.Identity()
 
 	switch req.Operation {
 	case "subscribe", "upgrade":
-		return h.ensureAndSettle(ctx, desired, id, secrets)
+		return h.ensureAndSettle(ctx, desired, secrets)
 	case "validate":
-		return h.validate(ctx, id, secrets)
+		return h.validate(ctx, desired, secrets)
 	case "unsubscribe":
 		return h.deleteAndSettle(ctx, desired, secrets)
 	default:
@@ -111,10 +110,48 @@ func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secret
 	}
 }
 
+// observe calls RequestObserver.ObserveWithRequest when the Resource
+// implements it, so the verb's own Secrets reach the observation the way a
+// token-backed block needs, and falls back to the plain Observe(ctx,
+// Identity) otherwise. d is never retained beyond this call: the Handler
+// holds no field of its own that could hand one verb's secrets to a later,
+// unrelated call.
+func (h *Handler) observe(ctx context.Context, d contract.Desired) (contract.Observation, error) {
+	if ro, ok := h.resource.(RequestObserver); ok {
+		return ro.ObserveWithRequest(ctx, d)
+	}
+	return h.resource.Observe(ctx, d.Identity)
+}
+
+// refuseSecretOutputs refuses a response whose outputs carry a value that
+// exactly matches one of the request's secrets, before that response ever
+// reaches the wire. It only inspects Outputs — SecretOutputs is where a
+// Resource is meant to return a secret value on purpose — and it matches on
+// exact value, never substring, so an output that merely contains a secret
+// (an owner login embedded in a repo path, say) is left alone.
+func refuseSecretOutputs(outputs map[string]string, secrets map[string]map[string]string) error {
+	for key, value := range outputs {
+		for _, group := range secrets {
+			for _, secretValue := range group {
+				// An empty secret value is an unset optional secret, not a
+				// secret, and an empty output value leaks nothing — so the
+				// two must never combine into a false refusal.
+				if secretValue == "" {
+					continue
+				}
+				if value == secretValue {
+					return Refuse("secret-in-output", "output %q carries a secret value", key)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // ensureAndSettle runs beforeEnsure, Ensure, afterEnsure, then polls Observe
 // until Present or the verb budget runs out. subscribe and upgrade share
 // this exact call sequence.
-func (h *Handler) ensureAndSettle(ctx context.Context, d contract.Desired, id contract.Identity, secrets []string) (int, contract.Response) {
+func (h *Handler) ensureAndSettle(ctx context.Context, d contract.Desired, secrets []string) (int, contract.Response) {
 	if hook, ok := h.hooks[HookBeforeEnsure]; ok {
 		if err := hook(ctx, d); err != nil {
 			return h.errorResponse(err, secrets)
@@ -128,7 +165,7 @@ func (h *Handler) ensureAndSettle(ctx context.Context, d contract.Desired, id co
 			return h.errorResponse(err, secrets)
 		}
 	}
-	return h.settlePresent(ctx, id, secrets)
+	return h.settlePresent(ctx, d, secrets)
 }
 
 // deleteAndSettle runs beforeDelete, Delete, afterDelete, then polls Observe
@@ -161,7 +198,7 @@ func (h *Handler) deleteAndSettle(ctx context.Context, desired contract.Desired,
 			return h.errorResponse(err, secrets)
 		}
 	}
-	return h.settleAbsent(ctx, id, secrets, handoverOutputs)
+	return h.settleAbsent(ctx, desired, secrets, handoverOutputs)
 }
 
 // settlePresent polls Observe up to VerbBudget times, stopping early on
@@ -173,20 +210,23 @@ func (h *Handler) deleteAndSettle(ctx context.Context, desired contract.Desired,
 // once ctx is done, so without this check a cancelled request would spend
 // its whole remaining budget on Observe calls back to back, unpaced,
 // against a cloud API, for an answer nobody will read.
-func (h *Handler) settlePresent(ctx context.Context, id contract.Identity, secrets []string) (int, contract.Response) {
+func (h *Handler) settlePresent(ctx context.Context, d contract.Desired, secrets []string) (int, contract.Response) {
 	var last contract.Observation
 	attempts := 0
 	for attempts < h.verbBudget {
 		if ctx.Err() != nil {
 			break
 		}
-		obs, err := h.resource.Observe(ctx, id)
+		obs, err := h.observe(ctx, d)
 		if err != nil {
 			return h.errorResponse(err, secrets)
 		}
 		attempts++
 		last = obs
 		if obs.State == contract.Present {
+			if err := refuseSecretOutputs(obs.Outputs, d.Secrets); err != nil {
+				return h.errorResponse(err, secrets)
+			}
 			return http.StatusOK, scrubResponse(obs.Response(), secrets)
 		}
 		if attempts < h.verbBudget {
@@ -212,24 +252,28 @@ func (h *Handler) settlePresent(ctx context.Context, id contract.Identity, secre
 // merged with Observe's own outputs — the union of the two, handoverOutputs
 // winning on a key both produce. The absent:false answer carries no
 // outputs, same as before HandoverResource existed.
-func (h *Handler) settleAbsent(ctx context.Context, id contract.Identity, secrets []string, handoverOutputs map[string]string) (int, contract.Response) {
+func (h *Handler) settleAbsent(ctx context.Context, d contract.Desired, secrets []string, handoverOutputs map[string]string) (int, contract.Response) {
 	var last contract.Observation
 	attempts := 0
 	for attempts < h.verbBudget {
 		if ctx.Err() != nil {
 			break
 		}
-		obs, err := h.resource.Observe(ctx, id)
+		obs, err := h.observe(ctx, d)
 		if err != nil {
 			return h.errorResponse(err, secrets)
 		}
 		attempts++
 		last = obs
 		if obs.State == contract.Absent {
+			merged := mergeOutputs(obs.Outputs, handoverOutputs)
+			if err := refuseSecretOutputs(merged, d.Secrets); err != nil {
+				return h.errorResponse(err, secrets)
+			}
 			absent := true
 			return http.StatusOK, contract.Response{
 				Absent:       &absent,
-				Outputs:      mergeOutputs(obs.Outputs, handoverOutputs),
+				Outputs:      merged,
 				StatusDetail: safe.Scrub(obs.StatusDetail, secrets...),
 			}
 		}
@@ -267,9 +311,12 @@ func mergeOutputs(base, overlay map[string]string) map[string]string {
 // the half Response() cannot carry, since its own doc says it reports what
 // was observed rather than that a resource is still converging. An Observe
 // error is classified, never folded into pending.
-func (h *Handler) validate(ctx context.Context, id contract.Identity, secrets []string) (int, contract.Response) {
-	obs, err := h.resource.Observe(ctx, id)
+func (h *Handler) validate(ctx context.Context, d contract.Desired, secrets []string) (int, contract.Response) {
+	obs, err := h.observe(ctx, d)
 	if err != nil {
+		return h.errorResponse(err, secrets)
+	}
+	if err := refuseSecretOutputs(obs.Outputs, d.Secrets); err != nil {
 		return h.errorResponse(err, secrets)
 	}
 	resp := obs.Response()

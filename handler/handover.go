@@ -36,3 +36,30 @@ type HandoverResource interface {
 	// they must never carry secret material.
 	DeleteWithRequest(ctx context.Context, d contract.Desired) (outputs map[string]string, err error)
 }
+
+// RequestObserver is an optional extension of Resource. A block whose
+// resource sits behind a token, or otherwise needs the request's own
+// secrets to authenticate, implements it alongside Resource so its
+// observation is of the real resource rather than of nothing.
+//
+// The Handler checks for it with a type assertion everywhere it calls
+// Observe: on validate, and on every settle poll a subscribe, upgrade or
+// unsubscribe drives. A Resource that also implements RequestObserver has
+// ObserveWithRequest called instead of Observe, with that verb's own
+// Desired (Secrets included, unlike the bare Identity Observe receives). A
+// Resource that does not implement it is unaffected and keeps calling
+// Observe(ctx, Identity) exactly as before.
+type RequestObserver interface {
+	// ObserveWithRequest reports what the resource identified by d.Identity
+	// actually is right now, the same way Observe does, but sees the
+	// verb's own Secrets too. The Handler holds them only for the duration
+	// of that one verb call and stores them nowhere — not on the Handler,
+	// not in the idempotency cache — so a later, unrelated request never
+	// sees them.
+	//
+	// Its outputs reach the wire unscrubbed, the same way Observe's do, so
+	// they must never carry secret material; a value here identical to one
+	// of d.Secrets's values is refused before any response leaves the
+	// Handler.
+	ObserveWithRequest(ctx context.Context, d contract.Desired) (contract.Observation, error)
+}
