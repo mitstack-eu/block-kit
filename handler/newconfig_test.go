@@ -396,3 +396,203 @@ func TestNew_ManifestUnreadableHooksValueIsRefused(t *testing.T) {
 		t.Errorf("error %q does not name the manifest", err.Error())
 	}
 }
+
+// --- A comment inside the hooks: block sequence does not shorten it --------
+
+// manifestWithHooksBlockCommentBetweenItems declares beforeEnsure and
+// afterDelete under spec.lifecycle.hooks with a comment line sitting between
+// them. A comment is valid inside a YAML block sequence, so both hooks are
+// declared.
+const manifestWithHooksBlockCommentBetweenItems = `apiVersion: mitstack/v1alpha
+kind: Block
+metadata:
+  id: test-block
+  name: Test Block
+spec:
+  layer: infra
+  lifecycle:
+    hooks:
+      - beforeEnsure
+      # a comment between two items
+      - afterDelete
+`
+
+// TestNew_ManifestCommentBetweenHookItemsDeclaresBoth pins that both hooks
+// either side of the comment are accepted — registering either one must not
+// be refused as undeclared.
+func TestNew_ManifestCommentBetweenHookItemsDeclaresBoth(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	f := &kittest.FakeResource{}
+	cfg := baseConfig(t, f, s)
+	cfg.Manifest = []byte(manifestWithHooksBlockCommentBetweenItems)
+	cfg.Hooks = map[string]handler.Hook{
+		handler.HookBeforeEnsure: noopHook,
+		handler.HookAfterDelete:  noopHook,
+	}
+
+	if _, err := handler.New(cfg); err != nil {
+		t.Fatalf("handler.New: unexpected error — both beforeEnsure and afterDelete are declared either side of the comment: %v", err)
+	}
+}
+
+// TestNew_ManifestCommentBetweenHookItemsErrorListsBothDeclaredHooks proves
+// the error for an actually-undeclared hook lists every hook the manifest
+// declares, including the one after the comment — the "declares:" list must
+// never omit a hook the manifest does declare.
+func TestNew_ManifestCommentBetweenHookItemsErrorListsBothDeclaredHooks(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	f := &kittest.FakeResource{}
+	cfg := baseConfig(t, f, s)
+	cfg.Manifest = []byte(manifestWithHooksBlockCommentBetweenItems)
+	cfg.Hooks = map[string]handler.Hook{
+		handler.HookBeforeDelete: noopHook, // declared by neither item
+	}
+
+	_, err := handler.New(cfg)
+	if err == nil {
+		t.Fatal("expected an error: beforeDelete is declared by neither item, got none")
+	}
+	if !strings.Contains(err.Error(), "beforeEnsure") {
+		t.Errorf("error %q does not list beforeEnsure among what the manifest declares", err.Error())
+	}
+	if !strings.Contains(err.Error(), "afterDelete") {
+		t.Errorf("error %q does not list afterDelete among what the manifest declares — "+
+			"it must never claim the manifest fails to declare a hook it does declare", err.Error())
+	}
+}
+
+// --- A tab-indented hooks: sequence fails on the reader's own error path ---
+
+// manifestWithTabIndentedHooksSequence indents the same two items with a tab
+// rather than spaces. A tab is not valid YAML indentation, so the reader
+// must refuse it rather than read it as an empty declaration.
+const manifestWithTabIndentedHooksSequence = "apiVersion: mitstack/v1alpha\n" +
+	"kind: Block\n" +
+	"metadata:\n  id: test-block\n  name: Test Block\n" +
+	"spec:\n  layer: infra\n  lifecycle:\n" +
+	"    hooks:\n" +
+	"\t- beforeEnsure\n" +
+	"\t- afterDelete\n"
+
+// TestNew_ManifestTabIndentedHooksSequenceFailsNamingManifest pins that a
+// tab-indented sequence fails New outright, naming the manifest, on its own
+// account — with no hook registered at all, so the only possible source of
+// an error is the manifest read itself, not a "hook not declared" refusal
+// riding on top of a wrongly-empty declaration.
+func TestNew_ManifestTabIndentedHooksSequenceFailsNamingManifest(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	f := &kittest.FakeResource{}
+	cfg := baseConfig(t, f, s)
+	cfg.Manifest = []byte(manifestWithTabIndentedHooksSequence)
+	// cfg.Hooks is left nil on purpose: with nothing registered, New has no
+	// "hook not declared" refusal available to fall back on, so an error
+	// here can only come from the manifest read failing on its own account.
+	// Today it reads the tab-indented sequence as zero items and no error,
+	// so New builds successfully — silently treating an unreadable
+	// declaration as an empty one.
+
+	_, err := handler.New(cfg)
+	if err == nil {
+		t.Fatal("expected an error for a tab-indented hooks sequence, got none — " +
+			"a tab is not valid indentation and must not be read as an empty declaration")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "manifest") {
+		t.Errorf("error %q does not name the manifest", err.Error())
+	}
+	if strings.Contains(err.Error(), "does not declare it") {
+		t.Errorf("error %q comes from the \"hook not declared\" refusal, not the reader's own error path — "+
+			"got here with no hook registered, so declaredSet must never have been consulted", err.Error())
+	}
+	if f.EnsureCalls != 0 || f.ObserveCalls != 0 || f.DeleteCalls != 0 {
+		t.Errorf("Resource was called before New even returned: Ensure=%d Observe=%d Delete=%d",
+			f.EnsureCalls, f.ObserveCalls, f.DeleteCalls)
+	}
+}
+
+// --- A sibling stanza, a commented-out hooks: key, and CRLF endings all ---
+// --- keep today's behaviour --------------------------------------------
+
+// manifestWithSiblingSpecOtherHooksStanza declares beforeEnsure under
+// spec.lifecycle.hooks and afterDelete under the unrelated sibling
+// spec.other.hooks. Only the former is spec.lifecycle.hooks; the sibling
+// must not be read as declaring anything.
+const manifestWithSiblingSpecOtherHooksStanza = `apiVersion: mitstack/v1alpha
+kind: Block
+metadata:
+  id: test-block
+  name: Test Block
+spec:
+  layer: infra
+  lifecycle:
+    hooks:
+      - beforeEnsure
+  other:
+    hooks:
+      - afterDelete
+`
+
+func TestNew_ManifestSiblingSpecOtherHooksStanzaIsIgnored(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	f := &kittest.FakeResource{}
+	cfg := baseConfig(t, f, s)
+	cfg.Manifest = []byte(manifestWithSiblingSpecOtherHooksStanza)
+	cfg.Hooks = map[string]handler.Hook{
+		handler.HookAfterDelete: noopHook, // declared only by the sibling spec.other.hooks
+	}
+
+	_, err := handler.New(cfg)
+	if err == nil {
+		t.Fatal("expected an error: afterDelete is declared only by the sibling spec.other.hooks stanza, " +
+			"not spec.lifecycle.hooks, so registering it must be refused")
+	}
+	if !strings.Contains(err.Error(), handler.HookAfterDelete) {
+		t.Errorf("error %q does not name the offending hook %q", err.Error(), handler.HookAfterDelete)
+	}
+}
+
+// manifestWithCommentedOutHooksKey comments out the entire hooks: stanza
+// under spec.lifecycle. A commented-out key is not a declaration, so this
+// must read exactly like a manifest with no hooks: key at all.
+const manifestWithCommentedOutHooksKey = `apiVersion: mitstack/v1alpha
+kind: Block
+metadata:
+  id: test-block
+  name: Test Block
+spec:
+  layer: infra
+  lifecycle:
+    # hooks:
+    #   - beforeEnsure
+`
+
+func TestNew_ManifestCommentedOutHooksKeyDeclaresNone(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	f := &kittest.FakeResource{}
+	cfg := baseConfig(t, f, s)
+	cfg.Manifest = []byte(manifestWithCommentedOutHooksKey)
+	cfg.Hooks = map[string]handler.Hook{
+		handler.HookBeforeEnsure: noopHook,
+	}
+
+	if _, err := handler.New(cfg); err == nil {
+		t.Fatal("expected an error: a commented-out hooks: line declares no hook, same as no hooks: key at all")
+	}
+}
+
+// TestNew_ManifestCRLFLineEndingsHooksSequenceIsRead pins that a hooks:
+// block sequence terminated with CRLF line endings is read the same as one
+// terminated with bare LF.
+func TestNew_ManifestCRLFLineEndingsHooksSequenceIsRead(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	f := &kittest.FakeResource{}
+	cfg := baseConfig(t, f, s)
+	cfg.Manifest = []byte(strings.ReplaceAll(string(manifestDeclaring("beforeEnsure", "afterDelete")), "\n", "\r\n"))
+	cfg.Hooks = map[string]handler.Hook{
+		handler.HookBeforeEnsure: noopHook,
+		handler.HookAfterDelete:  noopHook,
+	}
+
+	if _, err := handler.New(cfg); err != nil {
+		t.Fatalf("handler.New: unexpected error for a CRLF-terminated manifest: %v", err)
+	}
+}
