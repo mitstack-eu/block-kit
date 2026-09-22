@@ -157,13 +157,21 @@ func parseHooksValue(lines []string, hooksLine int) ([]string, error) {
 	if trimmed == "hooks:" {
 		var hooks []string
 		for _, next := range lines[hooksLine+1:] {
-			if strings.TrimSpace(next) == "" {
+			item := strings.TrimSpace(next)
+			if item == "" {
 				continue
+			}
+			if strings.HasPrefix(item, "#") {
+				continue
+			}
+			if leadingWhitespaceHasTab(next) {
+				return nil, fmt.Errorf("handler: manifest's spec.lifecycle.hooks is not a form New can read "+
+					"(want %q, a flow list like %q, or an indented \"- name\" sequence): %q",
+					"hooks: []", "hooks: [a, b]", item)
 			}
 			if leadingSpaces(next) <= indent {
 				break
 			}
-			item := strings.TrimSpace(next)
 			if !strings.HasPrefix(item, "-") {
 				break
 			}
@@ -195,4 +203,22 @@ func parseHooksValue(lines []string, hooksLine int) ([]string, error) {
 // leadingSpaces counts the spaces a line is indented by.
 func leadingSpaces(line string) int {
 	return len(line) - len(strings.TrimLeft(line, " "))
+}
+
+// leadingWhitespaceHasTab reports whether line's leading run of spaces and
+// tabs contains a tab. A tab is not valid YAML indentation, and
+// leadingSpaces counts only spaces, so a tab-indented line would otherwise
+// measure as column zero and be mistaken for the end of a block sequence.
+func leadingWhitespaceHasTab(line string) bool {
+	for _, r := range line {
+		switch r {
+		case ' ':
+			continue
+		case '\t':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
