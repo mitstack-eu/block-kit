@@ -188,3 +188,32 @@ func TestServe_UnsubscribeFailedSnapshotAbortsBeforeDestroy(t *testing.T) {
 		t.Errorf("ObserveCalls = %d, want 0 — settle must never run after an aborted delete", f.ObserveCalls)
 	}
 }
+
+// TestServe_UnsubscribeDeleteWithRequestReceivesTheUnsubscribeSecrets pins
+// that DeleteWithRequest sees the unsubscribe request's own secrets, the
+// same route by which it already sees Params (Request.Desired() at
+// contract/types.go:297 copies both onto the Desired it returns). No test
+// proved this arrives before now, so this closes that gap explicitly rather
+// than leaving it implied by the Params proof above.
+func TestServe_UnsubscribeDeleteWithRequestReceivesTheUnsubscribeSecrets(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	const tokenValue = "tok-unsubscribe-delete-request-3a7d"
+	f := &handoverFake{Count: 1}
+	h := newHandler(t, f, s)
+
+	status, raw := postHook(t, h, s, envelope("nonce-handover-secrets", map[string]any{
+		"operation": "unsubscribe",
+		"secrets":   map[string]any{"github": map[string]any{"token": tokenValue}},
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	assertConforms(t, raw)
+
+	if f.DeleteWithRequestCalls != 1 {
+		t.Fatalf("DeleteWithRequestCalls = %d, want 1", f.DeleteWithRequestCalls)
+	}
+	if got := f.LastDesired.Secrets["github"]["token"]; got != tokenValue {
+		t.Errorf(`DeleteWithRequest saw Secrets["github"]["token"] = %q, want %q`, got, tokenValue)
+	}
+}
