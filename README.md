@@ -41,8 +41,10 @@ prior outputs, and its cloud identity — independent of what it should
 converge to. The instances belong here because a teardown has to address
 the resource where it was provisioned: a block scoped to an AWS region
 reads that region out of `Identity.Instances`, and `Delete` and `Observe`
-are handed an `Identity` and nothing else. `Request.Desired()` returns a
-`contract.Desired`, which embeds `Identity` and adds the params, secrets
+are handed an `Identity` and nothing else by default — a Resource that opts
+into `handler.RequestObserver` or `handler.HandoverResource` (below) sees
+the verb's own `Desired`, secrets included, instead. `Request.Desired()`
+returns a `contract.Desired`, which embeds `Identity` and adds the params, secrets
 and bindings that describe what an operator should converge its resource
 to, so `d.Instances` inside `Ensure` resolves through the embedded
 `Identity` to the same map a teardown sees. Splitting a request this way
@@ -64,6 +66,31 @@ A block implements `handler.Resource` — `Ensure`, `Observe`, `Delete` — and
 idempotency cache described above, calling whatever `Hooks` the block's
 `Config` registers at `HookBeforeEnsure`, `HookAfterEnsure`, `HookBeforeDelete`
 or `HookAfterDelete`.
+
+A block whose resource sits behind a token — or otherwise needs the
+request's own secrets to authenticate — implements `handler.RequestObserver`:
+
+```go
+type RequestObserver interface {
+	ObserveWithRequest(ctx context.Context, d contract.Desired) (contract.Observation, error)
+}
+```
+
+The Handler checks for it with a type assertion everywhere it would
+otherwise call `Observe`: once on validate, and on every settle poll a
+subscribe, upgrade or unsubscribe drives. A Resource that also implements
+`RequestObserver` has `ObserveWithRequest` called instead, with that verb's
+own `Desired` — secrets included. A Resource that does not implement it is
+unaffected and keeps calling `Observe(ctx, Identity)` exactly as before. The
+secrets reach `ObserveWithRequest` only for the duration of that one verb
+call: the Handler stores them nowhere of its own, the idempotency cache
+included, so a later, unrelated request never sees them.
+
+`Delete` already has a route to the request's secrets, through
+`DeleteWithRequest` below: `Request.Desired()` copies `Secrets` onto the
+`Desired` it returns, the same way it copies `Params`, so a block that
+implements `HandoverResource` sees the unsubscribe request's secrets there
+too.
 
 A block whose teardown needs the unsubscribe request's own params, or that
 must return outputs from tearing down, also implements
@@ -98,6 +125,28 @@ the resource; a second call must find the snapshot (or other handover
 artifact) it already made, or report the resource gone, rather than fail.
 Its outputs also reach the wire unscrubbed, the same way Observe's do, so
 they must never carry secret material.
+
+### The output-secret gate
+
+Before any response leaves validate, a settled `Present` or a settled
+`absent:true`, the Handler refuses one whose `Outputs` carry a value that
+exactly matches one of the request's `secrets` values, over the merged
+`Observe` and `HandoverResource` outputs. The refusal is a `*handler.Refused`
+with `Class` `"secret-in-output"`, and its message names the offending
+output key — never the value — so the refusal itself never becomes a second
+leak.
+
+The check is exact-value, not substring: an output that merely contains a
+secret (an owner login embedded in a repository path, say) is left alone,
+since scrubbing every occurrence would also mangle a legitimate output. This
+is the gate's honest limit — it catches a secret returned verbatim as an
+output value, and it cannot detect one embedded inside a longer value — so a
+block must never put secret material in `Outputs`. Secret material belongs
+in `SecretOutputs`, which the gate never inspects, since that field is where
+a Resource is meant to return a secret on purpose. An empty secret value is
+ignored: it names an unset optional secret rather than an actual one, and an
+empty output value leaks nothing, so the two never combine into a false
+refusal.
 
 ## Testing
 
