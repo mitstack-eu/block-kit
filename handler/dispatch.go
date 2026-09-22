@@ -105,7 +105,7 @@ func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secret
 	case "validate":
 		return h.validate(ctx, id, secrets)
 	case "unsubscribe":
-		return h.deleteAndSettle(ctx, id, secrets)
+		return h.deleteAndSettle(ctx, desired, secrets)
 	default:
 		return http.StatusInternalServerError, contract.Response{Error: "handler: unreachable — unknown operation " + req.Operation}
 	}
@@ -132,24 +132,36 @@ func (h *Handler) ensureAndSettle(ctx context.Context, d contract.Desired, id co
 }
 
 // deleteAndSettle runs beforeDelete, Delete, afterDelete, then polls Observe
-// until Absent or the verb budget runs out.
-func (h *Handler) deleteAndSettle(ctx context.Context, id contract.Identity, secrets []string) (int, contract.Response) {
-	desired := contract.Desired{Identity: id}
+// until Absent or the verb budget runs out. desired carries the unsubscribe
+// request's own Params (in addition to its Identity), so a Resource that
+// also implements HandoverResource sees them — a plain Resource's Delete
+// still receives only the Identity, unchanged.
+func (h *Handler) deleteAndSettle(ctx context.Context, desired contract.Desired, secrets []string) (int, contract.Response) {
+	id := desired.Identity
 
 	if hook, ok := h.hooks[HookBeforeDelete]; ok {
 		if err := hook(ctx, desired); err != nil {
 			return h.errorResponse(err, secrets)
 		}
 	}
-	if err := h.resource.Delete(ctx, id); err != nil {
+
+	var handoverOutputs map[string]string
+	if hr, ok := h.resource.(HandoverResource); ok {
+		outputs, err := hr.DeleteWithRequest(ctx, desired)
+		if err != nil {
+			return h.errorResponse(err, secrets)
+		}
+		handoverOutputs = outputs
+	} else if err := h.resource.Delete(ctx, id); err != nil {
 		return h.errorResponse(err, secrets)
 	}
+
 	if hook, ok := h.hooks[HookAfterDelete]; ok {
 		if err := hook(ctx, desired); err != nil {
 			return h.errorResponse(err, secrets)
 		}
 	}
-	return h.settleAbsent(ctx, id, secrets)
+	return h.settleAbsent(ctx, id, secrets, handoverOutputs)
 }
 
 // settlePresent polls Observe up to VerbBudget times, stopping early on
@@ -194,7 +206,13 @@ func (h *Handler) settlePresent(ctx context.Context, id contract.Identity, secre
 // marker. Like settlePresent, it stops as soon as ctx.Err() is non-nil,
 // checked before every attempt, and answers with what it has observed so
 // far rather than spending the remaining budget unpaced.
-func (h *Handler) settleAbsent(ctx context.Context, id contract.Identity, secrets []string) (int, contract.Response) {
+//
+// handoverOutputs is whatever a HandoverResource's DeleteWithRequest
+// returned, or nil for a plain Resource. On the absent:true answer it is
+// merged with Observe's own outputs — the union of the two, handoverOutputs
+// winning on a key both produce. The absent:false answer carries no
+// outputs, same as before HandoverResource existed.
+func (h *Handler) settleAbsent(ctx context.Context, id contract.Identity, secrets []string, handoverOutputs map[string]string) (int, contract.Response) {
 	var last contract.Observation
 	attempts := 0
 	for attempts < h.verbBudget {
@@ -211,7 +229,7 @@ func (h *Handler) settleAbsent(ctx context.Context, id contract.Identity, secret
 			absent := true
 			return http.StatusOK, contract.Response{
 				Absent:       &absent,
-				Outputs:      obs.Outputs,
+				Outputs:      mergeOutputs(obs.Outputs, handoverOutputs),
 				StatusDetail: safe.Scrub(obs.StatusDetail, secrets...),
 			}
 		}
@@ -224,6 +242,24 @@ func (h *Handler) settleAbsent(ctx context.Context, id contract.Identity, secret
 		Absent:       &absent,
 		StatusDetail: safe.Scrub(fmt.Sprintf("observed %s after %d attempts", last.State, attempts), secrets...),
 	}
+}
+
+// mergeOutputs unions base (Observe's outputs) with overlay (a
+// HandoverResource's returned outputs), overlay winning on a key both
+// carry. An empty overlay returns base unchanged, so the ordinary
+// non-handover path allocates nothing new.
+func mergeOutputs(base, overlay map[string]string) map[string]string {
+	if len(overlay) == 0 {
+		return base
+	}
+	merged := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range overlay {
+		merged[k] = v
+	}
+	return merged
 }
 
 // validate calls Observe exactly once and never polls. It returns

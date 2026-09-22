@@ -57,6 +57,48 @@ that into the `contract.Response` the webhook handler returns, mapping
 `Absent` sets it to `true`, and `Unknown` leaves it `nil` so the engine
 fails open exactly as an operator that never implements the marker does.
 
+## The Handler and Resource
+
+A block implements `handler.Resource` — `Ensure`, `Observe`, `Delete` — and
+`handler.New` wires it behind the trust boundary, the settle loop and the
+idempotency cache described above, calling whatever `Hooks` the block's
+`Config` registers at `HookBeforeEnsure`, `HookAfterEnsure`, `HookBeforeDelete`
+or `HookAfterDelete`.
+
+A block whose teardown needs the unsubscribe request's own params, or that
+must return outputs from tearing down, also implements
+`handler.HandoverResource`:
+
+```go
+type HandoverResource interface {
+	DeleteWithRequest(ctx context.Context, d contract.Desired) (outputs map[string]string, err error)
+}
+```
+
+The Handler checks for it with a type assertion before calling Delete. A
+Resource that also implements HandoverResource has `DeleteWithRequest` called
+instead, with the unsubscribe request's full `Desired` — Params included,
+unlike the bare `Identity` Delete receives. A Resource that does not
+implement it is unaffected and keeps calling `Delete(ctx, Identity)` exactly
+as before. Returning an error from `DeleteWithRequest` aborts before
+anything is destroyed: the Handler answers the error response immediately,
+with no destroy step and no settle poll.
+
+This is the shape the kit's own `handover` package exists for: a block reads
+`d.Params["dataHandover"] == "snapshot"` to decide whether to snapshot data
+before destroying it, and returns the resulting id under the key
+`handover.OutputKey` ("dataSnapshotId") so it lands in the unsubscribe
+response's `outputs`, alongside `absent:true`, once the resource settles
+absent.
+
+`DeleteWithRequest` must be idempotent. A settle timeout answers
+`absent:false` with no outputs, and the platform's redrive calls
+`DeleteWithRequest` again, possibly after an earlier call already destroyed
+the resource; a second call must find the snapshot (or other handover
+artifact) it already made, or report the resource gone, rather than fail.
+Its outputs also reach the wire unscrubbed, the same way Observe's do, so
+they must never carry secret material.
+
 ## Testing
 
 ```
