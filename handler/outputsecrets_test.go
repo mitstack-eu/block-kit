@@ -87,7 +87,7 @@ func TestServe_ValidateOutputExactlyMatchingASecretValueIsRefused(t *testing.T) 
 	h := newHandler(t, f, s)
 	logBuf := captureLog(t)
 
-	status, raw := postHook(t, h, s, envelope("nonce-out-secret-validate", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-out-secret-validate", map[string]any{
 		"operation": "validate",
 		"secrets":   map[string]any{"github": map[string]any{"token": tokenValue}},
 	}))
@@ -119,7 +119,7 @@ func TestServe_UnsubscribeDeleteWithRequestOutputExactlyMatchingASecretValueIsRe
 	h := newHandler(t, f, s)
 	logBuf := captureLog(t)
 
-	status, raw := postHook(t, h, s, envelope("nonce-out-secret-delete", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-out-secret-delete", map[string]any{
 		"operation": "unsubscribe",
 		"secrets":   map[string]any{"github": map[string]any{"token": tokenValue}},
 	}))
@@ -153,7 +153,7 @@ func TestServe_ObserveOutputContainingASecretSubstringLikeOwnerLoginIsAllowed(t 
 	f := &kittest.FakeResource{Count: 1, Outputs: map[string]string{"repo": repoOutput}}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-out-owner-allowed", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-out-owner-allowed", map[string]any{
 		"operation": "validate",
 		"secrets":   map[string]any{"github": map[string]any{"owner": ownerValue, "token": tokenValue}},
 	}))
@@ -183,7 +183,7 @@ func TestServe_SecretOutputsCarryingASecretValueIsNotRefused(t *testing.T) {
 	f := &requestObserverFake{SecretOutputs: map[string]string{"apiToken": tokenValue}}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-secretoutputs-ok", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-secretoutputs-ok", map[string]any{
 		"operation": "validate",
 		"secrets":   map[string]any{"github": map[string]any{"token": tokenValue}},
 	}))
@@ -211,7 +211,7 @@ func TestServe_EmptyOutputValueIsNotRefusedEvenWithAnUnsetSecretPresent(t *testi
 	f := &kittest.FakeResource{Count: 1, Outputs: map[string]string{"blankField": "", "status": "ok"}}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-out-empty-secret-allowed", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-out-empty-secret-allowed", map[string]any{
 		"operation": "validate",
 		"secrets":   map[string]any{"github": map[string]any{"unsetSecret": "", "token": tokenValue}},
 	}))

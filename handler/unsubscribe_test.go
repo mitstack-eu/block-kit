@@ -18,7 +18,7 @@ func TestServe_UnsubscribeAbsentTrueOnlyAfterObserveReportsAbsent(t *testing.T) 
 	f := &kittest.FakeResource{Count: 1} // Delete drives Count to 0 -> Observe reports Absent
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-unsub-absent", map[string]any{"operation": "unsubscribe"}))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-unsub-absent", map[string]any{"operation": "unsubscribe"}))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -44,7 +44,7 @@ func TestServe_UnsubscribeAbsentFalseWithDetailForPresent(t *testing.T) {
 	f := &kittest.FakeResource{Count: 1, ObserveState: &present} // stays Present however Delete leaves Count
 	h := newHandler(t, f, s, func(c *handler.Config) { c.VerbBudget = 2 })
 
-	status, raw := postHook(t, h, s, envelope("nonce-unsub-present", map[string]any{"operation": "unsubscribe"}))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-unsub-present", map[string]any{"operation": "unsubscribe"}))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -71,7 +71,7 @@ func TestServe_UnsubscribeAbsentFalseWithDetailForUnknown(t *testing.T) {
 	f := &kittest.FakeResource{Count: 1, ObserveState: &unknown}
 	h := newHandler(t, f, s, func(c *handler.Config) { c.VerbBudget = 2 })
 
-	status, raw := postHook(t, h, s, envelope("nonce-unsub-unknown", map[string]any{"operation": "unsubscribe"}))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-unsub-unknown", map[string]any{"operation": "unsubscribe"}))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -94,7 +94,7 @@ func TestServe_UnsubscribeObserveErrorAfterSuccessfulDeleteIsAnErrorResponse(t *
 	f := &kittest.FakeResource{Count: 1, ObserveErr: errors.New("observe backend unavailable")}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-unsub-observe-err", map[string]any{"operation": "unsubscribe"}))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-unsub-observe-err", map[string]any{"operation": "unsubscribe"}))
 	if status != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 for a plain Observe error, body: %s", status, raw)
 	}

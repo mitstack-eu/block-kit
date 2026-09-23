@@ -280,7 +280,7 @@ func (h *Handler) serveLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveHook is the POST /hook pipeline: read the bounded body, authenticate
-// it, decode the envelope, verify an OBO token when present, then dispatch
+// it, decode the envelope, require and verify an OBO token, then dispatch
 // the verb — in that order, so a request that fails any earlier step never
 // reaches the Resource.
 func (h *Handler) serveHook(w http.ResponseWriter, r *http.Request) {
@@ -305,11 +305,14 @@ func (h *Handler) serveHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.OBO != "" {
-		if _, err := webhook.VerifyOBO(pub, req.OBO, h.now()); err != nil {
-			h.writeError(w, http.StatusUnauthorized, "invalid OBO token: "+err.Error())
-			return
-		}
+	if req.OBO == "" {
+		h.writeError(w, http.StatusUnauthorized, "missing OBO token")
+		return
+	}
+
+	if _, err := webhook.VerifyOBO(pub, req.OBO, h.now()); err != nil {
+		h.writeError(w, http.StatusUnauthorized, "invalid OBO token: "+err.Error())
+		return
 	}
 
 	h.dispatchRequest(w, r, req)

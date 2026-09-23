@@ -16,7 +16,7 @@ func TestServe_ValidateCallsObserveExactlyOnce(t *testing.T) {
 	f := &kittest.FakeResource{Count: 1}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-validate-once", map[string]any{"operation": "validate"}))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-validate-once", map[string]any{"operation": "validate"}))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -59,7 +59,7 @@ func TestServe_ValidateAnswersObservationResponsePlusPendingOnUnknown(t *testing
 			}
 			h := newHandler(t, f, s)
 
-			status, raw := postHook(t, h, s, envelope("nonce-validate-"+c.name, map[string]any{"operation": "validate"}))
+			status, raw := postHook(t, h, s, envelope(t, s, "nonce-validate-"+c.name, map[string]any{"operation": "validate"}))
 			if status != http.StatusOK {
 				t.Fatalf("status = %d, want 200, body: %s", status, raw)
 			}
@@ -96,7 +96,7 @@ func TestServe_ValidateObserveErrorIsNotPending(t *testing.T) {
 	f := &kittest.FakeResource{ObserveErr: errors.New("observe backend unavailable")}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-validate-observe-err", map[string]any{"operation": "validate"}))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-validate-observe-err", map[string]any{"operation": "validate"}))
 	if status != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 for a plain Observe error, body: %s", status, raw)
 	}

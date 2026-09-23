@@ -15,6 +15,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/contract"
 	"github.com/mitstack-eu/operator-kit/handler"
 	"github.com/mitstack-eu/operator-kit/kittest"
+	"github.com/mitstack-eu/operator-kit/webhook"
 )
 
 // noopSleep is passed as Config.Sleep so a test never waits on wall-clock
@@ -59,8 +60,15 @@ func newHandler(t *testing.T, r handler.Resource, s *kittest.Signer, mutate ...f
 // envelope builds a minimal but DecodeRequest-complete signed-webhook body:
 // operation/subscriptionId/blockId/orgId plus nonce/createdAt (added by
 // kittest.Envelope) — the full required set contract.DecodeRequest checks —
-// merged with extra, which may override any of the defaults.
-func envelope(nonce string, extra map[string]any) []byte {
+// merged with extra, which may override any of the defaults. It also mints
+// and attaches a valid OBO token signed by s (unless extra already sets
+// "obo" itself), so every existing call site keeps exercising the verb
+// behaviour it already pins instead of tripping the OBO-required boundary.
+// A test that wants a body with NO obo field at all — the boundary itself —
+// builds it with kittest.Envelope directly instead of this helper; see
+// obo_required_test.go.
+func envelope(t *testing.T, s *kittest.Signer, nonce string, extra map[string]any) []byte {
+	t.Helper()
 	fields := map[string]any{
 		"operation":      "subscribe",
 		"subscriptionId": "sub-1",
@@ -69,6 +77,18 @@ func envelope(nonce string, extra map[string]any) []byte {
 	}
 	for k, v := range extra {
 		fields[k] = v
+	}
+	if _, hasOBO := fields["obo"]; !hasOBO {
+		subID, _ := fields["subscriptionId"].(string)
+		orgID, _ := fields["orgId"].(string)
+		appID, _ := fields["appId"].(string)
+		tok, err := webhook.MintOBO(s.Private, s.Kid, webhook.OBOClaims{
+			OrgID: orgID, AppID: appID, SubscriptionID: subID,
+		}, time.Hour, time.Now())
+		if err != nil {
+			t.Fatalf("minting a default OBO token for envelope(): %v", err)
+		}
+		fields["obo"] = tok
 	}
 	return kittest.Envelope(nonce, time.Now(), fields)
 }

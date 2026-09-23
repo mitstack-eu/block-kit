@@ -62,7 +62,7 @@ func TestServeHTTP_DelegatesToServe(t *testing.T) {
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s)
 
-	body := envelope("nonce-servehttp", nil)
+	body := envelope(t, s, "nonce-servehttp", nil)
 	status, raw := postHook(t, h, s, body)
 
 	if status != http.StatusOK {

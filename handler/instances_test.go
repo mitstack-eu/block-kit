@@ -142,7 +142,7 @@ func TestServe_UnsubscribeDeletesTheRegionScopedResourceSubscribeCreated(t *test
 	r := &regionScopedResource{}
 	h := newHandler(t, r, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-inst-sub", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-inst-sub", map[string]any{
 		"operation": "subscribe",
 		"instances": awsInstances("eu-central-1"),
 	}))
@@ -155,7 +155,7 @@ func TestServe_UnsubscribeDeletesTheRegionScopedResourceSubscribeCreated(t *test
 			"Ensure must read the region off the request's instance config", got)
 	}
 
-	status, raw = postHook(t, h, s, envelope("nonce-inst-unsub", map[string]any{
+	status, raw = postHook(t, h, s, envelope(t, s, "nonce-inst-unsub", map[string]any{
 		"operation": "unsubscribe",
 		"instances": awsInstances("eu-central-1"),
 	}))
@@ -188,7 +188,7 @@ func TestServe_UnsubscribeReportsAbsentOnlyWithTheResourceActuallyGone(t *testin
 	r := &regionScopedResource{observeState: contract.Absent}
 	h := newHandler(t, r, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-false-success-sub", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-false-success-sub", map[string]any{
 		"operation": "subscribe",
 		"instances": awsInstances("eu-central-1"),
 	}))
@@ -199,7 +199,7 @@ func TestServe_UnsubscribeReportsAbsentOnlyWithTheResourceActuallyGone(t *testin
 		t.Fatalf("provisioned regions after subscribe = %v, want exactly one", got)
 	}
 
-	status, raw = postHook(t, h, s, envelope("nonce-false-success-unsub", map[string]any{
+	status, raw = postHook(t, h, s, envelope(t, s, "nonce-false-success-unsub", map[string]any{
 		"operation": "unsubscribe",
 		"instances": awsInstances("eu-central-1"),
 	}))
@@ -289,7 +289,7 @@ func TestServe_UnsubscribeStillTearsDownABlockReadingRegionFromPriorOutputs(t *t
 	r := &priorOutputsResource{provisioned: map[string]bool{"eu-west-1": true}}
 	h := newHandler(t, r, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-prior-outputs-unsub", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-prior-outputs-unsub", map[string]any{
 		"operation":    "unsubscribe",
 		"priorOutputs": map[string]string{"region": "eu-west-1"},
 	}))
@@ -337,7 +337,7 @@ func TestServe_ObserveReceivesTheRequestsInstanceConfig(t *testing.T) {
 			r := &regionScopedResource{}
 			h := newHandler(t, r, s)
 
-			status, raw := postHook(t, h, s, envelope(tc.nonce, map[string]any{
+			status, raw := postHook(t, h, s, envelope(t, s, tc.nonce, map[string]any{
 				"operation": tc.operation,
 				"instances": awsInstances("eu-central-1"),
 			}))
@@ -376,7 +376,7 @@ func TestServe_EnsureStillReceivesTheRequestsInstanceConfig(t *testing.T) {
 	r := &regionScopedResource{}
 	h := newHandler(t, r, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-ensure-inst", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-ensure-inst", map[string]any{
 		"operation": "subscribe",
 		"instances": awsInstances("eu-central-1"),
 	}))
@@ -419,7 +419,7 @@ func TestServe_DeleteHooksReceiveTheRequestsInstanceConfig(t *testing.T) {
 		}
 	})
 
-	status, raw := postHook(t, h, s, envelope("nonce-hook-inst", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-hook-inst", map[string]any{
 		"operation": "unsubscribe",
 		"instances": awsInstances("eu-central-1"),
 	}))
@@ -449,7 +449,7 @@ func TestServe_UnsubscribeWithNoInstancesSucceedsWithANilInstanceMap(t *testing.
 	r := &regionScopedResource{observeState: contract.Absent}
 	h := newHandler(t, r, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-no-inst-unsub", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-no-inst-unsub", map[string]any{
 		"operation": "unsubscribe",
 	}))
 	if status != http.StatusOK {
@@ -495,7 +495,7 @@ func TestServe_UnsubscribeIsolatesEachOrgsRegion(t *testing.T) {
 	}
 
 	for _, tn := range tenants {
-		status, raw := postHook(t, h, s, envelope("nonce-tenant-sub-"+tn.org, map[string]any{
+		status, raw := postHook(t, h, s, envelope(t, s, "nonce-tenant-sub-"+tn.org, map[string]any{
 			"operation":      "subscribe",
 			"orgId":          tn.org,
 			"subscriptionId": tn.sub,
@@ -509,7 +509,7 @@ func TestServe_UnsubscribeIsolatesEachOrgsRegion(t *testing.T) {
 		t.Fatalf("provisioned regions = %v, want [eu-west-1 us-east-1]", got)
 	}
 
-	status, raw := postHook(t, h, s, envelope("nonce-tenant-unsub-a", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-tenant-unsub-a", map[string]any{
 		"operation":      "unsubscribe",
 		"orgId":          tenants[0].org,
 		"subscriptionId": tenants[0].sub,
@@ -523,7 +523,7 @@ func TestServe_UnsubscribeIsolatesEachOrgsRegion(t *testing.T) {
 			"one org's teardown must not reach another org's region", got)
 	}
 
-	status, raw = postHook(t, h, s, envelope("nonce-tenant-unsub-b", map[string]any{
+	status, raw = postHook(t, h, s, envelope(t, s, "nonce-tenant-unsub-b", map[string]any{
 		"operation":      "unsubscribe",
 		"orgId":          tenants[1].org,
 		"subscriptionId": tenants[1].sub,

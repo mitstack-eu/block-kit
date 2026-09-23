@@ -104,7 +104,7 @@ func TestServe_UnsubscribeDeleteWithRequestReceivesDataHandoverParam(t *testing.
 	f := &handoverFake{Count: 1, SnapshotID: "snap-123"}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-handover-params", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-handover-params", map[string]any{
 		"operation": "unsubscribe",
 		"params":    map[string]string{"dataHandover": "snapshot"},
 	}))
@@ -136,7 +136,7 @@ func TestServe_UnsubscribeSnapshotIdLandsInOutputsBesideAbsentTrue(t *testing.T)
 	f := &handoverFake{Count: 1, SnapshotID: "snap-456"}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-handover-outputs", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-handover-outputs", map[string]any{
 		"operation": "unsubscribe",
 		"params":    map[string]string{"dataHandover": "snapshot"},
 	}))
@@ -165,7 +165,7 @@ func TestServe_UnsubscribeFailedSnapshotAbortsBeforeDestroy(t *testing.T) {
 	f := &handoverFake{Count: 1, SnapshotErr: errors.New("handover: snapshot did not complete")}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-handover-fail", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-handover-fail", map[string]any{
 		"operation": "unsubscribe",
 		"params":    map[string]string{"dataHandover": "snapshot"},
 	}))
@@ -201,7 +201,7 @@ func TestServe_UnsubscribeDeleteWithRequestReceivesTheUnsubscribeSecrets(t *test
 	f := &handoverFake{Count: 1}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-handover-secrets", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-handover-secrets", map[string]any{
 		"operation": "unsubscribe",
 		"secrets":   map[string]any{"github": map[string]any{"token": tokenValue}},
 	}))

@@ -68,7 +68,7 @@ func TestServe_ClassifiesEnsureErrors(t *testing.T) {
 			f := &kittest.FakeResource{EnsureErr: c.err}
 			h := newHandler(t, f, s)
 
-			status, raw := postHook(t, h, s, envelope("nonce-err-"+c.name, nil))
+			status, raw := postHook(t, h, s, envelope(t, s, "nonce-err-"+c.name, nil))
 			if status != c.wantStatus {
 				t.Fatalf("status = %d, want %d, body: %s", status, c.wantStatus, raw)
 			}
@@ -107,7 +107,7 @@ func TestServe_ClassifiesAHookError(t *testing.T) {
 		}
 	})
 
-	status, raw := postHook(t, h, s, envelope("nonce-hook-err", nil))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-hook-err", nil))
 	if status != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 for a refused hook, body: %s", status, raw)
 	}
@@ -147,7 +147,7 @@ func TestServe_RefusedTeardownRawResponseBytes(t *testing.T) {
 	f := &kittest.FakeResource{Count: 1, DeleteErr: handler.Refuse("dependents-remain", "two apps still bind this database")}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-refused-teardown", map[string]any{"operation": "unsubscribe"}))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-refused-teardown", map[string]any{"operation": "unsubscribe"}))
 	if status != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 for a refused teardown, body: %s", status, raw)
 	}

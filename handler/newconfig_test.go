@@ -135,7 +135,7 @@ func TestNew_AcceptsADeclaredAndRegisteredHookAndCallsItAtItsPoint(t *testing.T)
 		}
 	})
 
-	status, raw := postHook(t, h, s, envelope("nonce-hook-pos", nil))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-hook-pos", nil))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -155,7 +155,7 @@ func TestNew_ManifestDeclaringAHookNobodyRegistersIsAccepted(t *testing.T) {
 		// c.Hooks left nil: declared, but nobody registers.
 	})
 
-	status, raw := postHook(t, h, s, envelope("nonce-hook-unused", nil))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-hook-unused", nil))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -279,7 +279,7 @@ func TestNew_ManifestAnchoring_DecoyHooksKeyAboveSpecLifecycleIsIgnored(t *testi
 		}
 	})
 
-	status, raw := postHook(t, h, s, envelope("nonce-manifest-anchor-decoy-above", nil))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-manifest-anchor-decoy-above", nil))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -358,7 +358,7 @@ func TestNew_ManifestFlowFormHooksListIsRead(t *testing.T) {
 		}
 	})
 
-	status, raw := postHook(t, h, s, envelope("nonce-manifest-flow-form", nil))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-manifest-flow-form", nil))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}

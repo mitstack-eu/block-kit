@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/operator-kit/contract"
+	"github.com/mitstack-eu/operator-kit/webhook"
 )
 
 // verbSeamRequestSeq gives every request VerbSeamsOverHandler builds a
@@ -34,12 +35,20 @@ func VerbSeamsOverHandler(t *testing.T, h http.Handler, s *Signer, f *FakeResour
 	post := func(operation string) (int, map[string]any) {
 		t.Helper()
 		n := atomic.AddInt64(&verbSeamRequestSeq, 1)
+		tok, err := webhook.MintOBO(s.Private, s.Kid, webhook.OBOClaims{
+			OrgID:          "org-verbseam",
+			SubscriptionID: "sub-verbseam",
+		}, time.Hour, time.Now())
+		if err != nil {
+			t.Fatalf("minting an OBO token for a verb seam request: %v", err)
+		}
 		body := Envelope(fmt.Sprintf("verbseam-nonce-%d", n), time.Now(), map[string]any{
 			"operation":      operation,
 			"subscriptionId": "sub-verbseam",
 			"blockId":        "block-verbseam",
 			"orgId":          "org-verbseam",
 			"idempotencyKey": fmt.Sprintf("verbseam-idem-%d", n),
+			"obo":            tok,
 		})
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, s.HookRequest(t, "/hook", body))

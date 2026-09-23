@@ -23,7 +23,7 @@ func TestServe_SubscribePresentWithinBudgetAnswers200AbsentFalse(t *testing.T) {
 	f := &kittest.FakeResource{Outputs: map[string]string{"url": "https://example.test"}, StatusDetail: "provisioned"}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-settle-present", nil))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-settle-present", nil))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -58,7 +58,7 @@ func TestServe_SubscribeBudgetExhaustedAnswersPendingNeverError(t *testing.T) {
 	budget := 3
 	h := newHandler(t, f, s, func(c *handler.Config) { c.VerbBudget = budget })
 
-	status, raw := postHook(t, h, s, envelope("nonce-settle-pending", nil))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-settle-pending", nil))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200 — pending is never an error (MIT-1293), body: %s", status, raw)
 	}
@@ -91,7 +91,7 @@ func TestServe_UpgradeBudgetExhaustedAnswersPendingNeverError(t *testing.T) {
 	f := &kittest.FakeResource{ObserveState: &unknown}
 	h := newHandler(t, f, s, func(c *handler.Config) { c.VerbBudget = 2 })
 
-	status, raw := postHook(t, h, s, envelope("nonce-upgrade-pending", map[string]any{"operation": "upgrade"}))
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-upgrade-pending", map[string]any{"operation": "upgrade"}))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", status, raw)
 	}
@@ -158,7 +158,7 @@ func TestServe_SubscribeSettleStopsEarlyWhenContextIsCancelled(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		postHookWithContext(t, h, s, envelope("nonce-settle-cancel-sub", nil), ctx)
+		postHookWithContext(t, h, s, envelope(t, s, "nonce-settle-cancel-sub", nil), ctx)
 		close(done)
 	}()
 
@@ -186,7 +186,7 @@ func TestServe_UnsubscribeSettleStopsEarlyWhenContextIsCancelled(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		postHookWithContext(t, h, s, envelope("nonce-settle-cancel-unsub", map[string]any{"operation": "unsubscribe"}), ctx)
+		postHookWithContext(t, h, s, envelope(t, s, "nonce-settle-cancel-unsub", map[string]any{"operation": "unsubscribe"}), ctx)
 		close(done)
 	}()
 
