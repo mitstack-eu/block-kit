@@ -67,6 +67,12 @@ idempotency cache described above, calling whatever `Hooks` the block's
 `Config` registers at `HookBeforeEnsure`, `HookAfterEnsure`, `HookBeforeDelete`
 or `HookAfterDelete`.
 
+A request that carries no OBO token is refused with 401 on every verb —
+subscribe, upgrade, validate, unsubscribe — before the Resource is ever
+consulted. The token is the platform's own signed assertion of the
+consuming org, app and subscription, and nothing in `Config` or the
+manifest turns the check off.
+
 A block whose resource sits behind a token — or otherwise needs the
 request's own secrets to authenticate — implements `handler.RequestObserver`:
 
