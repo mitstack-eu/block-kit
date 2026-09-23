@@ -98,7 +98,7 @@ func TestServe_ValidateEmitsNoEvents(t *testing.T) {
 			h := newHandler(t, c.f, s)
 			events := newFakeEventsServer(t)
 
-			body := envelope("nonce-events-validate-"+c.name, map[string]any{
+			body := envelope(t, s, "nonce-events-validate-"+c.name, map[string]any{
 				"operation":      "validate",
 				"eventsCallback": eventsCallbackField(events.URL, "events-tok"),
 			})
@@ -125,7 +125,7 @@ func TestServe_SettledSubscribeEmitsExactlyOneCompletedEvent(t *testing.T) {
 			h := newHandler(t, f, s)
 			events := newFakeEventsServer(t)
 
-			body := envelope("nonce-events-settled-"+op, map[string]any{
+			body := envelope(t, s, "nonce-events-settled-"+op, map[string]any{
 				"operation":      op,
 				"eventsCallback": eventsCallbackField(events.URL, "events-tok"),
 			})
@@ -161,7 +161,7 @@ func TestServe_SettledUnsubscribeEmitsExactlyOneCompletedEvent(t *testing.T) {
 	h := newHandler(t, f, s)
 	events := newFakeEventsServer(t)
 
-	body := envelope("nonce-events-settled-unsub", map[string]any{
+	body := envelope(t, s, "nonce-events-settled-unsub", map[string]any{
 		"operation":      "unsubscribe",
 		"eventsCallback": eventsCallbackField(events.URL, "events-tok"),
 	})
@@ -192,7 +192,7 @@ func TestServe_PendingSubscribeEmitsExactlyOneProgressEvent(t *testing.T) {
 			h := newHandler(t, f, s, func(c *handler.Config) { c.VerbBudget = 2 })
 			events := newFakeEventsServer(t)
 
-			body := envelope("nonce-events-pending-"+op, map[string]any{
+			body := envelope(t, s, "nonce-events-pending-"+op, map[string]any{
 				"operation":      op,
 				"eventsCallback": eventsCallbackField(events.URL, "events-tok"),
 			})
@@ -237,7 +237,7 @@ func TestServe_FailingSubscribeEmitsExactlyOneFailedEventWithDetail(t *testing.T
 			h := newHandler(t, f, s)
 			events := newFakeEventsServer(t)
 
-			body := envelope("nonce-events-failed-"+c.name, map[string]any{
+			body := envelope(t, s, "nonce-events-failed-"+c.name, map[string]any{
 				"eventsCallback": eventsCallbackField(events.URL, "events-tok"),
 			})
 			status, raw := postHook(t, h, s, body)
@@ -286,7 +286,7 @@ func TestServe_EventsFailureNeverChangesTheLifecycleResponse(t *testing.T) {
 				url = failing.URL
 			}
 
-			body := envelope("nonce-events-advisory-"+c.name, map[string]any{
+			body := envelope(t, s, "nonce-events-advisory-"+c.name, map[string]any{
 				"eventsCallback": eventsCallbackField(url, "events-tok"),
 			})
 			status, raw := postHook(t, h, s, body)

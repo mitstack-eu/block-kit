@@ -25,7 +25,7 @@ func TestServe_IdempotencyReplaysTheFirstResponseForTheSameKey(t *testing.T) {
 	h := newHandler(t, f, s)
 
 	extra := map[string]any{"idempotencyKey": "idem-1", "subscriptionId": "sub-1"}
-	status1, raw1 := postHook(t, h, s, envelope("nonce-idem-1a", extra))
+	status1, raw1 := postHook(t, h, s, envelope(t, s, "nonce-idem-1a", extra))
 	if status1 != http.StatusOK {
 		t.Fatalf("first delivery: status = %d, body: %s", status1, raw1)
 	}
@@ -33,7 +33,7 @@ func TestServe_IdempotencyReplaysTheFirstResponseForTheSameKey(t *testing.T) {
 		t.Fatalf("EnsureCalls after first delivery = %d, want 1", f.EnsureCalls)
 	}
 
-	status2, raw2 := postHook(t, h, s, envelope("nonce-idem-1b", extra))
+	status2, raw2 := postHook(t, h, s, envelope(t, s, "nonce-idem-1b", extra))
 	if status2 != status1 {
 		t.Errorf("replay status = %d, want the first delivery's status %d", status2, status1)
 	}
@@ -53,12 +53,12 @@ func TestServe_IdempotencyDifferentKeyCallsTheResourceAgain(t *testing.T) {
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s)
 
-	postHook(t, h, s, envelope("nonce-idem-2a", map[string]any{"idempotencyKey": "idem-A", "subscriptionId": "sub-1"}))
+	postHook(t, h, s, envelope(t, s, "nonce-idem-2a", map[string]any{"idempotencyKey": "idem-A", "subscriptionId": "sub-1"}))
 	if f.EnsureCalls != 1 {
 		t.Fatalf("EnsureCalls after first delivery = %d, want 1", f.EnsureCalls)
 	}
 
-	postHook(t, h, s, envelope("nonce-idem-2b", map[string]any{"idempotencyKey": "idem-B", "subscriptionId": "sub-1"}))
+	postHook(t, h, s, envelope(t, s, "nonce-idem-2b", map[string]any{"idempotencyKey": "idem-B", "subscriptionId": "sub-1"}))
 	if f.EnsureCalls != 2 {
 		t.Errorf("EnsureCalls after a different idempotencyKey = %d, want 2 — a distinct key is a distinct request", f.EnsureCalls)
 	}
@@ -72,8 +72,8 @@ func TestServe_IdempotencyEmptyKeyIsNeverCached(t *testing.T) {
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s)
 
-	postHook(t, h, s, envelope("nonce-idem-3a", nil))
-	postHook(t, h, s, envelope("nonce-idem-3b", nil))
+	postHook(t, h, s, envelope(t, s, "nonce-idem-3a", nil))
+	postHook(t, h, s, envelope(t, s, "nonce-idem-3b", nil))
 
 	if f.EnsureCalls != 2 {
 		t.Errorf("EnsureCalls = %d, want 2 — an empty idempotencyKey must never be cached/replayed", f.EnsureCalls)
@@ -92,7 +92,7 @@ func TestServe_IdempotencyKeyedPerSubscription_NoCrossSubscriptionCollision(t *t
 
 	sharedKey := "idem-shared"
 
-	statusA, rawA := postHook(t, h, s, envelope("nonce-tenant-A", map[string]any{
+	statusA, rawA := postHook(t, h, s, envelope(t, s, "nonce-tenant-A", map[string]any{
 		"idempotencyKey": sharedKey, "subscriptionId": "sub-A", "orgId": "org-A",
 	}))
 	if statusA != http.StatusOK {
@@ -102,7 +102,7 @@ func TestServe_IdempotencyKeyedPerSubscription_NoCrossSubscriptionCollision(t *t
 		t.Fatalf("EnsureCalls after subscription A = %d, want 1", f.EnsureCalls)
 	}
 
-	statusB, rawB := postHook(t, h, s, envelope("nonce-tenant-B", map[string]any{
+	statusB, rawB := postHook(t, h, s, envelope(t, s, "nonce-tenant-B", map[string]any{
 		"idempotencyKey": sharedKey, "subscriptionId": "sub-B", "orgId": "org-B",
 	}))
 	if statusB != http.StatusOK {
@@ -116,7 +116,7 @@ func TestServe_IdempotencyKeyedPerSubscription_NoCrossSubscriptionCollision(t *t
 	// A third delivery replaying subscription A's own key+subscription must
 	// still replay correctly — proving the fix above did not simply widen
 	// the cache key into never matching at all.
-	statusA2, rawA2 := postHook(t, h, s, envelope("nonce-tenant-A2", map[string]any{
+	statusA2, rawA2 := postHook(t, h, s, envelope(t, s, "nonce-tenant-A2", map[string]any{
 		"idempotencyKey": sharedKey, "subscriptionId": "sub-A", "orgId": "org-A",
 	}))
 	if statusA2 != statusA || !bytes.Equal(rawA2, rawA) {
@@ -179,7 +179,7 @@ func TestServe_Idempotency500IsNeverCachedRetryRunsTheResourceAgain(t *testing.T
 
 	extra := map[string]any{"idempotencyKey": "idem-500", "subscriptionId": "sub-1"}
 
-	status1, raw1 := postHook(t, h, s, envelope("nonce-500-a", extra))
+	status1, raw1 := postHook(t, h, s, envelope(t, s, "nonce-500-a", extra))
 	if status1 != http.StatusInternalServerError {
 		t.Fatalf("first delivery: status = %d, want 500, body: %s", status1, raw1)
 	}
@@ -187,7 +187,7 @@ func TestServe_Idempotency500IsNeverCachedRetryRunsTheResourceAgain(t *testing.T
 		t.Fatalf("EnsureCalls after the first (failing) delivery = %d, want 1", r.calls())
 	}
 
-	status2, raw2 := postHook(t, h, s, envelope("nonce-500-b", extra))
+	status2, raw2 := postHook(t, h, s, envelope(t, s, "nonce-500-b", extra))
 	if r.calls() != 2 {
 		t.Errorf("EnsureCalls after the retry = %d, want 2 — a 500 must never be cached, so the retry must reach the Resource again", r.calls())
 	}
@@ -279,7 +279,7 @@ func TestServe_IdempotencySingleFlightSameKeyCallsEnsureOnce(t *testing.T) {
 	results := make(chan result, 2)
 
 	go func() {
-		status, raw := postHook(t, h, s, envelope("nonce-sf-a", extra))
+		status, raw := postHook(t, h, s, envelope(t, s, "nonce-sf-a", extra))
 		results <- result{status, raw}
 	}()
 
@@ -290,7 +290,7 @@ func TestServe_IdempotencySingleFlightSameKeyCallsEnsureOnce(t *testing.T) {
 	}
 
 	go func() {
-		status, raw := postHook(t, h, s, envelope("nonce-sf-b", extra))
+		status, raw := postHook(t, h, s, envelope(t, s, "nonce-sf-b", extra))
 		results <- result{status, raw}
 	}()
 

@@ -73,7 +73,7 @@ func TestServe_MapsEachVerbToItsCallSequence(t *testing.T) {
 		f := &kittest.FakeResource{}
 		h, s, seq := newRecordingHandler(t, f)
 
-		status, raw := postHook(t, h, s, envelope("nonce-sub", map[string]any{"operation": "subscribe"}))
+		status, raw := postHook(t, h, s, envelope(t, s, "nonce-sub", map[string]any{"operation": "subscribe"}))
 		if status != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body: %s", status, raw)
 		}
@@ -101,7 +101,7 @@ func TestServe_MapsEachVerbToItsCallSequence(t *testing.T) {
 		f := &kittest.FakeResource{}
 		h, s, seq := newRecordingHandler(t, f)
 
-		status, raw := postHook(t, h, s, envelope("nonce-upg", map[string]any{"operation": "upgrade"}))
+		status, raw := postHook(t, h, s, envelope(t, s, "nonce-upg", map[string]any{"operation": "upgrade"}))
 		if status != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body: %s", status, raw)
 		}
@@ -123,7 +123,7 @@ func TestServe_MapsEachVerbToItsCallSequence(t *testing.T) {
 		f := &kittest.FakeResource{Count: 1} // already provisioned
 		h, s, seq := newRecordingHandler(t, f)
 
-		status, raw := postHook(t, h, s, envelope("nonce-val", map[string]any{"operation": "validate"}))
+		status, raw := postHook(t, h, s, envelope(t, s, "nonce-val", map[string]any{"operation": "validate"}))
 		if status != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body: %s", status, raw)
 		}
@@ -144,7 +144,7 @@ func TestServe_MapsEachVerbToItsCallSequence(t *testing.T) {
 		f := &kittest.FakeResource{Count: 1} // already provisioned
 		h, s, seq := newRecordingHandler(t, f)
 
-		status, raw := postHook(t, h, s, envelope("nonce-uns", map[string]any{"operation": "unsubscribe"}))
+		status, raw := postHook(t, h, s, envelope(t, s, "nonce-uns", map[string]any{"operation": "unsubscribe"}))
 		if status != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body: %s", status, raw)
 		}

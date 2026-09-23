@@ -50,7 +50,7 @@ func TestServe_NeverLeaksSecretsInResponseOrLogs(t *testing.T) {
 
 	h := newHandler(t, f, s)
 
-	body := envelope("nonce-secrets", map[string]any{
+	body := envelope(t, s, "nonce-secrets", map[string]any{
 		"obo":          oboToken,
 		"secrets":      map[string]any{"db": map[string]any{"password": secretValue}},
 		"secretInputs": map[string]any{"apiKey": secretInputValue},

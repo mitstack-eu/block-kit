@@ -119,7 +119,7 @@ func TestServe_ValidateObserveWithRequestReceivesTheValidateRequestSecrets(t *te
 	f := &requestObserverFake{}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-observe-validate-secrets", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-observe-validate-secrets", map[string]any{
 		"operation": "validate",
 		"secrets":   map[string]any{"github": map[string]any{"token": tokenValue}},
 	}))
@@ -150,7 +150,7 @@ func TestServe_SubscribeSettlePollsEachReceiveTheSubscribeSecrets(t *testing.T) 
 	f := &requestObserverFake{PresentAfter: budget} // Present only on the final (3rd) poll
 	h := newHandler(t, f, s, func(c *handler.Config) { c.VerbBudget = budget })
 
-	status, raw := postHook(t, h, s, envelope("nonce-observe-subscribe-polls", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-observe-subscribe-polls", map[string]any{
 		"operation": "subscribe",
 		"secrets":   map[string]any{"github": map[string]any{"token": tokenValue}},
 	}))
@@ -179,7 +179,7 @@ func TestServe_UnsubscribeSettlePollsEachReceiveTheUnsubscribeSecrets(t *testing
 	f := &requestObserverFake{AbsentAfter: budget} // Absent only on the final (3rd) poll
 	h := newHandler(t, f, s, func(c *handler.Config) { c.VerbBudget = budget })
 
-	status, raw := postHook(t, h, s, envelope("nonce-observe-unsubscribe-polls", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-observe-unsubscribe-polls", map[string]any{
 		"operation": "unsubscribe",
 		"secrets":   map[string]any{"github": map[string]any{"token": tokenValue}},
 	}))
@@ -208,7 +208,7 @@ func TestServe_PlainResourceObserveIsUnaffectedWhenSecretsArePresent(t *testing.
 	f := &kittest.FakeResource{Outputs: map[string]string{"url": "https://example.test"}}
 	h := newHandler(t, f, s)
 
-	status, raw := postHook(t, h, s, envelope("nonce-plain-resource-untouched", map[string]any{
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-plain-resource-untouched", map[string]any{
 		"secrets": map[string]any{"github": map[string]any{"token": "tok-plain-untouched-11aa"}},
 	}))
 	if status != http.StatusOK {
@@ -241,7 +241,7 @@ func TestServe_PollSecretsFromOneVerbNeverReachALaterUnrelatedRequest(t *testing
 	f := &requestObserverFake{}
 	h := newHandler(t, f, s)
 
-	status1, raw1 := postHook(t, h, s, envelope("nonce-scope-a", map[string]any{
+	status1, raw1 := postHook(t, h, s, envelope(t, s, "nonce-scope-a", map[string]any{
 		"operation":      "validate",
 		"subscriptionId": "sub-scope-a",
 		"secrets":        map[string]any{"github": map[string]any{"token": tokenValue}},
@@ -253,7 +253,7 @@ func TestServe_PollSecretsFromOneVerbNeverReachALaterUnrelatedRequest(t *testing
 		t.Fatalf("first request did not reach ObserveWithRequest with its own secret: got %q", got)
 	}
 
-	status2, raw2 := postHook(t, h, s, envelope("nonce-scope-b", map[string]any{
+	status2, raw2 := postHook(t, h, s, envelope(t, s, "nonce-scope-b", map[string]any{
 		"operation":      "validate",
 		"subscriptionId": "sub-scope-b",
 	}))
@@ -288,12 +288,12 @@ func TestServe_IdempotencyCacheNeverStoresOrLeaksVerbSecrets(t *testing.T) {
 		"secrets":        map[string]any{"github": map[string]any{"token": tokenValue}},
 	}
 
-	status1, raw1 := postHook(t, h, s, envelope("nonce-idem-secret-a", extra))
+	status1, raw1 := postHook(t, h, s, envelope(t, s, "nonce-idem-secret-a", extra))
 	if status1 != http.StatusOK {
 		t.Fatalf("first delivery: status = %d, body: %s", status1, raw1)
 	}
 
-	status2, raw2 := postHook(t, h, s, envelope("nonce-idem-secret-b", extra))
+	status2, raw2 := postHook(t, h, s, envelope(t, s, "nonce-idem-secret-b", extra))
 	if status2 != status1 {
 		t.Errorf("replay status = %d, want the first delivery's status %d", status2, status1)
 	}

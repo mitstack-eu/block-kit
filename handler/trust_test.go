@@ -22,7 +22,7 @@ func TestServe_401WhenKeyIdMissing(t *testing.T) {
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s)
 
-	r := s.HookRequest(t, "/hook", envelope("nonce-trust-nokid", nil))
+	r := s.HookRequest(t, "/hook", envelope(t, s, "nonce-trust-nokid", nil))
 	r.Header.Del("X-Mitstack-Key-Id")
 
 	w := httptest.NewRecorder()
@@ -40,7 +40,7 @@ func TestServe_401OnForgedSignature(t *testing.T) {
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s)
 
-	body := envelope("nonce-trust-forged", nil)
+	body := envelope(t, s, "nonce-trust-forged", nil)
 	r := s.HookRequest(t, "/hook", body)
 	r.Header.Set("X-Mitstack-Signature-Ed25519", other.SignBody(body))
 
@@ -58,7 +58,7 @@ func TestServe_401WhenBodyTamperedAfterSigning(t *testing.T) {
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s)
 
-	original := envelope("nonce-trust-tamper", map[string]any{"operation": "subscribe"})
+	original := envelope(t, s, "nonce-trust-tamper", map[string]any{"operation": "subscribe"})
 	r := s.HookRequest(t, "/hook", original) // headers signed over `original`
 	tampered := []byte(strings.Replace(string(original), "subscribe", "unsubscrib", 1))
 	r.Body = io.NopCloser(strings.NewReader(string(tampered))) // but the wire body is `tampered`
@@ -92,7 +92,7 @@ func TestServe_401OnAReplayedNonce(t *testing.T) {
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s)
 
-	body := envelope("nonce-trust-replay", nil)
+	body := envelope(t, s, "nonce-trust-replay", nil)
 
 	status1, _ := postHook(t, h, s, body)
 	if status1 != http.StatusOK {
@@ -119,7 +119,7 @@ func TestServe_401OnAnInvalidOBOToken(t *testing.T) {
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s)
 
-	body := envelope("nonce-trust-obo", map[string]any{"obo": "not-a-real-obo-token"})
+	body := envelope(t, s, "nonce-trust-obo", map[string]any{"obo": "not-a-real-obo-token"})
 	status, _ := postHook(t, h, s, body)
 
 	if status != http.StatusUnauthorized {
