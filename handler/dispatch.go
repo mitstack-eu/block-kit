@@ -168,11 +168,19 @@ func (h *Handler) ensureAndSettle(ctx context.Context, d contract.Desired, secre
 	return h.settlePresent(ctx, d, secrets)
 }
 
-// deleteAndSettle runs beforeDelete, Delete, afterDelete, then polls Observe
-// until Absent or the verb budget runs out. desired carries the unsubscribe
-// request's own Params (in addition to its Identity), so a Resource that
-// also implements HandoverResource sees them — a plain Resource's Delete
-// still receives only the Identity, unchanged.
+// deleteAndSettle runs beforeDelete, Delete, afterDelete, then settles the
+// teardown. desired carries the unsubscribe request's own Params (in
+// addition to its Identity), so a Resource that also implements
+// HandoverResource sees them — a plain Resource's Delete still receives only
+// the Identity, unchanged. A manifest that declares
+// spec.lifecycle.retainsOnUnsubscribe answers absent:true as soon as
+// beforeDelete, Delete (or DeleteWithRequest) and afterDelete have all
+// succeeded, carrying any handover outputs, without ever polling Observe —
+// the block keeps the resource by design, so Observe would just keep
+// reporting Present. Any failure along the way still takes the ordinary
+// errorResponse path regardless of the declaration. Every other Resource
+// settles the ordinary way: settleAbsent polls Observe until Absent or the
+// verb budget runs out.
 func (h *Handler) deleteAndSettle(ctx context.Context, desired contract.Desired, secrets []string) (int, contract.Response) {
 	id := desired.Identity
 
@@ -198,6 +206,21 @@ func (h *Handler) deleteAndSettle(ctx context.Context, desired contract.Desired,
 			return h.errorResponse(err, secrets)
 		}
 	}
+
+	if h.retainsOnUnsubscribe {
+		if err := refuseSecretOutputs(handoverOutputs, desired.Secrets); err != nil {
+			return h.errorResponse(err, secrets)
+		}
+		absent := true
+		return http.StatusOK, contract.Response{
+			Absent:  &absent,
+			Outputs: handoverOutputs,
+			StatusDetail: safe.Scrub(
+				"the block declares it retains its resource on unsubscribe, so absence was not observed",
+				secrets...),
+		}
+	}
+
 	return h.settleAbsent(ctx, desired, secrets, handoverOutputs)
 }
 

@@ -132,6 +132,27 @@ artifact) it already made, or report the resource gone, rather than fail.
 Its outputs also reach the wire unscrubbed, the same way Observe's do, so
 they must never carry secret material.
 
+### Retaining a resource on unsubscribe
+
+A block whose manifest declares `spec.lifecycle.retainsOnUnsubscribe: true`
+is one that by design keeps the resource it created — a consumer's own app
+repository, say — so a normal teardown's `Observe` poll would just keep
+reporting `Present` forever, since nothing ever destroys the resource to
+make it go absent. Such a block declares `retainsOnUnsubscribe` so the
+Handler settles its unsubscribe without ever probing for absence: as soon as
+the `beforeDelete` hook, `Delete` (or `DeleteWithRequest`) and the
+`afterDelete` hook have all succeeded, it answers `absent:true` at once,
+carrying any `HandoverResource` outputs, with a `statusDetail` explaining
+that the block declares it retains its resource so absence was not
+observed. `Observe` is never called for that unsubscribe.
+
+A failed `Delete`, `DeleteWithRequest` or delete-side hook is unaffected by
+the declaration: it still answers the ordinary error response, never
+`absent:true`. A block that does not declare `retainsOnUnsubscribe` — the
+field defaults to `false` — keeps the ordinary behaviour: the Handler polls
+`Observe` up to `VerbBudget` times and answers `absent:false` if the budget
+runs out still non-absent.
+
 ### The output-secret gate
 
 Before any response leaves validate, a settled `Present` or a settled
