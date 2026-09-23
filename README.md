@@ -185,3 +185,15 @@ left off. A push whose commits deliver no keys records nothing and still
 succeeds. A push with keys but no `TRACKER_BASE_URL` configured fails the
 run, since a delivery that silently skips the board looks the same as one
 that reached it.
+
+## Gating a pull request on a board key
+
+Every pull request also runs `cmd/pr-keys`, which fails the `pr-key-gate`
+check when neither its commits nor its own title carries a board key. Both
+halves are checked because either can be the one that reaches main: a merge
+commit or a rebase delivers the range's commits, while a squash delivers
+only the pull request's title, folding every commit into that one line. A
+key has to lead a commit subject's key list (`MIT-123: fix the thing`) or
+sit on its own `Jira:` trailer line, and the same leading-list rule applies
+to the title — a key that only appears inside a merge commit's default
+branch name is not delivery intent, and the gate does not count it.

@@ -19,6 +19,35 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  # A pull request's own delivery intent has to reach the board somehow: a
+  # merge commit or a rebase carries it in the commits, a squash carries it
+  # only in the title, so this gates on both. pull_request only — a push to
+  # main has already merged, and record-delivery below is what reads it
+  # then.
+  pr-key-gate:
+    name: pr key gate
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the base..head range needs history a shallow checkout has not
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+      - name: Gate the pull request on a board key
+        # PR_TITLE carries the title through the environment rather than
+        # interpolated straight into the shell below: a pull request's title
+        # is attacker-controlled text, and inline interpolation into run:
+        # would be a script-injection hole.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          go run ./cmd/pr-keys \
+            --repo . \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+
   # This repository IS the kit, so a change reaching main without a tag is
   # unreachable to every block importing it. A thin caller by design: the
   # script owns the decision and the version arithmetic, and no copy of
