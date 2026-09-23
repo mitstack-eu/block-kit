@@ -7,6 +7,8 @@
 # Two jobs, and the ordering IS the acceptance criterion: `publish` needs
 # `conformance`, so a red conformance run never starts a publish, and
 # `blockprov build` refuses a non-pass verdict a second time regardless.
+# The publish job also refuses to move a version tag that already exists in
+# the registry, ending green with an "already published" message instead.
 name: publish-block
 
 on:
@@ -217,7 +219,34 @@ jobs:
           echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
           aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
 
+      # A version tag already in the registry is never pushed over: this
+      # probe is read-only and answers true/false into $GITHUB_OUTPUT for
+      # every step below to skip on. `aws ecr batch-get-image` exits 0 with
+      # `None` when the tag is absent (its images array comes back empty
+      # and the miss lands in its failures array instead), so `None` and
+      # empty are the only signals this step reads as "not published yet".
+      # A non-zero exit from aws means the probe itself could not answer,
+      # and that must never be read as "unpublished" — it fails the job.
+      - name: Refuse to move a published version tag
+        id: existing
+        run: |
+          set -euo pipefail
+          VERSION=$(awk '$1=="version:"{print $2; exit}' manifest.yaml)
+          DIGEST=$(aws ecr batch-get-image --repository-name "${{ inputs.ecr-repository }}" --image-ids "imageTag=v${VERSION}" --query 'images[0].imageId.imageDigest' --output text) || {
+            echo "probe for v${VERSION} failed; refusing to guess whether it is published" >&2
+            exit 1
+          }
+          if [ -n "$DIGEST" ] && [ "$DIGEST" != "None" ]; then
+            echo "already published: v${VERSION} ${DIGEST}"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "published=false" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Build and push image
+        if: steps.existing.outputs.published != 'true'
         run: |
           set -euo pipefail
           VERSION=$(awk '$1=="version:"{print $2; exit}' manifest.yaml)
@@ -239,6 +268,7 @@ jobs:
       # migrates — and this fails loudly rather than handing Build an empty
       # value it would refuse anyway with a less useful error.
       - name: Determine the kit version pinned in go.mod
+        if: steps.existing.outputs.published != 'true'
         run: |
           set -euo pipefail
           # `|| true` keeps a no-match grep from tripping `set -e` under
@@ -255,9 +285,11 @@ jobs:
       # A second gate over the same fact `needs: conformance` already
       # enforces: blockprov build refuses to sign anything but a fresh pass.
       - name: blockverify (standalone, for blockprov build's report)
+        if: steps.existing.outputs.published != 'true'
         run: ./blockverify --standalone --json . > blockverify-report.json
 
       - name: blockprov build
+        if: steps.existing.outputs.published != 'true'
         run: |
           ./blockprov build \
             --manifest manifest.yaml \
@@ -278,6 +310,7 @@ jobs:
       # argument — see that step's own comment for why.
       - name: Fetch ECR password
         id: ecr_password
+        if: steps.existing.outputs.published != 'true'
         run: |
           set -euo pipefail
           PASSWORD=$(aws ecr get-login-password --region ${{ inputs.aws-region }})
@@ -287,6 +320,7 @@ jobs:
       # The credential is read from the environment, never argv, so it never
       # sits in /proc or a stray `set -x` trace.
       - name: blockprov push
+        if: steps.existing.outputs.published != 'true'
         env:
           ECR_PASSWORD: ${{ steps.ecr_password.outputs.password }}
         run: |
