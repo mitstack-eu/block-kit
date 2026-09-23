@@ -112,6 +112,59 @@ func manifestHooks(manifest []byte) ([]string, error) {
 	return parseHooksValue(lines, hooksLine)
 }
 
+// manifestRetainsOnUnsubscribe reads spec.lifecycle.retainsOnUnsubscribe,
+// anchored the same way manifestHooks anchors spec.lifecycle.hooks: spec: at
+// the document's top level, lifecycle: a direct child of it, and
+// retainsOnUnsubscribe: a direct child of lifecycle, found with the same
+// findChild helper. A retainsOnUnsubscribe: key anywhere else — a decoy
+// above spec.lifecycle, or nested deeper under some other spec.lifecycle
+// child — is ignored.
+//
+// No manifest, no spec.lifecycle, or no retainsOnUnsubscribe key under it
+// all mean false. Only a bare "true" or "false" value is read; anything
+// else makes manifestRetainsOnUnsubscribe return an error naming the field,
+// the same way manifestHooks refuses a hooks: value it cannot read, since a
+// declaration nobody can read must not be mistaken for false.
+func manifestRetainsOnUnsubscribe(manifest []byte) (bool, error) {
+	if len(manifest) == 0 {
+		return false, nil
+	}
+	lines := strings.Split(string(manifest), "\n")
+
+	specLine := -1
+	for i, line := range lines {
+		if leadingSpaces(line) == 0 && strings.TrimSpace(line) == "spec:" {
+			specLine = i
+			break
+		}
+	}
+	if specLine < 0 {
+		return false, nil
+	}
+
+	lifecycleLine := findChild(lines, specLine, 0, "lifecycle:", false)
+	if lifecycleLine < 0 {
+		return false, nil
+	}
+
+	retainsLine := findChild(lines, lifecycleLine, leadingSpaces(lines[lifecycleLine]), "retainsOnUnsubscribe:", true)
+	if retainsLine < 0 {
+		return false, nil
+	}
+
+	trimmed := strings.TrimSpace(lines[retainsLine])
+	rest, ok := strings.CutPrefix(trimmed, "retainsOnUnsubscribe:")
+	if ok {
+		switch strings.TrimSpace(rest) {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("handler: manifest's spec.lifecycle.retainsOnUnsubscribe must be a bare true or false: %q", trimmed)
+}
+
 // findChild scans forward from just after the line at parentLine (itself
 // indented by parentIndent) for a direct child of that line: the first
 // line indented more than parentIndent fixes the child indent level, and

@@ -145,6 +145,8 @@ type Handler struct {
 	resource Resource
 	hooks    map[string]Hook
 
+	retainsOnUnsubscribe bool
+
 	jwksURL   string
 	publicKey func(kid string) (ed25519.PublicKey, error)
 	replay    *webhook.Replay
@@ -175,6 +177,10 @@ func New(cfg Config) (*Handler, error) {
 	if err := validateHooks(cfg); err != nil {
 		return nil, err
 	}
+	retainsOnUnsubscribe, err := manifestRetainsOnUnsubscribe(cfg.Manifest)
+	if err != nil {
+		return nil, err
+	}
 
 	hooks := cfg.Hooks
 	if hooks == nil {
@@ -182,17 +188,18 @@ func New(cfg Config) (*Handler, error) {
 	}
 
 	h := &Handler{
-		resource:     cfg.Resource,
-		hooks:        hooks,
-		jwksURL:      cfg.JWKSURL,
-		publicKey:    cfg.PublicKey,
-		replay:       cfg.Replay,
-		logs:         cfg.Logs,
-		verbBudget:   cfg.VerbBudget,
-		pollInterval: cfg.PollInterval,
-		sleep:        cfg.Sleep,
-		now:          cfg.Now,
-		idempotency:  newIdempotencyCache(),
+		resource:             cfg.Resource,
+		hooks:                hooks,
+		retainsOnUnsubscribe: retainsOnUnsubscribe,
+		jwksURL:              cfg.JWKSURL,
+		publicKey:            cfg.PublicKey,
+		replay:               cfg.Replay,
+		logs:                 cfg.Logs,
+		verbBudget:           cfg.VerbBudget,
+		pollInterval:         cfg.PollInterval,
+		sleep:                cfg.Sleep,
+		now:                  cfg.Now,
+		idempotency:          newIdempotencyCache(),
 	}
 
 	if h.verbBudget <= 0 {
