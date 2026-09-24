@@ -73,6 +73,22 @@ consulted. The token is the platform's own signed assertion of the
 consuming org, app and subscription, and nothing in `Config` or the
 manifest turns the check off.
 
+An error the Resource or a hook returns is answered by its kind. A
+`*handler.Refused` answers 400 with a `refused:<class>` status detail,
+which the engine treats as permanent. Any other error answers 500, which
+the engine retries under the same idempotency key, and the idempotency
+cache never stores a 500, so the retry reaches the Resource again. A panic
+in the Resource or a hook is answered the same way as that second kind: the
+Handler recovers it and answers 500 with a fixed error naming the verb,
+such as `handler: the block panicked during subscribe`. The response never
+carries the panic value. The Handler recovers inside the idempotency cache's
+single-flight call, so a delivery waiting on the same key receives that
+same response rather than an empty one. The panic is logged with the block,
+subscription and verb. A string or error panic value is logged with every
+request secret scrubbed where it appears literally, and any other value is
+logged only as its type, because formatting it could print a secret in a
+form a literal scrub cannot find. A block cannot turn this recovery off.
+
 A block whose resource sits behind a token — or otherwise needs the
 request's own secrets to authenticate — implements `handler.RequestObserver`:
 

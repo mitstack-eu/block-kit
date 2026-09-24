@@ -21,7 +21,9 @@ import (
 // finds its key already in flight waits for that call and shares its
 // response rather than running the verb a second time. An empty
 // idempotencyKey skips the cache entirely, so it is never stored or
-// single-flighted.
+// single-flighted. A panic in the Resource or a hook is recovered inside
+// run, so the calling delivery and every waiter on its key receive the same
+// retryable 500.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := secretsFor(req)
 
@@ -37,7 +39,7 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	})
 
 	run := func() (int, []byte) {
-		status, resp := h.dispatchVerb(ctx, req, secrets)
+		status, resp := h.dispatchVerbRecovering(ctx, req, secrets)
 		h.emitVerbEvent(ctx, req.Operation, status, resp)
 
 		raw, err := json.Marshal(resp)
@@ -60,6 +62,49 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(raw)
+}
+
+// dispatchVerbRecovering runs dispatchVerb and turns a panic raised by the
+// Resource or a hook into the answer errorResponse gives any other fault:
+// HTTP 500 with no refusal class. The engine reads a 500 as an operator
+// failure and retries it, and the idempotency cache never stores one, so the
+// retry reaches the Resource again. It recovers here, inside the
+// single-flight call, because a recover further out would leave a waiter on
+// the same key holding the in-flight call's zero status. The response error
+// is a fixed message per verb that carries nothing from the panic value,
+// since the platform stores the response body. The panic is logged with the
+// block, subscription and verb, as described on panicValueForLog.
+func (h *Handler) dispatchVerbRecovering(ctx context.Context, req contract.Request, secrets []string) (status int, resp contract.Response) {
+	defer func() {
+		p := recover()
+		if p == nil {
+			return
+		}
+		log.Printf("handler: block %s subscription %s: %s panicked: %s",
+			safe.LogSafe(req.BlockID, secrets...),
+			safe.LogSafe(req.SubscriptionID, secrets...),
+			req.Operation,
+			panicValueForLog(p, secrets))
+		status = http.StatusInternalServerError
+		resp = contract.Response{Error: "handler: the block panicked during " + req.Operation}
+	}()
+	return h.dispatchVerb(ctx, req, secrets)
+}
+
+// panicValueForLog renders a recovered panic value for the log. A string or
+// an error is kept, with every request secret scrubbed where it appears
+// literally. Any other value is rendered only as its type, because
+// formatting it could print a secret in a form a literal scrub cannot find,
+// such as a []byte printed as decimal bytes.
+func panicValueForLog(p any, secrets []string) string {
+	switch v := p.(type) {
+	case string:
+		return safe.LogSafe(v, secrets...)
+	case error:
+		return safe.LogSafe(v.Error(), secrets...)
+	default:
+		return fmt.Sprintf("value of type %T", p)
+	}
 }
 
 // emitVerbEvent emits at most one event for one verb call: none for

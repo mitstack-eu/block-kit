@@ -39,10 +39,12 @@ func isCacheableStatus(status int) bool {
 
 // inflightCall tracks one delivery that is still running a verb for a given
 // key, so a concurrent delivery of the same key can wait for it instead of
-// calling the Resource a second time. wg is released exactly once, however
-// the run function exits — including by panicking — after status/body are
-// set, so a waiter never blocks forever on a call that failed to finish
-// normally.
+// calling the Resource a second time. The run function recovers a panic in
+// the Resource or a hook itself, so a waiter on a call that panicked
+// receives the same 500 and body the calling delivery answers. wg is still
+// released exactly once however run exits, including by a panic that
+// escapes it, so a waiter never blocks forever; only such an escaped panic
+// leaves the waiter holding a zero status.
 type inflightCall struct {
 	wg     sync.WaitGroup
 	status int
