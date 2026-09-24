@@ -45,6 +45,18 @@ type panickingResource struct {
 	deleteCalls int
 	entered     chan struct{}
 	release     chan struct{}
+	// value, when non-nil, is what every method panics with instead of the
+	// default string quoting panicSecret.
+	value any
+}
+
+// panicValue is the value a method panics with: value when set, otherwise
+// a string that quotes panicSecret beside panicMessage.
+func (r *panickingResource) panicValue() any {
+	if r.value != nil {
+		return r.value
+	}
+	return fmt.Sprintf("%s using credential %s", panicMessage, panicSecret)
 }
 
 func (r *panickingResource) Ensure(ctx context.Context, d contract.Desired) error {
@@ -57,21 +69,21 @@ func (r *panickingResource) Ensure(ctx context.Context, d contract.Desired) erro
 	if r.release != nil {
 		<-r.release
 	}
-	panic(fmt.Sprintf("%s using credential %s", panicMessage, panicSecret))
+	panic(r.panicValue())
 }
 
 func (r *panickingResource) Observe(ctx context.Context, id contract.Identity) (contract.Observation, error) {
 	r.mu.Lock()
 	r.observeCall++
 	r.mu.Unlock()
-	panic(fmt.Sprintf("%s using credential %s", panicMessage, panicSecret))
+	panic(r.panicValue())
 }
 
 func (r *panickingResource) Delete(ctx context.Context, id contract.Identity) error {
 	r.mu.Lock()
 	r.deleteCalls++
 	r.mu.Unlock()
-	panic(fmt.Sprintf("%s using credential %s", panicMessage, panicSecret))
+	panic(r.panicValue())
 }
 
 func (r *panickingResource) calls() int {
@@ -196,7 +208,10 @@ func TestServe_PanickingResourceIsNotCachedRetryReachesTheResourceAgain(t *testi
 // goroutines sit inside the idempotency cache's single-flight call without
 // being inside the Resource itself. The first delivery holds the in-flight
 // entry for as long as the Resource blocks, so a delivery found inside the
-// cache at that point can only join it as a waiter.
+// cache at that point can only join it as a waiter. A goroutine counts only
+// once its stack is also parked in sync.(*WaitGroup).Wait, so one that has
+// entered the cache but not yet joined the call is never mistaken for a
+// waiter.
 func waitForSingleFlightWaiters(t *testing.T, want int, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -206,6 +221,7 @@ func waitForSingleFlightWaiters(t *testing.T, want int, timeout time.Duration) {
 		got := 0
 		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
 			if strings.Contains(g, "operator-kit/handler.(*idempotencyCache).") &&
+				strings.Contains(g, "sync.(*WaitGroup).Wait") &&
 				!strings.Contains(g, "(*panickingResource).Ensure") {
 				got++
 			}
@@ -315,4 +331,64 @@ func TestServe_PanickingResourceIsLoggedWithTheBlockAndNoSecret(t *testing.T) {
 		}
 	}
 	kittest.AssertNoSecret(t, "log output", logged, panicSecret)
+}
+
+// secretHolder is a panic value that holds panicSecret in a non-string
+// form. Formatting it renders the secret as decimal bytes, which a literal
+// substring scrub cannot find.
+type secretHolder struct {
+	Pw []byte
+}
+
+// decimalBytes renders the first n bytes of v the way fmt prints a []byte,
+// space-separated decimals, so a test can look for that rendering.
+func decimalBytes(v string, n int) string {
+	parts := make([]string, 0, n)
+	for _, b := range []byte(v)[:n] {
+		parts = append(parts, fmt.Sprint(b))
+	}
+	return strings.Join(parts, " ")
+}
+
+// panicAnswerFor serves one subscribe delivery against a Resource that
+// panics with value and returns the answer, already checked by
+// assertPanicAnswer.
+func panicAnswerFor(t *testing.T, nonce string, value any) (servedResult, contract.Response) {
+	t.Helper()
+	s := kittest.NewSigner(t, "kid-1", 7)
+	r := &panickingResource{value: value}
+	h := newHandler(t, r, s)
+	res := serveRecovering(h, panicEnvelope(t, s, nonce, map[string]any{"operation": "subscribe"}))
+	assertPanicAnswer(t, "calling delivery", res)
+	return res, decodeResponse(t, res.body)
+}
+
+// TestServe_PanicAnswerCarriesNothingFromANonStringPanicValue pins that a
+// panic value holding a secret as []byte inside a struct reaches the
+// response in no form, neither as the string nor as its decimal byte
+// rendering, while the error still names the panic and the verb. The
+// platform stores the response body, so the answer must be a fixed message.
+func TestServe_PanicAnswerCarriesNothingFromANonStringPanicValue(t *testing.T) {
+	res, resp := panicAnswerFor(t, "nonce-panic-holder", secretHolder{Pw: []byte(panicSecret)})
+
+	rendered := decimalBytes(panicSecret, 5)
+	if strings.Contains(string(res.body), rendered) {
+		t.Errorf("response body carries the secret's decimal byte rendering %q: %s", rendered, res.body)
+	}
+	kittest.AssertNoSecret(t, "response body", string(res.body), panicSecret)
+	if !strings.Contains(resp.Error, "subscribe") {
+		t.Errorf("error = %q, want it to name the verb subscribe", resp.Error)
+	}
+}
+
+// TestServe_PanicAnswerIsTheSameForDifferentPanicValues pins that the
+// response error for a panic in one verb does not depend on the panic
+// value, which proves it carries nothing from that value.
+func TestServe_PanicAnswerIsTheSameForDifferentPanicValues(t *testing.T) {
+	_, fromString := panicAnswerFor(t, "nonce-panic-value-a", "an unrelated failure")
+	_, fromHolder := panicAnswerFor(t, "nonce-panic-value-b", secretHolder{Pw: []byte(panicSecret)})
+
+	if fromString.Error != fromHolder.Error {
+		t.Errorf("error differs by panic value: %q vs %q, want one fixed message per verb", fromString.Error, fromHolder.Error)
+	}
 }
