@@ -27,24 +27,50 @@
 // --standalone is supplied with no target directory — there is no
 // "guess repo mode" fallback here, because there is no repo to guess.
 //
+// # Which rule judges a target
+//
+// The target's manifest.yaml declares the lifecycle contract it serves at
+// spec.lifecycle.contract, and trust-plumbing and contract judge the target
+// by that contract, the same branch the platform's operator gates take. The
+// value is read by walking the manifest's block mappings, so a contract: key
+// inside a block scalar, under params or anywhere else is not the contract,
+// and a lifecycle mapping with no contract key declares none.
+//
+//   - No declared contract, or no manifest at all: the legacy rule below.
+//   - kit/v1: kitshim.go and the three TestContract_* functions are waived,
+//     because the kit owns the trust boundary, the /hook route and the
+//     webhook-contract goldens. In their place, some non-test .go file under
+//     the target must import github.com/mitstack-eu/operator-kit/handler; an
+//     import in a _test.go file binds a test, not what the block serves.
+//     Both suites report pass or fail with a detail naming the kit/v1 rule.
+//   - Any other value: both suites fail, naming the value.
+//   - A manifest that is present but cannot be opened (a directory, a
+//     dangling symlink) or walked (a flow mapping or alias under spec or
+//     spec.lifecycle): both suites fail as a tooling failure naming the
+//     target's manifest.yaml, rather than judging it by the legacy rule.
+//
 // # What it checks, in run order
 //
 //  1. trust-plumbing — reimplements scripts/check-operator-kit-pin.sh: the
 //     target's go.mod requires the operator-kit module at or above the
-//     kit-pin floor version, kitshim.go exists, and no other non-test,
-//     non-shim .go file redeclares a kit-owned symbol (a purely TEXTUAL/
+//     kit-pin floor version, kitshim.go exists (on kit/v1, the handler
+//     import instead), and no other non-test, non-shim .go file redeclares
+//     a kit-owned symbol (a purely TEXTUAL/
 //     static check, so it still produces a meaningful failure on a target
 //     whose module does not compile — e.g. because it redeclares a
 //     kit-owned symbol, which is itself a build error). This suite also
 //     requires manifest.yaml to exist (a standalone target has no other
 //     suite positioned to catch that).
 //  2. contract — reimplements scripts/check-operator-contract-tests.sh: an
-//     explicit PRESENCE check for both TestContract_DecodesEveryValidGolden
-//     and TestContract_RejectsMalformedGoldens BEFORE running
+//     explicit PRESENCE check for TestContract_DecodesEveryValidGolden,
+//     TestContract_RejectsMalformedGoldens and
+//     TestContract_EmitsConformingResponse BEFORE running
 //     `go test -run TestContract_ ./...` in the target — presence is
 //     checked first because `go test -run` with zero matching tests exits 0
 //     (a vacuous pass), which is exactly the gap that presence check
-//     exists to close.
+//     exists to close. On kit/v1 no go test runs, and the handler-import
+//     check takes the presence check's place, so the suite never passes
+//     vacuously.
 //  3. secret-safety — reimplements scripts/check-operator-secret-leak-tests.sh:
 //     presence of TestNoSecretLeak (+ the TestNoSecretLeak_LogsEndpoint
 //     variant when the target serves the /logs ring buffer), and — unlike
