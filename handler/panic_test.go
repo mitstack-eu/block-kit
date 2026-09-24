@@ -392,3 +392,26 @@ func TestServe_PanicAnswerIsTheSameForDifferentPanicValues(t *testing.T) {
 		t.Errorf("error differs by panic value: %q vs %q, want one fixed message per verb", fromString.Error, fromHolder.Error)
 	}
 }
+
+// TestServe_PanicLogKeepsOnlyTheTypeOfANonStringPanicValue pins that a
+// panic value that is neither a string nor an error reaches the log only as
+// its type: the log carries neither the secret it holds nor that secret's
+// decimal byte rendering, yet still names the block, the subscription, the
+// verb and the value's type.
+func TestServe_PanicLogKeepsOnlyTheTypeOfANonStringPanicValue(t *testing.T) {
+	logBuf := captureLog(t)
+
+	panicAnswerFor(t, "nonce-panic-holder-log", secretHolder{Pw: []byte(panicSecret)})
+
+	logged := logBuf.String()
+	rendered := decimalBytes(panicSecret, 5)
+	if strings.Contains(logged, rendered) {
+		t.Errorf("log carries the secret's decimal byte rendering %q; log:\n%s", rendered, logged)
+	}
+	kittest.AssertNoSecret(t, "log output", logged, panicSecret)
+	for _, want := range []string{"panic", "block-panicky", "sub-panicky", "subscribe", "secretHolder"} {
+		if !strings.Contains(strings.ToLower(logged), strings.ToLower(want)) {
+			t.Errorf("log does not carry %q, want it to identify the block and the panic value's type; log:\n%s", want, logged)
+		}
+	}
+}
