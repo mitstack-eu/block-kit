@@ -21,8 +21,27 @@ var contractRequiredTests = []string{
 // TestContract_* functions BEFORE running `go test -run TestContract_
 // ./...` — zero tests matching that pattern exits 0 (a vacuous pass), which
 // is exactly the gap the presence check closes.
+//
+// On kit/v1 the kit owns the webhook-contract goldens, so the block defines
+// no TestContract_* function and none is run. The handler-import check takes
+// the place of the presence check, so the suite still reports a real verdict
+// rather than the vacuous pass an unguarded go test run would give.
 func contractSuite(target string) SuiteResult {
 	const name = "contract"
+
+	contract, detail, ok := contractRule(target)
+	if !ok {
+		return SuiteResult{name, "fail", detail}
+	}
+	if contract == kitV1Contract {
+		file, ok := checkKitHandlerImport(target)
+		if !ok {
+			return SuiteResult{name, "fail", file}
+		}
+		return SuiteResult{name, "pass", fmt.Sprintf(
+			"%s rule: the kit owns the webhook-contract goldens, so %s are waived; %s imports %s",
+			kitV1Contract, strings.Join(contractRequiredTests, ", "), file, kitHandlerPackage)}
+	}
 
 	missing := missingTestFuncs(target, contractRequiredTests)
 	if len(missing) > 0 {

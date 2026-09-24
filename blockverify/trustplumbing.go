@@ -57,25 +57,45 @@ var kitOwnedFuncs = []string{
 // TEXTUAL/static, so it still produces a meaningful failure on a target
 // whose module does not compile (e.g. because it redeclares a kit-owned
 // symbol, which is itself a build error).
+//
+// The binding it requires follows the block's declared lifecycle contract.
+// With none declared, that is kitshim.go. On kit/v1 the kit owns the trust
+// boundary and the /hook route, so kitshim.go is waived and a non-test .go
+// file must import the kit's handler package instead.
 func trustPlumbingSuite(target string) SuiteResult {
 	const name = "trust-plumbing"
 
+	contract, detail, ok := contractRule(target)
+	if !ok {
+		return SuiteResult{name, "fail", detail}
+	}
 	if detail, ok := checkKitDependency(target); !ok {
 		return SuiteResult{name, "fail", detail}
 	}
-	if _, err := os.Stat(filepath.Join(target, kitShimFile)); err != nil {
+	binding := kitShimFile + " present"
+	if contract == kitV1Contract {
+		file, ok := checkKitHandlerImport(target)
+		if !ok {
+			return SuiteResult{name, "fail", file}
+		}
+		binding = fmt.Sprintf("%s imports %s (%s waived)", file, kitHandlerPackage, kitShimFile)
+	} else if _, err := os.Stat(filepath.Join(target, kitShimFile)); err != nil {
 		return SuiteResult{name, "fail", fmt.Sprintf("%s has no %s binding it to the kit", target, kitShimFile)}
 	}
 	if detail, ok := checkNoOwnedSymbolRedeclared(target); !ok {
 		return SuiteResult{name, "fail", detail}
 	}
-	if _, err := os.Stat(filepath.Join(target, "manifest.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(target, manifestFile)); err != nil {
 		return SuiteResult{name, "fail", fmt.Sprintf("%s is missing manifest.yaml", target)}
 	}
 
-	return SuiteResult{name, "pass", fmt.Sprintf(
-		"depends on %s at or above the floor %s, %s present, no kit-owned symbol redeclared, manifest.yaml present",
-		kitModulePath, kitVersionFloor, kitShimFile)}
+	pass := fmt.Sprintf(
+		"depends on %s at or above the floor %s, %s, no kit-owned symbol redeclared, manifest.yaml present",
+		kitModulePath, kitVersionFloor, binding)
+	if contract == kitV1Contract {
+		pass = kitV1Contract + " rule: " + pass
+	}
+	return SuiteResult{name, "pass", pass}
 }
 
 var kitVersionRe = regexp.MustCompile(regexp.QuoteMeta(kitModulePath) + ` v(\d+\.\d+\.\d+)`)
