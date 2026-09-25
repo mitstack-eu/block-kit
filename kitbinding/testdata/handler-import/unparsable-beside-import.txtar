@@ -1,0 +1,15 @@
+verdict: tooling
+names: zz_broken.go
+main.go imports the handler package, and zz_broken.go, which sorts after it, does not parse. A scan that stops at the first import never reads it.
+-- main.go --
+package main
+
+import "github.com/mitstack-eu/operator-kit/handler"
+
+func main() { _ = handler.New }
+-- zz_broken.go --
+package main
+
+import (
+	"net/http
+)

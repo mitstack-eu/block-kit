@@ -39,9 +39,14 @@
 //   - No declared contract, or no manifest at all: the legacy rule below.
 //   - kit/v1: kitshim.go and the three TestContract_* functions are waived,
 //     because the kit owns the trust boundary, the /hook route and the
-//     webhook-contract goldens. In their place, some non-test .go file under
-//     the target must import github.com/mitstack-eu/operator-kit/handler; an
-//     import in a _test.go file binds a test, not what the block serves.
+//     webhook-contract goldens. In their place, some file under the target
+//     must import github.com/mitstack-eu/operator-kit/handler, as package
+//     kitbinding defines it: an import declaration in a non-test .go file a
+//     default build compiles, outside testdata/, vendor/ and directories
+//     starting with "_" or ".". A comment or string naming the path does not
+//     count, and an import in a _test.go file binds a test, not what the
+//     block serves. A file the scan cannot read, parse or match against its
+//     build constraints fails both suites as "could not scan", naming it.
 //     Both suites report pass or fail with a detail naming the kit/v1 rule.
 //   - Any other value: both suites fail, naming the value.
 //   - A manifest that is present but cannot be opened (a directory, a

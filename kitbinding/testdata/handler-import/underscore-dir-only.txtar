@@ -1,0 +1,12 @@
+verdict: absent
+The only real import sits in a directory whose name starts with an underscore, which the go tool ignores.
+-- main.go --
+package main
+
+func main() {}
+-- _example/wire.go --
+package main
+
+import "github.com/mitstack-eu/operator-kit/handler"
+
+var _ = handler.New

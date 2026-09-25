@@ -1,0 +1,12 @@
+verdict: absent
+The only real import sits under testdata/, which no build compiles.
+-- main.go --
+package main
+
+func main() {}
+-- testdata/wire.go --
+package wire
+
+import "github.com/mitstack-eu/operator-kit/handler"
+
+var _ = handler.New

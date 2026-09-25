@@ -1,0 +1,6 @@
+verdict: absent
+No file mentions the handler package at all.
+-- main.go --
+package main
+
+func main() {}

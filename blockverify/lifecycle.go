@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/mitstack-eu/operator-kit/kitbinding"
 )
 
 // kitV1Contract is the lifecycle contract on which the kit owns the trust
@@ -15,7 +17,7 @@ import (
 const kitV1Contract = "kit/v1"
 
 // kitHandlerPackage is the import that binds a kit/v1 block to the kit.
-const kitHandlerPackage = "github.com/mitstack-eu/operator-kit/handler"
+const kitHandlerPackage = kitbinding.HandlerPackage
 
 // manifestFile is the block manifest every target carries at its root.
 const manifestFile = "manifest.yaml"
@@ -163,42 +165,19 @@ func scalarValue(val string) string {
 	return val
 }
 
-// checkKitHandlerImport requires some non-test .go file under target to
-// import kitHandlerPackage. An import inside a _test.go file binds a test
-// rather than what the block serves, so it does not count. A scan that could
-// not run fails rather than reading as an absent import.
+// checkKitHandlerImport requires some file under target to import
+// kitHandlerPackage in code a default build compiles, as kitbinding defines
+// it, and returns the first such file. A scan that could not run fails
+// rather than reading as an absent import.
 func checkKitHandlerImport(target string) (detail string, ok bool) {
-	needle := `"` + kitHandlerPackage + `"`
-	var found string
-	err := filepath.WalkDir(target, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		name := d.Name()
-		if d.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(string(raw), needle) {
-			found = path
-			return fs.SkipAll
-		}
-		return nil
-	})
+	files, err := kitbinding.HandlerImportFiles(target)
 	if err != nil {
 		return fmt.Sprintf("%s rule: could not scan %s for a non-test .go file importing %s: %v",
 			kitV1Contract, target, kitHandlerPackage, err), false
 	}
-	if found == "" {
+	if len(files) == 0 {
 		return fmt.Sprintf("%s rule: no non-test .go file under %s imports %s, which is what binds a %s block to the kit",
 			kitV1Contract, target, kitHandlerPackage, kitV1Contract), false
 	}
-	rel, err := filepath.Rel(target, found)
-	if err != nil {
-		rel = found
-	}
-	return rel, true
+	return files[0], true
 }

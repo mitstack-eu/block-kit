@@ -1,0 +1,9 @@
+verdict: pass
+names: main.go
+main.go imports the handler package under a local name.
+-- main.go --
+package main
+
+import kithandler "github.com/mitstack-eu/operator-kit/handler"
+
+func main() { _ = kithandler.New }

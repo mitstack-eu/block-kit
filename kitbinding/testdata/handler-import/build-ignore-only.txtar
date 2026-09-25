@@ -1,0 +1,14 @@
+verdict: absent
+The only real import sits in a file that //go:build ignore keeps out of every build.
+-- main.go --
+package main
+
+func main() {}
+-- wire.go --
+//go:build ignore
+
+package main
+
+import "github.com/mitstack-eu/operator-kit/handler"
+
+var _ = handler.New

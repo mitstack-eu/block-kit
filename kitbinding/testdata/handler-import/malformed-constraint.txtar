@@ -1,0 +1,15 @@
+verdict: tooling
+names: wire.go
+wire.go's //go:build line does not parse, so whether any build compiles its import is unknown.
+-- main.go --
+package main
+
+func main() {}
+-- wire.go --
+//go:build (linux
+
+package main
+
+import "github.com/mitstack-eu/operator-kit/handler"
+
+var _ = handler.New

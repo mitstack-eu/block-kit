@@ -1,0 +1,20 @@
+verdict: pass
+names: serve.go
+The import sits in a grouped import block, in a file under a build constraint every default build satisfies.
+-- main.go --
+package main
+
+func main() {}
+-- serve.go --
+//go:build go1.18
+
+package main
+
+import (
+	"net/http"
+
+	"github.com/mitstack-eu/operator-kit/handler"
+)
+
+var _ = handler.New
+var _ = http.ListenAndServe

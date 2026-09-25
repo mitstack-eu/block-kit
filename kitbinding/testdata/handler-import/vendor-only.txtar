@@ -1,0 +1,12 @@
+verdict: absent
+The only real import sits under vendor/, in a dependency's source rather than the block's.
+-- main.go --
+package main
+
+func main() {}
+-- vendor/example.com/wiring/wire.go --
+package wiring
+
+import "github.com/mitstack-eu/operator-kit/handler"
+
+var _ = handler.New

@@ -1,0 +1,13 @@
+verdict: tooling
+names: zz_broken.go
+zz_broken.go's import block does not parse, so whether it imports the handler package is unknown.
+-- main.go --
+package main
+
+func main() {}
+-- zz_broken.go --
+package main
+
+import (
+	"net/http
+)

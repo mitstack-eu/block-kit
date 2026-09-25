@@ -1,0 +1,13 @@
+verdict: pass
+names: internal/serve/serve.go
+The import sits in a package below the module root.
+-- main.go --
+package main
+
+func main() {}
+-- internal/serve/serve.go --
+package serve
+
+import "github.com/mitstack-eu/operator-kit/handler"
+
+var _ = handler.New
