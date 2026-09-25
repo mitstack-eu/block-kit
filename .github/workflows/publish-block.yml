@@ -1,14 +1,25 @@
-# Reusable block-publish workflow (MIT-3097). A block's own ci.yml calls
-# this with `uses:` rather than inlining its own conformance and publish
-# steps, so the provenance record every block writes beside its image comes
-# from one implementation. Migrating an existing block's ci.yml to call this
-# is separate work: adding the workflow here is additive.
+# Reusable block-publish workflow. A block's own ci.yml calls this with
+# `uses:` on every event it wants verified, rather than inlining its own
+# conformance and publish steps, so the provenance record every block writes
+# beside its image comes from one implementation.
 #
 # Two jobs, and the ordering IS the acceptance criterion: `publish` needs
 # `conformance`, so a red conformance run never starts a publish, and
 # `blockprov build` refuses a non-pass verdict a second time regardless.
-# The publish job also refuses to move a version tag that already exists in
-# the registry, ending green with an "already published" message instead.
+#
+# `conformance` runs on every event. `publish` runs only on a push to the
+# caller's default branch, so a pull-request run of a caller gets
+# conformance with the publish job skipped.
+#
+# A version tag already in the registry is never pushed over. The probe asks
+# two questions, whether the tag is published and whether its provenance
+# record sits beside it. A rerun that finds the tag published but no
+# provenance record builds and pushes the record for the existing digest and
+# never pushes the image again. The record signs the run's commit, so only a
+# rerun of the run that built the image completes it; a later commit that
+# finds the record missing fails rather than attesting an image it did not
+# build. A tag that already has its record ends green
+# with no writes.
 name: publish-block
 
 on:
@@ -120,6 +131,13 @@ jobs:
         working-directory: operator-kit
         run: go build -o ../blockverify ./blockverify
 
+      # blockverify judges `.` and the image builds from `.`, so the kit
+      # checked out inside the block's tree must be gone before either reads
+      # it, or the block is judged by the kit's own source.
+      - name: Remove the kit checkout from the block tree
+        run: |
+          rm -rf operator-kit
+
       - name: blockverify (standalone contract check)
         run: |
           set -euo pipefail
@@ -141,6 +159,7 @@ jobs:
 
   publish:
     needs: conformance
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:
       contents: read
@@ -212,6 +231,13 @@ jobs:
           go build -o ../blockverify ./blockverify
           go build -o ../blockprov ./blockprov
 
+      # blockverify judges `.` and the image builds from `.`, so the kit
+      # checked out inside the block's tree must be gone before either reads
+      # it, or the block is judged by the kit's own source.
+      - name: Remove the kit checkout from the block tree
+        run: |
+          rm -rf operator-kit
+
       - name: Log in to ECR
         run: |
           set -euo pipefail
@@ -219,34 +245,65 @@ jobs:
           echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
           aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
 
-      # A version tag already in the registry is never pushed over: this
-      # probe is read-only and answers true/false into $GITHUB_OUTPUT for
-      # every step below to skip on. `aws ecr batch-get-image` exits 0 with
-      # `None` when the tag is absent (its images array comes back empty
-      # and the miss lands in its failures array instead), so `None` and
-      # empty are the only signals this step reads as "not published yet".
-      # A non-zero exit from aws means the probe itself could not answer,
-      # and that must never be read as "unpublished" — it fails the job.
-      - name: Refuse to move a published version tag
+      # A version tag already in the registry is never pushed over, and a
+      # record already beside it is never written again. This probe is
+      # read-only and answers into $GITHUB_OUTPUT: `published` for the
+      # version tag and `record` for the provenance record tag
+      # sha256-<hex>.prov that `blockprov push` writes for that digest. A
+      # tag that is not published has no digest yet, so its record is
+      # absent by definition and is not probed. A missing record is
+      # completed only for an image this commit built, since the record
+      # signs this commit. `aws ecr batch-get-image`
+      # exits 0 with `None` when a tag is absent, so `None` and empty are
+      # the only signals read as "absent". A non-zero exit from aws means
+      # the probe could not answer, and that fails the job rather than
+      # being read as absent.
+      - name: Probe the version tag and its provenance record
         id: existing
         run: |
           set -euo pipefail
           VERSION=$(awk '$1=="version:"{print $2; exit}' manifest.yaml)
-          DIGEST=$(aws ecr batch-get-image --repository-name "${{ inputs.ecr-repository }}" --image-ids "imageTag=v${VERSION}" --query 'images[0].imageId.imageDigest' --output text) || {
+          probe() {
+            aws ecr batch-get-image --repository-name "${{ inputs.ecr-repository }}" --image-ids "imageTag=$1" --query 'images[0].imageId.imageDigest' --output text
+          }
+          DIGEST=$(probe "v${VERSION}") || {
             echo "probe for v${VERSION} failed; refusing to guess whether it is published" >&2
             exit 1
           }
-          if [ -n "$DIGEST" ] && [ "$DIGEST" != "None" ]; then
-            echo "already published: v${VERSION} ${DIGEST}"
-            echo "published=true" >> "$GITHUB_OUTPUT"
-            echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          if [ -z "$DIGEST" ] || [ "$DIGEST" = "None" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "record=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "published=false" >> "$GITHUB_OUTPUT"
-          exit 0
+          echo "already published: v${VERSION} ${DIGEST}"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_DIGEST=${DIGEST}" >> "$GITHUB_ENV"
+
+          RECORD_TAG="sha256-${DIGEST#sha256:}.prov"
+          RECORD=$(probe "$RECORD_TAG") || {
+            echo "probe for ${RECORD_TAG} failed; refusing to guess whether the provenance record exists" >&2
+            exit 1
+          }
+          if [ -n "$RECORD" ] && [ "$RECORD" != "None" ]; then
+            echo "provenance record present at ${RECORD_TAG}"
+            echo "record=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The record signs this run's commit, so it is completed only for
+          # an image this commit built. The build step tags the image with
+          # the commit sha, so that tag must resolve to the same digest.
+          BUILT=$(probe "${GITHUB_SHA}") || BUILT="unanswered"
+          if [ "$BUILT" != "$DIGEST" ]; then
+            echo "no provenance record at ${RECORD_TAG}, and v${VERSION} (${DIGEST}) was not built from commit ${GITHUB_SHA} (its sha tag answers ${BUILT}); rerun the run that published it to complete the record" >&2
+            exit 1
+          fi
+          echo "no provenance record at ${RECORD_TAG}; completing it for ${DIGEST}"
+          echo "record=false" >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
-        if: steps.existing.outputs.published != 'true'
+        if: steps.existing.outputs.published == 'false'
         run: |
           set -euo pipefail
           VERSION=$(awk '$1=="version:"{print $2; exit}' manifest.yaml)
@@ -255,8 +312,10 @@ jobs:
             -t "${REGISTRY}/${{ inputs.ecr-repository }}:v${VERSION}" \
             -t "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}" \
             .
-          docker push "${REGISTRY}/${{ inputs.ecr-repository }}:v${VERSION}"
+          # The sha tag goes first: a version tag in the registry then always
+          # has the sha tag the probe checks before completing a record.
           docker push "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}"
+          docker push "${REGISTRY}/${{ inputs.ecr-repository }}:v${VERSION}"
           IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}" | cut -d@ -f2)
           echo "IMAGE_DIGEST=$IMAGE_DIGEST" >> "$GITHUB_ENV"
 
@@ -268,7 +327,7 @@ jobs:
       # migrates — and this fails loudly rather than handing Build an empty
       # value it would refuse anyway with a less useful error.
       - name: Determine the kit version pinned in go.mod
-        if: steps.existing.outputs.published != 'true'
+        if: steps.existing.outputs.record == 'false'
         run: |
           set -euo pipefail
           # `|| true` keeps a no-match grep from tripping `set -e` under
@@ -285,11 +344,11 @@ jobs:
       # A second gate over the same fact `needs: conformance` already
       # enforces: blockprov build refuses to sign anything but a fresh pass.
       - name: blockverify (standalone, for blockprov build's report)
-        if: steps.existing.outputs.published != 'true'
+        if: steps.existing.outputs.record == 'false'
         run: ./blockverify --standalone --json . > blockverify-report.json
 
       - name: blockprov build
-        if: steps.existing.outputs.published != 'true'
+        if: steps.existing.outputs.record == 'false'
         run: |
           ./blockprov build \
             --manifest manifest.yaml \
@@ -310,7 +369,7 @@ jobs:
       # argument — see that step's own comment for why.
       - name: Fetch ECR password
         id: ecr_password
-        if: steps.existing.outputs.published != 'true'
+        if: steps.existing.outputs.record == 'false'
         run: |
           set -euo pipefail
           PASSWORD=$(aws ecr get-login-password --region ${{ inputs.aws-region }})
@@ -320,7 +379,7 @@ jobs:
       # The credential is read from the environment, never argv, so it never
       # sits in /proc or a stray `set -x` trace.
       - name: blockprov push
-        if: steps.existing.outputs.published != 'true'
+        if: steps.existing.outputs.record == 'false'
         env:
           ECR_PASSWORD: ${{ steps.ecr_password.outputs.password }}
         run: |
