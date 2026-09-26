@@ -3,7 +3,10 @@ package handler
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+
+	"github.com/mitstack-eu/operator-kit/contract"
 )
 
 // errNilResource is returned by New when Config.Resource is nil.
@@ -16,17 +19,21 @@ var errNilResource = errors.New("handler: Config.Resource is required")
 var errEmptyJWKSURL = errors.New("handler: Config.JWKSURL is required")
 
 // knownHooks is the closed set of hook points New will ever accept a
-// registration for.
-var knownHooks = []string{HookBeforeEnsure, HookAfterEnsure, HookBeforeDelete, HookAfterDelete}
+// registration for. It comes from the contract so the handler and the
+// platform's manifest validation share one set.
+var knownHooks = contract.LifecycleHookPoints()
 
 // validateHooks refuses a Config that would let a block override an
 // invariant through Hooks: a registration under a name that is not one of
 // the four HookXxx constants, a registration for a hook the manifest does
 // not declare, a non-empty Hooks with no Manifest to check it against, or a
 // manifest whose spec.lifecycle.hooks value fits no form manifestHooks can
-// read. The manifest is parsed whenever it is non-empty, even with no Hooks
-// registered at all, since a declaration nobody can read must be refused
-// rather than silently treated as declaring nothing.
+// read, names a hook outside knownHooks, or names one hook twice.
+//
+// The manifest is checked whenever it is non-empty, even with no Hooks
+// registered at all, so that New refuses exactly the declarations the
+// platform's manifest validation refuses. A declaration nobody can read is
+// refused rather than treated as declaring nothing.
 func validateHooks(cfg Config) error {
 	if len(cfg.Hooks) > 0 && len(cfg.Manifest) == 0 {
 		return errors.New("handler: Config.Hooks is set but Config.Manifest is empty — a hook can only be registered if the manifest declares it")
@@ -39,17 +46,21 @@ func validateHooks(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if len(cfg.Hooks) == 0 {
-		return nil
-	}
 
-	declaredSet := make(map[string]bool, len(declared))
-	for _, h := range declared {
-		declaredSet[h] = true
-	}
 	knownSet := make(map[string]bool, len(knownHooks))
 	for _, h := range knownHooks {
 		knownSet[h] = true
+	}
+	declaredSet := make(map[string]bool, len(declared))
+	for _, h := range declared {
+		if !knownSet[h] {
+			return fmt.Errorf("handler: manifest's spec.lifecycle.hooks declares unknown hook point %q; the known hook points are %s",
+				h, strings.Join(knownHooks, ", "))
+		}
+		if declaredSet[h] {
+			return fmt.Errorf("handler: manifest's spec.lifecycle.hooks declares hook %q more than once", h)
+		}
+		declaredSet[h] = true
 	}
 
 	for name := range cfg.Hooks {
@@ -81,7 +92,13 @@ func validateHooks(cfg Config) error {
 //	  - afterDelete
 //
 // the flow list "hooks: [beforeEnsure, afterDelete]", and "hooks: []",
-// which — like a manifest with no hooks: key at all — declares no hook. A
+// which — like a manifest with no hooks: key at all — declares no hook.
+// Each name is read as a YAML scalar: plain, "double-quoted" or
+// 'single-quoted', with the quotes removed. A comment is stripped wherever
+// YAML allows one: after the hooks: key, after a sequence item, after the
+// closing "]" of a flow list, and on a line of its own between items. A "#"
+// starts a comment only at the start of the text or after whitespace, and
+// never inside quotes, so "before#Ensure" in quotes is read whole. A
 // hooks: value that fits none of those forms makes manifestHooks return an
 // error instead of silently declaring nothing, since a declaration nobody
 // can read must not be mistaken for an empty one.
@@ -201,13 +218,21 @@ func findChild(lines []string, parentLine, parentIndent int, name string, prefix
 
 // parseHooksValue reads the hooks: line at lines[hooksLine] in whichever of
 // the three supported forms it is written, or returns an error naming the
-// manifest when it fits none of them.
+// manifest when it fits none of them. A comment after the hooks: key or
+// after a flow list's closing "]" is ignored, and every name is read through
+// readScalar, so quoting and trailing comments never reach the name.
 func parseHooksValue(lines []string, hooksLine int) ([]string, error) {
 	line := lines[hooksLine]
 	trimmed := strings.TrimSpace(line)
 	indent := leadingSpaces(line)
 
-	if trimmed == "hooks:" {
+	key, err := stripComment(trimmed)
+	if err != nil {
+		return nil, unreadableHooks(trimmed)
+	}
+	key = strings.TrimSpace(key)
+
+	if key == "hooks:" {
 		var hooks []string
 		for _, next := range lines[hooksLine+1:] {
 			item := strings.TrimSpace(next)
@@ -218,39 +243,170 @@ func parseHooksValue(lines []string, hooksLine int) ([]string, error) {
 				continue
 			}
 			if leadingWhitespaceHasTab(next) {
-				return nil, fmt.Errorf("handler: manifest's spec.lifecycle.hooks is not a form New can read "+
-					"(want %q, a flow list like %q, or an indented \"- name\" sequence): %q",
-					"hooks: []", "hooks: [a, b]", item)
+				return nil, unreadableHooks(item)
 			}
-			if leadingSpaces(next) <= indent {
+			// YAML lets a block sequence sit at its key's own indent, so an
+			// item there still belongs to hooks; any other line at or below
+			// that indent ends the sequence.
+			itemIndent := leadingSpaces(next)
+			if itemIndent < indent || (itemIndent == indent && !isSequenceItem(item)) {
 				break
 			}
-			if !strings.HasPrefix(item, "-") {
+			if !isSequenceItem(item) {
 				break
 			}
-			hooks = append(hooks, strings.TrimSpace(strings.TrimPrefix(item, "-")))
+			name, err := readScalar(strings.TrimPrefix(item, "-"))
+			if err != nil {
+				return nil, unreadableHooks(item)
+			}
+			hooks = append(hooks, name)
 		}
 		return hooks, nil
 	}
 
-	if rest, ok := strings.CutPrefix(trimmed, "hooks:"); ok {
+	if rest, ok := strings.CutPrefix(key, "hooks:"); ok {
 		rest = strings.TrimSpace(rest)
 		if strings.HasPrefix(rest, "[") && strings.HasSuffix(rest, "]") {
 			inner := strings.TrimSpace(rest[1 : len(rest)-1])
 			if inner == "" {
 				return nil, nil
 			}
-			items := strings.Split(inner, ",")
+			items, err := splitFlowItems(inner)
+			if err != nil {
+				return nil, unreadableHooks(trimmed)
+			}
 			hooks := make([]string, 0, len(items))
 			for _, it := range items {
-				hooks = append(hooks, strings.TrimSpace(it))
+				name, err := readScalar(it)
+				if err != nil {
+					return nil, unreadableHooks(trimmed)
+				}
+				hooks = append(hooks, name)
 			}
 			return hooks, nil
 		}
 	}
 
-	return nil, fmt.Errorf("handler: manifest's spec.lifecycle.hooks is not a form New can read "+
-		"(want %q, a flow list like %q, or an indented \"- name\" sequence): %q", "hooks: []", "hooks: [a, b]", trimmed)
+	return nil, unreadableHooks(trimmed)
+}
+
+// unreadableHooks is the error parseHooksValue returns for a hooks: value,
+// quoted in text, that fits no form it can read.
+// isSequenceItem reports whether a trimmed line is a block sequence item.
+func isSequenceItem(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "-")
+}
+
+func unreadableHooks(text string) error {
+	return fmt.Errorf("handler: manifest's spec.lifecycle.hooks is not a form New can read "+
+		"(want %q, a flow list like %q, or an indented \"- name\" sequence): %q", "hooks: []", "hooks: [a, b]", text)
+}
+
+// readScalar reads s as one YAML scalar: it drops a trailing comment and
+// surrounding whitespace, then removes the quotes from a "double-quoted" or
+// 'single-quoted' value, decoding its escapes. A plain value is returned as
+// written. A quote left open, or text after a closing quote, is an error.
+func readScalar(s string) (string, error) {
+	s, err := stripComment(s)
+	if err != nil {
+		return "", err
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	switch s[0] {
+	case '"':
+		return strconv.Unquote(s)
+	case '\'':
+		if len(s) < 2 || s[len(s)-1] != '\'' {
+			return "", errors.New("unterminated single-quoted scalar")
+		}
+		inner := s[1 : len(s)-1]
+		if strings.Contains(strings.ReplaceAll(inner, "''", ""), "'") {
+			return "", errors.New("unescaped quote inside single-quoted scalar")
+		}
+		return strings.ReplaceAll(inner, "''", "'"), nil
+	}
+	return s, nil
+}
+
+// stripComment returns s up to the "#" that starts a YAML comment, or all
+// of s when it has none. A "#" starts a comment only at the start of s or
+// right after a space or tab, and never inside a quoted scalar. A quote
+// opens a scalar only at the start of a token: the start of s, or after
+// whitespace, "[", "," or "-". An unterminated quote is an error.
+func stripComment(s string) (string, error) {
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			i = skipQuoted(s, i, &quote)
+			continue
+		}
+		switch c {
+		case '#':
+			if i == 0 || s[i-1] == ' ' || s[i-1] == '\t' {
+				return s[:i], nil
+			}
+		case '"', '\'':
+			if i == 0 || strings.IndexByte(" \t[,-", s[i-1]) >= 0 {
+				quote = c
+			}
+		}
+	}
+	if quote != 0 {
+		return "", errors.New("unterminated quoted scalar")
+	}
+	return s, nil
+}
+
+// splitFlowItems splits the text between a flow list's brackets on the
+// commas that sit outside quotes. A single trailing comma, which YAML
+// allows, adds no item.
+func splitFlowItems(inner string) ([]string, error) {
+	var items []string
+	var quote byte
+	start := 0
+	for i := 0; i < len(inner); i++ {
+		c := inner[i]
+		if quote != 0 {
+			i = skipQuoted(inner, i, &quote)
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			if strings.TrimSpace(inner[start:i]) == "" {
+				quote = c
+			}
+		case ',':
+			items = append(items, inner[start:i])
+			start = i + 1
+		}
+	}
+	if quote != 0 {
+		return nil, errors.New("unterminated quoted scalar")
+	}
+	if last := inner[start:]; strings.TrimSpace(last) != "" || len(items) == 0 {
+		items = append(items, last)
+	}
+	return items, nil
+}
+
+// skipQuoted steps over the byte at s[i] inside a scalar opened by *quote
+// and returns the index the caller's loop should continue from. It consumes
+// a backslash escape in a double-quoted scalar and a doubled single quote
+// in a single-quoted one, and clears *quote when s[i] closes the scalar.
+func skipQuoted(s string, i int, quote *byte) int {
+	switch {
+	case *quote == '"' && s[i] == '\\':
+		return i + 1
+	case *quote == '\'' && s[i] == '\'' && i+1 < len(s) && s[i+1] == '\'':
+		return i + 1
+	case s[i] == *quote:
+		*quote = 0
+	}
+	return i
 }
 
 // leadingSpaces counts the spaces a line is indented by.

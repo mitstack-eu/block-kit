@@ -67,6 +67,14 @@ idempotency cache described above, calling whatever `Hooks` the block's
 `Config` registers at `HookBeforeEnsure`, `HookAfterEnsure`, `HookBeforeDelete`
 or `HookAfterDelete`.
 
+A block declares its hooks in the manifest under `spec.lifecycle.hooks`, the
+path held in the constant `contract.LifecycleHooksField`.
+`contract.LifecycleHookPoints` is the closed set of names a block may declare
+there. The handler and the platform's manifest validation both refuse a
+name outside that set, and both refuse a name listed twice. Both sides test against
+the same manifest golden, `contract.HooksManifestGolden`, so a change on
+either side turns the other side's tests red.
+
 A request that carries no OBO token is refused with 401 on every verb —
 subscribe, upgrade, validate, unsubscribe — before the Resource is ever
 consulted. The token is the platform's own signed assertion of the
