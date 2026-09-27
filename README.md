@@ -63,7 +63,7 @@ fails open exactly as an operator that never implements the marker does.
 
 A block implements `handler.Resource` — `Ensure`, `Observe`, `Delete` — and
 `handler.New` wires it behind the trust boundary, the settle loop and the
-idempotency cache described above, calling whatever `Hooks` the block's
+idempotency cache described below, calling whatever `Hooks` the block's
 `Config` registers at `HookBeforeEnsure`, `HookAfterEnsure`, `HookBeforeDelete`
 or `HookAfterDelete`.
 
@@ -96,6 +96,19 @@ subscription and verb. A string or error panic value is logged with every
 request secret scrubbed where it appears literally, and any other value is
 logged only as its type, because formatting it could print a secret in a
 form a literal scrub cannot find. A block cannot turn this recovery off.
+
+The idempotency cache is keyed by subscription and by the request's
+`idempotencyKey`, which the engine sets once per call and keeps the same
+across every retry of that call. It stores only a settled answer, for an
+hour: a settled 2xx or a 400 refusal is replayed to a later delivery of the
+same key, and a delivery that overlaps one still in flight waits for it and
+shares its answer. A 2xx that answers `pending:true` reaches the caller but
+is never stored, because the engine re-drives the same key to learn when
+the resource converges, and a stored pending answer would replay "still
+pending" instead of observing it. Two kinds of request bypass the cache
+entirely: a validate, because it is a probe of the resource's current state
+and a replayed observation could report a state the resource has left, and
+any request whose `idempotencyKey` is empty.
 
 A block whose resource sits behind a token — or otherwise needs the
 request's own secrets to authenticate — implements `handler.RequestObserver`:

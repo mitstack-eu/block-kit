@@ -28,7 +28,9 @@ type idempotencyEntry struct {
 }
 
 // isCacheableStatus reports whether status is a deterministic outcome worth
-// replaying: a 2xx, or the 400 a *Refused produces. A 500 stays retryable —
+// replaying: a 2xx, or the 400 a *Refused produces. It is only the status
+// half of the decision: do also requires run to report its answer settled,
+// so a 2xx that says pending:true is never stored. A 500 stays retryable —
 // the engine keeps one IdempotencyKey across every retry of a call, so
 // caching a 500 under that key would make every later retry replay the
 // stale failure instead of ever reaching the Resource again, turning one
@@ -44,20 +46,27 @@ func isCacheableStatus(status int) bool {
 // receives the same 500 and body the calling delivery answers. wg is still
 // released exactly once however run exits, including by a panic that
 // escapes it, so a waiter never blocks forever; only such an escaped panic
-// leaves the waiter holding a zero status.
+// leaves the waiter holding a zero status. settled is the run function's
+// own verdict on whether its answer is final, which do combines with
+// isCacheableStatus to decide whether to store it.
 type inflightCall struct {
-	wg     sync.WaitGroup
-	status int
-	body   []byte
+	wg      sync.WaitGroup
+	status  int
+	body    []byte
+	settled bool
 }
 
 // idempotencyCache remembers the status and response bytes a verb produced
 // for a given (subscriptionID, idempotencyKey), so a repeat delivery of the
 // same request replays them without calling the Resource again, and makes
 // that behaviour single-flight: an overlapping delivery of a key still in
-// flight waits for the first to finish and receives its exact response. An
-// empty idempotencyKey is never stored here — the caller skips the cache
-// entirely for one, since an empty key is never cached.
+// flight waits for the first to finish and receives its exact response. It
+// stores only a settled answer: a pending answer says the resource has not
+// converged, and the engine re-drives the same key to learn when it has, so
+// a stored one would replay "still pending" for the whole TTL instead of
+// observing the resource. An empty idempotencyKey and a validate never reach
+// this cache — the caller runs both directly, since a probe must observe
+// the resource's current state rather than replay an earlier one.
 type idempotencyCache struct {
 	mu      sync.Mutex
 	entries map[idempotencyKey]idempotencyEntry
@@ -74,12 +83,14 @@ func newIdempotencyCache() *idempotencyCache {
 
 // do returns the cached response for key when one exists, joins an
 // in-flight call for key when one is already running, or else calls run
-// itself, storing its result only when isCacheableStatus accepts the
-// status it produced. A key whose call ends in a status the cache does not
-// store leaves neither a cache entry nor an in-flight call behind, so the
-// next delivery of that key runs run again rather than joining a stale
-// call or replaying a response that was never stored.
-func (c *idempotencyCache) do(now time.Time, key idempotencyKey, run func() (int, []byte)) (int, []byte) {
+// itself. run reports its status, its response bytes and whether that
+// answer is settled; do stores the result only when the answer is settled
+// and isCacheableStatus accepts the status. A waiter already joined on the
+// call receives the result either way. A key whose call ends in an answer
+// the cache does not store leaves neither a cache entry nor an in-flight
+// call behind, so the next delivery of that key runs run again rather than
+// joining a stale call or replaying a response that was never stored.
+func (c *idempotencyCache) do(now time.Time, key idempotencyKey, run func() (status int, body []byte, settled bool)) (int, []byte) {
 	c.mu.Lock()
 	if entry, ok := c.getLocked(now, key); ok {
 		c.mu.Unlock()
@@ -99,14 +110,14 @@ func (c *idempotencyCache) do(now time.Time, key idempotencyKey, run func() (int
 	defer func() {
 		c.mu.Lock()
 		delete(c.calls, key)
-		if isCacheableStatus(call.status) {
+		if call.settled && isCacheableStatus(call.status) {
 			c.putLocked(now, key, call.status, call.body)
 		}
 		c.mu.Unlock()
 		call.wg.Done()
 	}()
 
-	call.status, call.body = run()
+	call.status, call.body, call.settled = run()
 	return call.status, call.body
 }
 

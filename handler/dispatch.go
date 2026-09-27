@@ -19,11 +19,15 @@ import (
 // idempotency cache: a repeat delivery of the same key replays the first
 // call's response without touching the Resource again, and a delivery that
 // finds its key already in flight waits for that call and shares its
-// response rather than running the verb a second time. An empty
-// idempotencyKey skips the cache entirely, so it is never stored or
-// single-flighted. A panic in the Resource or a hook is recovered inside
-// run, so the calling delivery and every waiter on its key receive the same
-// retryable 500.
+// response rather than running the verb a second time. Only a settled
+// answer is stored: a 2xx carrying pending:true reaches the caller and any
+// waiter on its key but is never replayed, so the engine's re-drive of the
+// same key observes the resource again. An empty idempotencyKey and a
+// validate both skip the cache entirely, so neither is ever stored,
+// replayed or single-flighted: validate is a read-only probe, and a replayed
+// probe would report a state the resource may have left. A panic in the
+// Resource or a hook is recovered inside run, so the calling delivery and
+// every waiter on its key receive the same retryable 500.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := secretsFor(req)
 
@@ -38,25 +42,25 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 		Callback:       callback,
 	})
 
-	run := func() (int, []byte) {
+	run := func() (int, []byte, bool) {
 		status, resp := h.dispatchVerbRecovering(ctx, req, secrets)
 		h.emitVerbEvent(ctx, req.Operation, status, resp)
 
 		raw, err := json.Marshal(resp)
 		if err != nil {
 			raw, _ = json.Marshal(contract.Response{Error: "handler: encoding response failed: " + err.Error()})
-			return http.StatusInternalServerError, raw
+			return http.StatusInternalServerError, raw, true
 		}
-		return status, raw
+		return status, raw, !resp.Pending
 	}
 
 	var status int
 	var raw []byte
-	if req.IdempotencyKey != "" {
+	if req.IdempotencyKey != "" && req.Operation != "validate" {
 		key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey}
 		status, raw = h.idempotency.do(h.now(), key, run)
 	} else {
-		status, raw = run()
+		status, raw, _ = run()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
