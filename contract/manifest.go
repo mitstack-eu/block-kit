@@ -38,6 +38,20 @@ func HooksManifestGolden() []byte {
 	return raw
 }
 
+// TypeBlockHooksManifestGolden returns the HooksManifestGolden block written
+// with a top-level `type: block` and no top-level `kind`, no spec.layer, a
+// provided contract typed with `format:` and a continuity unit classified
+// with `store:`. It declares the same hooks as HooksManifestGolden. It panics
+// if the embedded file is missing, since that can only be a packaging bug in
+// this module.
+func TypeBlockHooksManifestGolden() []byte {
+	raw, err := ManifestGoldens.ReadFile(ManifestGoldensDir + "/lifecycle-hooks-type-block.yaml")
+	if err != nil {
+		panic("contract: embedded manifest golden missing: " + err.Error())
+	}
+	return raw
+}
+
 // HooksManifestGoldenDeclares returns the hook names HooksManifestGolden
 // declares, in manifest order, so a test on either side can assert its
 // parser reads exactly these. Each call returns a fresh slice the caller may

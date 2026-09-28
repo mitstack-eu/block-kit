@@ -62,7 +62,8 @@ fails open exactly as an operator that never implements the marker does.
 ## The Handler and Resource
 
 A block implements `handler.Resource` — `Ensure`, `Observe`, `Delete` — and
-`handler.New` wires it behind the trust boundary, the settle loop and the
+`handler.New` wires it behind the trust boundary, the settle loop (a bounded
+poll of `Observe` until the resource actually serves) and the
 idempotency cache described below, calling whatever `Hooks` the block's
 `Config` registers at `HookBeforeEnsure`, `HookAfterEnsure`, `HookBeforeDelete`
 or `HookAfterDelete`.
@@ -73,7 +74,10 @@ path held in the constant `contract.LifecycleHooksField`.
 there. The handler and the platform's manifest validation both refuse a
 name outside that set, and both refuse a name listed twice. Both sides test against
 the same manifest golden, `contract.HooksManifestGolden`, so a change on
-either side turns the other side's tests red.
+either side turns the other side's tests red. Its twin,
+`contract.TypeBlockHooksManifestGolden`, is the same block written with
+`type: block`, `format` and `store` and without a layer, and the handler
+reads it exactly as it reads the first.
 
 A request that carries no OBO token is refused with 401 on every verb —
 subscribe, upgrade, validate, unsubscribe — before the Resource is ever
