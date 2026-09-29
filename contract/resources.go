@@ -67,6 +67,45 @@ func LookupResource(name string) (ResourceEntry, bool) {
 	return ResourceEntry{}, false
 }
 
+// NearestResource returns the registry entry name or alias with the smallest
+// edit distance from name, the alphabetically first on a tie. A registered
+// name or alias is its own nearest.
+func NearestResource(name string) string {
+	best, bestDist := "", -1
+	for _, r := range resourceRegistry {
+		for _, candidate := range append([]string{r.Name}, r.Aliases...) {
+			d := levenshtein(name, candidate)
+			if bestDist < 0 || d < bestDist || d == bestDist && candidate < best {
+				best, bestDist = candidate, d
+			}
+		}
+	}
+	return best
+}
+
+// levenshtein returns the number of single-character insertions, deletions
+// and substitutions that turn a into b.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
+}
+
 // resourceRegistry holds every output name the platform's pinned blocks
 // declare in their manifests, under its current name, with any older name as
 // an alias.
