@@ -12,8 +12,8 @@ import (
 
 // suiteVersion is the version of THIS suite's contract (report shape, suite
 // set, run order, digest algorithms) — bump it in the same change that
-// changes any of those, mirroring scripts/block-verify.sh's SUITE_VERSION.
-const suiteVersion = "1.0.0"
+// changes any of those.
+const suiteVersion = "1.1.0"
 
 // Report is the standalone-mode conformance report blockverify emits — see
 // the package doc for the full field-by-field contract.
@@ -38,7 +38,12 @@ const usageMessage = `blockverify: standalone conformance runner for a mitstack 
 external repository.
 
 Usage:
-  blockverify [--json] --standalone <dir>
+  blockverify [--json] --standalone [--base-manifest <path>] <dir>
+
+--base-manifest names the base branch's manifest.yaml. When the file exists,
+a spec.version that differs from the base's needs spec.releaseClass and
+spec.releaseNote. A path that does not exist is a block new on this branch,
+and no version is compared.
 
 This command supports ONLY standalone mode (a single external target,
 scanned in isolation). It refuses to run without --standalone and a target
@@ -52,16 +57,15 @@ living inside this repository; this command is its external-repo twin.
 // stdout, never the real process streams directly, so the whole command is
 // testable without touching os.Stdout.
 func Run(args []string, stdout io.Writer) int {
-	jsonOut, standalone, target := parseArgs(args)
-
-	if !standalone || target == "" {
+	a, ok := parseArgs(args)
+	if !ok || !a.standalone || a.target == "" {
 		fmt.Fprint(stdout, usageMessage)
 		return 2
 	}
 
-	report := runStandalone(target)
+	report := runStandalone(a.target, a.baseManifest)
 
-	if jsonOut {
+	if a.jsonOut {
 		raw, err := json.Marshal(report)
 		if err != nil {
 			// Report is a plain struct of strings/slices; Marshal cannot
@@ -80,32 +84,48 @@ func Run(args []string, stdout io.Writer) int {
 	return 0
 }
 
-// parseArgs recognises --json and --standalone as flags; any other argument
-// is the target directory (the last one wins, mirroring
-// scripts/block-verify.sh's own arg loop).
-func parseArgs(args []string) (jsonOut, standalone bool, target string) {
-	for _, a := range args {
-		switch a {
+// cliArgs is the command line Run accepts.
+type cliArgs struct {
+	jsonOut, standalone bool
+	target              string
+	baseManifest        string
+}
+
+// parseArgs recognises --json and --standalone as flags, and --base-manifest
+// with the path that follows it, in any position; any other argument is the
+// target directory (the last one wins, mirroring scripts/block-verify.sh's
+// own arg loop). ok is false when --base-manifest has no path after it.
+func parseArgs(args []string) (a cliArgs, ok bool) {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--json":
-			jsonOut = true
+			a.jsonOut = true
 		case "--standalone":
-			standalone = true
+			a.standalone = true
+		case "--base-manifest":
+			if i+1 == len(args) {
+				return a, false
+			}
+			i++
+			a.baseManifest = args[i]
 		default:
-			target = a
+			a.target = args[i]
 		}
 	}
-	return jsonOut, standalone, target
+	return a, true
 }
 
 // runStandalone runs every suite against target, in the fixed contract
-// order, and assembles the report.
-func runStandalone(target string) Report {
+// order, and assembles the report. baseManifest is the --base-manifest path,
+// or "" when the flag is absent.
+func runStandalone(target, baseManifest string) Report {
 	suites := []SuiteResult{
 		trustPlumbingSuite(target),
 		contractSuite(target),
 		secretSafetySuite(target),
 		teardownSuite(target),
 		deliverableSuite(target),
+		manifestSuite(target, baseManifest),
 		capabilityParitySuite(),
 	}
 

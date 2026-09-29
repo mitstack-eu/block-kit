@@ -1,10 +1,10 @@
 {
-  "suiteVersion": "1.0.0",
+  "suiteVersion": "1.1.0",
   "kitVersion": "v0.1.0",
   "mode": "standalone",
   "manifestDigest": "sha256:f99a1d28387ccc1af4b6e8f15d5689aedbcd45961ad9921842e8d063242f571c",
   "verdict": "pass",
-  "resultsDigest": "sha256:9464ad02a74b1d0b7179ffb668f4c8e7a33c81dcda4b0591e1050a8fa5aeeda1",
+  "resultsDigest": "sha256:15b6c8749292a3462a914b1913e6f5fd3be8622acad8e66c68c8cb16738fea49",
   "suites": [
     {
       "name": "trust-plumbing",
@@ -30,6 +30,11 @@
       "name": "deliverable",
       "status": "pass",
       "detail": "own Dockerfile exists and assumes no monorepo build context"
+    },
+    {
+      "name": "manifest",
+      "status": "pass",
+      "detail": "spec.outputs and spec.requires[].reads resolve through the resource registry; no --base-manifest given, so spec.version was not compared"
     },
     {
       "name": "capability-parity",

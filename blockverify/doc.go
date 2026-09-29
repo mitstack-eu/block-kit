@@ -3,7 +3,11 @@
 // MIT-1586/1588). An external author's own CI invokes it as:
 //
 //	go run github.com/mitstack-eu/operator-kit/blockverify@<tag> \
-//	  --json --standalone .
+//	  --json --standalone [--base-manifest <path>] .
+//
+// --base-manifest names the base branch's manifest.yaml, and may appear
+// anywhere on the command line; its path is never taken for the target. The
+// flag with no path after it is a usage error.
 //
 // # One truth, two doors
 //
@@ -20,7 +24,8 @@
 // from-scratch REIMPLEMENTATION of its standalone-mode behaviour in Go, not
 // a wrapper around the shell script (which this module cannot invoke — it
 // has no access to a checkout of this repo either). Anything that changes
-// the standalone contract must change both.
+// the standalone contract must change both. The manifest suite is the one
+// exception: it is blockverify's own and has no counterpart in the script.
 //
 // blockverify supports ONLY standalone mode. It refuses (exit 2, naming
 // scripts/block-verify.sh) if --standalone is not supplied, or if
@@ -87,7 +92,11 @@
 //  5. deliverable — the target's OWN Dockerfile must exist and must not
 //     COPY a monorepo-relative build context (examples/operator-kit) it
 //     does not have as a standalone repository.
-//  6. capability-parity — ALWAYS skipped: comparing several providers of one
+//  6. manifest — checks the names the target's manifest.yaml declares
+//     against the resource registry package contract owns (see "The
+//     manifest suite" below). Skipped when there is no manifest.yaml, which
+//     trust-plumbing already fails.
+//  7. capability-parity — ALWAYS skipped: comparing several providers of one
 //     capability is not meaningful for a single standalone target. It still
 //     always appears in the report, with a non-empty Detail explaining why
 //     — a suite that silently disappeared would be indistinguishable from a
@@ -101,12 +110,41 @@
 // third, non-failing status reserved for a suite that is honestly not
 // applicable here (capability-parity), never a caveated partial pass.
 //
+// # The manifest suite
+//
+// The manifest suite reads three things of the target's manifest.yaml and
+// nothing else, so a manifest field it does not know is never refused:
+//
+//   - Every spec.outputs name must resolve through contract.LookupResource,
+//     by name or alias. A name that does not fails, naming the nearest
+//     registered name or alias by edit distance.
+//   - Every spec.requires[].reads name must be non-empty, resolve through the
+//     registry, and name an entry that lists that requirement's capability,
+//     refused with the messages the platform gives at apply. A requirement
+//     with no reads passes, since operators add their declarations one at a
+//     time.
+//   - With --base-manifest, a spec.version that differs from the base's
+//     needs spec.releaseClass and a non-blank spec.releaseNote. The class
+//     value is not checked here; the platform validates it at apply. A base
+//     path that does not exist is a block new on this branch, and no version
+//     is compared. A base that is present but cannot be read fails.
+//
+// The same keys nested anywhere else, under another spec field or inside a
+// block scalar, are not read. A manifest.yaml that is present but cannot be
+// read, or holds a flow mapping, an alias or a merge key where the suite
+// reads (spec, spec.outputs, spec.requires or one of its items), fails
+// rather than passing on what the reader could not see.
+//
+// On a pull request, publish-block.yml's conformance job writes the base
+// commit's manifest.yaml to a temporary file and passes it as
+// --base-manifest; other events pass no flag.
+//
 // # Report contract
 //
 // With --json, Run emits exactly one JSON object on stdout:
 //
 //	{
-//	  "suiteVersion":   "1.0.0",
+//	  "suiteVersion":   "1.1.0",
 //	  "kitVersion":     "v0.1.0",
 //	  "mode":           "standalone",
 //	  "manifestDigest": "sha256:<hex of <target>/manifest.yaml's raw bytes>",
@@ -118,6 +156,7 @@
 //	    {"name": "secret-safety",     "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "teardown",          "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "deliverable",       "status": "pass"|"fail",          "detail": "..."},
+//	    {"name": "manifest",          "status": "pass"|"fail"|"skipped", "detail": "..."},
 //	    {"name": "capability-parity", "status": "skipped",              "detail": "..."}
 //	  ]
 //	}
@@ -136,8 +175,8 @@
 //	0 — the target is fully conformant (verdict "pass")
 //	1 — the target failed one or more suites (verdict "fail") — a
 //	    target-specific problem, never a usage error
-//	2 — a usage error: no --standalone flag, or --standalone with no
-//	    target, or any other unrecognised invocation. The message on stdout
+//	2 — a usage error: no --standalone flag, --standalone with no target,
+//	    --base-manifest with no path, or any other unrecognised invocation. The message on stdout
 //	    always names scripts/block-verify.sh as the tool to use instead for
 //	    repo-mode verification.
 //
