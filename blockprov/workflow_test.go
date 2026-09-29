@@ -140,6 +140,13 @@ func TestWorkflow_ConformanceJobRunsVetTestAndBlockverify(t *testing.T) {
 	if !strings.Contains(conformance, "--standalone") || !strings.Contains(conformance, "--json") {
 		t.Error("the blockverify invocation must run --standalone --json, matching the CLI's only supported mode")
 	}
+	// On a pull request, blockverify compares spec.version against the base
+	// commit's manifest, which a shallow checkout does not hold.
+	for _, want := range []string{"github.event.pull_request.base.sha", "git fetch --depth=1", "--base-manifest", "pull_request"} {
+		if !strings.Contains(conformance, want) {
+			t.Errorf("conformance job must pass the base commit's manifest.yaml to blockverify on a pull request, and has no %q", want)
+		}
+	}
 }
 
 func TestWorkflow_ConformanceJobNeverPushesOrWritesARecord(t *testing.T) {
