@@ -1,106 +1,21 @@
 package contract_test
 
-// resources_test.go pins the resource registry the kit owns: the output names
-// a block may declare in spec.outputs and read under spec.requires[].reads.
-// The platform imports this registry, so the names, kinds, aliases, secret
-// flags and capabilities held here are the platform's; the per-entry table
-// below is test data drawn from it, not a second registry.
+// resources_test.go pins how the resource registry the kit owns behaves: the
+// output names a block may declare in spec.outputs and read under
+// spec.requires[].reads. It checks properties every entry must hold, never the
+// registry's content, so adding an entry never means editing this file.
 
 import (
 	"reflect"
-	"sort"
 	"testing"
 
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// registryEntry is what the table pins of each entry: the fields a verdict
-// or a lookup depends on. Meaning, shape and example are prose and are
-// checked for presence only.
-type registryEntry struct {
-	kind         string
-	secret       bool
-	aliases      []string
-	capabilities []string
-}
-
-// platformRegistry is every entry of the platform's resource registry, by
-// name.
-var platformRegistry = map[string]registryEntry{
-	"agentEndpoint":        {kind: "Coding agent", capabilities: []string{"agent-session"}},
-	"appHostname":          {kind: "Host & network", capabilities: []string{"app-host", "aws-topology"}},
-	"appName":              {kind: "App", capabilities: []string{"database"}},
-	"appUrl":               {kind: "Host & network", capabilities: []string{"app-host", "aws-topology"}},
-	"artifact":             {kind: "Build & deploy", capabilities: []string{"artifact"}},
-	"awsCredential":        {kind: "Access", capabilities: []string{"runner"}},
-	"boardRepo":            {kind: "Work", capabilities: []string{"ci-check"}},
-	"buildRequestId":       {kind: "Coding agent", capabilities: []string{"generated-source"}},
-	"cdRepo":               {kind: "Build & deploy", capabilities: []string{"deployment"}},
-	"certTrusted":          {kind: "Host & network", capabilities: []string{"app-host", "aws-topology"}},
-	"ciCheckContribution":  {kind: "Work", capabilities: []string{"ci-check"}},
-	"ciRepo":               {kind: "Build & deploy", capabilities: []string{"artifact"}},
-	"claim":                {kind: "Host & network", capabilities: []string{"reconcile/crossplane"}},
-	"cloud.region":         {kind: "Host & network", aliases: []string{"region"}, capabilities: []string{"app-host", "aws-topology"}},
-	"dataSnapshotId":       {kind: "Data", capabilities: []string{"aws-topology"}},
-	"dbName":               {kind: "Data", capabilities: []string{"database"}},
-	"deployRoleArn":        {kind: "Access", secret: true, capabilities: []string{"aws-iam", "aws-topology"}},
-	"deployment":           {kind: "Build & deploy", capabilities: []string{"deployment"}},
-	"driftPolicy":          {kind: "Host & network", capabilities: []string{"reconcile/crossplane"}},
-	"driftedResources":     {kind: "Host & network", capabilities: []string{"reconcile/crossplane"}},
-	"dshSessionUrl":        {kind: "Coding agent", capabilities: []string{"agent-session"}},
-	"ecrPushRoleArn":       {kind: "Access", capabilities: []string{"aws-topology"}},
-	"ecrRegistry":          {kind: "Build & deploy", capabilities: []string{"aws-topology"}},
-	"execKind":             {kind: "Host & network", capabilities: []string{"app-host"}},
-	"execTarget":           {kind: "Host & network", capabilities: []string{"app-host"}},
-	"host":                 {kind: "Data", capabilities: []string{"database"}},
-	"host.type":            {kind: "Host & network", aliases: []string{"instanceType"}, capabilities: []string{"app-host", "aws-topology"}},
-	"hostId":               {kind: "Host & network", capabilities: []string{"app-host"}},
-	"hostProvider":         {kind: "Host & network", capabilities: []string{"app-host"}},
-	"imageRepo":            {kind: "Build & deploy", capabilities: []string{"artifact"}},
-	"instanceId":           {kind: "Host & network", capabilities: []string{"aws-topology"}},
-	"landedBranch":         {kind: "Source"},
-	"landedBuildRequestId": {kind: "Coding agent"},
-	"landedSha":            {kind: "Source"},
-	"landingPullRequest":   {kind: "Source"},
-	"llmEndpoint":          {kind: "Model", capabilities: []string{"llm"}},
-	"model":                {kind: "Model", capabilities: []string{"llm"}},
-	"oidcProviderArn":      {kind: "Access", secret: true, capabilities: []string{"aws-iam"}},
-	"opencodeUrl":          {kind: "Coding agent"},
-	"port":                 {kind: "Data", capabilities: []string{"database"}},
-	"publicIp":             {kind: "Host & network", capabilities: []string{"app-host", "aws-topology"}},
-	"reachable":            {kind: "Host & network", capabilities: []string{"app-host", "aws-topology"}},
-	"reconciledResources":  {kind: "Host & network", capabilities: []string{"reconcile/crossplane"}},
-	"registryHost":         {kind: "Build & deploy", capabilities: []string{"app-host"}},
-	"registryKind":         {kind: "Build & deploy", capabilities: []string{"app-host"}},
-	"repo":                 {kind: "Source", capabilities: []string{"repo"}},
-	"repoUrl":              {kind: "Source", capabilities: []string{"repo"}},
-	"runnerLabel":          {kind: "Build & deploy", capabilities: []string{"runner"}},
-	"runsOn":               {kind: "Build & deploy", capabilities: []string{"runner"}},
-	"runsOnPr":             {kind: "Build & deploy", capabilities: []string{"runner"}},
-	"scaffoldCommit":       {kind: "Source"},
-	"scaffoldPullRequest":  {kind: "Source"},
-	"settingsWarning":      {kind: "Source"},
-	"sourceBranch":         {kind: "Source", capabilities: []string{"generated-source"}},
-	"sourceSha":            {kind: "Source", capabilities: []string{"generated-source"}},
-	"standardPullRequest":  {kind: "Coding agent", capabilities: []string{"agent-session"}},
-	"url":                  {kind: "Work"},
-	"username":             {kind: "Data", capabilities: []string{"database"}},
-	"workflowPath":         {kind: "Coding agent", capabilities: []string{"agent-session"}},
-	"workflowUrl":          {kind: "Build & deploy", capabilities: []string{"ci"}},
-}
-
 // nineKinds is the closed kind vocabulary, as the labels the console shows.
 var nineKinds = map[string]bool{
 	"App": true, "Host & network": true, "Data": true, "Build & deploy": true, "Access": true,
 	"Model": true, "Coding agent": true, "Work": true, "Source": true,
-}
-
-// orEmpty treats a nil list as the empty list, so the table can omit one.
-func orEmpty(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }
 
 // registry returns contract.Resources(), failing the test when it is empty so
@@ -112,48 +27,6 @@ func registry(t *testing.T) []contract.ResourceEntry {
 		t.Fatal("contract.Resources() is empty")
 	}
 	return rs
-}
-
-func TestResources_HoldsTheSixtyPlatformNames(t *testing.T) {
-	rs := contract.Resources()
-	if len(rs) != 60 {
-		t.Errorf("contract.Resources() holds %d entries, want 60", len(rs))
-	}
-	got := map[string]bool{}
-	for _, r := range rs {
-		got[r.Name] = true
-	}
-	for name := range platformRegistry {
-		if !got[name] {
-			t.Errorf("the registry has no entry named %q", name)
-		}
-	}
-	for name := range got {
-		if _, ok := platformRegistry[name]; !ok {
-			t.Errorf("the registry holds %q, which the platform's registry does not", name)
-		}
-	}
-}
-
-func TestResources_EachEntryCarriesThePlatformsKindAliasesSecretAndCapabilities(t *testing.T) {
-	for _, r := range registry(t) {
-		want, ok := platformRegistry[r.Name]
-		if !ok {
-			continue // reported by TestResources_HoldsTheSixtyPlatformNames
-		}
-		if r.Kind != want.kind {
-			t.Errorf("%q: kind %q, want %q", r.Name, r.Kind, want.kind)
-		}
-		if r.Secret != want.secret {
-			t.Errorf("%q: secret %v, want %v", r.Name, r.Secret, want.secret)
-		}
-		if !reflect.DeepEqual(r.Aliases, orEmpty(want.aliases)) {
-			t.Errorf("%q: aliases %#v, want %#v", r.Name, r.Aliases, orEmpty(want.aliases))
-		}
-		if !reflect.DeepEqual(r.Capabilities, orEmpty(want.capabilities)) {
-			t.Errorf("%q: capabilities %#v, want %#v", r.Name, r.Capabilities, orEmpty(want.capabilities))
-		}
-	}
 }
 
 func TestResources_EveryEntryIsComplete(t *testing.T) {
@@ -207,30 +80,11 @@ func TestResources_NoAliasEqualsAnEntryName(t *testing.T) {
 	}
 }
 
-func TestResources_TheOnlyAliasesAreRegionAndInstanceType(t *testing.T) {
-	var all []string
+func TestResources_SecretEntriesCarryNoExample(t *testing.T) {
 	for _, r := range registry(t) {
-		all = append(all, r.Aliases...)
-	}
-	sort.Strings(all)
-	if want := []string{"instanceType", "region"}; !reflect.DeepEqual(all, want) {
-		t.Errorf("aliases across the registry = %v, want %v", all, want)
-	}
-}
-
-func TestResources_SecretEntriesAreDeployRoleArnAndOidcProviderArnWithNoExample(t *testing.T) {
-	var secret []string
-	for _, r := range registry(t) {
-		if !r.Secret {
-			continue
+		if r.Secret && r.Example != "" {
+			t.Errorf("secret entry %q carries example %q, want none, since the example would show the secret", r.Name, r.Example)
 		}
-		secret = append(secret, r.Name)
-		if r.Example != "" {
-			t.Errorf("secret entry %q carries example %q, want none", r.Name, r.Example)
-		}
-	}
-	if want := []string{"deployRoleArn", "oidcProviderArn"}; !reflect.DeepEqual(secret, want) {
-		t.Errorf("secret entries = %v, want %v", secret, want)
 	}
 }
 
@@ -314,11 +168,17 @@ func TestLookupResource_ReturnsACopyACallerCanMutate(t *testing.T) {
 	if !ok {
 		t.Fatal(`LookupResource("cloud.region") found nothing`)
 	}
+	if len(first.Aliases) == 0 || len(first.Capabilities) == 0 {
+		t.Fatalf("cloud.region needs an alias and a capability for this test to mutate, got %+v", first)
+	}
+	want := first
+	want.Aliases = append([]string{}, first.Aliases...)
+	want.Capabilities = append([]string{}, first.Capabilities...)
+
 	first.Aliases[0] = "mutated"
 	first.Capabilities[0] = "mutated"
 
-	again, _ := contract.LookupResource("region")
-	if again.Name != "cloud.region" || again.Aliases[0] != "region" || again.Capabilities[0] != "app-host" {
-		t.Errorf("mutating a looked-up entry changed the registry: a later lookup returned %+v", again)
+	if again, _ := contract.LookupResource("cloud.region"); !reflect.DeepEqual(again, want) {
+		t.Errorf("mutating a looked-up entry changed the registry: a later lookup returned %+v, want %+v", again, want)
 	}
 }
