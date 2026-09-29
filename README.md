@@ -5,8 +5,10 @@ engine. It covers the webhook trust boundary a block's handler sits behind,
 the events a block emits as it works, and `kittest`, the conformance harness
 a block's own tests run against the same fixtures the engine is tested
 against. The `contract` package owns the wire contract itself: the envelope
-and response JSON schemas, and the golden request and response fixtures both
-sides are checked against.
+and response JSON schemas, the golden request and response fixtures both
+sides are checked against, and the resource registry. The registry is the one
+list of output names a block may declare in `spec.outputs` and read under
+`spec.requires[].reads`, and the engine reads it from this package.
 
 ## Importing it
 

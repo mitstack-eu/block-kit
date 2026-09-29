@@ -189,10 +189,34 @@ jobs:
         run: |
           rm -rf operator-kit
 
-      - name: blockverify (standalone contract check)
+      # On a pull request blockverify compares spec.version with the base
+      # commit's manifest.yaml. The checkout is shallow, so the base commit is
+      # fetched first. The file goes to RUNNER_TEMP, outside the tree
+      # blockverify judges, and a base with no manifest.yaml writes no file,
+      # which blockverify reads as a block new on this branch.
+      - name: Write the base commit's manifest
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          ./blockverify --standalone --json . > blockverify-report.json
+          git fetch --depth=1 origin "$BASE_SHA"
+          if git cat-file -e "$BASE_SHA:manifest.yaml" 2>/dev/null; then
+            git show "$BASE_SHA:manifest.yaml" > "$RUNNER_TEMP/base-manifest.yaml"
+          else
+            echo "the base commit $BASE_SHA has no manifest.yaml, so the block is new on this branch"
+          fi
+
+      - name: blockverify (standalone contract check)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          base_flag=()
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_flag=(--base-manifest "$RUNNER_TEMP/base-manifest.yaml")
+          fi
+          ./blockverify --standalone --json "${base_flag[@]}" . > blockverify-report.json
           cat blockverify-report.json
           verdict=$(jq -r .verdict blockverify-report.json)
           if [ "$verdict" != "pass" ]; then
