@@ -16,12 +16,14 @@ import (
 
 // runSSM sends script to h.Target as an AWS-RunShellScript document and
 // waits for it to reach a terminal state.
-func runSSM(ctx context.Context, h Host, script string) error {
-	commandID, err := sendSSMCommand(ctx, h, script)
+func runSSM(ctx context.Context, h Host, script string, o sendOptions) error {
+	commandID, err := sendSSMCommand(ctx, h, script, o)
 	if err != nil {
 		return err
 	}
-	return waitForSSMTerminalStatus(ctx, h, commandID)
+	pollCtx, cancel := ssmPollContext(ctx, o)
+	defer cancel()
+	return waitForSSMPoll(pollCtx, o, h, commandID)
 }
 
 // runSSMOutput sends script exactly as runSSM does — sharing sendSSMCommand
@@ -29,22 +31,53 @@ func runSSM(ctx context.Context, h Host, script string) error {
 // and, only once the poll has already reached Success, issues a second
 // get-command-invocation call to read the captured stdout. Run itself must
 // never take this extra call, which is why it stays a separate function
-// rather than folding into runSSM.
-func runSSMOutput(ctx context.Context, h Host, script string) (string, error) {
-	commandID, err := sendSSMCommand(ctx, h, script)
+// rather than folding into runSSM. The output read runs on the same context
+// as the poll, so a detached poll's read also outlives cancellation.
+func runSSMOutput(ctx context.Context, h Host, script string, o sendOptions) (string, error) {
+	commandID, err := sendSSMCommand(ctx, h, script, o)
 	if err != nil {
 		return "", err
 	}
-	if err := waitForSSMTerminalStatus(ctx, h, commandID); err != nil {
+	pollCtx, cancel := ssmPollContext(ctx, o)
+	defer cancel()
+	if err := waitForSSMPoll(pollCtx, o, h, commandID); err != nil {
 		return "", err
 	}
-	return ssmCommandOutput(ctx, h, commandID)
+	return ssmCommandOutput(pollCtx, h, commandID)
+}
+
+// ssmPollContext returns the context the poll and output read run on. It is
+// ctx itself unless o asks for a detached poll, in which case it keeps ctx's
+// values but drops its cancellation and deadline, and is bounded by
+// SSMPollTimeout instead: the command is already running on the host, and
+// cancelling ctx does not stop it there.
+func ssmPollContext(ctx context.Context, o sendOptions) (context.Context, context.CancelFunc) {
+	if !o.detachedPoll {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), SSMPollTimeout)
+}
+
+// waitForSSMPoll runs waitForSSMTerminalStatus on pollCtx. A detached poll's
+// context ends only when the SSMPollTimeout bound runs out, so for one it
+// reports that bound rather than a bare context error.
+func waitForSSMPoll(pollCtx context.Context, o sendOptions, h Host, commandID string) error {
+	err := waitForSSMTerminalStatus(pollCtx, h, commandID)
+	if err != nil && o.detachedPoll {
+		if ctxErr := pollCtx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			return fmt.Errorf("hostexec: ssm command %s timed out waiting for a terminal state after %s: %w", commandID, SSMPollTimeout, ctxErr)
+		}
+	}
+	return err
 }
 
 // sendSSMCommand issues the send-command call and returns the resulting
 // CommandId. The argv order is exact — a caller depends on the document
-// name, instance id and region arriving in precisely this sequence.
-func sendSSMCommand(ctx context.Context, h Host, script string) (string, error) {
+// name, instance id and region arriving in precisely this sequence, then
+// --comment and --timeout-seconds when o sets them, then --parameters last,
+// with executionTimeout ahead of commands when o sets it. The zero
+// sendOptions adds none of them.
+func sendSSMCommand(ctx context.Context, h Host, script string, o sendOptions) (string, error) {
 	// The aws CLI's shorthand parser decodes only \" and \\ inside the
 	// commands list, so the JSON handed to it must carry <, > and & literally:
 	// json.Marshal's HTML escapes (\u003e and friends) would reach the host
@@ -57,15 +90,27 @@ func sendSSMCommand(ctx context.Context, h Host, script string) (string, error) 
 	}
 	commandsJSON := strings.TrimSuffix(buf.String(), "\n")
 
-	cmd := exec.CommandContext(ctx, "aws",
+	args := []string{
 		"ssm", "send-command",
 		"--document-name", "AWS-RunShellScript",
 		"--instance-ids", h.Target,
 		"--region", h.Region,
 		"--query", "Command.CommandId",
 		"--output", "text",
-		"--parameters", "commands="+commandsJSON,
-	)
+	}
+	if o.commentSet {
+		args = append(args, "--comment", o.comment)
+	}
+	if o.deliveryTimeoutSet {
+		args = append(args, "--timeout-seconds", seconds(o.deliveryTimeout))
+	}
+	params := "commands=" + commandsJSON
+	if o.executionTimeoutSet {
+		params = `executionTimeout=["` + seconds(o.executionTimeout) + `"],` + params
+	}
+	args = append(args, "--parameters", params)
+
+	cmd := exec.CommandContext(ctx, "aws", args...)
 	setCmdEnv(cmd, h.Env)
 	cmd.WaitDelay = subprocessWaitDelay
 

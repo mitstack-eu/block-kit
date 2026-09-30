@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/operator-kit/hostexec"
 )
@@ -225,4 +226,166 @@ func ssmQueryOrder(t *testing.T, argvRecord string) []string {
 		}
 	}
 	return queries
+}
+
+// fakeSSMHeld writes a stub `aws` whose get-command-invocation Status answer
+// stays InProgress for as long as holdFile exists, the way a command still
+// running on the box does, and answers finalStatus once the test removes it.
+// Every get-command-invocation call first creates pollStarted, so a test can
+// wait until the driver has sent the command and begun polling. A
+// StandardOutputContent query always serves stdout. holdFile is created
+// armed; removing it releases the command. hangStatusPoll makes every Status
+// query hang instead.
+func fakeSSMHeld(t *testing.T, sendCommandID, finalStatus, stdout string) (dir, argvRecord, pollStarted, holdFile string) {
+	t.Helper()
+	dir = t.TempDir()
+	argvRecord = filepath.Join(dir, "argv")
+	pollStarted = filepath.Join(dir, "poll-started")
+	holdFile = filepath.Join(dir, "hold-in-progress")
+
+	script := fmt.Sprintf(`#!/usr/bin/env bash
+set -u
+for a in "$@"; do printf '%%s\n' "$a" >> %[1]s; done
+printf -- '---\n' >> %[1]s
+
+if [ "${2:-}" = "send-command" ]; then
+  printf '%%s\n' %[2]s
+  exit 0
+fi
+
+if [ "${2:-}" = "get-command-invocation" ]; then
+  : > %[3]s
+  query=""
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--query" ]; then query="$a"; fi
+    prev="$a"
+  done
+  if [ "$query" = "StandardOutputContent" ]; then
+    printf '%%s\n' %[6]s
+    exit 0
+  fi
+  if [ -f %[7]s ]; then
+    exec sleep %[8]d
+  fi
+  if [ -f %[4]s ]; then
+    printf '%%s\n' InProgress
+    exit 0
+  fi
+  printf '%%s\n' %[5]s
+  exit 0
+fi
+
+echo "fake aws: unrecognised subcommand: $*" >&2
+exit 2
+`, argvRecord, shQuote(sendCommandID), pollStarted, holdFile, shQuote(finalStatus), shQuote(stdout),
+		filepath.Join(dir, hangStatusMarker), int(hungStatusSleep/time.Second))
+
+	bin := filepath.Join(dir, "aws")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake aws: %v", err)
+	}
+	if err := os.WriteFile(holdFile, nil, 0o644); err != nil {
+		t.Fatalf("arming the in-progress hold: %v", err)
+	}
+	return dir, argvRecord, pollStarted, holdFile
+}
+
+// hangStatusMarker names the file in a fakeSSMHeld dir that makes every
+// Status query hang; hungStatusSleep bounds that hang. The stub execs sleep,
+// so killing the Status call kills the sleep itself and leaves no process
+// holding its pipes, and an unkilled call still ends after hungStatusSleep.
+const (
+	hangStatusMarker = "hang-status-poll"
+	hungStatusSleep  = 10 * time.Second
+)
+
+// hangStatusPoll makes the fakeSSMHeld stub in dir hang on every Status query
+// for hungStatusSleep instead of answering it.
+func hangStatusPoll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, hangStatusMarker), nil, 0o644); err != nil {
+		t.Fatalf("arming the Status call hang: %v", err)
+	}
+}
+
+// setSSMPolling sets SSMPollInterval and SSMPollTimeout for one test and
+// restores both on cleanup. A test that sets them must not run in parallel
+// with another test that reads them.
+func setSSMPolling(t *testing.T, interval, timeout time.Duration) {
+	t.Helper()
+	origInterval, origTimeout := hostexec.SSMPollInterval, hostexec.SSMPollTimeout
+	hostexec.SSMPollInterval = interval
+	hostexec.SSMPollTimeout = timeout
+	t.Cleanup(func() {
+		hostexec.SSMPollInterval = origInterval
+		hostexec.SSMPollTimeout = origTimeout
+	})
+}
+
+// runInBackground runs call on its own goroutine and delivers its error on
+// the returned channel. On cleanup it removes holdFile, releasing a held
+// fakeSSMHeld command, and waits for call to return, so a failed test never
+// leaves a call running that still reads the package variables
+// setSSMPolling restores. Call setSSMPolling and fakeSSMHeld before this so
+// that wait runs before either of their cleanups.
+func runInBackground(t *testing.T, holdFile string, call func() error) <-chan error {
+	t.Helper()
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		done <- call()
+	}()
+	t.Cleanup(func() {
+		_ = os.Remove(holdFile)
+		select {
+		case <-finished:
+		case <-time.After(30 * time.Second):
+			t.Error("the call under test was still running 30s after its hold was released")
+		}
+	})
+	return done
+}
+
+// waitForFile waits until path exists, failing early if done delivers first,
+// since the call under test then returned before reaching the point path
+// marks.
+func waitForFile(t *testing.T, path string, done <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("the call returned (err=%v) before %s was created", err, filepath.Base(path))
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// sendCommandArgv returns the argv of the first send-command call recorded
+// in argvRecord, one element per line as fakeSSM, fakeSSMOutput and
+// fakeSSMHeld record it. It fails the test when no send-command was
+// recorded.
+func sendCommandArgv(t *testing.T, argvRecord string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(argvRecord)
+	if err != nil {
+		t.Fatalf("reading fake aws argv record: %v", err)
+	}
+	for _, inv := range strings.Split(string(raw), "---\n") {
+		lines := strings.Split(strings.TrimRight(inv, "\n"), "\n")
+		if len(lines) >= 2 && lines[0] == "ssm" && lines[1] == "send-command" {
+			return lines
+		}
+	}
+	t.Fatal("fake aws never recorded a send-command call")
+	return nil
 }

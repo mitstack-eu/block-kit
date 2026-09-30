@@ -34,6 +34,14 @@
 // output, hold a persistent connection, or retry anything beyond the SSM
 // poll loop's own transient-error retry. An operator that needs a live
 // shell or incremental output needs a different tool.
+//
+// The ssm driver takes opt-in SendOptions: WithComment, WithDeliveryTimeout
+// and WithExecutionTimeout add the matching send-command arguments, and
+// WithDetachedPoll keeps polling for a terminal status after the caller's
+// context is cancelled, bounded by SSMPollTimeout, because cancelling the
+// caller does not stop a command already running on the host. The options
+// are ssm-only; the ssh driver rejects any of them. A call with no option
+// sends the base send-command argv and returns once ctx is cancelled.
 package hostexec
 
 import (
@@ -92,14 +100,31 @@ var SSMPollTimeout = 10 * time.Minute
 // spawned: an unrecognised or empty Kind, an empty Target, or an empty
 // Region on the ssm driver are all rejected up front rather than falling
 // back to a default or a partially-started subprocess.
-func Run(ctx context.Context, h Host, script string) error {
+//
+// opts adjust how the ssm driver sends and waits for the command: a comment,
+// a delivery timeout, an execution timeout, and a poll detached from ctx's
+// cancellation. They are validated before anything is spawned too, and they
+// are ssm-only: any option at all on the ssh driver is rejected rather than
+// ignored. With no option, the ssm driver sends the base send-command argv
+// and the whole call stops promptly once ctx is cancelled. With
+// WithDetachedPoll, send-command still runs on ctx, but once the command is
+// sent Run keeps polling after ctx is cancelled, so it can outlive the
+// cancellation by up to SSMPollTimeout.
+func Run(ctx context.Context, h Host, script string, opts ...SendOption) error {
 	if err := validateHost(h); err != nil {
 		return err
 	}
 	switch h.Kind {
 	case KindSSM:
-		return runSSM(ctx, h, script)
+		o, err := resolveSendOptions(opts)
+		if err != nil {
+			return err
+		}
+		return runSSM(ctx, h, script, o)
 	case KindSSH:
+		if err := refuseSendOptions(h.Kind, opts); err != nil {
+			return err
+		}
 		return runSSH(ctx, h, script)
 	default:
 		return fmt.Errorf("hostexec: unrecognised host kind %q", h.Kind)
@@ -122,14 +147,26 @@ func Run(ctx context.Context, h Host, script string) error {
 // itself once it is already running, never the secret value. The ssh
 // driver instead reads the stdout its own subprocess already produced;
 // script itself still travels only on that subprocess's stdin, never argv.
-func RunOutput(ctx context.Context, h Host, script string) (string, error) {
+//
+// RunOutput takes the same ssm-only opts as Run, validated and applied the
+// same way. With WithDetachedPoll, the output read runs on the same detached
+// context as the poll, so it too can outlive ctx's cancellation by up to
+// SSMPollTimeout.
+func RunOutput(ctx context.Context, h Host, script string, opts ...SendOption) (string, error) {
 	if err := validateHost(h); err != nil {
 		return "", err
 	}
 	switch h.Kind {
 	case KindSSM:
-		return runSSMOutput(ctx, h, script)
+		o, err := resolveSendOptions(opts)
+		if err != nil {
+			return "", err
+		}
+		return runSSMOutput(ctx, h, script, o)
 	case KindSSH:
+		if err := refuseSendOptions(h.Kind, opts); err != nil {
+			return "", err
+		}
 		return runSSHOutput(ctx, h, script)
 	default:
 		return "", fmt.Errorf("hostexec: unrecognised host kind %q", h.Kind)
