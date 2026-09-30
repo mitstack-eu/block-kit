@@ -55,7 +55,9 @@ func WithComment(comment string) SendOption {
 
 // WithDeliveryTimeout sends d as the command's --timeout-seconds, how long
 // SSM keeps trying to deliver the command to the instance. d must be a whole
-// number of seconds between 30 s and 2592000 s inclusive.
+// number of seconds between 30 s and 2592000 s inclusive. It also lengthens
+// the poll bound, which becomes d plus any execution timeout plus one
+// SSMPollInterval whenever that exceeds SSMPollTimeout.
 func WithDeliveryTimeout(d time.Duration) SendOption {
 	return func(o *sendOptions) {
 		o.deliveryTimeout = d
@@ -65,7 +67,9 @@ func WithDeliveryTimeout(d time.Duration) SendOption {
 
 // WithExecutionTimeout sends d as the AWS-RunShellScript executionTimeout
 // parameter, how long the script may run on the instance. d must be a whole
-// number of seconds between 1 s and 172800 s inclusive.
+// number of seconds between 1 s and 172800 s inclusive. It also lengthens the
+// poll bound, which becomes d plus any delivery timeout plus one
+// SSMPollInterval whenever that exceeds SSMPollTimeout.
 func WithExecutionTimeout(d time.Duration) SendOption {
 	return func(o *sendOptions) {
 		o.executionTimeout = d
@@ -76,9 +80,11 @@ func WithExecutionTimeout(d time.Duration) SendOption {
 // WithDetachedPoll keeps waiting for the sent command after the caller's
 // context is cancelled. send-command still runs on the caller's context, but
 // the status poll and, for RunOutput, the output read run on a context
-// detached from its cancellation and bounded by SSMPollTimeout. The call then
-// returns only once the command reaches a terminal state or that bound runs
-// out, so it can outlive a cancellation by up to SSMPollTimeout.
+// detached from its cancellation and bounded by the poll bound: SSMPollTimeout,
+// or with a delivery or execution timeout set, their sum plus one
+// SSMPollInterval if that is longer. The call then returns only once the
+// command reaches a terminal state or that bound runs out, so it can outlive a
+// cancellation by up to that bound.
 func WithDetachedPoll() SendOption {
 	return func(o *sendOptions) {
 		o.detachedPoll = true

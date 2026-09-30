@@ -21,9 +21,10 @@ func runSSM(ctx context.Context, h Host, script string, o sendOptions) error {
 	if err != nil {
 		return err
 	}
-	pollCtx, cancel := ssmPollContext(ctx, o)
+	bound := ssmPollBound(o)
+	pollCtx, cancel := ssmPollContext(ctx, o, bound)
 	defer cancel()
-	return waitForSSMPoll(pollCtx, o, h, commandID)
+	return waitForSSMPoll(pollCtx, o, bound, h, commandID)
 }
 
 // runSSMOutput sends script exactly as runSSM does — sharing sendSSMCommand
@@ -38,34 +39,56 @@ func runSSMOutput(ctx context.Context, h Host, script string, o sendOptions) (st
 	if err != nil {
 		return "", err
 	}
-	pollCtx, cancel := ssmPollContext(ctx, o)
+	bound := ssmPollBound(o)
+	pollCtx, cancel := ssmPollContext(ctx, o, bound)
 	defer cancel()
-	if err := waitForSSMPoll(pollCtx, o, h, commandID); err != nil {
+	if err := waitForSSMPoll(pollCtx, o, bound, h, commandID); err != nil {
 		return "", err
 	}
 	return ssmCommandOutput(pollCtx, h, commandID)
 }
 
+// ssmPollBound returns how long the ssm driver waits for a command sent with
+// o to reach a terminal state. With neither a delivery nor an execution
+// timeout it is SSMPollTimeout. With either, it is the delivery timeout plus
+// the execution timeout plus one SSMPollInterval, an unset one counting as
+// zero, so the poll outlasts the time SSM itself may take to deliver and run
+// the command and report that; SSMPollTimeout stays its floor. It reads the
+// package variables at call time.
+func ssmPollBound(o sendOptions) time.Duration {
+	if !o.deliveryTimeoutSet && !o.executionTimeoutSet {
+		return SSMPollTimeout
+	}
+	var sum time.Duration
+	if o.deliveryTimeoutSet {
+		sum += o.deliveryTimeout
+	}
+	if o.executionTimeoutSet {
+		sum += o.executionTimeout
+	}
+	return max(SSMPollTimeout, sum+SSMPollInterval)
+}
+
 // ssmPollContext returns the context the poll and output read run on. It is
 // ctx itself unless o asks for a detached poll, in which case it keeps ctx's
-// values but drops its cancellation and deadline, and is bounded by
-// SSMPollTimeout instead: the command is already running on the host, and
-// cancelling ctx does not stop it there.
-func ssmPollContext(ctx context.Context, o sendOptions) (context.Context, context.CancelFunc) {
+// values but drops its cancellation and deadline, and is bounded by bound
+// instead: the command is already running on the host, and cancelling ctx
+// does not stop it there.
+func ssmPollContext(ctx context.Context, o sendOptions, bound time.Duration) (context.Context, context.CancelFunc) {
 	if !o.detachedPoll {
 		return ctx, func() {}
 	}
-	return context.WithTimeout(context.WithoutCancel(ctx), SSMPollTimeout)
+	return context.WithTimeout(context.WithoutCancel(ctx), bound)
 }
 
-// waitForSSMPoll runs waitForSSMTerminalStatus on pollCtx. A detached poll's
-// context ends only when the SSMPollTimeout bound runs out, so for one it
+// waitForSSMPoll runs waitForSSMTerminalStatus on pollCtx under bound. A
+// detached poll's context ends only when bound runs out, so for one it
 // reports that bound rather than a bare context error.
-func waitForSSMPoll(pollCtx context.Context, o sendOptions, h Host, commandID string) error {
-	err := waitForSSMTerminalStatus(pollCtx, h, commandID)
+func waitForSSMPoll(pollCtx context.Context, o sendOptions, bound time.Duration, h Host, commandID string) error {
+	err := waitForSSMTerminalStatus(pollCtx, h, commandID, bound)
 	if err != nil && o.detachedPoll {
 		if ctxErr := pollCtx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
-			return fmt.Errorf("hostexec: ssm command %s timed out waiting for a terminal state after %s: %w", commandID, SSMPollTimeout, ctxErr)
+			return fmt.Errorf("hostexec: ssm command %s timed out waiting for a terminal state after %s: %w", commandID, bound, ctxErr)
 		}
 	}
 	return err
@@ -151,12 +174,12 @@ func sendSSMCommand(ctx context.Context, h Host, script string, o sendOptions) (
 }
 
 // waitForSSMTerminalStatus polls get-command-invocation until commandID
-// reaches a terminal state, returning nil only on Success. A poll
-// subprocess error (the invocation not visible yet, a transient CLI
+// reaches a terminal state or bound runs out, returning nil only on Success.
+// A poll subprocess error (the invocation not visible yet, a transient CLI
 // failure) is treated as still-pending and retried, never as terminal.
-func waitForSSMTerminalStatus(ctx context.Context, h Host, commandID string) error {
+func waitForSSMTerminalStatus(ctx context.Context, h Host, commandID string, bound time.Duration) error {
 	var lastPollErr error
-	deadline := time.Now().Add(SSMPollTimeout)
+	deadline := time.Now().Add(bound)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -183,9 +206,9 @@ func waitForSSMTerminalStatus(ctx context.Context, h Host, commandID string) err
 		}
 	}
 	if lastPollErr != nil {
-		return fmt.Errorf("hostexec: ssm command %s timed out waiting for a terminal state after %s — last poll failure: %v", commandID, SSMPollTimeout, lastPollErr)
+		return fmt.Errorf("hostexec: ssm command %s timed out waiting for a terminal state after %s — last poll failure: %v", commandID, bound, lastPollErr)
 	}
-	return fmt.Errorf("hostexec: ssm command %s timed out waiting for a terminal state after %s", commandID, SSMPollTimeout)
+	return fmt.Errorf("hostexec: ssm command %s timed out waiting for a terminal state after %s", commandID, bound)
 }
 
 // ssmCommandStatus reads the current status of commandID. Any error from

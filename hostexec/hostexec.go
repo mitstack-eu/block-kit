@@ -38,10 +38,13 @@
 // The ssm driver takes opt-in SendOptions: WithComment, WithDeliveryTimeout
 // and WithExecutionTimeout add the matching send-command arguments, and
 // WithDetachedPoll keeps polling for a terminal status after the caller's
-// context is cancelled, bounded by SSMPollTimeout, because cancelling the
-// caller does not stop a command already running on the host. The options
-// are ssm-only; the ssh driver rejects any of them. A call with no option
-// sends the base send-command argv and returns once ctx is cancelled.
+// context is cancelled, because cancelling the caller does not stop a command
+// already running on the host. Every poll, detached or not, gives up after
+// SSMPollTimeout when neither timeout option is set; with either set it waits
+// at least the delivery timeout plus the execution timeout plus one
+// SSMPollInterval, and never less than SSMPollTimeout. The options are
+// ssm-only; the ssh driver rejects any of them. A call with no option sends
+// the base send-command argv and returns once ctx is cancelled.
 package hostexec
 
 import (
@@ -90,8 +93,10 @@ type Host struct {
 var SSMPollInterval = 5 * time.Second
 
 // SSMPollTimeout is how long the ssm driver waits for a terminal status
-// before giving up. A package variable for the same reason as
-// SSMPollInterval.
+// before giving up when the call sets neither WithDeliveryTimeout nor
+// WithExecutionTimeout. A call that sets either waits the delivery timeout
+// plus the execution timeout plus one SSMPollInterval, with SSMPollTimeout as
+// the floor. A package variable for the same reason as SSMPollInterval.
 var SSMPollTimeout = 10 * time.Minute
 
 // Run executes script on h and returns once it reaches a terminal state.
@@ -109,7 +114,8 @@ var SSMPollTimeout = 10 * time.Minute
 // and the whole call stops promptly once ctx is cancelled. With
 // WithDetachedPoll, send-command still runs on ctx, but once the command is
 // sent Run keeps polling after ctx is cancelled, so it can outlive the
-// cancellation by up to SSMPollTimeout.
+// cancellation by up to the poll bound: SSMPollTimeout, or with a delivery or
+// execution timeout set, their sum plus one SSMPollInterval if that is longer.
 func Run(ctx context.Context, h Host, script string, opts ...SendOption) error {
 	if err := validateHost(h); err != nil {
 		return err
@@ -150,8 +156,8 @@ func Run(ctx context.Context, h Host, script string, opts ...SendOption) error {
 //
 // RunOutput takes the same ssm-only opts as Run, validated and applied the
 // same way. With WithDetachedPoll, the output read runs on the same detached
-// context as the poll, so it too can outlive ctx's cancellation by up to
-// SSMPollTimeout.
+// context as the poll, so it too can outlive ctx's cancellation by up to the
+// same poll bound Run describes.
 func RunOutput(ctx context.Context, h Host, script string, opts ...SendOption) (string, error) {
 	if err := validateHost(h); err != nil {
 		return "", err
