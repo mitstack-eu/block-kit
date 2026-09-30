@@ -40,8 +40,12 @@ type sendOptions struct {
 }
 
 // WithComment sends comment as the command's --comment, so the command can be
-// found by it later. The comment must be non-empty, at most 100 bytes and must
-// not begin with "-"; it is never truncated.
+// found by it later. The comment must be non-empty and at most 100 bytes; it
+// is never truncated. It must not begin with "-", which the aws CLI would
+// parse as an option, nor with file://, fileb://, http:// or https://, which
+// the aws CLI can read as an instruction to load the value from that file or
+// URL; the prefix check ignores letter case. Those strings later in the
+// comment are sent verbatim.
 func WithComment(comment string) SendOption {
 	return func(o *sendOptions) {
 		o.comment = comment
@@ -110,6 +114,9 @@ func resolveSendOptions(opts []SendOption) (sendOptions, error) {
 		case strings.HasPrefix(o.comment, "-"):
 			return sendOptions{}, fmt.Errorf("hostexec: WithComment: comment %q begins with \"-\" — the aws CLI has no end-of-options marker, so it would be parsed as an option", o.comment)
 		}
+		if prefix, ok := remoteValuePrefix(o.comment); ok {
+			return sendOptions{}, fmt.Errorf("hostexec: WithComment: comment %q begins with %q — the aws CLI can read it as an instruction to load the value from that file or URL", o.comment, prefix)
+		}
 	}
 	if o.deliveryTimeoutSet {
 		if err := checkWholeSeconds("WithDeliveryTimeout", o.deliveryTimeout, minDeliveryTimeout, maxDeliveryTimeout); err != nil {
@@ -122,6 +129,22 @@ func resolveSendOptions(opts []SendOption) (sendOptions, error) {
 		}
 	}
 	return o, nil
+}
+
+// remoteValuePrefixes are the parameter-value prefixes that make the aws CLI
+// read the value from a local file or fetch it from a URL.
+var remoteValuePrefixes = []string{"file://", "fileb://", "http://", "https://"}
+
+// remoteValuePrefix reports which of remoteValuePrefixes s begins with,
+// compared case-insensitively, so every letter-case variant is refused
+// whether or not the aws CLI would honour it.
+func remoteValuePrefix(s string) (string, bool) {
+	for _, p := range remoteValuePrefixes {
+		if len(s) >= len(p) && strings.EqualFold(s[:len(p)], p) {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // checkWholeSeconds rejects d unless it is a whole number of seconds within

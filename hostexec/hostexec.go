@@ -41,7 +41,7 @@
 // context is cancelled, bounded by SSMPollTimeout, because cancelling the
 // caller does not stop a command already running on the host. The options
 // are ssm-only; the ssh driver rejects any of them. A call with no option
-// behaves exactly as a call from before the options existed.
+// sends the base send-command argv and returns once ctx is cancelled.
 package hostexec
 
 import (
