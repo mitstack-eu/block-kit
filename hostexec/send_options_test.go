@@ -466,13 +466,13 @@ func TestSSMRun_DetachedPollIsBoundedBySSMPollTimeout(t *testing.T) {
 	}
 }
 
-// pollBoundPhrase is what a detached poll's error says once SSMPollTimeout
-// ends it, whether the poll loop's own deadline or the poll context's
-// deadline ran out first.
+// pollBoundPhrase is what a poll's error says once the poll bound ends it,
+// attached or detached, whether the poll loop's own deadline or the poll
+// context's deadline ran out first.
 const pollBoundPhrase = "timed out waiting for a terminal state after"
 
-// assertPollBoundError asserts err reports the SSMPollTimeout bound that
-// ended a detached poll, rather than a bare context error or the caller's
+// assertPollBoundError asserts err reports the poll bound that ended a poll,
+// attached or detached, rather than a bare context error or the caller's
 // cancellation.
 func assertPollBoundError(t *testing.T, name string, err error) {
 	t.Helper()
@@ -483,7 +483,7 @@ func assertPollBoundError(t *testing.T, name string, err error) {
 		t.Errorf("%s() error = %v, want it to contain %q", name, err, pollBoundPhrase)
 	}
 	if errors.Is(err, context.Canceled) {
-		t.Errorf("%s() error = %v wraps context.Canceled, want it to report the SSMPollTimeout bound that ended the detached poll", name, err)
+		t.Errorf("%s() error = %v wraps context.Canceled, want it to report the poll bound that ended the poll", name, err)
 	}
 }
 

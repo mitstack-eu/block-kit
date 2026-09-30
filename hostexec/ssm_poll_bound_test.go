@@ -73,7 +73,7 @@ func assertOutlivesHold(t *testing.T, h heldPastBound) {
 
 	select {
 	case err := <-done:
-		t.Fatalf("%s returned (err=%v) while the command was still InProgress %s after the poll began, want it to keep polling: SSMPollTimeout is %s, and the timeout options set a longer bound", h.ep.name, err, h.hold, h.pollTimeout)
+		t.Fatalf("%s returned (err=%v) while the command was still InProgress %s after the poll began, want it to keep polling until its bound, the longer of SSMPollTimeout (%s) and the bound the timeout options derive", h.ep.name, err, h.hold, h.pollTimeout)
 	case <-time.After(h.hold):
 	}
 
