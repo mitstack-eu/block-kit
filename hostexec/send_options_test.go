@@ -2,10 +2,11 @@ package hostexec_test
 
 // The SSM send options are opt-in: a comment, a delivery timeout, an
 // execution timeout, and a poll that outlives the caller's cancellation.
-// A caller that passes none gets exactly the send-command argv and the
-// return-on-cancellation it had before the options existed. Every option is
-// validated before any subprocess is spawned, and none is accepted on the ssh
-// driver, which has no equivalent to apply it to.
+// A caller that passes none gets the base send-command argv, with only
+// --parameters commands=[...] after the output flags, and a call that returns
+// as soon as its context is cancelled. Every option is validated before any
+// subprocess is spawned, and none is accepted on the ssh driver, which has no
+// equivalent to apply it to.
 
 import (
 	"context"
@@ -84,7 +85,7 @@ func assertArgv(t *testing.T, got, want []string) {
 
 // --- argv -----------------------------------------------------------------
 
-func TestSSMSendOptions_NoOptionsSendsTodaysArgvExactly(t *testing.T) {
+func TestSSMSendOptions_NoOptionsSendsTheBaseArgvExactly(t *testing.T) {
 	for _, ep := range entryPoints {
 		t.Run(ep.name, func(t *testing.T) {
 			got := sendAndRecordArgv(t, ep)
@@ -170,6 +171,10 @@ func TestSSMSendOptions_BoundaryValuesAreAcceptedAndSentVerbatim(t *testing.T) {
 			wantSendArgv("--parameters", `executionTimeout=["172800"],`+fixtureCommands)},
 		{"comment of exactly 100 bytes", hostexec.WithComment(comment100),
 			wantSendArgv("--comment", comment100, "--parameters", fixtureCommands)},
+		// Only a leading file://, fileb://, http:// or https:// makes the aws
+		// CLI load the value from elsewhere.
+		{"comment containing file:// after its start", hostexec.WithComment("mitstack install notes file://comment-fixture"),
+			wantSendArgv("--comment", "mitstack install notes file://comment-fixture", "--parameters", fixtureCommands)},
 	}
 	for _, ep := range entryPoints {
 		for _, c := range cases {
@@ -195,6 +200,15 @@ func TestSSMSendOptions_InvalidOptionIsRejectedBeforeAnySubprocessIsSpawned(t *t
 		{"comment of 51 runes but 102 bytes", hostexec.WithComment(strings.Repeat("é", 51))},
 		// The aws CLI has no end-of-options marker.
 		{"comment beginning with a dash", hostexec.WithComment("-mitstack app-runner install lane-a")},
+		// The aws CLI loads a parameter value beginning with file:// or
+		// fileb:// from that file, and v1 fetches an http:// or https:// URL,
+		// matching the prefix case-insensitively.
+		{"comment beginning with file://", hostexec.WithComment("file://comment-fixture")},
+		{"comment beginning with fileb://", hostexec.WithComment("fileb://comment-fixture")},
+		{"comment beginning with FILEB://", hostexec.WithComment("FILEB://comment-fixture")},
+		{"comment beginning with http://", hostexec.WithComment("http://comment-fixture")},
+		{"comment beginning with https://", hostexec.WithComment("https://comment-fixture")},
+		{"comment beginning with HTTPS://", hostexec.WithComment("HTTPS://comment-fixture")},
 		{"delivery timeout of zero", hostexec.WithDeliveryTimeout(0)},
 		{"negative delivery timeout", hostexec.WithDeliveryTimeout(-600 * time.Second)},
 		{"delivery timeout below 30s", hostexec.WithDeliveryTimeout(29 * time.Second)},
@@ -444,17 +458,66 @@ func TestSSMRun_DetachedPollIsBoundedBySSMPollTimeout(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("Run() = nil for a command still InProgress, want a timeout error")
-		}
-		msg := strings.ToLower(err.Error())
-		if !strings.Contains(msg, "timed out") && !strings.Contains(msg, "timeout") && !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("Run() error = %v, want it to say the poll timed out", err)
-		}
-		if errors.Is(err, context.Canceled) {
-			t.Errorf("Run() error = %v wraps context.Canceled, want it to report the SSMPollTimeout bound that ended the detached poll", err)
-		}
+		assertPollBoundError(t, "Run", err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run with the detached poll did not return within 5s of a 1s SSMPollTimeout; the detached poll must stay bounded")
+	}
+}
+
+// pollBoundPhrase is what a detached poll's error says once SSMPollTimeout
+// ends it, whether the poll loop's own deadline or the poll context's
+// deadline ran out first.
+const pollBoundPhrase = "timed out waiting for a terminal state after"
+
+// assertPollBoundError asserts err reports the SSMPollTimeout bound that
+// ended a detached poll, rather than a bare context error or the caller's
+// cancellation.
+func assertPollBoundError(t *testing.T, name string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s() = nil for a command that never reached a terminal state, want a timeout error", name)
+	}
+	if !strings.Contains(err.Error(), pollBoundPhrase) {
+		t.Errorf("%s() error = %v, want it to contain %q", name, err, pollBoundPhrase)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Errorf("%s() error = %v wraps context.Canceled, want it to report the SSMPollTimeout bound that ended the detached poll", name, err)
+	}
+}
+
+func TestSSMRun_DetachedPollEndsAHungStatusCallAtSSMPollTimeout(t *testing.T) {
+	// The Status call itself hangs, so the poll loop never gets back to its
+	// own deadline check: only the poll context's SSMPollTimeout bound can
+	// kill that call and end the wait.
+	const pollTimeout = 1 * time.Second
+	for _, ep := range entryPoints {
+		t.Run(ep.name, func(t *testing.T) {
+			setSSMPolling(t, 20*time.Millisecond, pollTimeout)
+			dir, _, pollStarted, holdFile := fakeSSMHeld(t, "cmd-fixture-1", "Success", "READY=0")
+			hangStatusPoll(t, dir)
+			setPath(t, dir)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var out string
+			done := runInBackground(t, holdFile, func() error {
+				var err error
+				out, err = ep.call(ctx, optionsHost(), fixtureScript, hostexec.WithDetachedPoll())
+				return err
+			})
+
+			waitForFile(t, pollStarted, done)
+			cancel()
+
+			select {
+			case err := <-done:
+				assertPollBoundError(t, ep.name, err)
+				if out != "" {
+					t.Errorf("%s() output = %q alongside a timeout, want empty", ep.name, out)
+				}
+			case <-time.After(4 * time.Second):
+				t.Fatalf("%s with the detached poll did not return within 4s of a 1s SSMPollTimeout while the Status call hung; the poll context must carry the bound", ep.name)
+			}
+		})
 	}
 }

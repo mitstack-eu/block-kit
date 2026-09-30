@@ -234,7 +234,8 @@ func ssmQueryOrder(t *testing.T, argvRecord string) []string {
 // Every get-command-invocation call first creates pollStarted, so a test can
 // wait until the driver has sent the command and begun polling. A
 // StandardOutputContent query always serves stdout. holdFile is created
-// armed; removing it releases the command.
+// armed; removing it releases the command. hangStatusPoll makes every Status
+// query hang instead.
 func fakeSSMHeld(t *testing.T, sendCommandID, finalStatus, stdout string) (dir, argvRecord, pollStarted, holdFile string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -264,6 +265,9 @@ if [ "${2:-}" = "get-command-invocation" ]; then
     printf '%%s\n' %[6]s
     exit 0
   fi
+  if [ -f %[7]s ]; then
+    exec sleep %[8]d
+  fi
   if [ -f %[4]s ]; then
     printf '%%s\n' InProgress
     exit 0
@@ -274,7 +278,8 @@ fi
 
 echo "fake aws: unrecognised subcommand: $*" >&2
 exit 2
-`, argvRecord, shQuote(sendCommandID), pollStarted, holdFile, shQuote(finalStatus), shQuote(stdout))
+`, argvRecord, shQuote(sendCommandID), pollStarted, holdFile, shQuote(finalStatus), shQuote(stdout),
+		filepath.Join(dir, hangStatusMarker), int(hungStatusSleep/time.Second))
 
 	bin := filepath.Join(dir, "aws")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -284,6 +289,24 @@ exit 2
 		t.Fatalf("arming the in-progress hold: %v", err)
 	}
 	return dir, argvRecord, pollStarted, holdFile
+}
+
+// hangStatusMarker names the file in a fakeSSMHeld dir that makes every
+// Status query hang; hungStatusSleep bounds that hang. The stub execs sleep,
+// so killing the Status call kills the sleep itself and leaves no process
+// holding its pipes, and an unkilled call still ends after hungStatusSleep.
+const (
+	hangStatusMarker = "hang-status-poll"
+	hungStatusSleep  = 10 * time.Second
+)
+
+// hangStatusPoll makes the fakeSSMHeld stub in dir hang on every Status query
+// for hungStatusSleep instead of answering it.
+func hangStatusPoll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, hangStatusMarker), nil, 0o644); err != nil {
+		t.Fatalf("arming the Status call hang: %v", err)
+	}
 }
 
 // setSSMPolling sets SSMPollInterval and SSMPollTimeout for one test and
