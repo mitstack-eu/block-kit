@@ -171,8 +171,9 @@ func TestSSMSendOptions_BoundaryValuesAreAcceptedAndSentVerbatim(t *testing.T) {
 			wantSendArgv("--parameters", `executionTimeout=["172800"],`+fixtureCommands)},
 		{"comment of exactly 100 bytes", hostexec.WithComment(comment100),
 			wantSendArgv("--comment", comment100, "--parameters", fixtureCommands)},
-		// Only a leading file://, fileb://, http:// or https:// makes the aws
-		// CLI load the value from elsewhere.
+		// A comment is refused only when it begins with file://, fileb://,
+		// http:// or https://; the same text later in the string is sent
+		// verbatim.
 		{"comment containing file:// after its start", hostexec.WithComment("mitstack install notes file://comment-fixture"),
 			wantSendArgv("--comment", "mitstack install notes file://comment-fixture", "--parameters", fixtureCommands)},
 	}
@@ -200,9 +201,10 @@ func TestSSMSendOptions_InvalidOptionIsRejectedBeforeAnySubprocessIsSpawned(t *t
 		{"comment of 51 runes but 102 bytes", hostexec.WithComment(strings.Repeat("é", 51))},
 		// The aws CLI has no end-of-options marker.
 		{"comment beginning with a dash", hostexec.WithComment("-mitstack app-runner install lane-a")},
-		// The aws CLI loads a parameter value beginning with file:// or
-		// fileb:// from that file, and v1 fetches an http:// or https:// URL,
-		// matching the prefix case-insensitively.
+		// The aws CLI can load a parameter value beginning with file:// or
+		// fileb:// from that file, and some versions fetch an http:// or
+		// https:// URL; the kit refuses every letter case whether or not a
+		// given CLI version honours it.
 		{"comment beginning with file://", hostexec.WithComment("file://comment-fixture")},
 		{"comment beginning with fileb://", hostexec.WithComment("fileb://comment-fixture")},
 		{"comment beginning with FILEB://", hostexec.WithComment("FILEB://comment-fixture")},
