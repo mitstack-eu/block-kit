@@ -44,6 +44,20 @@ func TestManifestHooks_ReadsQuotedAndCommentedFormsAsYAMLDoes(t *testing.T) {
 	}
 }
 
+// TestManifestHooks_ACommentOnTheSpecLineDoesNotHideTheHooks pins that a
+// trailing comment on the top-level spec: line still opens spec's block. The
+// table above prepends a fixed spec: line, so this form needs its own test.
+func TestManifestHooks_ACommentOnTheSpecLineDoesNotHideTheHooks(t *testing.T) {
+	doc := "spec: # note\n  layer: infra\n  lifecycle:\n    hooks:\n      - beforeEnsure\n"
+	got, err := manifestHooks([]byte(doc))
+	if err != nil {
+		t.Fatalf("manifestHooks: unexpected error: %v", err)
+	}
+	if want := []string{"beforeEnsure"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifestHooks = %q, want %q\nmanifest:\n%s", got, want, doc)
+	}
+}
+
 // TestManifestHooks_HashInsideQuotesIsNotAComment pins that a "#" inside a
 // quoted scalar is part of the value, as in YAML, so the name read keeps it
 // and New's closed-set check, not the comment stripper, is what refuses it.

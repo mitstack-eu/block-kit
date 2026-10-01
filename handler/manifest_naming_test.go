@@ -68,6 +68,8 @@ func TestManifestAppNameNaming_ACommentLineDoesNotHideTheDeclaration(t *testing.
 		"comment at column 0 between spec children": namingManifestHead + "# note\n" + awsAppInfraNaming,
 		"over-indented comment as spec's first line": strings.Replace(namingManifestHead, "spec:\n", "spec:\n    # note\n", 1) +
 			awsAppInfraNaming,
+		"trailing comment on the spec line": strings.Replace(namingManifestHead, "spec:\n", "spec: # block spec\n", 1) +
+			awsAppInfraNaming,
 	}
 	for label, manifest := range cases {
 		t.Run(label, func(t *testing.T) {
