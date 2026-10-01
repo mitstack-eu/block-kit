@@ -107,6 +107,16 @@ func TestNamingSuite_ATemplateWithoutThePlaceholderFails(t *testing.T) {
 	requireNamingFail(t, namingSuite(manifestDir(t, manifestHead+spec)), template, "{appName}")
 }
 
+// TestNamingSuite_ATemplateUsingThePlaceholderMoreThanOnceFails declares
+// the maxLength the one-placeholder formula would give (64 minus the one
+// fixed character), so only the refusal of a repeated placeholder can fail
+// it.
+func TestNamingSuite_ATemplateUsingThePlaceholderMoreThanOnceFails(t *testing.T) {
+	const template = "{appName}-{appName}"
+	spec := namingSpec("63", derivedName(template, "64"))
+	requireNamingFail(t, namingSuite(manifestDir(t, manifestHead+spec)), template, "more than once")
+}
+
 // TestNamingSuite_ATemplateWhoseFixedTextReachesItsLimitFails covers fixed
 // text equal to the limit, which leaves no character for the app name, as
 // well as fixed text over it.

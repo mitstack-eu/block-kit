@@ -26,6 +26,7 @@ func TestManifestHooks_ReadsQuotedAndCommentedFormsAsYAMLDoes(t *testing.T) {
 		{"empty flow list followed by a trailing comment", "    hooks: [] # none yet\n", nil},
 		{"sequence at the key's own indent", "    hooks:\n    - beforeEnsure\n    - afterDelete\n    contract: kit/v1\n", []string{"beforeEnsure", "afterDelete"}},
 		{"sequence at the key's own indent with a comment between items", "    hooks:\n    - beforeEnsure\n    # the delete side\n    - afterDelete\n", []string{"beforeEnsure", "afterDelete"}},
+		{"comment at column 0 before the hooks key", "# note\n    hooks:\n      - beforeEnsure\n", []string{"beforeEnsure"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

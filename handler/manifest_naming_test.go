@@ -40,19 +40,68 @@ const awsAppInfraNaming = `  naming:
           limit: 64
 `
 
-func TestManifestAppNameNaming_ReadsTheDeclaration(t *testing.T) {
-	got, err := handler.ManifestAppNameNaming([]byte(namingManifestHead + awsAppInfraNaming))
-	if err != nil {
-		t.Fatalf("ManifestAppNameNaming: unexpected error: %v", err)
-	}
-	want := &contract.AppNameNaming{
+// wantAWSAppInfraNaming is what awsAppInfraNaming reads as.
+func wantAWSAppInfraNaming() *contract.AppNameNaming {
+	return &contract.AppNameNaming{
 		MaxLength: 27,
 		DerivedNames: []contract.DerivedName{
 			{Template: "mitstack-app-{appName}-github-actions-ecr-push", Limit: 64},
 		},
 	}
-	if !reflect.DeepEqual(got, want) {
+}
+
+func TestManifestAppNameNaming_ReadsTheDeclaration(t *testing.T) {
+	got, err := handler.ManifestAppNameNaming([]byte(namingManifestHead + awsAppInfraNaming))
+	if err != nil {
+		t.Fatalf("ManifestAppNameNaming: unexpected error: %v", err)
+	}
+	if want := wantAWSAppInfraNaming(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ManifestAppNameNaming = %+v, want %+v", got, want)
+	}
+}
+
+// TestManifestAppNameNaming_ACommentLineDoesNotHideTheDeclaration pins that
+// a comment line, which YAML ignores at any indentation, neither ends spec's
+// block nor sets the indent its children sit at.
+func TestManifestAppNameNaming_ACommentLineDoesNotHideTheDeclaration(t *testing.T) {
+	cases := map[string]string{
+		"comment at column 0 between spec children": namingManifestHead + "# note\n" + awsAppInfraNaming,
+		"over-indented comment as spec's first line": strings.Replace(namingManifestHead, "spec:\n", "spec:\n    # note\n", 1) +
+			awsAppInfraNaming,
+	}
+	for label, manifest := range cases {
+		t.Run(label, func(t *testing.T) {
+			got, err := handler.ManifestAppNameNaming([]byte(manifest))
+			if err != nil {
+				t.Fatalf("ManifestAppNameNaming: unexpected error: %v", err)
+			}
+			if want := wantAWSAppInfraNaming(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("ManifestAppNameNaming = %+v, want %+v\nmanifest:\n%s", got, want, manifest)
+			}
+		})
+	}
+}
+
+// TestManifestAppNameNaming_ADerivedNameMissingAKeyIsAnError pins that an
+// item without its template or its limit is refused, naming the missing
+// key, rather than read as an empty template or a zero limit.
+func TestManifestAppNameNaming_ADerivedNameMissingAKeyIsAnError(t *testing.T) {
+	cases := map[string]string{
+		"limit":    strings.Replace(awsAppInfraNaming, "          limit: 64\n", "", 1),
+		"template": strings.Replace(awsAppInfraNaming, "- template: \"mitstack-app-{appName}-github-actions-ecr-push\"\n          limit: 64", "- limit: 64", 1),
+	}
+	for missing, spec := range cases {
+		t.Run("missing "+missing, func(t *testing.T) {
+			got, err := handler.ManifestAppNameNaming([]byte(namingManifestHead + spec))
+			if err == nil {
+				t.Fatalf("ManifestAppNameNaming = %+v, nil error; want an error for a derivedNames item with no %s\nspec:\n%s", got, missing, spec)
+			}
+			for _, want := range []string{contract.AppNameNamingField, missing} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to contain %q", err, want)
+				}
+			}
+		})
 	}
 }
 
