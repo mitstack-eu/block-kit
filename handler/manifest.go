@@ -340,10 +340,14 @@ func unreadableNaming(text string) error {
 }
 
 // findSpec returns the index of the top-level spec: line, or -1 when the
-// manifest has none.
+// manifest has none. The line must read exactly spec: once any trailing
+// comment is stripped.
 func findSpec(lines []string) int {
 	for i, line := range lines {
-		if leadingSpaces(line) == 0 && strings.TrimSpace(line) == "spec:" {
+		if leadingSpaces(line) != 0 {
+			continue
+		}
+		if key, err := stripComment(line); err == nil && strings.TrimSpace(key) == "spec:" {
 			return i
 		}
 	}
