@@ -161,8 +161,9 @@
 // template with {appName} removed) for the app name, and maxLength must
 // equal the smallest of those. A mismatch fails, naming the template that
 // sets the limit and the computed value. A template with no {appName}, a
-// template whose fixed text alone reaches its limit, a maxLength with no
-// derivedNames, and a declaration the reader cannot read all fail.
+// template using {appName} more than once, a template whose fixed text alone
+// reaches its limit, a maxLength with no derivedNames, and a declaration the
+// reader cannot read all fail.
 //
 // # Report contract
 //

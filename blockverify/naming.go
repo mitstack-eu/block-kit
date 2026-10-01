@@ -15,13 +15,14 @@ import (
 // the app name.
 const appNamePlaceholder = "{appName}"
 
-// namingSuite checks the app-name limit target's manifest declares at
+// namingSuite checks the app-name limit the target's manifest declares at
 // spec.naming.appName. Each derived name leaves its limit minus the length
 // of its fixed text (the template with {appName} removed) for the app name,
 // and maxLength must equal the smallest of those. A template with no
-// {appName}, a template whose fixed text alone reaches its limit, and a
-// maxLength with no derivedNames behind it all fail. A manifest that
-// declares no spec.naming.appName is skipped.
+// {appName}, a template using {appName} more than once, a template whose
+// fixed text alone reaches its limit, and a maxLength with no derivedNames
+// behind it all fail. A manifest that declares no spec.naming.appName is
+// skipped.
 func namingSuite(target string) SuiteResult {
 	const name = "naming"
 
@@ -51,11 +52,16 @@ func namingSuite(target string) SuiteResult {
 	var problems []string
 	computed, setBy := 0, ""
 	for _, d := range naming.DerivedNames {
-		if !strings.Contains(d.Template, appNamePlaceholder) {
+		switch n := strings.Count(d.Template, appNamePlaceholder); {
+		case n == 0:
 			problems = append(problems, fmt.Sprintf("derived name %q has no %s placeholder", d.Template, appNamePlaceholder))
 			continue
+		case n > 1:
+			problems = append(problems, fmt.Sprintf(
+				"derived name %q uses the %s placeholder more than once", d.Template, appNamePlaceholder))
+			continue
 		}
-		fixed := len(strings.ReplaceAll(d.Template, appNamePlaceholder, ""))
+		fixed := len(d.Template) - len(appNamePlaceholder)
 		if fixed >= d.Limit {
 			problems = append(problems, fmt.Sprintf(
 				"derived name %q has %d characters of fixed text, which reaches its limit of %d and leaves no room for the app name",

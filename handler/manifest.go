@@ -187,9 +187,9 @@ func manifestRetainsOnUnsubscribe(manifest []byte) (bool, error) {
 // derivedNames key returns a declaration whose DerivedNames is nil. Any
 // value the reader cannot read, including naming: or appName: written as a
 // flow mapping, a missing maxLength, a non-integer maxLength or limit, and a
-// derivedNames item with a key other than template and limit, is an error
-// naming the field, since a declaration nobody can read must not be
-// mistaken for an absent one.
+// derivedNames item with a key other than template and limit or without
+// both of them, is an error naming the field, since a declaration nobody
+// can read must not be mistaken for an absent one.
 func ManifestAppNameNaming(manifest []byte) (*contract.AppNameNaming, error) {
 	lines := strings.Split(string(manifest), "\n")
 
@@ -241,10 +241,12 @@ func ManifestAppNameNaming(manifest []byte) (*contract.AppNameNaming, error) {
 // lines[keyLine]. Each item is a mapping of template and limit, its first
 // key on the "- " line and the other on a line of its own. The sequence may
 // sit at the key's own indent, as YAML allows; any other line at or below
-// that indent ends it.
+// that indent ends it. An item missing template or limit is an error naming
+// the missing key.
 func parseDerivedNames(lines []string, keyLine int) ([]contract.DerivedName, error) {
 	keyIndent := leadingSpaces(lines[keyLine])
 	var names []contract.DerivedName
+	var seen []map[string]bool
 	for _, line := range lines[keyLine+1:] {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -260,6 +262,7 @@ func parseDerivedNames(lines []string, keyLine int) ([]contract.DerivedName, err
 		entry := trimmed
 		if isSequenceItem(trimmed) {
 			names = append(names, contract.DerivedName{})
+			seen = append(seen, map[string]bool{})
 			entry = strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
 		}
 		if len(names) == 0 {
@@ -285,6 +288,15 @@ func parseDerivedNames(lines []string, keyLine int) ([]contract.DerivedName, err
 			current.Limit = limit
 		default:
 			return nil, unreadableNaming(trimmed)
+		}
+		seen[len(seen)-1][key] = true
+	}
+	for i, keys := range seen {
+		for _, key := range []string{"template", "limit"} {
+			if !keys[key] {
+				return nil, fmt.Errorf("handler: manifest's %s: derivedNames item %d has no %s",
+					contract.AppNameNamingField, i+1, key)
+			}
 		}
 	}
 	return names, nil
@@ -344,14 +356,16 @@ func findSpec(lines []string) int {
 // only a line at exactly that level counts, since anything indented deeper
 // belongs to that child's own nested block, not to the parent directly.
 // The scan stops as soon as indentation drops back to parentIndent or
-// below, since that ends the parent's block. It returns the index of the
-// first direct-child line whose trimmed text equals name or, when
+// below, since that ends the parent's block. A blank line or a comment-only
+// line is skipped at any indentation, since YAML ignores both, so neither
+// ends the block nor fixes the child indent level. It returns the index of
+// the first direct-child line whose trimmed text equals name or, when
 // prefixOK is true, starts with name — or -1 when there is none.
 func findChild(lines []string, parentLine, parentIndent int, name string, prefixOK bool) int {
 	childIndent := -1
 	for i := parentLine + 1; i < len(lines); i++ {
 		line := lines[i]
-		if strings.TrimSpace(line) == "" {
+		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		indent := leadingSpaces(line)
