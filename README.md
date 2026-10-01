@@ -111,10 +111,14 @@ same key, and a delivery that overlaps one still in flight waits for it and
 shares its answer. A 2xx that answers `pending:true` reaches the caller but
 is never stored, because the engine re-drives the same key to learn when
 the resource converges, and a stored pending answer would replay "still
-pending" instead of observing it. Two kinds of request bypass the cache
-entirely: a validate, because it is a probe of the resource's current state
-and a replayed observation could report a state the resource has left, and
-any request whose `idempotencyKey` is empty.
+pending" instead of observing it. An unsubscribe that answers
+`absent:false` also reaches the caller but is never stored, because absence
+must come from observing the resource, and the redelivery observes it
+again. A subscribe or upgrade answer that carries `absent:false` is stored
+as usual, since that is what a present resource answers. Two kinds of
+request bypass the cache entirely: a validate, because it is a probe of the
+resource's current state and a replayed observation could report a state
+the resource has left, and any request whose `idempotencyKey` is empty.
 
 A block whose resource sits behind a token — or otherwise needs the
 request's own secrets to authenticate — implements `handler.RequestObserver`:

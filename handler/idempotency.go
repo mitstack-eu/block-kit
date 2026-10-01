@@ -30,11 +30,11 @@ type idempotencyEntry struct {
 // isCacheableStatus reports whether status is a deterministic outcome worth
 // replaying: a 2xx, or the 400 a *Refused produces. It is only the status
 // half of the decision: do also requires run to report its answer settled,
-// so a 2xx that says pending:true is never stored. A 500 stays retryable —
-// the engine keeps one IdempotencyKey across every retry of a call, so
-// caching a 500 under that key would make every later retry replay the
-// stale failure instead of ever reaching the Resource again, turning one
-// transient error into a permanent one.
+// so a 2xx that says pending:true, or an unsubscribe's absent:false, is
+// never stored. A 500 stays retryable — the engine keeps one IdempotencyKey
+// across every retry of a call, so caching a 500 under that key would make
+// every later retry replay the stale failure instead of ever reaching the
+// Resource again, turning one transient error into a permanent one.
 func isCacheableStatus(status int) bool {
 	return (status >= 200 && status < 300) || status == http.StatusBadRequest
 }
@@ -61,12 +61,13 @@ type inflightCall struct {
 // same request replays them without calling the Resource again, and makes
 // that behaviour single-flight: an overlapping delivery of a key still in
 // flight waits for the first to finish and receives its exact response. It
-// stores only a settled answer: a pending answer says the resource has not
-// converged, and the engine re-drives the same key to learn when it has, so
-// a stored one would replay "still pending" for the whole TTL instead of
-// observing the resource. An empty idempotencyKey and a validate never reach
-// this cache — the caller runs both directly, since a probe must observe
-// the resource's current state rather than replay an earlier one.
+// stores only a settled answer: a pending answer, or an unsubscribe answered
+// absent:false, says the resource has not converged, and the engine
+// re-drives the same key to learn when it has, so a stored one would replay
+// "not yet" for the whole TTL instead of observing the resource. An empty
+// idempotencyKey and a validate never reach this cache — the caller runs
+// both directly, since a probe must observe the resource's current state
+// rather than replay an earlier one.
 type idempotencyCache struct {
 	mu      sync.Mutex
 	entries map[idempotencyKey]idempotencyEntry
