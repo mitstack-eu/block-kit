@@ -26,6 +26,7 @@ func TestManifestHooks_ReadsQuotedAndCommentedFormsAsYAMLDoes(t *testing.T) {
 		{"empty flow list followed by a trailing comment", "    hooks: [] # none yet\n", nil},
 		{"sequence at the key's own indent", "    hooks:\n    - beforeEnsure\n    - afterDelete\n    contract: kit/v1\n", []string{"beforeEnsure", "afterDelete"}},
 		{"sequence at the key's own indent with a comment between items", "    hooks:\n    - beforeEnsure\n    # the delete side\n    - afterDelete\n", []string{"beforeEnsure", "afterDelete"}},
+		{"comment at column 0 before the hooks key", "# note\n    hooks:\n      - beforeEnsure\n", []string{"beforeEnsure"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,6 +41,20 @@ func TestManifestHooks_ReadsQuotedAndCommentedFormsAsYAMLDoes(t *testing.T) {
 				t.Fatalf("manifestHooks = %q, want %q\nmanifest:\n%s", got, tc.want, head+tc.hooks)
 			}
 		})
+	}
+}
+
+// TestManifestHooks_ACommentOnTheSpecLineDoesNotHideTheHooks pins that a
+// trailing comment on the top-level spec: line still opens spec's block. The
+// table above prepends a fixed spec: line, so this form needs its own test.
+func TestManifestHooks_ACommentOnTheSpecLineDoesNotHideTheHooks(t *testing.T) {
+	doc := "spec: # note\n  layer: infra\n  lifecycle:\n    hooks:\n      - beforeEnsure\n"
+	got, err := manifestHooks([]byte(doc))
+	if err != nil {
+		t.Fatalf("manifestHooks: unexpected error: %v", err)
+	}
+	if want := []string{"beforeEnsure"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifestHooks = %q, want %q\nmanifest:\n%s", got, want, doc)
 	}
 }
 

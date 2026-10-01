@@ -146,3 +146,9 @@ func TestHooksManifestGoldenDeclares_MatchesTheGoldenText(t *testing.T) {
 		t.Fatalf("golden hooks: items = %v, contract.HooksManifestGoldenDeclares() = %v:\n%s", items, want, raw)
 	}
 }
+
+func TestAppNameNamingField_IsSpecNamingAppName(t *testing.T) {
+	if contract.AppNameNamingField != "spec.naming.appName" {
+		t.Fatalf("contract.AppNameNamingField = %q, want %q", contract.AppNameNamingField, "spec.naming.appName")
+	}
+}

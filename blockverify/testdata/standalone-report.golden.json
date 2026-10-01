@@ -1,10 +1,10 @@
 {
-  "suiteVersion": "1.1.0",
+  "suiteVersion": "1.2.0",
   "kitVersion": "v0.1.0",
   "mode": "standalone",
   "manifestDigest": "sha256:f99a1d28387ccc1af4b6e8f15d5689aedbcd45961ad9921842e8d063242f571c",
   "verdict": "pass",
-  "resultsDigest": "sha256:15b6c8749292a3462a914b1913e6f5fd3be8622acad8e66c68c8cb16738fea49",
+  "resultsDigest": "sha256:1de1ace8c915f45879c710280ccf253abae155f13526a1416990586a67fa32c9",
   "suites": [
     {
       "name": "trust-plumbing",
@@ -35,6 +35,11 @@
       "name": "manifest",
       "status": "pass",
       "detail": "spec.outputs and spec.requires[].reads resolve through the resource registry; no --base-manifest given, so spec.version was not compared"
+    },
+    {
+      "name": "naming",
+      "status": "skipped",
+      "detail": "manifest.yaml declares no spec.naming.appName, so there is no app-name limit to check"
     },
     {
       "name": "capability-parity",

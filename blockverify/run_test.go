@@ -100,7 +100,7 @@ func expectedResultsDigest(suites []reportSuite) string {
 }
 
 // suiteByName finds a suite result by name, failing the test if absent —
-// every one of the 7 documented suites MUST always appear in the report,
+// every one of the 8 documented suites MUST always appear in the report,
 // pass or fail or skipped.
 func suiteByName(t *testing.T, r report, name string) reportSuite {
 	t.Helper()
@@ -128,8 +128,8 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 	if r.Mode != "standalone" {
 		t.Errorf("mode = %q, want %q", r.Mode, "standalone")
 	}
-	if r.SuiteVersion != "1.1.0" {
-		t.Errorf("suiteVersion = %q, want %q (the suite set includes manifest)", r.SuiteVersion, "1.1.0")
+	if r.SuiteVersion != "1.2.0" {
+		t.Errorf("suiteVersion = %q, want %q (the suite set includes naming)", r.SuiteVersion, "1.2.0")
 	}
 	if r.KitVersion != "v0.1.0" {
 		t.Errorf("kitVersion = %q, want %q (the kit pin floor)", r.KitVersion, "v0.1.0")
@@ -151,7 +151,7 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 		t.Errorf("resultsDigest = %q, want %q (sha256 over the compact [{name,status}] array)", r.ResultsDigest, wantResultsDigest)
 	}
 
-	wantOrder := []string{"trust-plumbing", "contract", "secret-safety", "teardown", "deliverable", "manifest", "capability-parity"}
+	wantOrder := []string{"trust-plumbing", "contract", "secret-safety", "teardown", "deliverable", "manifest", "naming", "capability-parity"}
 	if len(r.Suites) != len(wantOrder) {
 		t.Fatalf("suites = %d entries, want %d: %+v", len(r.Suites), len(wantOrder), r.Suites)
 	}
@@ -166,6 +166,14 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 		if s.Status != "pass" {
 			t.Errorf("suite %q status = %q, want %q; detail: %s", name, s.Status, "pass", s.Detail)
 		}
+	}
+
+	naming := suiteByName(t, r, "naming")
+	if naming.Status != "skipped" {
+		t.Errorf("naming status = %q, want %q — the golden fixture declares no spec.naming, so no limit applies", naming.Status, "skipped")
+	}
+	if naming.Detail == "" {
+		t.Error("naming must carry a reason in detail, not a silent skip")
 	}
 
 	cap := suiteByName(t, r, "capability-parity")

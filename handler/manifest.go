@@ -105,13 +105,7 @@ func validateHooks(cfg Config) error {
 func manifestHooks(manifest []byte) ([]string, error) {
 	lines := strings.Split(string(manifest), "\n")
 
-	specLine := -1
-	for i, line := range lines {
-		if leadingSpaces(line) == 0 && strings.TrimSpace(line) == "spec:" {
-			specLine = i
-			break
-		}
-	}
+	specLine := findSpec(lines)
 	if specLine < 0 {
 		return nil, nil
 	}
@@ -148,13 +142,7 @@ func manifestRetainsOnUnsubscribe(manifest []byte) (bool, error) {
 	}
 	lines := strings.Split(string(manifest), "\n")
 
-	specLine := -1
-	for i, line := range lines {
-		if leadingSpaces(line) == 0 && strings.TrimSpace(line) == "spec:" {
-			specLine = i
-			break
-		}
-	}
+	specLine := findSpec(lines)
 	if specLine < 0 {
 		return false, nil
 	}
@@ -182,20 +170,206 @@ func manifestRetainsOnUnsubscribe(manifest []byte) (bool, error) {
 	return false, fmt.Errorf("handler: manifest's spec.lifecycle.retainsOnUnsubscribe must be a bare true or false: %q", trimmed)
 }
 
+// ManifestAppNameNaming reads a block manifest's spec.naming.appName
+// declaration (contract.AppNameNamingField), anchored the same way
+// manifestHooks anchors spec.lifecycle.hooks: spec: at the document's top
+// level, naming: a direct child of it, appName: a direct child of naming.
+// The declaration is read as
+//
+//	appName:
+//	  maxLength: 27
+//	  derivedNames:
+//	    - template: "mitstack-app-{appName}-github-actions-ecr-push"
+//	      limit: 64
+//
+// with each value read as a YAML scalar, quotes removed. A manifest with no
+// spec.naming.appName returns nil and no error. A maxLength with no
+// derivedNames key returns a declaration whose DerivedNames is nil. Any
+// value the reader cannot read, including naming: or appName: written as a
+// flow mapping, a missing maxLength, a non-integer maxLength or limit, and a
+// derivedNames item with a key other than template and limit or without
+// both of them, is an error naming the field, since a declaration nobody
+// can read must not be mistaken for an absent one.
+func ManifestAppNameNaming(manifest []byte) (*contract.AppNameNaming, error) {
+	lines := strings.Split(string(manifest), "\n")
+
+	specLine := findSpec(lines)
+	if specLine < 0 {
+		return nil, nil
+	}
+	namingLine := findChild(lines, specLine, 0, "naming:", true)
+	if namingLine < 0 {
+		return nil, nil
+	}
+	if err := requireBlockKey(lines[namingLine], "naming:"); err != nil {
+		return nil, err
+	}
+	appNameLine := findChild(lines, namingLine, leadingSpaces(lines[namingLine]), "appName:", true)
+	if appNameLine < 0 {
+		return nil, nil
+	}
+	if err := requireBlockKey(lines[appNameLine], "appName:"); err != nil {
+		return nil, err
+	}
+	appNameIndent := leadingSpaces(lines[appNameLine])
+
+	maxLengthLine := findChild(lines, appNameLine, appNameIndent, "maxLength:", true)
+	if maxLengthLine < 0 {
+		return nil, unreadableNaming("appName: declares no maxLength")
+	}
+	maxLength, err := readIntValue(lines[maxLengthLine], "maxLength:")
+	if err != nil {
+		return nil, err
+	}
+	naming := &contract.AppNameNaming{MaxLength: maxLength}
+
+	derivedLine := findChild(lines, appNameLine, appNameIndent, "derivedNames:", true)
+	if derivedLine < 0 {
+		return naming, nil
+	}
+	if err := requireBlockKey(lines[derivedLine], "derivedNames:"); err != nil {
+		return nil, err
+	}
+	naming.DerivedNames, err = parseDerivedNames(lines, derivedLine)
+	if err != nil {
+		return nil, err
+	}
+	return naming, nil
+}
+
+// parseDerivedNames reads the block sequence under the derivedNames: line at
+// lines[keyLine]. Each item is a mapping of template and limit, its first
+// key on the "- " line and the other on a line of its own. The sequence may
+// sit at the key's own indent, as YAML allows; any other line at or below
+// that indent ends it. An item missing template or limit is an error naming
+// the missing key.
+func parseDerivedNames(lines []string, keyLine int) ([]contract.DerivedName, error) {
+	keyIndent := leadingSpaces(lines[keyLine])
+	var names []contract.DerivedName
+	var seen []map[string]bool
+	for _, line := range lines[keyLine+1:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if leadingWhitespaceHasTab(line) {
+			return nil, unreadableNaming(trimmed)
+		}
+		indent := leadingSpaces(line)
+		if indent < keyIndent || (indent == keyIndent && !isSequenceItem(trimmed)) {
+			break
+		}
+		entry := trimmed
+		if isSequenceItem(trimmed) {
+			names = append(names, contract.DerivedName{})
+			seen = append(seen, map[string]bool{})
+			entry = strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+		}
+		if len(names) == 0 {
+			return nil, unreadableNaming(trimmed)
+		}
+		key, value, ok := strings.Cut(entry, ":")
+		if !ok {
+			return nil, unreadableNaming(trimmed)
+		}
+		current := &names[len(names)-1]
+		switch key {
+		case "template":
+			template, err := readScalar(value)
+			if err != nil {
+				return nil, unreadableNaming(trimmed)
+			}
+			current.Template = template
+		case "limit":
+			limit, err := readInt(value)
+			if err != nil {
+				return nil, unreadableNaming(trimmed)
+			}
+			current.Limit = limit
+		default:
+			return nil, unreadableNaming(trimmed)
+		}
+		seen[len(seen)-1][key] = true
+	}
+	for i, keys := range seen {
+		for _, key := range []string{"template", "limit"} {
+			if !keys[key] {
+				return nil, fmt.Errorf("handler: manifest's %s: derivedNames item %d has no %s",
+					contract.AppNameNamingField, i+1, key)
+			}
+		}
+	}
+	return names, nil
+}
+
+// requireBlockKey returns an error unless line, with any trailing comment
+// removed, is exactly key: a key opening a nested block, not one written
+// with an inline value or flow mapping.
+func requireBlockKey(line, key string) error {
+	trimmed := strings.TrimSpace(line)
+	bare, err := stripComment(trimmed)
+	if err != nil || strings.TrimSpace(bare) != key {
+		return unreadableNaming(trimmed)
+	}
+	return nil
+}
+
+// readIntValue reads the integer value of the "key: value" line.
+func readIntValue(line, key string) (int, error) {
+	trimmed := strings.TrimSpace(line)
+	n, err := readInt(strings.TrimPrefix(trimmed, key))
+	if err != nil {
+		return 0, unreadableNaming(trimmed)
+	}
+	return n, nil
+}
+
+// readInt reads s as one YAML scalar holding a decimal integer.
+func readInt(s string) (int, error) {
+	v, err := readScalar(s)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(v)
+}
+
+// unreadableNaming is the error ManifestAppNameNaming returns for text, in
+// the spec.naming.appName declaration, that it cannot read.
+func unreadableNaming(text string) error {
+	return fmt.Errorf("handler: manifest's %s is not a form the kit can read: %q", contract.AppNameNamingField, text)
+}
+
+// findSpec returns the index of the top-level spec: line, or -1 when the
+// manifest has none. The line must read exactly spec: once any trailing
+// comment is stripped.
+func findSpec(lines []string) int {
+	for i, line := range lines {
+		if leadingSpaces(line) != 0 {
+			continue
+		}
+		if key, err := stripComment(line); err == nil && strings.TrimSpace(key) == "spec:" {
+			return i
+		}
+	}
+	return -1
+}
+
 // findChild scans forward from just after the line at parentLine (itself
 // indented by parentIndent) for a direct child of that line: the first
 // line indented more than parentIndent fixes the child indent level, and
 // only a line at exactly that level counts, since anything indented deeper
 // belongs to that child's own nested block, not to the parent directly.
 // The scan stops as soon as indentation drops back to parentIndent or
-// below, since that ends the parent's block. It returns the index of the
-// first direct-child line whose trimmed text equals name or, when
+// below, since that ends the parent's block. A blank line or a comment-only
+// line is skipped at any indentation, since YAML ignores both, so neither
+// ends the block nor fixes the child indent level. It returns the index of
+// the first direct-child line whose trimmed text equals name or, when
 // prefixOK is true, starts with name — or -1 when there is none.
 func findChild(lines []string, parentLine, parentIndent int, name string, prefixOK bool) int {
 	childIndent := -1
 	for i := parentLine + 1; i < len(lines); i++ {
 		line := lines[i]
-		if strings.TrimSpace(line) == "" {
+		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		indent := leadingSpaces(line)
