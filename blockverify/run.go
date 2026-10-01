@@ -13,7 +13,7 @@ import (
 // suiteVersion is the version of THIS suite's contract (report shape, suite
 // set, run order, digest algorithms) — bump it in the same change that
 // changes any of those.
-const suiteVersion = "1.1.0"
+const suiteVersion = "1.2.0"
 
 // Report is the standalone-mode conformance report blockverify emits — see
 // the package doc for the full field-by-field contract.
@@ -126,6 +126,7 @@ func runStandalone(target, baseManifest string) Report {
 		teardownSuite(target),
 		deliverableSuite(target),
 		manifestSuite(target, baseManifest),
+		namingSuite(target),
 		capabilityParitySuite(),
 	}
 

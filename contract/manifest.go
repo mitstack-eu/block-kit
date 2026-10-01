@@ -7,6 +7,30 @@ import "embed"
 // read hooks from this path, so a block declares them in one place only.
 const LifecycleHooksField = "spec.lifecycle.hooks"
 
+// AppNameNamingField is the block manifest field that declares how long an
+// app name the block accepts, and the provider names it derives from it.
+const AppNameNamingField = "spec.naming.appName"
+
+// AppNameNaming is a block's AppNameNamingField declaration: the longest app
+// name the block claims to accept, and every name it derives from the app
+// name, which together set that limit.
+type AppNameNaming struct {
+	// MaxLength is the longest app name the block claims to accept.
+	MaxLength int
+	// DerivedNames lists every provider resource name the block builds from
+	// the app name.
+	DerivedNames []DerivedName
+}
+
+// DerivedName is one provider resource name a block builds from the app
+// name.
+type DerivedName struct {
+	// Template is the name with the app name written as {appName}.
+	Template string
+	// Limit is the provider's maximum length for the whole name.
+	Limit int
+}
+
 // LifecycleHookPoints returns the closed set of lifecycle hook points, in the
 // order a subscribe and an unsubscribe reach them. The kit handler and the
 // platform's manifest validation both refuse a manifest that declares a hook

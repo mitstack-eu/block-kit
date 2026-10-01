@@ -24,8 +24,9 @@
 // from-scratch REIMPLEMENTATION of its standalone-mode behaviour in Go, not
 // a wrapper around the shell script (which this module cannot invoke — it
 // has no access to a checkout of this repo either). Anything that changes
-// the standalone contract must change both. The manifest suite is the one
-// exception: it is blockverify's own and has no counterpart in the script.
+// the standalone contract must change both. The manifest and naming suites
+// are the two exceptions: they are blockverify's own and have no counterpart
+// in the script.
 //
 // blockverify supports ONLY standalone mode. It refuses (exit 2, naming
 // scripts/block-verify.sh) if --standalone is not supplied, or if
@@ -96,7 +97,11 @@
 //     against the resource registry package contract owns (see "The
 //     manifest suite" below). Skipped when there is no manifest.yaml, which
 //     trust-plumbing already fails.
-//  7. capability-parity — ALWAYS skipped: comparing several providers of one
+//  7. naming — checks the app-name limit the target's manifest.yaml
+//     declares at spec.naming.appName against the derived names behind it
+//     (see "The naming suite" below). Skipped when the manifest declares no
+//     spec.naming.appName, or when there is no manifest.yaml.
+//  8. capability-parity — ALWAYS skipped: comparing several providers of one
 //     capability is not meaningful for a single standalone target. It still
 //     always appears in the report, with a non-empty Detail explaining why
 //     — a suite that silently disappeared would be indistinguishable from a
@@ -108,7 +113,8 @@
 // that does not exist, which is worse than no test at all. A PARTIAL pass
 // is a FAIL: there is no "passed with exceptions", because "skipped" is a
 // third, non-failing status reserved for a suite that is honestly not
-// applicable here (capability-parity), never a caveated partial pass.
+// applicable here (capability-parity, or naming on a manifest that declares
+// no app-name limit), never a caveated partial pass.
 //
 // # The manifest suite
 //
@@ -139,12 +145,31 @@
 // commit's manifest.yaml to a temporary file and passes it as
 // --base-manifest; other events pass no flag.
 //
+// # The naming suite
+//
+// A block that builds provider resource names from the app name declares
+// them at spec.naming.appName, read by handler.ManifestAppNameNaming:
+//
+//	naming:
+//	  appName:
+//	    maxLength: 27
+//	    derivedNames:
+//	      - template: "mitstack-app-{appName}-github-actions-ecr-push"
+//	        limit: 64
+//
+// Each template leaves its limit minus the length of its fixed text (the
+// template with {appName} removed) for the app name, and maxLength must
+// equal the smallest of those. A mismatch fails, naming the template that
+// sets the limit and the computed value. A template with no {appName}, a
+// template whose fixed text alone reaches its limit, a maxLength with no
+// derivedNames, and a declaration the reader cannot read all fail.
+//
 // # Report contract
 //
 // With --json, Run emits exactly one JSON object on stdout:
 //
 //	{
-//	  "suiteVersion":   "1.1.0",
+//	  "suiteVersion":   "1.2.0",
 //	  "kitVersion":     "v0.1.0",
 //	  "mode":           "standalone",
 //	  "manifestDigest": "sha256:<hex of <target>/manifest.yaml's raw bytes>",
@@ -157,6 +182,7 @@
 //	    {"name": "teardown",          "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "deliverable",       "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "manifest",          "status": "pass"|"fail"|"skipped", "detail": "..."},
+//	    {"name": "naming",            "status": "pass"|"fail"|"skipped", "detail": "..."},
 //	    {"name": "capability-parity", "status": "skipped",              "detail": "..."}
 //	  ]
 //	}
