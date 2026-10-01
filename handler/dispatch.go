@@ -20,14 +20,16 @@ import (
 // call's response without touching the Resource again, and a delivery that
 // finds its key already in flight waits for that call and shares its
 // response rather than running the verb a second time. Only a settled
-// answer is stored: a 2xx carrying pending:true reaches the caller and any
-// waiter on its key but is never replayed, so the engine's re-drive of the
-// same key observes the resource again. An empty idempotencyKey and a
-// validate both skip the cache entirely, so neither is ever stored,
-// replayed or single-flighted: validate is a read-only probe, and a replayed
-// probe would report a state the resource may have left. A panic in the
-// Resource or a hook is recovered inside run, so the calling delivery and
-// every waiter on its key receive the same retryable 500.
+// answer is stored: a 2xx carrying pending:true, or an unsubscribe answered
+// absent:false, reaches the caller and any waiter on its key but is never
+// replayed, so the engine's re-drive of the same key observes the resource
+// again. A subscribe or upgrade answer that carries absent:false is settled
+// and stored as usual. An empty idempotencyKey and a validate both skip the
+// cache entirely, so neither is ever stored, replayed or single-flighted:
+// validate is a read-only probe, and a replayed probe would report a state
+// the resource may have left. A panic in the Resource or a hook is recovered
+// inside run, so the calling delivery and every waiter on its key receive
+// the same retryable 500.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := secretsFor(req)
 
@@ -51,7 +53,8 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 			raw, _ = json.Marshal(contract.Response{Error: "handler: encoding response failed: " + err.Error()})
 			return http.StatusInternalServerError, raw, true
 		}
-		return status, raw, !resp.Pending
+		notYetAbsent := req.Operation == "unsubscribe" && resp.Absent != nil && !*resp.Absent
+		return status, raw, !resp.Pending && !notYetAbsent
 	}
 
 	var status int
