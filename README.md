@@ -23,6 +23,13 @@ data, and its scope says whether it serves one app or the whole
 organisation. It says whether the resource is priced, and it names the
 registry outputs the resource produces.
 
+The `contract` package also owns the grammar of ids, which ADR 0080 sets. A
+community name is bare and a private one sits under its org as `@<org>/`, so
+`contract.ParseBlockID` and `contract.ParseCapabilityID` accept `billing-db`
+or `@acme/billing-db`, and `contract.ParseResourceTypeID` accepts
+`aws.ebs-volume` or `@acme/aws.special-bucket`. Blockverify's manifest suite
+judges a manifest's `metadata.id` with `contract.ParseBlockID`.
+
 The types `contract.Step` and `contract.SuppliedResource` each carry an
 `ownership` field. Its value is `created` for a resource the block creates
 and deletes, or `referenced` for one the block only uses. Nothing parses
