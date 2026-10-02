@@ -801,6 +801,7 @@ var catalogueTable = []catalogueRow{
 	{"github.pull-request", "change-request", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldPullRequest", "standardPullRequest"}},
 	{"github.repository-webhook", "webhook", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
 	{"github.workflow-file", "ci-workflow", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"agentEndpoint", "ciCheckContribution", "workflowPath", "workflowUrl"}},
+	{"github.container-image", "container-image", "github", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"artifact", "imageRepo"}},
 	{"github.self-hosted-runner", "ci-runner", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"awsCredential", "runnerLabel", "runsOn", "runsOnPr"}},
 	{"github.runner-group", "runner-group", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
 	{"github.actions-secret", "secret", "github", "secrets", nil, "", "replaceable", "per-app", "", nil},
@@ -840,8 +841,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 46 {
-		t.Fatalf("catalogueTable has %d rows, want 46", len(catalogueTable))
+	if len(catalogueTable) != 47 {
+		t.Fatalf("catalogueTable has %d rows, want 47", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))

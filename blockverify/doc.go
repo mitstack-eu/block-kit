@@ -94,19 +94,15 @@
 //     COPY a monorepo-relative build context (examples/operator-kit) it
 //     does not have as a standalone repository.
 //  6. manifest — checks the names the target's manifest.yaml declares
-//     against the resource registry package contract owns, and its
-//     metadata.id against the block id grammar (see "The manifest suite"
-//     below). Skipped when there is no manifest.yaml, which
-//     trust-plumbing already fails.
+//     against the resource registry package contract owns, its metadata.id
+//     against the block id grammar, and a declared spec.steps against
+//     contract.ValidateBlockSteps (see "The manifest suite" below).
+//     Skipped when there is no manifest.yaml, which trust-plumbing already
+//     fails.
 //  7. naming — checks the app-name limit the target's manifest.yaml
 //     declares at spec.naming.appName against the derived names behind it
 //     (see "The naming suite" below). Skipped when the manifest declares no
 //     spec.naming.appName, or when there is no manifest.yaml.
-//  8. capability-parity — ALWAYS skipped: comparing several providers of one
-//     capability is not meaningful for a single standalone target. It still
-//     always appears in the report, with a non-empty Detail explaining why
-//     — a suite that silently disappeared would be indistinguishable from a
-//     bug.
 //
 // Every suite RUNS what it checks rather than merely detecting its
 // presence, in the two places that matters (contract, secret-safety,
@@ -114,12 +110,12 @@
 // that does not exist, which is worse than no test at all. A PARTIAL pass
 // is a FAIL: there is no "passed with exceptions", because "skipped" is a
 // third, non-failing status reserved for a suite that is honestly not
-// applicable here (capability-parity, or naming on a manifest that declares
-// no app-name limit), never a caveated partial pass.
+// applicable here (naming on a manifest that declares no app-name limit),
+// never a caveated partial pass.
 //
 // # The manifest suite
 //
-// The manifest suite reads four things of the target's manifest.yaml and
+// The manifest suite reads five things of the target's manifest.yaml and
 // nothing else, so a manifest field it does not know is never refused:
 //
 //   - A metadata.id, when present and non-empty, must parse through
@@ -137,6 +133,13 @@
 //     refused with the messages the platform gives at apply. A requirement
 //     with no reads passes, since operators add their declarations one at a
 //     time.
+//   - A manifest that declares spec.steps, as ADR 0079 sets it, has its
+//     spec.params names, its steps, the resource entries of spec.requires
+//     and the `- step:` offers in spec.provides judged by
+//     contract.ValidateBlockSteps, in place of the reads check above. Such
+//     a manifest is also refused a `capability:` or `extension:` entry in
+//     spec.requires and a spec.dependsOn key, each named. A manifest without
+//     spec.steps gets the reads check above and none of these.
 //   - With --base-manifest, a spec.version that differs from the base's
 //     needs spec.releaseClass and a non-blank spec.releaseNote. The class
 //     value is not checked here; the platform validates it at apply. A base
@@ -191,8 +194,7 @@
 //	    {"name": "teardown",          "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "deliverable",       "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "manifest",          "status": "pass"|"fail"|"skipped", "detail": "..."},
-//	    {"name": "naming",            "status": "pass"|"fail"|"skipped", "detail": "..."},
-//	    {"name": "capability-parity", "status": "skipped",              "detail": "..."}
+//	    {"name": "naming",            "status": "pass"|"fail"|"skipped", "detail": "..."}
 //	  ]
 //	}
 //

@@ -151,7 +151,7 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 		t.Errorf("resultsDigest = %q, want %q (sha256 over the compact [{name,status}] array)", r.ResultsDigest, wantResultsDigest)
 	}
 
-	wantOrder := []string{"trust-plumbing", "contract", "secret-safety", "teardown", "deliverable", "manifest", "naming", "capability-parity"}
+	wantOrder := []string{"trust-plumbing", "contract", "secret-safety", "teardown", "deliverable", "manifest", "naming"}
 	if len(r.Suites) != len(wantOrder) {
 		t.Fatalf("suites = %d entries, want %d: %+v", len(r.Suites), len(wantOrder), r.Suites)
 	}
@@ -176,13 +176,6 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 		t.Error("naming must carry a reason in detail, not a silent skip")
 	}
 
-	cap := suiteByName(t, r, "capability-parity")
-	if cap.Status != "skipped" {
-		t.Errorf("capability-parity status = %q, want %q — it is never meaningful for a single standalone target", cap.Status, "skipped")
-	}
-	if cap.Detail == "" {
-		t.Error("capability-parity must carry a reason in detail, not a silent skip")
-	}
 }
 
 // --- 2. Failure modes -----------------------------------------------------
@@ -234,13 +227,6 @@ func TestRun_MissingDockerfile_FailsDeliverable(t *testing.T) {
 		t.Errorf("deliverable detail = %q, want it to name Dockerfile", d.Detail)
 	}
 
-	// capability-parity is skipped UNCONDITIONALLY — even when the run as a
-	// whole fails, it must never silently disappear from the report or flip
-	// to "fail" by association with the overall verdict.
-	cap := suiteByName(t, r, "capability-parity")
-	if cap.Status != "skipped" {
-		t.Errorf("capability-parity status = %q, want %q even when other suites fail", cap.Status, "skipped")
-	}
 }
 
 func TestRun_RedeclaredKitOwnedSymbol_FailsTrustPlumbing(t *testing.T) {
@@ -380,7 +366,7 @@ func TestRun_ResultsDigest_ChangesWhenASuiteOutcomeChanges(t *testing.T) {
 // --- 4. Golden report fixture for the API side (see golden_test.go) is
 //        tested separately.
 
-// --- 5. capability-parity is always skipped; repo-mode refusal exits 2 ---
+// --- 5. repo-mode refusal exits 2 ---
 
 func TestRun_RepoModeRefused_NoStandaloneFlag(t *testing.T) {
 	dir := newGoldenFixture(t)
