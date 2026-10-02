@@ -615,6 +615,15 @@ var resourceRegistry = []ResourceEntry{
 		Capabilities: []string{},
 	},
 	{
+		Name:         "scaffoldContribution",
+		Kind:         "Source",
+		Meaning:      "One block's files, environment keys and config entries for the app's repository, as JSON.",
+		Shape:        "JSON object with files, env and config maps",
+		Example:      "{\"files\":{\".github/workflows/build.yml\":\"name: build\"},\"env\":{\"PORT\":\"8080\"}}",
+		Aliases:      []string{},
+		Capabilities: []string{"scaffold-contribution"},
+	},
+	{
 		Name:         "scaffoldPullRequest",
 		Kind:         "Source",
 		Meaning:      "The pull request carrying the app's scaffold when main refused a direct commit.",

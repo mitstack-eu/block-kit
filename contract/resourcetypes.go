@@ -114,11 +114,23 @@ func ResourceTypeScopes() []string {
 }
 
 // ValidateResourceTypes returns the first defect it finds in ts, or nil. It
-// checks every entry's fields, refuses an ID listed more than once, and refuses
-// two types whose names, the part of the ID after the first dot, are equal but
-// whose kinds differ. The error names the defective entry by its ID, or by its
-// index when the ID is empty, and a kind mismatch also names the type and kind
-// it clashes with.
+// checks every entry's fields, refuses an ID outside the community grammar of
+// platform ADR 0080, refuses an ID listed more than once, and refuses two types
+// whose names, the part of the ID after the first dot, are equal but whose
+// kinds differ. The error names the defective entry by its ID, or by its index
+// when the ID is empty, and a kind mismatch also names the type and kind it
+// clashes with.
+//
+// The catalogue holds community types only, so an ID is a bare
+// <capability>.<name> with no @<org>/ namespace, and its capability is a slug
+// ParseCapabilityID accepts.
+//
+// The shared-name rule is the catalogue's naming rule. A name after the dot
+// names one real thing in every capability, as ec2-instance does under aws,
+// cloudformation and crossplane, so every type sharing a name shares its kind.
+// The rule is stricter than ADR 0081, which says only that types reaching one
+// real thing through different capabilities share a kind. A reviewer gives a
+// different real thing a different name rather than a different kind.
 func ValidateResourceTypes(ts []ResourceType) error {
 	seen := make(map[string]bool, len(ts))
 	byName := make(map[string]ResourceType, len(ts))
@@ -158,6 +170,9 @@ func validateResourceType(t ResourceType) error {
 	}
 	if prefix != t.Capability {
 		return fmt.Errorf("ID prefix %q differs from capability %q", prefix, t.Capability)
+	}
+	if !isSlug(prefix) {
+		return fmt.Errorf("ID is not a community type <capability>.<name>: capability %q must be 1 to 40 lowercase letters, digits and dashes that start and end with a letter or digit, with no @<org>/ namespace", prefix)
 	}
 	if !isKebab(t.Kind) {
 		return fmt.Errorf("kind %q is not lowercase kebab case", t.Kind)
@@ -301,8 +316,11 @@ var resourceTypeCatalogue = []ResourceType{
 	{ID: "aws.ecr-repository", Kind: "container-repository", Capability: "aws", Category: "artifact-registry", Languages: []string{"any-container"}, ArtifactType: "container-image", Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"ecrRegistry", "registryHost"}},
 	{ID: "aws.egress-proxy", Kind: "egress-proxy", Capability: "aws", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Priced: true, PricingKey: "AmazonEC2", Outputs: emptyList},
 	{ID: "aws.iam-oidc-provider", Kind: "oidc-provider", Capability: "aws", Category: "identity-and-access", Languages: emptyList, Lifecycle: "replaceable", Scope: "org-wide", Outputs: []string{"oidcProviderArn"}},
+	// The iam-role kind keeps its AWS wording on purpose. Every read of it is
+	// an ARN, which only a type reached through the AWS API publishes, so a
+	// neutral name would promise a match no other provider's type could meet.
 	{ID: "aws.iam-role", Kind: "iam-role", Capability: "aws", Category: "identity-and-access", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"deployRoleArn", "ecrPushRoleArn"}},
-	{ID: "aws.route53-record", Kind: "dns-record", Capability: "aws", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"appHostname"}},
+	{ID: "aws.route53-record", Kind: "app-address", Capability: "aws", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"appHostname", "appUrl"}},
 	{ID: "aws.security-group", Kind: "firewall", Capability: "aws", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "aws.ssm-association", Kind: "host-configuration", Capability: "aws", Category: "compute", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "aws.ssm-parameter", Kind: "secret", Capability: "aws", Category: "secrets", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: emptyList},
@@ -311,6 +329,7 @@ var resourceTypeCatalogue = []ResourceType{
 	{ID: "cloudformation.ec2-instance", Kind: "host", Capability: "cloudformation", Category: "compute", Languages: []string{"any-container"}, Lifecycle: "replaceable", Scope: "per-app", Priced: true, PricingKey: "AmazonEC2", Outputs: []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
 	{ID: "cloudformation.ecr-repository", Kind: "container-repository", Capability: "cloudformation", Category: "artifact-registry", Languages: []string{"any-container"}, ArtifactType: "container-image", Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"ecrRegistry", "registryHost"}},
 	{ID: "cloudformation.iam-role", Kind: "iam-role", Capability: "cloudformation", Category: "identity-and-access", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"deployRoleArn", "ecrPushRoleArn"}},
+	{ID: "cloudformation.llm-endpoint", Kind: "llm-endpoint", Capability: "cloudformation", Category: "ai-model", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Priced: true, PricingKey: "AmazonEC2", Outputs: []string{"llmEndpoint", "model"}},
 	{ID: "cloudformation.security-group", Kind: "firewall", Capability: "cloudformation", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "cloudformation.ssm-association", Kind: "host-configuration", Capability: "cloudformation", Category: "compute", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "cloudformation.vpc", Kind: "network", Capability: "cloudformation", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
@@ -330,6 +349,7 @@ var resourceTypeCatalogue = []ResourceType{
 	{ID: "github.repository", Kind: "git-repository", Capability: "github", Category: "source-and-work", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: []string{"boardRepo", "cdRepo", "ciRepo", "repo", "repoUrl"}},
 	{ID: "github.repository-webhook", Kind: "webhook", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "github.runner-group", Kind: "runner-group", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "github.scaffold-contribution", Kind: "scaffold-contribution", Capability: "github", Category: "source-and-work", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"scaffoldContribution"}},
 	{ID: "github.self-hosted-runner", Kind: "ci-runner", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"awsCredential", "runnerLabel", "runsOn", "runsOnPr"}},
 	{ID: "github.workflow-file", Kind: "ci-workflow", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"agentEndpoint", "ciCheckContribution", "workflowPath", "workflowUrl"}},
 	{ID: "hetzner.firewall", Kind: "firewall", Capability: "hetzner", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},

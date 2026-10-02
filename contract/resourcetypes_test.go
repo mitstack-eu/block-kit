@@ -146,9 +146,10 @@ func TestValidateResourceTypes_RefusesADefectNamingTheTypeID(t *testing.T) {
 		{"ID prefix differs from the capability", "prefix", func(rt *contract.ResourceType) {
 			rt.ID = "hetzner.ecr-repository"
 		}},
-		// The ID's prefix is empty too, so it equals the empty capability and
-		// only the empty-capability rule can refuse it.
-		{"empty capability", "capability", func(rt *contract.ResourceType) {
+		// The ID's prefix is empty too, so it equals the empty capability. The
+		// community-grammar rule would also refuse it, so the fragment is the
+		// empty-capability rule's own words.
+		{"empty capability", "empty capability", func(rt *contract.ResourceType) {
 			rt.ID, rt.Capability = ".ecr-repository", ""
 		}},
 		{"empty kind", "kind", func(rt *contract.ResourceType) {
@@ -782,7 +783,8 @@ type catalogueRow struct {
 // changing a type means changing this table. The github.repository,
 // github.commit, aws.ecr-image and github.self-hosted-runner rows carry the
 // kinds and capabilities ADR 0078 fixes. The cloudformation and crossplane rows
-// repeat seven aws rows under the capability ADR 0081 gives them.
+// repeat seven aws rows under the capability ADR 0081 gives them, and
+// cloudformation.llm-endpoint is the one CloudFormation type with no aws twin.
 var catalogueTable = []catalogueRow{
 	{"aws.ec2-instance", "host", "aws", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
 	{"aws.security-group", "firewall", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
@@ -795,7 +797,7 @@ var catalogueTable = []catalogueRow{
 	{"aws.ssm-parameter", "secret", "aws", "secrets", nil, "", "stateful", "per-app", "", nil},
 	{"aws.egress-proxy", "egress-proxy", "aws", "network", nil, "", "replaceable", "per-app", "AmazonEC2", nil},
 	{"aws.vpc", "network", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
-	{"aws.route53-record", "dns-record", "aws", "network", nil, "", "replaceable", "per-app", "", []string{"appHostname"}},
+	{"aws.route53-record", "app-address", "aws", "network", nil, "", "replaceable", "per-app", "", []string{"appHostname", "appUrl"}},
 	{"github.repository", "git-repository", "github", "source-and-work", nil, "", "stateful", "per-app", "", []string{"boardRepo", "cdRepo", "ciRepo", "repo", "repoUrl"}},
 	{"github.commit", "source-revision", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldCommit", "sourceBranch", "sourceSha"}},
 	{"github.pull-request", "change-request", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldPullRequest", "standardPullRequest"}},
@@ -806,6 +808,7 @@ var catalogueTable = []catalogueRow{
 	{"github.runner-group", "runner-group", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
 	{"github.actions-secret", "secret", "github", "secrets", nil, "", "replaceable", "per-app", "", nil},
 	{"github.actions-variable", "ci-variable", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
+	{"github.scaffold-contribution", "scaffold-contribution", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldContribution"}},
 	{"tracker.api-token", "api-token", "tracker", "identity-and-access", nil, "", "replaceable", "per-app", "", nil},
 	{"crossplane.reconcile-claim", "reconcile-claim", "crossplane", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"claim", "driftPolicy", "driftedResources", "reconciledResources"}},
 	{"hetzner.server", "host", "hetzner", "compute", []string{"any-container"}, "", "replaceable", "per-app", "HetznerCloud", []string{"cloud.region", "execTarget", "host.type", "hostId"}},
@@ -824,6 +827,7 @@ var catalogueTable = []catalogueRow{
 	{"cloudformation.iam-role", "iam-role", "cloudformation", "identity-and-access", nil, "", "replaceable", "per-app", "", []string{"deployRoleArn", "ecrPushRoleArn"}},
 	{"cloudformation.ssm-association", "host-configuration", "cloudformation", "compute", nil, "", "replaceable", "per-app", "", nil},
 	{"cloudformation.vpc", "network", "cloudformation", "network", nil, "", "replaceable", "per-app", "", nil},
+	{"cloudformation.llm-endpoint", "llm-endpoint", "cloudformation", "ai-model", nil, "", "replaceable", "per-app", "AmazonEC2", []string{"llmEndpoint", "model"}},
 	{"crossplane.ec2-instance", "host", "crossplane", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
 	{"crossplane.security-group", "firewall", "crossplane", "network", nil, "", "replaceable", "per-app", "", nil},
 	{"crossplane.ebs-volume", "block-volume", "crossplane", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}},
@@ -841,8 +845,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 47 {
-		t.Fatalf("catalogueTable has %d rows, want 47", len(catalogueTable))
+	if len(catalogueTable) != 49 {
+		t.Fatalf("catalogueTable has %d rows, want 49", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))

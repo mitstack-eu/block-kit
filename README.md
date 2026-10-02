@@ -30,7 +30,11 @@ through several capabilities is therefore several types. An EC2 instance is
 `crossplane.ec2-instance`, depending on which capability creates it, and all
 three have the kind `host`. Types that share a name, the part of the ID after
 the first dot, share a kind, and `contract.ValidateResourceTypes` refuses a
-catalogue in which they do not.
+catalogue in which they do not. That rule is stricter than ADR 0081, and the
+reason is naming: a name means one real thing in every capability, so a
+different thing gets a different name. Every catalogue type has a bare
+name that mitstack assigns, so `contract.ValidateResourceTypes` also refuses an
+ID whose capability is not a bare slug, such as `reconcile/crossplane.claim`.
 
 The `contract` package also owns the grammar of block, capability and
 resource-type ids, which the platform's ADR 0080 sets. A community name is
