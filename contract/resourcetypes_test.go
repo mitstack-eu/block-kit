@@ -114,103 +114,121 @@ func TestValidateResourceTypes_AcceptsEveryVocabularyValue(t *testing.T) {
 	}
 }
 
+// TestValidateResourceTypes_RefusesADefectNamingTheTypeID mutates the valid
+// fixture so that exactly one rule refuses it, then checks the error names the
+// type's ID and carries a fragment identifying that rule. A case no other rule
+// refuses fails if its own rule is dropped.
 func TestValidateResourceTypes_RefusesADefectNamingTheTypeID(t *testing.T) {
-	cases := map[string]func(rt *contract.ResourceType){
-		"ID without a dot": func(rt *contract.ResourceType) {
-			rt.ID = "awsecr-repository"
-		},
-		"ID with an empty name after the dot": func(rt *contract.ResourceType) {
+	cases := []struct {
+		name string
+		// rule is a fragment the error text carries, apart from the ID,
+		// naming the rule that refused the type.
+		rule   string
+		mutate func(rt *contract.ResourceType)
+	}{
+		// The capability equals the whole ID, so only the missing dot can
+		// refuse it, not a prefix that differs from the capability.
+		{"ID without a dot", "ID", func(rt *contract.ResourceType) {
+			rt.ID = "aws"
+		}},
+		{"ID with an empty name after the dot", "ID", func(rt *contract.ResourceType) {
 			rt.ID = "aws."
-		},
-		"ID with an uppercase name": func(rt *contract.ResourceType) {
+		}},
+		{"ID with an uppercase name", "ID", func(rt *contract.ResourceType) {
 			rt.ID = "aws.EcrRepository"
-		},
-		"ID with an underscore in the name": func(rt *contract.ResourceType) {
+		}},
+		{"ID with an underscore in the name", "ID", func(rt *contract.ResourceType) {
 			rt.ID = "aws.ecr_repository"
-		},
-		"ID with a second dot in the name": func(rt *contract.ResourceType) {
+		}},
+		{"ID with a second dot in the name", "ID", func(rt *contract.ResourceType) {
 			rt.ID = "aws.ecr.repository"
-		},
-		"ID prefix differs from the capability": func(rt *contract.ResourceType) {
+		}},
+		{"ID prefix differs from the capability", "prefix", func(rt *contract.ResourceType) {
 			rt.ID = "hetzner.ecr-repository"
-		},
-		"empty capability": func(rt *contract.ResourceType) {
-			rt.Capability = ""
-		},
-		"empty kind": func(rt *contract.ResourceType) {
+		}},
+		// The ID's prefix is empty too, so it equals the empty capability and
+		// only the empty-capability rule can refuse it.
+		{"empty capability", "capability", func(rt *contract.ResourceType) {
+			rt.ID, rt.Capability = ".ecr-repository", ""
+		}},
+		{"empty kind", "kind", func(rt *contract.ResourceType) {
 			rt.Kind = ""
-		},
-		"kind with uppercase letters": func(rt *contract.ResourceType) {
+		}},
+		{"kind with uppercase letters", "kind", func(rt *contract.ResourceType) {
 			rt.Kind = "Container-Repository"
-		},
-		"kind with an underscore": func(rt *contract.ResourceType) {
+		}},
+		{"kind with an underscore", "kind", func(rt *contract.ResourceType) {
 			rt.Kind = "container_repository"
-		},
-		"kind with a space": func(rt *contract.ResourceType) {
+		}},
+		{"kind with a space", "kind", func(rt *contract.ResourceType) {
 			rt.Kind = "container repository"
-		},
-		"empty category": func(rt *contract.ResourceType) {
+		}},
+		{"empty category", "category", func(rt *contract.ResourceType) {
 			rt.Category = ""
-		},
-		"category outside the vocabulary": func(rt *contract.ResourceType) {
+		}},
+		{"category outside the vocabulary", "category", func(rt *contract.ResourceType) {
 			rt.Category = "registry"
-		},
-		"category in the wrong case": func(rt *contract.ResourceType) {
+		}},
+		{"category in the wrong case", "category", func(rt *contract.ResourceType) {
 			rt.Category = "Artifact-Registry"
-		},
-		"empty lifecycle": func(rt *contract.ResourceType) {
+		}},
+		{"empty lifecycle", "lifecycle", func(rt *contract.ResourceType) {
 			rt.Lifecycle = ""
-		},
-		"lifecycle outside the vocabulary": func(rt *contract.ResourceType) {
+		}},
+		{"lifecycle outside the vocabulary", "lifecycle", func(rt *contract.ResourceType) {
 			rt.Lifecycle = "ephemeral"
-		},
-		"empty scope": func(rt *contract.ResourceType) {
+		}},
+		{"empty scope", "scope", func(rt *contract.ResourceType) {
 			rt.Scope = ""
-		},
-		"scope outside the vocabulary": func(rt *contract.ResourceType) {
+		}},
+		{"scope outside the vocabulary", "scope", func(rt *contract.ResourceType) {
 			rt.Scope = "global"
-		},
-		"language outside the vocabulary": func(rt *contract.ResourceType) {
+		}},
+		{"language outside the vocabulary", "language", func(rt *contract.ResourceType) {
 			rt.Languages = []string{"golang"}
-		},
-		"language repeated": func(rt *contract.ResourceType) {
+		}},
+		{"language repeated", "language", func(rt *contract.ResourceType) {
 			rt.Languages = []string{"go", "node", "go"}
-		},
-		"nil languages": func(rt *contract.ResourceType) {
+		}},
+		{"nil languages", "language", func(rt *contract.ResourceType) {
 			rt.Languages = nil
-		},
-		"artifact type outside the vocabulary": func(rt *contract.ResourceType) {
+		}},
+		{"artifact type outside the vocabulary", "artifact type", func(rt *contract.ResourceType) {
 			rt.ArtifactType = "docker-image"
-		},
-		"priced without a pricing key": func(rt *contract.ResourceType) {
+		}},
+		{"priced without a pricing key", "pricing key", func(rt *contract.ResourceType) {
 			rt.Priced, rt.PricingKey = true, ""
-		},
-		"pricing key without priced": func(rt *contract.ResourceType) {
+		}},
+		{"pricing key without priced", "pricing key", func(rt *contract.ResourceType) {
 			rt.Priced, rt.PricingKey = false, "AmazonEC2"
-		},
-		"nil outputs": func(rt *contract.ResourceType) {
+		}},
+		{"nil outputs", "output", func(rt *contract.ResourceType) {
 			rt.Outputs = nil
-		},
-		"output the registry does not hold": func(rt *contract.ResourceType) {
+		}},
+		{"output the registry does not hold", "output", func(rt *contract.ResourceType) {
 			rt.Outputs = []string{"ecrRegistry", "noSuchOutput"}
-		},
-		"output named by a registry alias, not its canonical name": func(rt *contract.ResourceType) {
+		}},
+		{"output named by a registry alias, not its canonical name", "output", func(rt *contract.ResourceType) {
 			rt.Outputs = []string{"region"}
-		},
-		"output repeated": func(rt *contract.ResourceType) {
+		}},
+		{"output repeated", "output", func(rt *contract.ResourceType) {
 			rt.Outputs = []string{"ecrRegistry", "registryHost", "ecrRegistry"}
-		},
+		}},
 	}
-	for name, mutate := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
 			rt := validType()
-			mutate(&rt)
+			c.mutate(&rt)
 			err := contract.ValidateResourceTypes([]contract.ResourceType{rt})
 			if err == nil {
 				t.Fatalf("ValidateResourceTypes(%+v) = nil, want an error", rt)
 			}
 			if !strings.Contains(err.Error(), rt.ID) {
 				t.Errorf("error %q does not name the type's ID %q", err, rt.ID)
+			}
+			// The ID is removed first so a fragment cannot match inside it.
+			if rest := strings.ReplaceAll(err.Error(), rt.ID, ""); !strings.Contains(rest, c.rule) {
+				t.Errorf("error %q does not carry %q, the rule that should refuse the type", err, c.rule)
 			}
 		})
 	}
@@ -254,8 +272,8 @@ func TestValidateResourceTypes_EmptyIDIsRefusedNamingItsIndex(t *testing.T) {
 	if err == nil {
 		t.Fatal("ValidateResourceTypes with an empty ID = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "3") {
-		t.Errorf("error %q does not name the index 3 of the entry with no ID", err)
+	if !strings.Contains(err.Error(), "index 3") {
+		t.Errorf("error %q does not name index 3, the entry with no ID", err)
 	}
 }
 
@@ -350,13 +368,23 @@ func TestLookupResourceType_FindsEveryCatalogueEntryByItsID(t *testing.T) {
 	}
 }
 
-func TestLookupResourceType_FindsAKnownID(t *testing.T) {
-	rt, ok := contract.LookupResourceType("github.repository")
+func TestLookupResourceType_ReturnsACopyACallerCanMutate(t *testing.T) {
+	first, ok := contract.LookupResourceType("aws.ecr-repository")
 	if !ok {
-		t.Fatal(`LookupResourceType("github.repository") found nothing`)
+		t.Fatal(`LookupResourceType("aws.ecr-repository") found nothing`)
 	}
-	if rt.ID != "github.repository" {
-		t.Errorf(`LookupResourceType("github.repository").ID = %q, want "github.repository"`, rt.ID)
+	if len(first.Languages) == 0 || len(first.Outputs) == 0 {
+		t.Fatalf("aws.ecr-repository needs a language and an output for this test to mutate, got %+v", first)
+	}
+	want := first
+	want.Languages = append([]string{}, first.Languages...)
+	want.Outputs = append([]string{}, first.Outputs...)
+
+	first.Languages[0] = "mutated"
+	first.Outputs[0] = "mutated"
+
+	if again, _ := contract.LookupResourceType("aws.ecr-repository"); !reflect.DeepEqual(again, want) {
+		t.Errorf("mutating a looked-up type changed the catalogue: a later lookup returned %+v, want %+v", again, want)
 	}
 }
 
@@ -386,9 +414,10 @@ func TestResourceTypes_ADR0078FixesTheRepositoryCommitAndImageRows(t *testing.T)
 	}
 }
 
-// catalogueRow is one row of the design's catalogue table. An empty languages
-// or outputs list stands for the table's "-", and pricingKey is "" when the
-// row is not priced.
+// catalogueRow is one released resource type: its ID, its kind and capability,
+// the six facets ADR 0077 gives a type, and its outputs. A nil languages or
+// outputs list means the type has none, and pricingKey is "" when the type is
+// not priced.
 type catalogueRow struct {
 	id, kind, capability, category string
 	languages                      []string
@@ -398,6 +427,10 @@ type catalogueRow struct {
 	outputs                        []string
 }
 
+// catalogueTable pins every type the kit releases, so adding, removing or
+// changing a type means changing this table. The github.repository,
+// github.commit and aws.ecr-image rows carry the kinds and capabilities
+// ADR 0078 fixes.
 var catalogueTable = []catalogueRow{
 	{"aws.ec2-instance", "host", "aws", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
 	{"aws.security-group", "firewall", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
@@ -432,9 +465,12 @@ func sortedCopy(s []string) []string {
 	return out
 }
 
-func TestResourceTypes_HoldEveryRowOfTheDesignTable(t *testing.T) {
+func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
 	if len(catalogueTable) != 24 {
-		t.Fatalf("the design table has %d rows here, want 24", len(catalogueTable))
+		t.Fatalf("catalogueTable has %d rows, want 24", len(catalogueTable))
+	}
+	if got := len(catalogue(t)); got != len(catalogueTable) {
+		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))
 	}
 	for _, row := range catalogueTable {
 		t.Run(row.id, func(t *testing.T) {
@@ -524,14 +560,14 @@ func TestStep_MarshalsOwnershipUnderTheOwnershipKey(t *testing.T) {
 		ID:        "image",
 		Type:      "aws.ecr-image",
 		Ownership: contract.OwnershipCreated,
-		Inputs:    map[string]string{"repository": "registry"},
+		Inputs:    map[string]string{"repository": "steps.registry.outputs.ecrRegistry"},
 	}
 	m := marshalToMap(t, step)
 	want := map[string]any{
 		"id":        "image",
 		"type":      "aws.ecr-image",
 		"ownership": "created",
-		"inputs":    map[string]any{"repository": "registry"},
+		"inputs":    map[string]any{"repository": "steps.registry.outputs.ecrRegistry"},
 	}
 	if !reflect.DeepEqual(m, want) {
 		t.Errorf("Step marshals to %v, want %v", m, want)
