@@ -479,6 +479,73 @@ func TestResourceTypes_AppScaffoldResourcesMapToCataloguedTypes(t *testing.T) {
 	}
 }
 
+// TestResourceTypes_BoardAutomationResourcesMapToCataloguedTypes checks the
+// types board-automation's spec.resources entries map to. Its tracker ledger
+// token maps to tracker.api-token, its TRACKER_TOKEN Actions secret to
+// github.actions-secret and its TRACKER_BASE_URL Actions variable to
+// github.actions-variable, each a replaceable per-app type that is not priced
+// and publishes nothing. Its board repository maps to github.repository, which
+// publishes boardRepo beside its existing outputs, and its seeded workflows to
+// github.workflow-file, which publishes ciCheckContribution beside workflowUrl.
+func TestResourceTypes_BoardAutomationResourcesMapToCataloguedTypes(t *testing.T) {
+	newTypes := []struct{ id, kind, capability, category string }{
+		{"tracker.api-token", "api-token", "tracker", "identity-and-access"},
+		{"github.actions-secret", "secret", "github", "secrets"},
+		{"github.actions-variable", "ci-variable", "github", "build-and-delivery"},
+	}
+	for _, w := range newTypes {
+		t.Run(w.id, func(t *testing.T) {
+			rt, ok := contract.LookupResourceType(w.id)
+			if !ok {
+				t.Fatalf("the catalogue has no %q", w.id)
+			}
+			if rt.Kind != w.kind || rt.Capability != w.capability {
+				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, w.kind, w.capability)
+			}
+			if rt.Category != w.category {
+				t.Errorf("Category = %q, want %q", rt.Category, w.category)
+			}
+			if rt.Lifecycle != "replaceable" {
+				t.Errorf("Lifecycle = %q, want %q", rt.Lifecycle, "replaceable")
+			}
+			if rt.Scope != "per-app" {
+				t.Errorf("Scope = %q, want %q", rt.Scope, "per-app")
+			}
+			if rt.Priced || rt.PricingKey != "" {
+				t.Errorf("Priced, PricingKey = %v, %q; want false, %q", rt.Priced, rt.PricingKey, "")
+			}
+			if rt.Languages == nil || len(rt.Languages) != 0 {
+				t.Errorf("Languages = %#v, want an empty, non-nil list", rt.Languages)
+			}
+			if rt.ArtifactType != "" {
+				t.Errorf("ArtifactType = %q, want %q", rt.ArtifactType, "")
+			}
+			if rt.Outputs == nil || len(rt.Outputs) != 0 {
+				t.Errorf("Outputs = %#v, want an empty, non-nil list", rt.Outputs)
+			}
+		})
+	}
+
+	widened := []struct {
+		id      string
+		outputs []string
+	}{
+		{"github.repository", []string{"cdRepo", "ciRepo", "repo", "repoUrl", "boardRepo"}},
+		{"github.workflow-file", []string{"workflowUrl", "ciCheckContribution"}},
+	}
+	for _, w := range widened {
+		t.Run(w.id, func(t *testing.T) {
+			rt, ok := contract.LookupResourceType(w.id)
+			if !ok {
+				t.Fatalf("the catalogue has no %q", w.id)
+			}
+			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
+				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
+			}
+		})
+	}
+}
+
 // catalogueRow is one released resource type: its ID, its kind and capability,
 // the six facets ADR 0077 gives a type, and its outputs. A nil languages or
 // outputs list means the type has none, and pricingKey is "" when the type is
@@ -509,13 +576,16 @@ var catalogueTable = []catalogueRow{
 	{"aws.egress-proxy", "egress-proxy", "aws", "network", nil, "", "replaceable", "per-app", "AmazonEC2", nil},
 	{"aws.vpc", "network", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
 	{"aws.route53-record", "dns-record", "aws", "network", nil, "", "replaceable", "per-app", "", []string{"appHostname"}},
-	{"github.repository", "git-repository", "github", "source-and-work", nil, "", "stateful", "per-app", "", []string{"cdRepo", "ciRepo", "repo", "repoUrl"}},
+	{"github.repository", "git-repository", "github", "source-and-work", nil, "", "stateful", "per-app", "", []string{"boardRepo", "cdRepo", "ciRepo", "repo", "repoUrl"}},
 	{"github.commit", "source-revision", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldCommit", "sourceBranch", "sourceSha"}},
 	{"github.pull-request", "change-request", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldPullRequest"}},
 	{"github.repository-webhook", "webhook", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
-	{"github.workflow-file", "ci-workflow", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"workflowUrl"}},
+	{"github.workflow-file", "ci-workflow", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"ciCheckContribution", "workflowUrl"}},
 	{"github.self-hosted-runner", "ci-runner", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"awsCredential", "runnerLabel", "runsOn", "runsOnPr"}},
 	{"github.runner-group", "runner-group", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
+	{"github.actions-secret", "secret", "github", "secrets", nil, "", "replaceable", "per-app", "", nil},
+	{"github.actions-variable", "ci-variable", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
+	{"tracker.api-token", "api-token", "tracker", "identity-and-access", nil, "", "replaceable", "per-app", "", nil},
 	{"hetzner.server", "host", "hetzner", "compute", []string{"any-container"}, "", "replaceable", "per-app", "HetznerCloud", []string{"cloud.region", "execTarget", "host.type", "hostId"}},
 	{"hetzner.primary-ip", "ip-address", "hetzner", "network", nil, "", "replaceable", "per-app", "", []string{"publicIp"}},
 	{"hetzner.firewall", "firewall", "hetzner", "network", nil, "", "replaceable", "per-app", "", nil},
@@ -535,8 +605,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 28 {
-		t.Fatalf("catalogueTable has %d rows, want 28", len(catalogueTable))
+	if len(catalogueTable) != 31 {
+		t.Fatalf("catalogueTable has %d rows, want 31", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))
