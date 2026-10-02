@@ -447,7 +447,7 @@ func TestResourceTypes_AppRunnerResourcesMapToCataloguedTypes(t *testing.T) {
 	}
 }
 
-// catalogueRow is one released resource type:its ID, its kind and capability,
+// catalogueRow is one released resource type: its ID, its kind and capability,
 // the six facets ADR 0077 gives a type, and its outputs. A nil languages or
 // outputs list means the type has none, and pricingKey is "" when the type is
 // not priced.
