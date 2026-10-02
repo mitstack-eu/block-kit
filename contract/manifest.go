@@ -1,6 +1,11 @@
 package contract
 
-import "embed"
+import (
+	"embed"
+	"fmt"
+	"regexp"
+	"strings"
+)
 
 // LifecycleHooksField is the one block manifest field that carries lifecycle
 // hook declarations. The kit handler and the platform's manifest parser both
@@ -82,4 +87,87 @@ func TypeBlockHooksManifestGolden() []byte {
 // modify.
 func HooksManifestGoldenDeclares() []string {
 	return []string{"beforeEnsure", "afterDelete"}
+}
+
+// slugPattern is the platform's slug: 1 to 40 characters of lowercase
+// letters, digits and dashes, starting and ending with a letter or digit.
+// Go's $ matches only at the end of the text, so a trailing newline is
+// refused.
+var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
+
+func isSlug(s string) bool { return slugPattern.MatchString(s) }
+
+// ParseBlockID splits a block id into its namespace and name. It accepts a
+// bare slug, a community block, giving namespace "", and @<org slug>/<slug>,
+// a private block, giving the org slug without its @. ADR 0080 sets this
+// grammar: community names are bare and private names sit under @<org>/.
+// Nothing is trimmed, so an id carrying whitespace is refused. On error both
+// returned strings are empty.
+func ParseBlockID(id string) (namespace, name string, err error) {
+	return parseNamespacedName("block", id)
+}
+
+// ParseCapabilityID splits a capability id into its namespace and name,
+// under the same grammar as ParseBlockID: a bare slug for a community
+// capability, @<org slug>/<slug> for a private one. ADR 0080 sets this
+// grammar. On error both returned strings are empty.
+func ParseCapabilityID(id string) (namespace, name string, err error) {
+	return parseNamespacedName("capability", id)
+}
+
+// parseNamespacedName accepts <slug> or @<slug>/<slug>; kind names what the
+// id identifies in the error.
+func parseNamespacedName(kind, id string) (namespace, name string, err error) {
+	if org, rest, ok := splitNamespace(id); ok {
+		if isSlug(org) && isSlug(rest) {
+			return org, rest, nil
+		}
+	} else if isSlug(id) {
+		return "", id, nil
+	}
+	return "", "", fmt.Errorf(
+		"%s id %q is neither a community id <name> nor a private id @<org>/<name>, "+
+			"where each of org and name is 1 to 40 lowercase letters, digits and dashes that start and end with a letter or digit",
+		kind, id)
+}
+
+// ParseResourceTypeID splits a resource-type id into its namespace,
+// capability and name. It accepts <capability slug>.<name>, a community
+// type, giving namespace "", and @<org slug>/<capability slug>.<name>, a
+// private type, giving the org slug without its @. The name is lowercase
+// kebab case. ADR 0080 sets this grammar: community names are bare and
+// private names sit under @<org>/. Nothing is trimmed, so an id carrying
+// whitespace is refused. On error every returned string is empty.
+func ParseResourceTypeID(id string) (namespace, capability, name string, err error) {
+	rest := id
+	if strings.HasPrefix(id, "@") {
+		org, after, ok := splitNamespace(id)
+		if !ok || !isSlug(org) {
+			return "", "", "", resourceTypeIDError(id)
+		}
+		namespace, rest = org, after
+	}
+	capability, name, hasDot := strings.Cut(rest, ".")
+	if !hasDot || !isSlug(capability) || !isKebab(name) {
+		return "", "", "", resourceTypeIDError(id)
+	}
+	return namespace, capability, name, nil
+}
+
+func resourceTypeIDError(id string) error {
+	return fmt.Errorf(
+		"resource type id %q is neither a community type <capability>.<name> nor a private type @<org>/<capability>.<name>, "+
+			"where org and capability are each 1 to 40 lowercase letters, digits and dashes that start and end with a letter or digit, "+
+			"and name is lowercase kebab case",
+		id)
+}
+
+// splitNamespace splits "@<org>/<rest>" at its first slash. ok is false when
+// id does not start with @, or has no slash.
+func splitNamespace(id string) (org, rest string, ok bool) {
+	after, found := strings.CutPrefix(id, "@")
+	if !found {
+		return "", "", false
+	}
+	return strings.Cut(after, "/")
 }

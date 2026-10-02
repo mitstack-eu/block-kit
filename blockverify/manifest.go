@@ -16,8 +16,9 @@ import (
 // kit's resource registry: every spec.outputs name, and every
 // spec.requires[].reads name together with its requirement's capability.
 // Given a base manifest (the --base-manifest path), it also asks a changed
-// spec.version for a release class and a release note. It reads nothing
-// else of the manifest, so a field it does not know is never refused.
+// spec.version for a release class and a release note. A metadata.id, when
+// present, must parse through contract.ParseBlockID. It reads nothing else
+// of the manifest, so a field it does not know is never refused.
 func manifestSuite(target, baseManifest string) SuiteResult {
 	const name = "manifest"
 
@@ -32,6 +33,11 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 	}
 
 	problems := registryProblems(m)
+	if m.id != "" {
+		if _, _, err := contract.ParseBlockID(m.id); err != nil {
+			problems = append(problems, "metadata.id: "+err.Error())
+		}
+	}
 	note, problem, err := compareVersion(m, baseManifest)
 	switch {
 	case err != nil:
@@ -48,6 +54,7 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 
 // blockManifest is what the manifest suite reads of a manifest.
 type blockManifest struct {
+	id           string
 	version      string
 	releaseClass string
 	releaseNote  string
@@ -155,36 +162,70 @@ func readBlockManifest(path string) (blockManifest, error) {
 	if err != nil {
 		return blockManifest{}, fmt.Errorf("%s is present but could not be read, so its outputs and reads are unknown: %v", path, err)
 	}
-	spec, err := manifestSpec(string(raw))
-	if err != nil {
-		return blockManifest{}, fmt.Errorf("%s: %v", path, err)
-	}
-	m, err := specFields(spec)
+	m, err := manifestFields(string(raw))
 	if err != nil {
 		return blockManifest{}, fmt.Errorf("%s: %v", path, err)
 	}
 	return m, nil
 }
 
+// manifestFields parses content and extracts the fields the manifest suite
+// checks from its spec and metadata.
+func manifestFields(content string) (blockManifest, error) {
+	root, err := manifestRoot(content)
+	if err != nil {
+		return blockManifest{}, err
+	}
+	spec, err := topLevelMap(root, "spec")
+	if err != nil {
+		return blockManifest{}, err
+	}
+	m, err := specFields(spec)
+	if err != nil {
+		return m, err
+	}
+	metadata, err := topLevelMap(root, "metadata")
+	if err != nil {
+		return m, err
+	}
+	m.id, err = rawScalarField(metadata, "metadata.id", "id")
+	return m, err
+}
+
 // manifestSpec parses content and returns its spec mapping, or nil when the
 // manifest has no spec.
 func manifestSpec(content string) (*yamlNode, error) {
+	root, err := manifestRoot(content)
+	if err != nil {
+		return nil, err
+	}
+	return topLevelMap(root, "spec")
+}
+
+// manifestRoot parses content and returns its top-level mapping, or nil when
+// the document is empty.
+func manifestRoot(content string) (*yamlNode, error) {
 	root := parseYAML(content)
 	switch root.kind {
 	case yamlNull:
 		return nil, nil
 	case yamlMap:
-	default:
-		return nil, unfollowable("the document")
+		return root, nil
 	}
-	spec := root.get("spec")
-	if spec == nil || spec.kind == yamlNull {
+	return nil, unfollowable("the document")
+}
+
+// topLevelMap returns the mapping under key in root, or nil when it is
+// absent or empty.
+func topLevelMap(root *yamlNode, key string) (*yamlNode, error) {
+	n := root.get(key)
+	if n == nil || n.kind == yamlNull {
 		return nil, nil
 	}
-	if !spec.followableMap() {
-		return nil, unfollowable("spec")
+	if !n.followableMap() {
+		return nil, unfollowable(key)
 	}
-	return spec, nil
+	return n, nil
 }
 
 // specFields extracts the fields the manifest suite checks from spec.
@@ -231,6 +272,13 @@ func specFields(spec *yamlNode) (blockManifest, error) {
 // scalarField returns the trimmed scalar under key in n, or "" when the key
 // is absent or empty. field names it in an error.
 func scalarField(n *yamlNode, field, key string) (string, error) {
+	v, err := rawScalarField(n, field, key)
+	return strings.TrimSpace(v), err
+}
+
+// rawScalarField is scalarField without the trim, for a value whose every
+// character is judged, as an id is.
+func rawScalarField(n *yamlNode, field, key string) (string, error) {
 	if n == nil {
 		return "", nil
 	}
@@ -239,7 +287,9 @@ func scalarField(n *yamlNode, field, key string) (string, error) {
 	case v == nil || v.kind == yamlNull:
 		return "", nil
 	case v.kind == yamlScalar:
-		return strings.TrimSpace(v.value), nil
+		return v.value, nil
+	case v.reserved != 0:
+		return "", fmt.Errorf("%s starts with %q, which YAML does not allow at the start of an unquoted value, so quote it, as in id: \"@acme/billing-db\"", field, v.reserved)
 	}
 	return "", unfollowable(field)
 }
@@ -293,6 +343,9 @@ type yamlNode struct {
 	// misplaced marks a mapping holding a line that is neither a key of it
 	// nor inside one of its values.
 	misplaced bool
+	// reserved is the character, @ or `, that starts an unquoted scalar YAML
+	// refuses. Such a node is opaque.
+	reserved byte
 }
 
 // get returns the value under key in a mapping, or nil.
@@ -440,6 +493,11 @@ func (r *yamlReader) inline(text string, owner int) *yamlNode {
 	case '*', '{':
 		r.skipDeeper(owner)
 		return &yamlNode{kind: yamlOpaque}
+	case '@', '`':
+		// YAML reserves these at the start of a plain scalar, so a real
+		// parser refuses the value unless it is quoted.
+		r.skipDeeper(owner)
+		return &yamlNode{kind: yamlOpaque, reserved: text[0]}
 	case '[':
 		return r.flowSequence(text, owner)
 	case '"', '\'':

@@ -23,6 +23,22 @@ data, and its scope says whether it serves one app or the whole
 organisation. It says whether the resource is priced, and it names the
 registry outputs the resource produces.
 
+The `contract` package also owns the grammar of block, capability and
+resource-type ids, which the platform's ADR 0080 sets. A community name is
+bare, with no prefix, and mitstack assigns it. A private name sits under its
+org's namespace, as in `@acme/billing-db`. Two orgs can then each hold a
+private block named `api`, and a private name never takes a community one,
+because no bare name is private. Each part is a slug of 1 to 40 lowercase
+letters, digits and dashes that starts and ends with a letter or digit.
+`contract.ParseBlockID` and `contract.ParseCapabilityID` accept `billing-db`
+or `@acme/billing-db`, and `contract.ParseResourceTypeID` accepts
+`aws.ebs-volume` or `@acme/aws.special-bucket`.
+
+blockverify, the kit's conformance runner, judges a manifest's `metadata.id`
+with `contract.ParseBlockID` in its manifest suite. Write a private id in
+quotes, as in `id: "@acme/billing-db"`, because YAML does not allow `@` at
+the start of an unquoted value.
+
 The types `contract.Step` and `contract.SuppliedResource` each carry an
 `ownership` field. Its value is `created` for a resource the block creates
 and deletes, or `referenced` for one the block only uses. Nothing parses

@@ -10,6 +10,10 @@ package main
 //     requirement's capability, with the platform's own refusal messages;
 //   - a changed spec.version against --base-manifest needs a release class
 //     and a release note;
+//   - metadata.id, when present, parses through contract.ParseBlockID: a
+//     bare community slug or @<org>/<name>, or the suite fails naming
+//     metadata.id and both forms; a manifest with no metadata.id keeps the
+//     verdict its spec earns;
 //   - both manifest spellings (type/format/store and kind in all three
 //     places) pass, and an unknown spec field passes;
 //   - a block that declares no reads passes, since operators add their
@@ -342,6 +346,115 @@ func TestManifestSuite_UnreadableBaseManifestFailsNamingIt(t *testing.T) {
 	requireManifestFail(t, manifestSuite(manifestDir(t, withVersion("1.1.0")), base), base)
 }
 
+// --- metadata.id ----------------------------------------------------------
+
+// withID returns manifestHead with its metadata.id line replaced by idLine,
+// written as it appears after "id:", quotes included.
+func withID(idLine string) string {
+	return strings.Replace(manifestHead, "  id: reads-consumer\n", "  id: "+idLine+"\n", 1)
+}
+
+func TestManifestSuite_ACommunityOrPrivateMetadataIDPasses(t *testing.T) {
+	cases := map[string]string{
+		"bare slug":                 "billing-db",
+		"double-quoted private id":  `"@acme/billing-db"`,
+		"single-quoted private id":  `'@acme/billing-db'`,
+		"private id with a comment": `"@org-a/api" # the org's own api block`,
+		"forty-character bare slug": "a" + strings.Repeat("b", 38) + "c",
+	}
+	for label, idLine := range cases {
+		t.Run(label, func(t *testing.T) {
+			requireManifestPass(t, manifestSuite(manifestDir(t, withID(idLine)), ""))
+		})
+	}
+}
+
+func TestManifestSuite_AMetadataIDOutsideBothFormsFailsNamingIt(t *testing.T) {
+	cases := map[string]string{
+		"uppercase namespace":     `"@Acme/x"`,
+		"namespace with no name":  `"@acme/"`,
+		"namespace without its @": "acme/x",
+		"two slashes":             `"@acme/x/y"`,
+		"uppercase bare id":       "Billing-DB",
+		"trailing dash":           "billing-",
+		"41-character bare id":    "a" + strings.Repeat("b", 39) + "c",
+	}
+	for label, idLine := range cases {
+		t.Run(label, func(t *testing.T) {
+			requireManifestFail(t, manifestSuite(manifestDir(t, withID(idLine)), ""),
+				"manifest.yaml", "metadata.id", "@<org>/")
+		})
+	}
+}
+
+// YAML reserves @ and ` at the start of a plain value, so a parser such as
+// the platform's refuses a private id written without quotes. The suite fails
+// it too, and says to quote it, rather than passing a manifest the platform
+// will not read.
+func TestManifestSuite_AnUnquotedPrivateIDFailsAskingForQuotes(t *testing.T) {
+	for label, idLine := range map[string]string{
+		"unquoted private id":          "@acme/billing-db",
+		"unquoted private id, comment": "@acme/billing-db # the billing database",
+		"backtick-led id":              "`billing-db`",
+	} {
+		t.Run(label, func(t *testing.T) {
+			requireManifestFail(t, manifestSuite(manifestDir(t, withID(idLine)), ""),
+				"manifest.yaml", "metadata.id", "quote")
+		})
+	}
+}
+
+// A bad metadata.id is reported beside the spec's own problems, so one run
+// shows every defect.
+func TestManifestSuite_ABadMetadataIDIsReportedBesideASpecProblem(t *testing.T) {
+	content := withID(`"@Acme/x"`) + "  outputs: [hostnme]\n"
+	requireManifestFail(t, manifestSuite(manifestDir(t, content), ""),
+		"metadata.id", "@<org>/", `spec.outputs: "hostnme"`)
+}
+
+// A manifest with no metadata.id earns the verdict its spec earns.
+func TestManifestSuite_NoMetadataIDKeepsTheSpecVerdict(t *testing.T) {
+	noID := strings.Replace(manifestHead, "  id: reads-consumer\n", "", 1)
+	noMetadata := strings.Replace(manifestHead,
+		"metadata:\n  id: reads-consumer\n  name: Reads Consumer\n  owner: blockverify-tests\n", "", 1)
+	if noID == manifestHead || noMetadata == manifestHead {
+		t.Fatal("manifestHead changed shape; the metadata.id fixtures no longer remove the id")
+	}
+
+	for label, content := range map[string]string{
+		"metadata without an id": noID,
+		"no metadata at all":     noMetadata,
+	} {
+		t.Run(label+" passes with a valid spec", func(t *testing.T) {
+			requireManifestPass(t, manifestSuite(manifestDir(t, content), ""))
+		})
+		t.Run(label+" fails with a bad spec", func(t *testing.T) {
+			got := manifestSuite(manifestDir(t, content+"  outputs: [hostnme]\n"), "")
+			requireManifestFail(t, got, `spec.outputs: "hostnme"`)
+			if strings.Contains(got.Detail, "metadata.id") {
+				t.Errorf("manifest detail = %q names metadata.id, want no id problem when the id is absent", got.Detail)
+			}
+		})
+	}
+}
+
+// metadata the reader cannot follow could hide a bad id, so it fails as an
+// unfollowable spec does, never passing on an id the suite could not read.
+func TestManifestSuite_AMetadataTheReaderCannotFollowIsAFailure(t *testing.T) {
+	head := "apiVersion: mitstack/v1alpha\nkind: Block\n"
+	spec := "spec:\n  layer: backend\n  version: 1.0.0\n"
+	cases := map[string]string{
+		"metadata is a flow mapping": head + "metadata: {id: \"@Acme/x\", owner: blockverify-tests}\n" + spec,
+		"metadata.id is an alias":    "x-shared: &bad \"@Acme/x\"\n" + head + "metadata:\n  id: *bad\n" + spec,
+		"metadata.id is a mapping":   head + "metadata:\n  id:\n    org: Acme\n" + spec,
+	}
+	for label, content := range cases {
+		t.Run(label, func(t *testing.T) {
+			requireManifestFail(t, manifestSuite(manifestDir(t, content), ""), "manifest.yaml", "metadata")
+		})
+	}
+}
+
 // --- spellings and unknown fields -----------------------------------------
 
 // typeBlockSpellingManifest is the fixture block written with type: block, a
@@ -487,6 +600,38 @@ func TestRun_AnUnknownSpecFieldStillPassesBlockverify(t *testing.T) {
 	}
 	if s := suiteByName(t, r, "manifest"); s.Status != "pass" {
 		t.Errorf("manifest status = %q, want %q; detail: %s", s.Status, "pass", s.Detail)
+	}
+}
+
+// A metadata.id outside both forms fails the whole command through the
+// manifest suite, and a private id passes it.
+func TestRun_MetadataIDIsJudgedByTheManifestSuite(t *testing.T) {
+	cases := []struct {
+		label, idLine, status string
+		exit                  int
+	}{
+		{"private id passes", `"@acme/billing-db"`, "pass", 0},
+		{"uppercase namespace fails", `"@Acme/x"`, "fail", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			files := goldenFixtureFiles(t)
+			content := strings.Replace(manifestYAML, "  id: blockverify-fixture\n", "  id: "+tc.idLine+"\n", 1)
+			if content == manifestYAML {
+				t.Fatal("manifestYAML changed shape; the fixture no longer carries id: blockverify-fixture")
+			}
+			files["manifest.yaml"] = content
+			stdout, exit := runBlockverify(t, "--json", "--standalone", newFixtureFrom(t, files))
+			if exit != tc.exit {
+				t.Errorf("exit = %d, want %d\nstdout:\n%s", exit, tc.exit, stdout)
+			}
+			r := decodeReport(t, stdout)
+			if s := suiteByName(t, r, "manifest"); s.Status != tc.status {
+				t.Errorf("manifest status = %q, want %q; detail: %s", s.Status, tc.status, s.Detail)
+			} else if tc.status == "fail" && !strings.Contains(s.Detail, "metadata.id") {
+				t.Errorf("manifest detail = %q, want it to name metadata.id", s.Detail)
+			}
+		})
 	}
 }
 

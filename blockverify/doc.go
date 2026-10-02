@@ -94,8 +94,9 @@
 //     COPY a monorepo-relative build context (examples/operator-kit) it
 //     does not have as a standalone repository.
 //  6. manifest — checks the names the target's manifest.yaml declares
-//     against the resource registry package contract owns (see "The
-//     manifest suite" below). Skipped when there is no manifest.yaml, which
+//     against the resource registry package contract owns, and its
+//     metadata.id against the block id grammar (see "The manifest suite"
+//     below). Skipped when there is no manifest.yaml, which
 //     trust-plumbing already fails.
 //  7. naming — checks the app-name limit the target's manifest.yaml
 //     declares at spec.naming.appName against the derived names behind it
@@ -118,9 +119,16 @@
 //
 // # The manifest suite
 //
-// The manifest suite reads three things of the target's manifest.yaml and
+// The manifest suite reads four things of the target's manifest.yaml and
 // nothing else, so a manifest field it does not know is never refused:
 //
+//   - A metadata.id, when present and non-empty, must parse through
+//     contract.ParseBlockID: a bare slug for a community block, or
+//     @<org>/<name> for a private one. A private id must be quoted, as in
+//     id: "@acme/billing-db", because YAML does not allow @ at the start of
+//     an unquoted value and the platform's parser refuses it. A manifest
+//     with no metadata.id is not refused for it. A bad id is reported beside
+//     any other problem the suite finds.
 //   - Every spec.outputs name must resolve through contract.LookupResource,
 //     by name or alias. A name that does not fails, naming the nearest
 //     registered name or alias by edit distance.
@@ -138,8 +146,8 @@
 // The same keys nested anywhere else, under another spec field or inside a
 // block scalar, are not read. A manifest.yaml that is present but cannot be
 // read, or holds a flow mapping, an alias or a merge key where the suite
-// reads (spec, spec.outputs, spec.requires or one of its items), fails
-// rather than passing on what the reader could not see.
+// reads (spec, spec.outputs, spec.requires or one of its items, metadata or
+// metadata.id), fails rather than passing on what the reader could not see.
 //
 // On a pull request, publish-block.yml's conformance job writes the base
 // commit's manifest.yaml to a temporary file and passes it as
