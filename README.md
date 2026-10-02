@@ -10,6 +10,13 @@ sides are checked against, and the resource registry. The registry is the one
 list of output names a block may declare in `spec.outputs` and read under
 `spec.requires[].reads`, and the engine reads it from this package.
 
+The package also holds the resource-type catalogue, the one list of the kinds
+of thing a block creates or references, such as `aws.ecr-repository`. Each
+type carries its category, lifecycle, scope and pricing, and names the
+registry outputs it publishes. A step or a supplied resource names its type
+and its ownership, which is either `created`, for a resource the block
+creates and deletes, or `referenced`, for one it only uses.
+
 ## Importing it
 
 The module path is `github.com/mitstack-eu/operator-kit`. A block adds it the
