@@ -111,10 +111,10 @@ func TestValidateBlockSteps_RefusesEachDefectNamingWhatItIsAbout(t *testing.T) {
 			b.Requires[1].Type = "github.not-a-type"
 		}, []string{`requirement "workflows"`, `"github.not-a-type"`}},
 		{"requirement of a kind no catalogued type has", func(b *contract.BlockSteps) {
-			b.Requires[0].Kind = "llm-endpoint"
+			b.Requires[0].Kind = "message-queue"
 			b.Requires[0].Reads = nil
 			b.Steps[1].Inputs = nil
-		}, []string{`requirement "image"`, `kind "llm-endpoint"`}},
+		}, []string{`requirement "image"`, `kind "message-queue"`}},
 		{"requirement reading an output its kind lacks", func(b *contract.BlockSteps) {
 			b.Requires[0].Reads = []string{"runsOn"}
 			b.Steps[1].Inputs = nil
