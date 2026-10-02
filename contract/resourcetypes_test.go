@@ -447,6 +447,38 @@ func TestResourceTypes_AppRunnerResourcesMapToCataloguedTypes(t *testing.T) {
 	}
 }
 
+// TestResourceTypes_AppScaffoldResourcesMapToCataloguedTypes checks the two
+// types app-scaffold's spec.resources entries map to. Its scaffold commit maps
+// to github.commit, which publishes scaffoldCommit beside the source branch
+// and sha, and its scaffold pull request maps to github.pull-request, a
+// change-request publishing scaffoldPullRequest.
+func TestResourceTypes_AppScaffoldResourcesMapToCataloguedTypes(t *testing.T) {
+	want := []struct {
+		id, kind, capability string
+		outputs              []string
+	}{
+		{"github.commit", "source-revision", "github", []string{"sourceBranch", "sourceSha", "scaffoldCommit"}},
+		{"github.pull-request", "change-request", "github", []string{"scaffoldPullRequest"}},
+	}
+	for _, w := range want {
+		t.Run(w.id, func(t *testing.T) {
+			rt, ok := contract.LookupResourceType(w.id)
+			if !ok {
+				t.Fatalf("the catalogue has no %q", w.id)
+			}
+			if rt.Kind != w.kind || rt.Capability != w.capability {
+				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, w.kind, w.capability)
+			}
+			if rt.Outputs == nil {
+				t.Error("Outputs is nil, want an empty list when the type publishes none")
+			}
+			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
+				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
+			}
+		})
+	}
+}
+
 // catalogueRow is one released resource type: its ID, its kind and capability,
 // the six facets ADR 0077 gives a type, and its outputs. A nil languages or
 // outputs list means the type has none, and pricingKey is "" when the type is
@@ -478,7 +510,8 @@ var catalogueTable = []catalogueRow{
 	{"aws.vpc", "network", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
 	{"aws.route53-record", "dns-record", "aws", "network", nil, "", "replaceable", "per-app", "", []string{"appHostname"}},
 	{"github.repository", "git-repository", "github", "source-and-work", nil, "", "stateful", "per-app", "", []string{"cdRepo", "ciRepo", "repo", "repoUrl"}},
-	{"github.commit", "source-revision", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"sourceBranch", "sourceSha"}},
+	{"github.commit", "source-revision", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldCommit", "sourceBranch", "sourceSha"}},
+	{"github.pull-request", "change-request", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldPullRequest"}},
 	{"github.repository-webhook", "webhook", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
 	{"github.workflow-file", "ci-workflow", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"workflowUrl"}},
 	{"github.self-hosted-runner", "ci-runner", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"awsCredential", "runnerLabel", "runsOn", "runsOnPr"}},
@@ -502,8 +535,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 27 {
-		t.Fatalf("catalogueTable has %d rows, want 27", len(catalogueTable))
+	if len(catalogueTable) != 28 {
+		t.Fatalf("catalogueTable has %d rows, want 28", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))
