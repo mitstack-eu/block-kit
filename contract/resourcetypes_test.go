@@ -629,6 +629,142 @@ func TestResourceTypes_CrossplaneReconcileClaimIsCatalogued(t *testing.T) {
 	}
 }
 
+// sharedAWSNames are the seven names ADR 0081 catalogues under the
+// cloudformation and crossplane capabilities as well as under aws, since each
+// capability owns the lifecycle of the resources it creates.
+var sharedAWSNames = []string{"ec2-instance", "security-group", "ebs-volume", "ecr-repository", "iam-role", "ssm-association", "vpc"}
+
+// TestResourceTypes_CloudFormationAndCrossplaneEC2InstanceAreHosts checks that
+// an EC2 instance created through CloudFormation or through Crossplane has a
+// type of its own capability, and that both are the host kind aws.ec2-instance
+// is, so a requirement for a host is met whichever capability made it.
+func TestResourceTypes_CloudFormationAndCrossplaneEC2InstanceAreHosts(t *testing.T) {
+	for _, capability := range []string{"cloudformation", "crossplane"} {
+		id := capability + ".ec2-instance"
+		t.Run(id, func(t *testing.T) {
+			rt, ok := contract.LookupResourceType(id)
+			if !ok {
+				t.Fatalf("the catalogue has no %q", id)
+			}
+			if rt.Kind != "host" || rt.Capability != capability {
+				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, "host", capability)
+			}
+		})
+	}
+}
+
+// TestResourceTypes_CloudFormationAndCrossplaneTwinsMatchTheirAWSType checks,
+// for each of the seven shared names, that the cloudformation and crossplane
+// types equal the aws type on every field but ID and Capability: kind,
+// category, languages, artifact type, lifecycle, scope, pricing and outputs.
+// It compares the looked-up entries with each other, so a later change to the
+// aws type that its twins do not follow fails here.
+func TestResourceTypes_CloudFormationAndCrossplaneTwinsMatchTheirAWSType(t *testing.T) {
+	for _, name := range sharedAWSNames {
+		aws, ok := contract.LookupResourceType("aws." + name)
+		if !ok {
+			t.Errorf("the catalogue has no %q", "aws."+name)
+			continue
+		}
+		for _, capability := range []string{"cloudformation", "crossplane"} {
+			id := capability + "." + name
+			t.Run(id, func(t *testing.T) {
+				twin, ok := contract.LookupResourceType(id)
+				if !ok {
+					t.Fatalf("the catalogue has no %q", id)
+				}
+				want := aws
+				want.ID, want.Capability = id, capability
+				if !reflect.DeepEqual(twin, want) {
+					t.Errorf("%q = %+v; want %+v, the aws type with only ID and Capability changed", id, twin, want)
+				}
+			})
+		}
+	}
+}
+
+// TestValidateResourceTypes_RefusesAReleasedSharedNameWithTwoKinds changes the
+// kind of the released cloudformation.vpc so it no longer matches aws.vpc's,
+// and checks ValidateResourceTypes refuses the catalogue naming both IDs and
+// both kinds: types reached through different capabilities under one name
+// must share a kind.
+func TestValidateResourceTypes_RefusesAReleasedSharedNameWithTwoKinds(t *testing.T) {
+	ts := catalogue(t)
+	changed := false
+	for i := range ts {
+		if ts[i].ID == "cloudformation.vpc" {
+			ts[i].Kind = "virtual-network"
+			changed = true
+		}
+	}
+	if !changed {
+		t.Fatal("the catalogue has no cloudformation.vpc to change the kind of")
+	}
+	err := contract.ValidateResourceTypes(ts)
+	if err == nil {
+		t.Fatal("ValidateResourceTypes with cloudformation.vpc of kind virtual-network beside aws.vpc of kind network = nil, want an error")
+	}
+	msg := err.Error()
+	for _, id := range []string{"cloudformation.vpc", "aws.vpc"} {
+		if !strings.Contains(msg, id) {
+			t.Errorf("error %q does not name %q", msg, id)
+		}
+	}
+	if !strings.Contains(msg, "virtual-network") {
+		t.Errorf("error %q does not name the kind %q", msg, "virtual-network")
+	}
+	// "network" sits inside "virtual-network", so that kind is removed first.
+	if rest := strings.ReplaceAll(msg, "virtual-network", ""); !strings.Contains(rest, "network") {
+		t.Errorf("error %q does not name the kind %q", msg, "network")
+	}
+}
+
+// TestValidateResourceTypes_RefusesASharedNameWithTwoKinds checks the
+// shared-name rule on two synthetic types that are each valid alone, so the
+// rule is pinned apart from the released catalogue. Both orders are checked,
+// since the rule must not depend on which type comes first.
+func TestValidateResourceTypes_RefusesASharedNameWithTwoKinds(t *testing.T) {
+	a := validType()
+	a.ID, a.Capability, a.Kind = "aws.thing", "aws", "thing-alpha"
+	b := validType()
+	b.ID, b.Capability, b.Kind = "hetzner.thing", "hetzner", "thing-beta"
+	for _, rt := range []contract.ResourceType{a, b} {
+		if err := contract.ValidateResourceTypes([]contract.ResourceType{rt}); err != nil {
+			t.Fatalf("ValidateResourceTypes(%+v) alone = %v, want nil so only the shared name can refuse the pair", rt, err)
+		}
+	}
+	orders := map[string][]contract.ResourceType{
+		"aws first":     {a, b},
+		"hetzner first": {b, a},
+	}
+	for name, ts := range orders {
+		t.Run(name, func(t *testing.T) {
+			err := contract.ValidateResourceTypes(ts)
+			if err == nil {
+				t.Fatal("ValidateResourceTypes with aws.thing of kind thing-alpha and hetzner.thing of kind thing-beta = nil, want an error")
+			}
+			for _, want := range []string{"aws.thing", "hetzner.thing", "thing-alpha", "thing-beta"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not name %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateResourceTypes_AcceptsASharedNameWithOneKind checks the
+// shared-name rule refuses only a kind mismatch: two types under different
+// capabilities may share a name when they carry the same kind.
+func TestValidateResourceTypes_AcceptsASharedNameWithOneKind(t *testing.T) {
+	a := validType()
+	a.ID, a.Capability, a.Kind = "aws.thing", "aws", "thing"
+	b := validType()
+	b.ID, b.Capability, b.Kind = "hetzner.thing", "hetzner", "thing"
+	if err := contract.ValidateResourceTypes([]contract.ResourceType{a, b}); err != nil {
+		t.Errorf("ValidateResourceTypes with aws.thing and hetzner.thing both of kind thing = %v, want nil", err)
+	}
+}
+
 // catalogueRow is one released resource type: its ID, its kind and capability,
 // the six facets ADR 0077 gives a type, and its outputs. A nil languages or
 // outputs list means the type has none, and pricingKey is "" when the type is
@@ -645,7 +781,8 @@ type catalogueRow struct {
 // catalogueTable pins every type the kit releases, so adding, removing or
 // changing a type means changing this table. The github.repository,
 // github.commit, aws.ecr-image and github.self-hosted-runner rows carry the
-// kinds and capabilities ADR 0078 fixes.
+// kinds and capabilities ADR 0078 fixes. The cloudformation and crossplane rows
+// repeat seven aws rows under the capability ADR 0081 gives them.
 var catalogueTable = []catalogueRow{
 	{"aws.ec2-instance", "host", "aws", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
 	{"aws.security-group", "firewall", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
@@ -679,6 +816,20 @@ var catalogueTable = []catalogueRow{
 	{"app-host.postgres-database", "postgres-database", "app-host", "database", nil, "", "stateful", "per-app", "", []string{"dbName", "host", "port", "username"}},
 	{"app-host.deployment", "deployment", "app-host", "build-and-delivery", []string{"any-container"}, "", "replaceable", "per-app", "", []string{"deployment"}},
 	{"app-host.host-configuration", "host-configuration", "app-host", "compute", nil, "", "replaceable", "per-app", "", nil},
+	{"cloudformation.ec2-instance", "host", "cloudformation", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
+	{"cloudformation.security-group", "firewall", "cloudformation", "network", nil, "", "replaceable", "per-app", "", nil},
+	{"cloudformation.ebs-volume", "block-volume", "cloudformation", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}},
+	{"cloudformation.ecr-repository", "container-repository", "cloudformation", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"ecrRegistry", "registryHost"}},
+	{"cloudformation.iam-role", "iam-role", "cloudformation", "identity-and-access", nil, "", "replaceable", "per-app", "", []string{"deployRoleArn", "ecrPushRoleArn"}},
+	{"cloudformation.ssm-association", "host-configuration", "cloudformation", "compute", nil, "", "replaceable", "per-app", "", nil},
+	{"cloudformation.vpc", "network", "cloudformation", "network", nil, "", "replaceable", "per-app", "", nil},
+	{"crossplane.ec2-instance", "host", "crossplane", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
+	{"crossplane.security-group", "firewall", "crossplane", "network", nil, "", "replaceable", "per-app", "", nil},
+	{"crossplane.ebs-volume", "block-volume", "crossplane", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}},
+	{"crossplane.ecr-repository", "container-repository", "crossplane", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"ecrRegistry", "registryHost"}},
+	{"crossplane.iam-role", "iam-role", "crossplane", "identity-and-access", nil, "", "replaceable", "per-app", "", []string{"deployRoleArn", "ecrPushRoleArn"}},
+	{"crossplane.ssm-association", "host-configuration", "crossplane", "compute", nil, "", "replaceable", "per-app", "", nil},
+	{"crossplane.vpc", "network", "crossplane", "network", nil, "", "replaceable", "per-app", "", nil},
 }
 
 // sortedCopy returns s sorted, as a non-nil list, so two lists compare as sets.
@@ -689,8 +840,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 32 {
-		t.Fatalf("catalogueTable has %d rows, want 32", len(catalogueTable))
+	if len(catalogueTable) != 46 {
+		t.Fatalf("catalogueTable has %d rows, want 46", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))
