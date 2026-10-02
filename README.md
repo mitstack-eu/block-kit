@@ -50,9 +50,20 @@ the start of an unquoted value.
 
 The types `contract.Step` and `contract.SuppliedResource` each carry an
 `ownership` field. Its value is `created` for a resource the block creates
-and deletes, or `referenced` for one the block only uses. Nothing parses
-steps from a manifest yet, so for now these types define only the shape a
-step will take.
+and deletes, or `referenced` for one the block only uses.
+
+A manifest may list the resources a block creates as ordered steps under
+`spec.steps`, as the platform's ADR 0079 sets. Such a manifest requires only
+resources. Each `contract.ResourceRequirement` is matched by a kind and the
+outputs it reads, or narrowed to one type, and a requirement with
+`many: true` collects every offer in the stack. A block offers the resource
+a step creates by listing `- step: <id>` under `spec.provides`, which
+`contract.Offer` holds. `contract.ValidateBlockSteps` checks a block's steps,
+requirements and offers against the catalogue, naming the step, requirement
+or offer at fault. `contract.DeriveCapabilities` returns the capabilities
+the block's step types and narrowed requirements belong to, so a manifest
+never lists them by hand. blockverify's manifest suite runs the same check
+on any manifest that declares `spec.steps`.
 
 ## Importing it
 

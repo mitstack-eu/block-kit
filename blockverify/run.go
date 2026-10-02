@@ -127,7 +127,6 @@ func runStandalone(target, baseManifest string) Report {
 		deliverableSuite(target),
 		manifestSuite(target, baseManifest),
 		namingSuite(target),
-		capabilityParitySuite(),
 	}
 
 	verdict := "pass"

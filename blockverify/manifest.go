@@ -15,6 +15,10 @@ import (
 // manifestSuite checks the names target's manifest declares against the
 // kit's resource registry: every spec.outputs name, and every
 // spec.requires[].reads name together with its requirement's capability.
+// A manifest that declares spec.steps has its steps, resource requirements
+// and offers judged by contract.ValidateBlockSteps instead of the capability
+// reads check, and is refused a capability entry, an extension entry or a
+// dependsOn key, as ADR 0079 sets.
 // Given a base manifest (the --base-manifest path), it also asks a changed
 // spec.version for a release class and a release note. A metadata.id, when
 // present, must parse through contract.ParseBlockID. It reads nothing else
@@ -33,6 +37,9 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 	}
 
 	problems := registryProblems(m)
+	if m.stepped != nil {
+		problems = append(problems, steppedProblems(*m.stepped)...)
+	}
 	if m.id != "" {
 		if _, _, err := contract.ParseBlockID(m.id); err != nil {
 			problems = append(problems, "metadata.id: "+err.Error())
@@ -60,6 +67,9 @@ type blockManifest struct {
 	releaseNote  string
 	outputs      []string
 	requires     []requirement
+	// stepped is what a manifest declaring spec.steps declares beside its
+	// steps, or nil for a manifest without them.
+	stepped *steppedManifest
 }
 
 // requirement is one item of spec.requires.
@@ -243,6 +253,14 @@ func specFields(spec *yamlNode) (blockManifest, error) {
 	}
 	if m.outputs, err = nameList(spec.get("outputs"), "spec.outputs"); err != nil {
 		return m, err
+	}
+	if hasSteps(spec) {
+		stepped, err := steppedFields(spec)
+		if err != nil {
+			return m, err
+		}
+		m.stepped = &stepped
+		return m, nil
 	}
 
 	requires := spec.get("requires")
