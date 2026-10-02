@@ -414,7 +414,40 @@ func TestResourceTypes_ADR0078FixesTheRepositoryCommitAndImageRows(t *testing.T)
 	}
 }
 
-// catalogueRow is one released resource type: its ID, its kind and capability,
+// TestResourceTypes_AppRunnerResourcesMapToCataloguedTypes checks the three
+// types app-runner's spec.resources entries map to. Its runner lanes are the
+// ci-runner kind ADR 0078 has managed-ci and managed-cd require, publishing
+// the four outputs that requirement reads, while its runner group and its host
+// configuration publish nothing.
+func TestResourceTypes_AppRunnerResourcesMapToCataloguedTypes(t *testing.T) {
+	want := []struct {
+		id, kind, capability string
+		outputs              []string
+	}{
+		{"github.self-hosted-runner", "ci-runner", "github", []string{"runnerLabel", "runsOn", "runsOnPr", "awsCredential"}},
+		{"github.runner-group", "runner-group", "github", nil},
+		{"app-host.host-configuration", "host-configuration", "app-host", nil},
+	}
+	for _, w := range want {
+		t.Run(w.id, func(t *testing.T) {
+			rt, ok := contract.LookupResourceType(w.id)
+			if !ok {
+				t.Fatalf("the catalogue has no %q", w.id)
+			}
+			if rt.Kind != w.kind || rt.Capability != w.capability {
+				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, w.kind, w.capability)
+			}
+			if rt.Outputs == nil {
+				t.Error("Outputs is nil, want an empty list when the type publishes none")
+			}
+			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
+				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
+			}
+		})
+	}
+}
+
+// catalogueRow is one released resource type:its ID, its kind and capability,
 // the six facets ADR 0077 gives a type, and its outputs. A nil languages or
 // outputs list means the type has none, and pricingKey is "" when the type is
 // not priced.
@@ -429,8 +462,8 @@ type catalogueRow struct {
 
 // catalogueTable pins every type the kit releases, so adding, removing or
 // changing a type means changing this table. The github.repository,
-// github.commit and aws.ecr-image rows carry the kinds and capabilities
-// ADR 0078 fixes.
+// github.commit, aws.ecr-image and github.self-hosted-runner rows carry the
+// kinds and capabilities ADR 0078 fixes.
 var catalogueTable = []catalogueRow{
 	{"aws.ec2-instance", "host", "aws", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
 	{"aws.security-group", "firewall", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
@@ -448,6 +481,8 @@ var catalogueTable = []catalogueRow{
 	{"github.commit", "source-revision", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"sourceBranch", "sourceSha"}},
 	{"github.repository-webhook", "webhook", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
 	{"github.workflow-file", "ci-workflow", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"workflowUrl"}},
+	{"github.self-hosted-runner", "ci-runner", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"awsCredential", "runnerLabel", "runsOn", "runsOnPr"}},
+	{"github.runner-group", "runner-group", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
 	{"hetzner.server", "host", "hetzner", "compute", []string{"any-container"}, "", "replaceable", "per-app", "HetznerCloud", []string{"cloud.region", "execTarget", "host.type", "hostId"}},
 	{"hetzner.primary-ip", "ip-address", "hetzner", "network", nil, "", "replaceable", "per-app", "", []string{"publicIp"}},
 	{"hetzner.firewall", "firewall", "hetzner", "network", nil, "", "replaceable", "per-app", "", nil},
@@ -456,6 +491,7 @@ var catalogueTable = []catalogueRow{
 	{"app-host.container", "container", "app-host", "compute", []string{"any-container"}, "", "replaceable", "per-app", "", []string{"url"}},
 	{"app-host.postgres-database", "postgres-database", "app-host", "database", nil, "", "stateful", "per-app", "", []string{"dbName", "host", "port", "username"}},
 	{"app-host.deployment", "deployment", "app-host", "build-and-delivery", []string{"any-container"}, "", "replaceable", "per-app", "", []string{"deployment"}},
+	{"app-host.host-configuration", "host-configuration", "app-host", "compute", nil, "", "replaceable", "per-app", "", nil},
 }
 
 // sortedCopy returns s sorted, as a non-nil list, so two lists compare as sets.
@@ -466,8 +502,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 24 {
-		t.Fatalf("catalogueTable has %d rows, want 24", len(catalogueTable))
+	if len(catalogueTable) != 27 {
+		t.Fatalf("catalogueTable has %d rows, want 27", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))
