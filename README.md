@@ -23,6 +23,13 @@ data, and its scope says whether it serves one app or the whole
 organisation. It says whether the resource is priced, and it names the
 registry outputs the resource produces.
 
+A type belongs to the capability that owns its lifecycle, so one thing reached
+through several capabilities is several types. An EC2 instance is
+`aws.ec2-instance`, `cloudformation.ec2-instance` or
+`crossplane.ec2-instance`, depending on which capability creates it. Types
+that share a name, the part of the ID after the first dot, share a kind, and
+`contract.ValidateResourceTypes` refuses a catalogue in which they do not.
+
 The `contract` package also owns the grammar of block, capability and
 resource-type ids, which the platform's ADR 0080 sets. A community name is
 bare, with no prefix, and mitstack assigns it. A private name sits under its
