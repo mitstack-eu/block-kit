@@ -294,6 +294,7 @@ var resourceTypeCatalogue = []ResourceType{
 	{ID: "aws.ssm-association", Kind: "host-configuration", Capability: "aws", Category: "compute", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "aws.ssm-parameter", Kind: "secret", Capability: "aws", Category: "secrets", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: emptyList},
 	{ID: "aws.vpc", Kind: "network", Capability: "aws", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "crossplane.reconcile-claim", Kind: "reconcile-claim", Capability: "crossplane", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"claim", "driftPolicy", "driftedResources", "reconciledResources"}},
 	{ID: "github.actions-secret", Kind: "secret", Capability: "github", Category: "secrets", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "github.actions-variable", Kind: "ci-variable", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "github.commit", Kind: "source-revision", Capability: "github", Category: "source-and-work", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"scaffoldCommit", "sourceBranch", "sourceSha"}},
