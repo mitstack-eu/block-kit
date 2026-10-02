@@ -113,11 +113,15 @@ func ResourceTypeScopes() []string {
 	return []string{"per-app", "org-wide"}
 }
 
-// ValidateResourceTypes returns the first defect it finds in ts, or nil. The
-// error names the defective entry by its ID, or by its index when the ID is
-// empty.
+// ValidateResourceTypes returns the first defect it finds in ts, or nil. It
+// checks every entry's fields, refuses an ID listed more than once, and refuses
+// two types whose names, the part of the ID after the first dot, are equal but
+// whose kinds differ. The error names the defective entry by its ID, or by its
+// index when the ID is empty, and a kind mismatch also names the type and kind
+// it clashes with.
 func ValidateResourceTypes(ts []ResourceType) error {
 	seen := make(map[string]bool, len(ts))
+	byName := make(map[string]ResourceType, len(ts))
 	for i, t := range ts {
 		if t.ID == "" {
 			return fmt.Errorf("resource type at index %d: empty ID", i)
@@ -129,6 +133,15 @@ func ValidateResourceTypes(ts []ResourceType) error {
 			return fmt.Errorf("resource type %q: listed more than once", t.ID)
 		}
 		seen[t.ID] = true
+		_, name, _ := strings.Cut(t.ID, ".")
+		first, ok := byName[name]
+		if !ok {
+			byName[name] = t
+			continue
+		}
+		if first.Kind != t.Kind {
+			return fmt.Errorf("resource type %q: kind %q differs from kind %q of %q, which shares its name", t.ID, t.Kind, first.Kind, first.ID)
+		}
 	}
 	return nil
 }
@@ -294,7 +307,21 @@ var resourceTypeCatalogue = []ResourceType{
 	{ID: "aws.ssm-association", Kind: "host-configuration", Capability: "aws", Category: "compute", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "aws.ssm-parameter", Kind: "secret", Capability: "aws", Category: "secrets", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: emptyList},
 	{ID: "aws.vpc", Kind: "network", Capability: "aws", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "cloudformation.ebs-volume", Kind: "block-volume", Capability: "cloudformation", Category: "storage", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: []string{"dataSnapshotId"}},
+	{ID: "cloudformation.ec2-instance", Kind: "host", Capability: "cloudformation", Category: "compute", Languages: []string{"any-container"}, Lifecycle: "replaceable", Scope: "per-app", Priced: true, PricingKey: "AmazonEC2", Outputs: []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
+	{ID: "cloudformation.ecr-repository", Kind: "container-repository", Capability: "cloudformation", Category: "artifact-registry", Languages: []string{"any-container"}, ArtifactType: "container-image", Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"ecrRegistry", "registryHost"}},
+	{ID: "cloudformation.iam-role", Kind: "iam-role", Capability: "cloudformation", Category: "identity-and-access", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"deployRoleArn", "ecrPushRoleArn"}},
+	{ID: "cloudformation.security-group", Kind: "firewall", Capability: "cloudformation", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "cloudformation.ssm-association", Kind: "host-configuration", Capability: "cloudformation", Category: "compute", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "cloudformation.vpc", Kind: "network", Capability: "cloudformation", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "crossplane.ebs-volume", Kind: "block-volume", Capability: "crossplane", Category: "storage", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: []string{"dataSnapshotId"}},
+	{ID: "crossplane.ec2-instance", Kind: "host", Capability: "crossplane", Category: "compute", Languages: []string{"any-container"}, Lifecycle: "replaceable", Scope: "per-app", Priced: true, PricingKey: "AmazonEC2", Outputs: []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
+	{ID: "crossplane.ecr-repository", Kind: "container-repository", Capability: "crossplane", Category: "artifact-registry", Languages: []string{"any-container"}, ArtifactType: "container-image", Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"ecrRegistry", "registryHost"}},
+	{ID: "crossplane.iam-role", Kind: "iam-role", Capability: "crossplane", Category: "identity-and-access", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"deployRoleArn", "ecrPushRoleArn"}},
 	{ID: "crossplane.reconcile-claim", Kind: "reconcile-claim", Capability: "crossplane", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"claim", "driftPolicy", "driftedResources", "reconciledResources"}},
+	{ID: "crossplane.security-group", Kind: "firewall", Capability: "crossplane", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "crossplane.ssm-association", Kind: "host-configuration", Capability: "crossplane", Category: "compute", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "crossplane.vpc", Kind: "network", Capability: "crossplane", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "github.actions-secret", Kind: "secret", Capability: "github", Category: "secrets", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "github.actions-variable", Kind: "ci-variable", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "github.commit", Kind: "source-revision", Capability: "github", Category: "source-and-work", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"scaffoldCommit", "sourceBranch", "sourceSha"}},
