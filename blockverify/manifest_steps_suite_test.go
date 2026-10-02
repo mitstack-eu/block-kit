@@ -70,6 +70,20 @@ func TestSteppedFields_ReadsTheKitStepsGoldenExactlyAsTheKitDeclaresIt(t *testin
 	}
 }
 
+func TestManifestSuite_NamesTheManifestPositionOfARequirementWithAnEmptyResource(t *testing.T) {
+	spec := strings.Replace(steppedSpec, "  requires:\n", "  requires:\n    - capability: github\n    - resource: \"\"\n      kind: container-image\n", 1)
+	requireManifestFail(t, manifestSuite(manifestDir(t, manifestHead+spec), ""), "spec.requires[1]", "names no resource")
+}
+
+func TestManifestSuite_AnUnquotedAtResourceIsAskedToBeQuotedNotCalledMissing(t *testing.T) {
+	spec := strings.Replace(steppedSpec, "  requires:\n", "  requires:\n    - resource: @x\n      kind: container-image\n", 1)
+	got := manifestSuite(manifestDir(t, manifestHead+spec), "")
+	requireManifestFail(t, got, "quote")
+	if strings.Contains(got.Detail, "names no resource") {
+		t.Errorf("manifest detail %q calls a resource it could not read missing", got.Detail)
+	}
+}
+
 func TestManifestSuite_NamesTheManifestPositionOfARequirementWithNoResource(t *testing.T) {
 	spec := strings.Replace(steppedSpec, "  requires:\n", "  requires:\n    - capability: github\n    - reads: [artifact]\n", 1)
 	requireManifestFail(t, manifestSuite(manifestDir(t, manifestHead+spec), ""), "spec.requires[1]", "resource")
