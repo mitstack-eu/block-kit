@@ -64,7 +64,11 @@ func steppedFields(spec *yamlNode) (steppedManifest, error) {
 			m.extensions = append(m.extensions, v)
 			continue
 		}
-		if v, err := scalarField(item, "spec.requires[].resource", "resource"); err != nil || v == "" {
+		v, err := scalarField(item, "spec.requires[].resource", "resource")
+		if err != nil {
+			return m, err
+		}
+		if v == "" {
 			m.unnamed = append(m.unnamed, i)
 			continue
 		}
