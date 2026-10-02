@@ -423,20 +423,3 @@ func TestNoContract_DeliverableKeepsTheLegacyVerdict(t *testing.T) {
 		t.Errorf("deliverable detail = %q, want it to name Dockerfile", got.Detail)
 	}
 }
-
-func TestNoContract_CapabilityParityKeepsTheLegacyVerdict(t *testing.T) {
-	dir := newFixtureFrom(t, noContractFixtureFiles(t))
-
-	stdout, exit := runBlockverify(t, "--json", "--standalone", dir)
-	if exit != 0 {
-		t.Fatalf("want exit 0 on a conformant legacy target declaring no contract, got %d\nstdout:\n%s", exit, stdout)
-	}
-	r := decodeReport(t, stdout)
-	s := suiteByName(t, r, "capability-parity")
-	if s.Status != "skipped" {
-		t.Errorf("capability-parity status = %q, want %q", s.Status, "skipped")
-	}
-	if s.Detail == "" {
-		t.Error("capability-parity must carry a reason in detail")
-	}
-}

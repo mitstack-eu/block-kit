@@ -1,0 +1,41 @@
+apiVersion: mitstack/v1alpha
+type: block
+metadata:
+  id: steps-golden
+  name: Steps Golden
+  owner: mitstack
+spec:
+  version: 1.0.0
+  description: A block that lists the resources it creates as ordered steps and requires only resources.
+  params:
+    - name: appName
+      required: true
+  requires:
+    - resource: image
+      kind: container-image
+      reads: [artifact]
+    - resource: workflows
+      type: github.workflow-file
+      reads: [workflowPath]
+      many: true
+  steps:
+    - id: registry
+      type: aws.ecr-repository
+      ownership: created
+      inputs:
+        name: params.appName
+    - id: build-image
+      type: aws.ecr-image
+      ownership: created
+      inputs:
+        registry: steps.registry.outputs.ecrRegistry
+        base: requires.image.outputs.artifact
+        workflow: requires.workflows.outputs.workflowPath
+  provides:
+    - step: build-image
+  outputs:
+    - artifact
+  lifecycle:
+    endpoint: https://steps-golden.example.com/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
