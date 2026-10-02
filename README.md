@@ -10,6 +10,25 @@ sides are checked against, and the resource registry. The registry is the one
 list of output names a block may declare in `spec.outputs` and read under
 `spec.requires[].reads`, and the engine reads it from this package.
 
+The `contract` package also holds the resource-type catalogue, which is the
+one list of resource types a block can create or reference.
+`contract.ResourceTypes` returns every type, sorted by its ID, and
+`contract.LookupResourceType` returns the one type with a given ID, such as
+`aws.ecr-repository`. Each type carries a kind, which names what the
+resource is without naming a provider: the kind of `aws.ecr-repository` is
+`container-repository`. Each type also carries the capability it belongs to
+and a category. It lists the languages it serves and the artifact type it
+holds, if any. Its lifecycle says whether replacing the resource loses
+data, and its scope says whether it serves one app or the whole
+organisation. It says whether the resource is priced, and it names the
+registry outputs the resource produces.
+
+The types `contract.Step` and `contract.SuppliedResource` each carry an
+`ownership` field. Its value is `created` for a resource the block creates
+and deletes, or `referenced` for one the block only uses. Nothing parses
+steps from a manifest yet, so for now these types define only the shape a
+step will take.
+
 ## Importing it
 
 The module path is `github.com/mitstack-eu/operator-kit`. A block adds it the
