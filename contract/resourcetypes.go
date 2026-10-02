@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// The resource-type catalogue is the one list of the kinds of thing a block
+// The resource-type catalogue is the one list of resource types a block
 // creates or references. Each type is described by its facets, and its
 // Outputs name entries of the resource registry, so a type's outputs and a
 // block's declared outputs come from the same vocabulary.
@@ -244,8 +244,9 @@ func (o Ownership) Valid() bool {
 }
 
 // Step is one resource a block's plan works on: its catalogue type, whether
-// the block creates or references it, and which earlier step IDs feed its
-// named inputs.
+// the block creates or references it, and the binding each of its named
+// inputs reads from. A binding is a param, an earlier step's output or a
+// required resource's output.
 type Step struct {
 	// ID names the step within the block.
 	ID string `json:"id"`
@@ -253,7 +254,11 @@ type Step struct {
 	Type string `json:"type"`
 	// Ownership says whether the block creates the resource or references it.
 	Ownership Ownership `json:"ownership"`
-	// Inputs maps an input name to the ID of the step that supplies it.
+	// Inputs maps an input name to the binding reference it reads, in exactly
+	// one of three forms: "params.<name>" for a param the manifest declares,
+	// "steps.<id>.outputs.<name>" for an output an earlier step's type
+	// produces, or "requires.<id>.outputs.<name>" for an output a required
+	// resource produces, where the name must be in that requirement's reads.
 	Inputs map[string]string `json:"inputs,omitempty"`
 }
 
