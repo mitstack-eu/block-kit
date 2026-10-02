@@ -280,6 +280,7 @@ var emptyList = []string{}
 var resourceTypeCatalogue = []ResourceType{
 	{ID: "app-host.container", Kind: "container", Capability: "app-host", Category: "compute", Languages: []string{"any-container"}, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"url"}},
 	{ID: "app-host.deployment", Kind: "deployment", Capability: "app-host", Category: "build-and-delivery", Languages: []string{"any-container"}, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"deployment"}},
+	{ID: "app-host.host-configuration", Kind: "host-configuration", Capability: "app-host", Category: "compute", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "app-host.postgres-database", Kind: "postgres-database", Capability: "app-host", Category: "database", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: []string{"dbName", "host", "port", "username"}},
 	{ID: "aws.ebs-volume", Kind: "block-volume", Capability: "aws", Category: "storage", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: []string{"dataSnapshotId"}},
 	{ID: "aws.ec2-instance", Kind: "host", Capability: "aws", Category: "compute", Languages: []string{"any-container"}, Lifecycle: "replaceable", Scope: "per-app", Priced: true, PricingKey: "AmazonEC2", Outputs: []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
@@ -296,6 +297,8 @@ var resourceTypeCatalogue = []ResourceType{
 	{ID: "github.commit", Kind: "source-revision", Capability: "github", Category: "source-and-work", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"sourceBranch", "sourceSha"}},
 	{ID: "github.repository", Kind: "git-repository", Capability: "github", Category: "source-and-work", Languages: emptyList, Lifecycle: "stateful", Scope: "per-app", Outputs: []string{"cdRepo", "ciRepo", "repo", "repoUrl"}},
 	{ID: "github.repository-webhook", Kind: "webhook", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "github.runner-group", Kind: "runner-group", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
+	{ID: "github.self-hosted-runner", Kind: "ci-runner", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"awsCredential", "runnerLabel", "runsOn", "runsOnPr"}},
 	{ID: "github.workflow-file", Kind: "ci-workflow", Capability: "github", Category: "build-and-delivery", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"workflowUrl"}},
 	{ID: "hetzner.firewall", Kind: "firewall", Capability: "hetzner", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: emptyList},
 	{ID: "hetzner.primary-ip", Kind: "ip-address", Capability: "hetzner", Category: "network", Languages: emptyList, Lifecycle: "replaceable", Scope: "per-app", Outputs: []string{"publicIp"}},
