@@ -96,8 +96,9 @@
 //  6. manifest — checks the names the target's manifest.yaml declares
 //     against the resource registry package contract owns, its metadata.id
 //     against the block id grammar, and a declared spec.steps against
-//     contract.ValidateBlockSteps (see "The manifest suite" below). Skipped when there is no manifest.yaml, which
-//     trust-plumbing already fails.
+//     contract.ValidateBlockSteps (see "The manifest suite" below).
+//     Skipped when there is no manifest.yaml, which trust-plumbing already
+//     fails.
 //  7. naming — checks the app-name limit the target's manifest.yaml
 //     declares at spec.naming.appName against the derived names behind it
 //     (see "The naming suite" below). Skipped when the manifest declares no

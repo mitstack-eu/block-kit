@@ -57,9 +57,11 @@ and deletes, or `referenced` for one the block only uses.
 A step is one resource a block creates or references, of one catalogued
 type, and `spec.steps` lists a block's steps in the order it works on them.
 The platform's ADR 0079, at `docs/adr/0079-a-block-requires-only-resources-and-derives-its-capabilities.md`
-in `mitstack-eu/mitstack`, sets this shape. A manifest that declares
-`spec.steps` requires only resources, never capabilities, and it reads like
-this:
+in `mitstack-eu/mitstack`, sets this shape. A stack is the set of blocks
+subscribed together for one app. A block offers a resource to the rest of
+its stack when it lists, under `spec.provides`, the step that creates it.
+A manifest that declares `spec.steps` requires only resources, never
+capabilities, and it reads like this:
 
 ```yaml
 spec:
@@ -69,6 +71,10 @@ spec:
     - resource: image
       kind: container-image
       reads: [artifact]
+    - resource: workflows
+      type: github.workflow-file
+      reads: [workflowPath]
+      many: true
   steps:
     - id: registry
       type: aws.ecr-repository
@@ -85,31 +91,41 @@ spec:
     - step: build-image
 ```
 
-Each `contract.ResourceRequirement` is matched in one of two ways. A kind
-requirement, like `image` above, matches any catalogued type of that kind
-that outputs every name in `reads`. A narrowed requirement names one `type`
-in place of a kind, and matches that type alone. A requirement with
-`many: true` collects every matching offer in the stack, and one without it
-is met by exactly one.
+Each entry under `requires` is a `contract.ResourceRequirement`, matched in
+one of two ways. A kind requirement names a `kind`, as `image` does above.
+It matches any catalogued type of that kind that outputs every name in
+`reads`, so both `aws.ecr-image` and `github.container-image` meet `image`.
+A narrowed requirement names one `type` in place of a kind, as `workflows`
+does, and matches that type alone.
 
-A step input binds to a declared param, to an output of an earlier step's
-type, or to a name in a one-provider requirement's `reads`. No form yet binds
-a many-provider requirement.
+A requirement with `many: true`, like `workflows`, collects every matching
+offer in the stack. A requirement without it is met by exactly one offer, or
+by an existing resource the subscriber supplies.
 
-A block offers the resource a step creates to the rest of its stack by
-listing `- step: <id>` under `spec.provides`, which `contract.Offer` holds.
-A capability slug under `spec.provides` still means the block runs that
-capability. A resource a block creates without offering it matches no other
-block's requirement.
+A step input binds in one of three forms. `params.<name>` reads a param the
+manifest declares. `steps.<id>.outputs.<name>` reads an output that the type
+of an earlier step produces. `requires.<id>.outputs.<name>` reads a name in
+the `reads` of a requirement without `many: true`. No form yet binds a
+requirement with `many: true`.
+
+`contract.Offer` holds one `- step: <id>` entry of `spec.provides`. A plain
+name under `spec.provides`, such as `app-host`, is a capability slug, and it
+still means the block runs that capability. A resource a block creates
+without offering it matches no other block's requirement.
 
 `contract.ValidateBlockSteps` checks all of this against the catalogue. Each
 refusal names what it is about, as in
 `step "registry": type "aws.not-a-type" is not in the resource-type catalogue`.
 `contract.DeriveCapabilities` returns the capabilities that own the block's
 step types and narrowed requirement types, so a manifest never lists them by
-hand. blockverify's manifest suite runs the same check on any manifest that
-declares `spec.steps`, and refuses a `capability:` or `extension:` entry or a
-`dependsOn` key beside it.
+hand.
+
+blockverify's manifest suite runs the same check on any manifest that
+declares `spec.steps`. Such a manifest is also refused two older kinds of
+`requires` entry and one older key, each of which ADR 0079 retires. A
+`capability:` entry named a capability by hand. An `extension:` entry named a
+fan-in, which is now a requirement with `many: true`. A `dependsOn` key named
+blocks to order after, which resource requirements now order.
 
 ## Importing it
 
@@ -182,8 +198,11 @@ either side turns the other side's tests red. Its twin,
 `type: block`, `format` and `store` and without a layer, and the handler
 reads it exactly as it reads the first. A third golden,
 `contract.StepsManifestGolden`, declares steps, resource requirements and an
-offer. `contract.StepsManifestGoldenDeclares` returns what it declares, and
-blockverify and the platform's parser each test that they read it exactly so.
+offer. `contract.StepsManifestGoldenDeclares` returns that declaration as a
+`contract.BlockSteps`: the param names, the steps, the requirements and the
+offers, each in manifest order. blockverify's tests check that its reader
+turns the golden into exactly that value, so a change to either side shows
+up as a failing test.
 
 A request that carries no OBO token is refused with 401 on every verb —
 subscribe, upgrade, validate, unsubscribe — before the Resource is ever
