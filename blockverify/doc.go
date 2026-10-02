@@ -94,9 +94,9 @@
 //     COPY a monorepo-relative build context (examples/operator-kit) it
 //     does not have as a standalone repository.
 //  6. manifest — checks the names the target's manifest.yaml declares
-//     against the resource registry package contract owns, and its
-//     metadata.id against the block id grammar (see "The manifest suite"
-//     below). Skipped when there is no manifest.yaml, which
+//     against the resource registry package contract owns, its metadata.id
+//     against the block id grammar, and a declared spec.steps against
+//     contract.ValidateBlockSteps (see "The manifest suite" below). Skipped when there is no manifest.yaml, which
 //     trust-plumbing already fails.
 //  7. naming — checks the app-name limit the target's manifest.yaml
 //     declares at spec.naming.appName against the derived names behind it
@@ -138,7 +138,7 @@
 //     contract.ValidateBlockSteps, in place of the reads check above. Such
 //     a manifest is also refused a `capability:` or `extension:` entry in
 //     spec.requires and a spec.dependsOn key, each named. A manifest without
-//     spec.steps is judged as before.
+//     spec.steps gets the reads check above and none of these.
 //   - With --base-manifest, a spec.version that differs from the base's
 //     needs spec.releaseClass and a non-blank spec.releaseNote. The class
 //     value is not checked here; the platform validates it at apply. A base

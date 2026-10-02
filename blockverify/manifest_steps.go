@@ -15,6 +15,9 @@ type steppedManifest struct {
 	capabilities []string
 	extensions   []string
 	dependsOn    bool
+	// unnamed holds the spec.requires position of each entry that names no
+	// resource, capability or extension.
+	unnamed []int
 }
 
 // hasSteps reports whether spec declares a spec.steps key.
@@ -44,7 +47,7 @@ func steppedFields(spec *yamlNode) (steppedManifest, error) {
 	if err != nil {
 		return m, err
 	}
-	for _, item := range requires {
+	for i, item := range requires {
 		if c := item.get("capability"); c != nil {
 			v, err := scalarField(item, "spec.requires[].capability", "capability")
 			if err != nil {
@@ -59,6 +62,10 @@ func steppedFields(spec *yamlNode) (steppedManifest, error) {
 				return m, err
 			}
 			m.extensions = append(m.extensions, v)
+			continue
+		}
+		if item.get("resource") == nil {
+			m.unnamed = append(m.unnamed, i)
 			continue
 		}
 		r, err := resourceRequirement(item)
@@ -199,6 +206,10 @@ func steppedProblems(m steppedManifest) []string {
 	for _, e := range m.extensions {
 		problems = append(problems, fmt.Sprintf(
 			"spec.requires: extension %q is refused in a manifest that declares spec.steps; a fan-in is a resource requirement with many: true", e))
+	}
+	for _, i := range m.unnamed {
+		problems = append(problems, fmt.Sprintf(
+			"spec.requires[%d]: names no resource; a manifest that declares spec.steps requires only resources", i))
 	}
 	if m.dependsOn {
 		problems = append(problems,

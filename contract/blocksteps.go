@@ -96,9 +96,12 @@ func (b BlockSteps) clone() BlockSteps {
 // Each message names the step, requirement or offer it is about. It checks
 // that each step has a unique id, a catalogued type, a valid ownership and
 // inputs bound to a declared param, an output of an earlier step's type or a
-// name in a declared requirement's reads; that each requirement has a unique
-// id, exactly one of a catalogued kind and a catalogued type, and reads its
-// kind or type outputs; and that each offer names a declared step.
+// name in the reads of a declared one-provider requirement; that each
+// requirement has a unique id, exactly one of a catalogued kind and a
+// catalogued type, and reads outputs one catalogued type of its kind, or its
+// type, produces together; and that each offer names a declared step. No
+// input binds a many-provider requirement, since ADR 0079 fixes no form for
+// one.
 func ValidateBlockSteps(b BlockSteps) error {
 	var errs []error
 	requires := map[string]ResourceRequirement{}
@@ -200,6 +203,9 @@ func validateRequirement(r ResourceRequirement) error {
 			return fmt.Errorf("reads %q, which no catalogued type of kind %q outputs", read, r.Kind)
 		}
 	}
+	if !slices.ContainsFunc(ofKind, r.Matches) {
+		return fmt.Errorf("reads %q, which no single catalogued type of kind %q outputs together, so nothing can meet it", r.Reads, r.Kind)
+	}
 	return nil
 }
 
@@ -230,6 +236,9 @@ func validateBinding(ref string, params map[string]bool, earlier map[string]Reso
 		r, ok := requires[parts[1]]
 		if !ok {
 			return fmt.Errorf("binds requirement %q, which the manifest does not declare", parts[1])
+		}
+		if r.Many {
+			return fmt.Errorf("binds requirement %q, which collects many offers; no binding form reads a many-provider requirement yet (ADR 0079)", parts[1])
 		}
 		if !slices.Contains(r.Reads, parts[3]) {
 			return fmt.Errorf("binds output %q of requirement %q, which is not in its reads", parts[3], parts[1])
@@ -299,7 +308,6 @@ var stepsManifestGoldenDeclares = BlockSteps{
 			Inputs: map[string]string{
 				"registry": "steps.registry.outputs.ecrRegistry",
 				"base":     "requires.image.outputs.artifact",
-				"workflow": "requires.workflows.outputs.workflowPath",
 			}},
 	},
 	Offers: []Offer{{Step: "build-image"}},

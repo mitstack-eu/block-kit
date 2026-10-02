@@ -52,18 +52,64 @@ The types `contract.Step` and `contract.SuppliedResource` each carry an
 `ownership` field. Its value is `created` for a resource the block creates
 and deletes, or `referenced` for one the block only uses.
 
-A manifest may list the resources a block creates as ordered steps under
-`spec.steps`, as the platform's ADR 0079 sets. Such a manifest requires only
-resources. Each `contract.ResourceRequirement` is matched by a kind and the
-outputs it reads, or narrowed to one type, and a requirement with
-`many: true` collects every offer in the stack. A block offers the resource
-a step creates by listing `- step: <id>` under `spec.provides`, which
-`contract.Offer` holds. `contract.ValidateBlockSteps` checks a block's steps,
-requirements and offers against the catalogue, naming the step, requirement
-or offer at fault. `contract.DeriveCapabilities` returns the capabilities
-the block's step types and narrowed requirements belong to, so a manifest
-never lists them by hand. blockverify's manifest suite runs the same check
-on any manifest that declares `spec.steps`.
+## Steps, resource requirements and offers
+
+A step is one resource a block creates or references, of one catalogued
+type, and `spec.steps` lists a block's steps in the order it works on them.
+The platform's ADR 0079, at `docs/adr/0079-a-block-requires-only-resources-and-derives-its-capabilities.md`
+in `mitstack-eu/mitstack`, sets this shape. A manifest that declares
+`spec.steps` requires only resources, never capabilities, and it reads like
+this:
+
+```yaml
+spec:
+  params:
+    - name: appName
+  requires:
+    - resource: image
+      kind: container-image
+      reads: [artifact]
+  steps:
+    - id: registry
+      type: aws.ecr-repository
+      ownership: created
+      inputs:
+        name: params.appName
+    - id: build-image
+      type: aws.ecr-image
+      ownership: created
+      inputs:
+        registry: steps.registry.outputs.ecrRegistry
+        base: requires.image.outputs.artifact
+  provides:
+    - step: build-image
+```
+
+Each `contract.ResourceRequirement` is matched in one of two ways. A kind
+requirement, like `image` above, matches any catalogued type of that kind
+that outputs every name in `reads`. A narrowed requirement names one `type`
+in place of a kind, and matches that type alone. A requirement with
+`many: true` collects every matching offer in the stack, and one without it
+is met by exactly one.
+
+A step input binds to a declared param, to an output of an earlier step's
+type, or to a name in a one-provider requirement's `reads`. No form yet binds
+a many-provider requirement.
+
+A block offers the resource a step creates to the rest of its stack by
+listing `- step: <id>` under `spec.provides`, which `contract.Offer` holds.
+A capability slug under `spec.provides` still means the block runs that
+capability. A resource a block creates without offering it matches no other
+block's requirement.
+
+`contract.ValidateBlockSteps` checks all of this against the catalogue. Each
+refusal names what it is about, as in
+`step "registry": type "aws.not-a-type" is not in the resource-type catalogue`.
+`contract.DeriveCapabilities` returns the capabilities that own the block's
+step types and narrowed requirement types, so a manifest never lists them by
+hand. blockverify's manifest suite runs the same check on any manifest that
+declares `spec.steps`, and refuses a `capability:` or `extension:` entry or a
+`dependsOn` key beside it.
 
 ## Importing it
 
@@ -134,7 +180,10 @@ the same manifest golden, `contract.HooksManifestGolden`, so a change on
 either side turns the other side's tests red. Its twin,
 `contract.TypeBlockHooksManifestGolden`, is the same block written with
 `type: block`, `format` and `store` and without a layer, and the handler
-reads it exactly as it reads the first.
+reads it exactly as it reads the first. A third golden,
+`contract.StepsManifestGolden`, declares steps, resource requirements and an
+offer. `contract.StepsManifestGoldenDeclares` returns what it declares, and
+blockverify and the platform's parser each test that they read it exactly so.
 
 A request that carries no OBO token is refused with 401 on every verb —
 subscribe, upgrade, validate, unsubscribe — before the Resource is ever

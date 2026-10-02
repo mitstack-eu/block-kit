@@ -16,9 +16,10 @@ import (
 // kit's resource registry: every spec.outputs name, and every
 // spec.requires[].reads name together with its requirement's capability.
 // A manifest that declares spec.steps has its steps, resource requirements
-// and offers judged by contract.ValidateBlockSteps instead of the capability
+// and offers judged by contract.ValidateBlockSteps in place of the capability
 // reads check, and is refused a capability entry, an extension entry or a
-// dependsOn key, as ADR 0079 sets.
+// dependsOn key, as ADR 0079 sets. A manifest without spec.steps gets the
+// capability reads check alone.
 // Given a base manifest (the --base-manifest path), it also asks a changed
 // spec.version for a release class and a release note. A metadata.id, when
 // present, must parse through contract.ParseBlockID. It reads nothing else
@@ -54,6 +55,10 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 	}
 	if len(problems) > 0 {
 		return SuiteResult{name, "fail", path + ": " + strings.Join(problems, "; ")}
+	}
+	if m.stepped != nil {
+		return SuiteResult{name, "pass",
+			"spec.outputs resolve through the resource registry, and spec.steps, its resource requirements and offers pass contract.ValidateBlockSteps; " + note}
 	}
 	return SuiteResult{name, "pass",
 		"spec.outputs and spec.requires[].reads resolve through the resource registry; " + note}
