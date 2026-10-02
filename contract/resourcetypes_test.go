@@ -458,7 +458,7 @@ func TestResourceTypes_AppScaffoldResourcesMapToCataloguedTypes(t *testing.T) {
 		outputs              []string
 	}{
 		{"github.commit", "source-revision", "github", []string{"sourceBranch", "sourceSha", "scaffoldCommit"}},
-		{"github.pull-request", "change-request", "github", []string{"scaffoldPullRequest"}},
+		{"github.pull-request", "change-request", "github", []string{"scaffoldPullRequest", "standardPullRequest"}},
 	}
 	for _, w := range want {
 		t.Run(w.id, func(t *testing.T) {
@@ -531,7 +531,7 @@ func TestResourceTypes_BoardAutomationResourcesMapToCataloguedTypes(t *testing.T
 		outputs []string
 	}{
 		{"github.repository", []string{"cdRepo", "ciRepo", "repo", "repoUrl", "boardRepo"}},
-		{"github.workflow-file", []string{"workflowUrl", "ciCheckContribution"}},
+		{"github.workflow-file", []string{"agentEndpoint", "workflowUrl", "ciCheckContribution", "workflowPath"}},
 	}
 	for _, w := range widened {
 		t.Run(w.id, func(t *testing.T) {
@@ -541,6 +541,50 @@ func TestResourceTypes_BoardAutomationResourcesMapToCataloguedTypes(t *testing.T
 			}
 			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
 				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
+			}
+		})
+	}
+}
+
+// TestResourceTypes_DevStackClaudeCodeResourcesMapToCataloguedTypes checks the
+// two types dev-stack-claude-code's spec.resources entries map to. Its agent
+// workflow file maps to github.workflow-file, which publishes agentEndpoint and
+// workflowPath beside ciCheckContribution and workflowUrl, and its standard pull
+// request maps to github.pull-request, which publishes standardPullRequest
+// beside scaffoldPullRequest. The platform refuses a resource whose produces
+// list is not a subset of its type's outputs, so each type must carry every
+// name the block publishes, and each added name must be a canonical registry
+// resource.
+func TestResourceTypes_DevStackClaudeCodeResourcesMapToCataloguedTypes(t *testing.T) {
+	want := []struct {
+		id, kind, capability string
+		outputs              []string
+		added                []string
+	}{
+		{"github.workflow-file", "ci-workflow", "github", []string{"agentEndpoint", "ciCheckContribution", "workflowPath", "workflowUrl"}, []string{"agentEndpoint", "workflowPath"}},
+		{"github.pull-request", "change-request", "github", []string{"scaffoldPullRequest", "standardPullRequest"}, []string{"standardPullRequest"}},
+	}
+	for _, w := range want {
+		t.Run(w.id, func(t *testing.T) {
+			rt, ok := contract.LookupResourceType(w.id)
+			if !ok {
+				t.Fatalf("the catalogue has no %q", w.id)
+			}
+			if rt.Kind != w.kind || rt.Capability != w.capability {
+				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, w.kind, w.capability)
+			}
+			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
+				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
+			}
+			for _, name := range w.added {
+				entry, ok := contract.LookupResource(name)
+				if !ok {
+					t.Errorf("the resource registry has no %q", name)
+					continue
+				}
+				if entry.Name != name {
+					t.Errorf("LookupResource(%q).Name = %q, want the canonical %q", name, entry.Name, name)
+				}
 			}
 		})
 	}
@@ -617,9 +661,9 @@ var catalogueTable = []catalogueRow{
 	{"aws.route53-record", "dns-record", "aws", "network", nil, "", "replaceable", "per-app", "", []string{"appHostname"}},
 	{"github.repository", "git-repository", "github", "source-and-work", nil, "", "stateful", "per-app", "", []string{"boardRepo", "cdRepo", "ciRepo", "repo", "repoUrl"}},
 	{"github.commit", "source-revision", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldCommit", "sourceBranch", "sourceSha"}},
-	{"github.pull-request", "change-request", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldPullRequest"}},
+	{"github.pull-request", "change-request", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldPullRequest", "standardPullRequest"}},
 	{"github.repository-webhook", "webhook", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
-	{"github.workflow-file", "ci-workflow", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"ciCheckContribution", "workflowUrl"}},
+	{"github.workflow-file", "ci-workflow", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"agentEndpoint", "ciCheckContribution", "workflowPath", "workflowUrl"}},
 	{"github.self-hosted-runner", "ci-runner", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"awsCredential", "runnerLabel", "runsOn", "runsOnPr"}},
 	{"github.runner-group", "runner-group", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
 	{"github.actions-secret", "secret", "github", "secrets", nil, "", "replaceable", "per-app", "", nil},
