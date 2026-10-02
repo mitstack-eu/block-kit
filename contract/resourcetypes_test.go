@@ -146,9 +146,10 @@ func TestValidateResourceTypes_RefusesADefectNamingTheTypeID(t *testing.T) {
 		{"ID prefix differs from the capability", "prefix", func(rt *contract.ResourceType) {
 			rt.ID = "hetzner.ecr-repository"
 		}},
-		// The ID's prefix is empty too, so it equals the empty capability and
-		// only the empty-capability rule can refuse it.
-		{"empty capability", "capability", func(rt *contract.ResourceType) {
+		// The ID's prefix is empty too, so it equals the empty capability. The
+		// community-grammar rule would also refuse it, so the fragment is the
+		// empty-capability rule's own words.
+		{"empty capability", "empty capability", func(rt *contract.ResourceType) {
 			rt.ID, rt.Capability = ".ecr-repository", ""
 		}},
 		{"empty kind", "kind", func(rt *contract.ResourceType) {

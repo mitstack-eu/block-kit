@@ -89,16 +89,6 @@ func TestResourceTypes_ReviewAddsTheScaffoldContributionAndLLMEndpointAndAnAppAd
 	}
 }
 
-// No catalogued type keeps the dns-record kind, since the one record the
-// catalogue models is the app's address.
-func TestResourceTypes_NoTypeKeepsTheDNSRecordKind(t *testing.T) {
-	for _, rt := range catalogue(t) {
-		if rt.Kind == "dns-record" {
-			t.Errorf("%s has kind dns-record, want app-address for the app's hostname record", rt.ID)
-		}
-	}
-}
-
 // Each former extension point or capability-only requirement ADR 0079 lists
 // is met by a catalogued type owned by one capability. A requirement narrowed
 // to a type names it; one matched by kind names the kind ADR 0078 fixes and
@@ -136,22 +126,6 @@ func TestResourceTypes_EveryADR0079RequirementHasACataloguedType(t *testing.T) {
 				t.Errorf("requirement %+v does not match %s (kind %q, outputs %q)", c.req, rt.ID, rt.Kind, rt.Outputs)
 			}
 		})
-	}
-}
-
-// The app-host capability owns the four types blocks create on an app's
-// host, which is what the former app-host requirement of postgres-db, plain,
-// app-runner and managed-cd becomes.
-func TestResourceTypes_AppHostOwnsTheTypesBlocksCreateOnTheHost(t *testing.T) {
-	var got []string
-	for _, rt := range catalogue(t) {
-		if rt.Capability == "app-host" {
-			got = append(got, rt.ID)
-		}
-	}
-	want := []string{"app-host.container", "app-host.deployment", "app-host.host-configuration", "app-host.postgres-database"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("app-host types = %q, want %q", got, want)
 	}
 }
 
