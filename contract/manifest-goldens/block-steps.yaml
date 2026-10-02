@@ -30,7 +30,6 @@ spec:
       inputs:
         registry: steps.registry.outputs.ecrRegistry
         base: requires.image.outputs.artifact
-        workflow: requires.workflows.outputs.workflowPath
   provides:
     - step: build-image
   outputs:

@@ -61,7 +61,7 @@ func TestValidateBlockSteps_RefusesEachDefectNamingWhatItIsAbout(t *testing.T) {
 		}, []string{`step "registry"`, `"aws.not-a-type"`}},
 		{"step without ownership", func(b *contract.BlockSteps) {
 			b.Steps[0].Ownership = ""
-		}, []string{`step "registry"`, "ownership"}},
+		}, []string{`step "registry"`, "no ownership"}},
 		{"step with an invalid ownership", func(b *contract.BlockSteps) {
 			b.Steps[0].Ownership = "borrowed"
 		}, []string{`step "registry"`, "ownership", `"borrowed"`}},
@@ -97,7 +97,7 @@ func TestValidateBlockSteps_RefusesEachDefectNamingWhatItIsAbout(t *testing.T) {
 		}, []string{`step "build-image"`, `input "base"`, `"imageRepo"`, "reads"}},
 		{"requirement with neither kind nor type", func(b *contract.BlockSteps) {
 			b.Requires[0].Kind = ""
-		}, []string{`requirement "image"`, "kind", "type"}},
+		}, []string{`requirement "image"`, "neither", "kind", "type"}},
 		{"requirement with both kind and type", func(b *contract.BlockSteps) {
 			b.Requires[0].Type = "aws.ecr-image"
 		}, []string{`requirement "image"`, "kind", "type"}},
@@ -119,6 +119,17 @@ func TestValidateBlockSteps_RefusesEachDefectNamingWhatItIsAbout(t *testing.T) {
 			b.Requires[0].Reads = []string{"runsOn"}
 			b.Steps[1].Inputs = nil
 		}, []string{`requirement "image"`, `"runsOn"`, `kind "container-image"`}},
+		{"kind requirement whose reads no single type of the kind outputs", func(b *contract.BlockSteps) {
+			// aws.ec2-instance outputs publicIp but not cloud.region, and
+			// hetzner.server the reverse, so no host type meets both reads.
+			b.Requires[0].Kind = "host"
+			b.Requires[0].Reads = []string{"publicIp", "cloud.region"}
+			b.Steps[1].Inputs = nil
+		}, []string{`requirement "image"`, `kind "host"`, `"publicIp"`, `"cloud.region"`}},
+		{"binding to a many-provider requirement", func(b *contract.BlockSteps) {
+			b.Requires[1].Reads = []string{"workflowPath"}
+			b.Steps[1].Inputs = map[string]string{"path": "requires.workflows.outputs.workflowPath"}
+		}, []string{`step "build-image"`, `input "path"`, `requirement "workflows"`, "many"}},
 		{"narrowed requirement reading an output its type lacks", func(b *contract.BlockSteps) {
 			b.Requires[1].Reads = []string{"repo"}
 		}, []string{`requirement "workflows"`, `"repo"`, `"github.workflow-file"`}},

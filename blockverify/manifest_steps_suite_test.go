@@ -8,6 +8,7 @@ package main
 // as before.
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -45,7 +46,33 @@ const steppedSpec = `  params:
 `
 
 func TestManifestSuite_PassesAValidSteppedManifest(t *testing.T) {
-	requireManifestPass(t, manifestSuite(manifestDir(t, manifestHead+steppedSpec), ""))
+	got := manifestSuite(manifestDir(t, manifestHead+steppedSpec), "")
+	requireManifestPass(t, got)
+	if !strings.Contains(got.Detail, "spec.steps") {
+		t.Errorf("a stepped manifest's pass detail %q does not say its steps were validated", got.Detail)
+	}
+}
+
+// TestSteppedFields_ReadsTheKitStepsGoldenExactlyAsTheKitDeclaresIt is the
+// contract test on blockverify's side: its reader turns the kit's stepped
+// golden into exactly the declaration the kit says the golden holds.
+func TestSteppedFields_ReadsTheKitStepsGoldenExactlyAsTheKitDeclaresIt(t *testing.T) {
+	spec, err := manifestSpec(string(contract.StepsManifestGolden()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := steppedFields(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := contract.StepsManifestGoldenDeclares(); !reflect.DeepEqual(got.declares, want) {
+		t.Errorf("blockverify reads the steps golden as\n%+v\nwant\n%+v", got.declares, want)
+	}
+}
+
+func TestManifestSuite_NamesTheManifestPositionOfARequirementWithNoResource(t *testing.T) {
+	spec := strings.Replace(steppedSpec, "  requires:\n", "  requires:\n    - capability: github\n    - reads: [artifact]\n", 1)
+	requireManifestFail(t, manifestSuite(manifestDir(t, manifestHead+spec), ""), "spec.requires[1]", "resource")
 }
 
 func TestManifestSuite_PassesTheKitStepsGolden(t *testing.T) {
