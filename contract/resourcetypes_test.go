@@ -546,6 +546,45 @@ func TestResourceTypes_BoardAutomationResourcesMapToCataloguedTypes(t *testing.T
 	}
 }
 
+// TestResourceTypes_CrossplaneReconcileClaimIsCatalogued checks the type
+// crossplane-reconcile's one created resource maps to: the ReconcileClaim it
+// applies on a Crossplane control plane. It is crossplane.reconcile-claim, a
+// reconcile-claim of the crossplane capability in build-and-delivery, a
+// replaceable per-app type that serves no particular language, holds no
+// artifact and is not priced. It publishes the claim's name, its drift policy,
+// the resources found drifted and the count of resources kept converged.
+func TestResourceTypes_CrossplaneReconcileClaimIsCatalogued(t *testing.T) {
+	const id = "crossplane.reconcile-claim"
+	rt, ok := contract.LookupResourceType(id)
+	if !ok {
+		t.Fatalf("the catalogue has no %q", id)
+	}
+	if rt.Kind != "reconcile-claim" || rt.Capability != "crossplane" {
+		t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, "reconcile-claim", "crossplane")
+	}
+	if rt.Category != "build-and-delivery" {
+		t.Errorf("Category = %q, want %q", rt.Category, "build-and-delivery")
+	}
+	if rt.Lifecycle != "replaceable" {
+		t.Errorf("Lifecycle = %q, want %q", rt.Lifecycle, "replaceable")
+	}
+	if rt.Scope != "per-app" {
+		t.Errorf("Scope = %q, want %q", rt.Scope, "per-app")
+	}
+	if rt.Priced || rt.PricingKey != "" {
+		t.Errorf("Priced, PricingKey = %v, %q; want false, %q", rt.Priced, rt.PricingKey, "")
+	}
+	if rt.ArtifactType != "" {
+		t.Errorf("ArtifactType = %q, want %q", rt.ArtifactType, "")
+	}
+	if rt.Languages == nil || len(rt.Languages) != 0 {
+		t.Errorf("Languages = %#v, want an empty, non-nil list", rt.Languages)
+	}
+	if want := []string{"claim", "driftPolicy", "driftedResources", "reconciledResources"}; !reflect.DeepEqual(rt.Outputs, want) {
+		t.Errorf("Outputs = %q, want %q in that order", rt.Outputs, want)
+	}
+}
+
 // catalogueRow is one released resource type: its ID, its kind and capability,
 // the six facets ADR 0077 gives a type, and its outputs. A nil languages or
 // outputs list means the type has none, and pricingKey is "" when the type is
@@ -586,6 +625,7 @@ var catalogueTable = []catalogueRow{
 	{"github.actions-secret", "secret", "github", "secrets", nil, "", "replaceable", "per-app", "", nil},
 	{"github.actions-variable", "ci-variable", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
 	{"tracker.api-token", "api-token", "tracker", "identity-and-access", nil, "", "replaceable", "per-app", "", nil},
+	{"crossplane.reconcile-claim", "reconcile-claim", "crossplane", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"claim", "driftPolicy", "driftedResources", "reconciledResources"}},
 	{"hetzner.server", "host", "hetzner", "compute", []string{"any-container"}, "", "replaceable", "per-app", "HetznerCloud", []string{"cloud.region", "execTarget", "host.type", "hostId"}},
 	{"hetzner.primary-ip", "ip-address", "hetzner", "network", nil, "", "replaceable", "per-app", "", []string{"publicIp"}},
 	{"hetzner.firewall", "firewall", "hetzner", "network", nil, "", "replaceable", "per-app", "", nil},
@@ -605,8 +645,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 31 {
-		t.Fatalf("catalogueTable has %d rows, want 31", len(catalogueTable))
+	if len(catalogueTable) != 32 {
+		t.Fatalf("catalogueTable has %d rows, want 32", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))
