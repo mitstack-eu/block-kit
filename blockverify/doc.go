@@ -124,9 +124,11 @@
 //
 //   - A metadata.id, when present and non-empty, must parse through
 //     contract.ParseBlockID: a bare slug for a community block, or
-//     @<org>/<name> for a private one. A manifest with no metadata.id is not
-//     refused for it. A bad id is reported beside any other problem the
-//     suite finds.
+//     @<org>/<name> for a private one. A private id must be quoted, as in
+//     id: "@acme/billing-db", because YAML does not allow @ at the start of
+//     an unquoted value and the platform's parser refuses it. A manifest
+//     with no metadata.id is not refused for it. A bad id is reported beside
+//     any other problem the suite finds.
 //   - Every spec.outputs name must resolve through contract.LookupResource,
 //     by name or alias. A name that does not fails, naming the nearest
 //     registered name or alias by edit distance.
@@ -145,8 +147,7 @@
 // block scalar, are not read. A manifest.yaml that is present but cannot be
 // read, or holds a flow mapping, an alias or a merge key where the suite
 // reads (spec, spec.outputs, spec.requires or one of its items, metadata or
-// metadata.id), fails
-// rather than passing on what the reader could not see.
+// metadata.id), fails rather than passing on what the reader could not see.
 //
 // On a pull request, publish-block.yml's conformance job writes the base
 // commit's manifest.yaml to a temporary file and passes it as

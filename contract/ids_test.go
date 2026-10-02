@@ -125,8 +125,26 @@ func requireErrorNamesBothForms(t *testing.T, fn string, parse parseNameFunc) {
 			t.Errorf("%s(%q) accepted, want an error naming both forms", fn, id)
 			continue
 		}
-		if !strings.Contains(err.Error(), "@<org>/") {
-			t.Errorf("%s(%q) error = %q, want it to name the private form @<org>/<name>", fn, id, err)
+		for _, form := range []string{"community id <name>", "private id @<org>/<name>"} {
+			if !strings.Contains(err.Error(), form) {
+				t.Errorf("%s(%q) error = %q, want it to name the form %q", fn, id, err, form)
+			}
+		}
+	}
+}
+
+// A refused resource-type id names both allowed forms too.
+func TestParseResourceTypeID_ErrorNamesBothForms(t *testing.T) {
+	for _, id := range []string{"aws", "@Acme/aws.x", "@acme/", "aws.Bucket"} {
+		_, _, _, err := contract.ParseResourceTypeID(id)
+		if err == nil {
+			t.Errorf("ParseResourceTypeID(%q) accepted, want an error naming both forms", id)
+			continue
+		}
+		for _, form := range []string{"community type <capability>.<name>", "private type @<org>/<capability>.<name>"} {
+			if !strings.Contains(err.Error(), form) {
+				t.Errorf("ParseResourceTypeID(%q) error = %q, want it to name the form %q", id, err, form)
+			}
 		}
 	}
 }

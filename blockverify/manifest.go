@@ -288,6 +288,8 @@ func rawScalarField(n *yamlNode, field, key string) (string, error) {
 		return "", nil
 	case v.kind == yamlScalar:
 		return v.value, nil
+	case v.reserved != 0:
+		return "", fmt.Errorf("%s starts with %q, which YAML does not allow at the start of an unquoted value, so quote it, as in id: \"@acme/billing-db\"", field, v.reserved)
 	}
 	return "", unfollowable(field)
 }
@@ -341,6 +343,9 @@ type yamlNode struct {
 	// misplaced marks a mapping holding a line that is neither a key of it
 	// nor inside one of its values.
 	misplaced bool
+	// reserved is the character, @ or `, that starts an unquoted scalar YAML
+	// refuses. Such a node is opaque.
+	reserved byte
 }
 
 // get returns the value under key in a mapping, or nil.
@@ -488,6 +493,11 @@ func (r *yamlReader) inline(text string, owner int) *yamlNode {
 	case '*', '{':
 		r.skipDeeper(owner)
 		return &yamlNode{kind: yamlOpaque}
+	case '@', '`':
+		// YAML reserves these at the start of a plain scalar, so a real
+		// parser refuses the value unless it is quoted.
+		r.skipDeeper(owner)
+		return &yamlNode{kind: yamlOpaque, reserved: text[0]}
 	case '[':
 		return r.flowSequence(text, owner)
 	case '"', '\'':

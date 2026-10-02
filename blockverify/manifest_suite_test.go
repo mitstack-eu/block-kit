@@ -387,6 +387,23 @@ func TestManifestSuite_AMetadataIDOutsideBothFormsFailsNamingIt(t *testing.T) {
 	}
 }
 
+// YAML reserves @ and ` at the start of a plain value, so a parser such as
+// the platform's refuses a private id written without quotes. The suite fails
+// it too, and says to quote it, rather than passing a manifest the platform
+// will not read.
+func TestManifestSuite_AnUnquotedPrivateIDFailsAskingForQuotes(t *testing.T) {
+	for label, idLine := range map[string]string{
+		"unquoted private id":          "@acme/billing-db",
+		"unquoted private id, comment": "@acme/billing-db # the billing database",
+		"backtick-led id":              "`billing-db`",
+	} {
+		t.Run(label, func(t *testing.T) {
+			requireManifestFail(t, manifestSuite(manifestDir(t, withID(idLine)), ""),
+				"manifest.yaml", "metadata.id", "quote")
+		})
+	}
+}
+
 // A bad metadata.id is reported beside the spec's own problems, so one run
 // shows every defect.
 func TestManifestSuite_ABadMetadataIDIsReportedBesideASpecProblem(t *testing.T) {
@@ -395,8 +412,7 @@ func TestManifestSuite_ABadMetadataIDIsReportedBesideASpecProblem(t *testing.T) 
 		"metadata.id", "@<org>/", `spec.outputs: "hostnme"`)
 }
 
-// The suite read nothing of metadata before it judged metadata.id, so a
-// manifest with no metadata.id earns the verdict its spec earns.
+// A manifest with no metadata.id earns the verdict its spec earns.
 func TestManifestSuite_NoMetadataIDKeepsTheSpecVerdict(t *testing.T) {
 	noID := strings.Replace(manifestHead, "  id: reads-consumer\n", "", 1)
 	noMetadata := strings.Replace(manifestHead,
