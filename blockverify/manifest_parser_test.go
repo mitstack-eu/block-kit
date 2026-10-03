@@ -68,10 +68,10 @@ func TestManifestSuite_FailsAManifestTheKitParserRefuses(t *testing.T) {
 			wants:   []string{"manifest.yaml", contract.ManifestAPIVersionV1Alpha, contract.ManifestAPIVersion},
 		},
 		{
-			// app-host gives region, so read as a block mapping this item passes.
-			label:   "a v1alpha requires item written as a flow mapping",
-			content: manifestHead + "  requires:\n    - {capability: app-host, reads: [region]}\n",
-			wants:   []string{"manifest.yaml", "spec.requires", "cannot follow"},
+			// app-host gives region, so without the unknown key this item passes.
+			label:   "a v1alpha requires item carrying an unknown key",
+			content: manifestHead + "  requires:\n    - capability: app-host\n      reads: [region]\n      frobnicate: true\n",
+			wants:   []string{"manifest.yaml", "spec.requires[0].frobnicate"},
 		},
 	}
 	requireManifestPass(t, manifestSuite(manifestDir(t,

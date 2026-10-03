@@ -233,9 +233,9 @@ func TestRun_UnreadableManifest_IsAToolingFailureNamingTheTarget(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
-		// A flow mapping is a structure the gates' reader cannot walk.
-		"cannot be walked": func(t *testing.T, dir string) {
-			content := manifestYAML + "  lifecycle: {contract: kit/v1}\n"
+		// A key no manifest field names makes the parser refuse it.
+		"refused by the parser": func(t *testing.T, dir string) {
+			content := manifestYAML + "  lifecycle:\n    contract: kit/v1\n    frobnicate: true\n"
 			if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(content), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -311,8 +311,9 @@ func TestRun_UnknownContractValue_FailsNamingTheValue(t *testing.T) {
 
 // noContractManifestYAML declares no lifecycle contract, while carrying the
 // text "contract: kit/v1" where it is not one: inside a folded description
-// and as a key of a params entry. A lifecycle mapping without a contract key
-// still declares none.
+// and as a key of spec.lifecycle.verbBudgets, a mapping nested under the
+// lifecycle. A lifecycle mapping without a contract key still declares
+// none.
 const noContractManifestYAML = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -332,9 +333,10 @@ spec:
   lifecycle:
     endpoint: https://api.mitstack.dev/operators/blockverify-fixture/hook
     operations: [subscribe, unsubscribe]
+    verbBudgets:
+      contract: kit/v1
   params:
     - name: mode
-      contract: kit/v1
 `
 
 func noContractFixtureFiles(t *testing.T) map[string]string {
