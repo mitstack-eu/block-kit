@@ -316,12 +316,12 @@ func readV1Alpha(root *yamlNode) (*V1AlphaManifest, []ManifestWarning, error) {
 		Metadata:     doc.Metadata,
 		Spec:         doc.Spec,
 	}
-	return a, v1alphaWarnings(dropped, a.Requires), nil
+	return a, v1alphaWarnings(dropped, a.Spec.Requires), nil
 }
 
 // v1alphaWarnings returns one warning per retired key among the dropped
 // paths, then one per requirement whose optional is true, in requirement
-// order and keyed by its capability.
+// order and keyed by its capability as written, untrimmed.
 func v1alphaWarnings(dropped []string, requires []V1AlphaRequirement) []ManifestWarning {
 	var warnings []ManifestWarning
 	for _, path := range dropped {
