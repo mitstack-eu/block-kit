@@ -33,6 +33,9 @@ type manifestDecoder struct {
 	// YAML reads as a number or a boolean, and a bool takes true or false
 	// only.
 	coerce bool
+	// dropped, when set, collects the path of each key a field named _
+	// reads with a non-null value.
+	dropped *[]string
 }
 
 // The YAML 1.2 core schema reads a plain scalar matching one of these as a
@@ -355,6 +358,9 @@ func (d manifestDecoder) structure(n *yamlNode, v reflect.Value, path string) er
 		}
 		if err != nil {
 			return err
+		}
+		if f.dropped && d.dropped != nil && !isNull(val) {
+			*d.dropped = append(*d.dropped, keyPath)
 		}
 		if underFold {
 			folded = append(folded, foldedValue{f, target.String()})

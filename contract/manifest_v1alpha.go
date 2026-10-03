@@ -275,26 +275,37 @@ type v1alphaDocument struct {
 	Spec       V1AlphaSpec     `yaml:"spec,omitempty"`
 }
 
+// v1alphaRetiredKeys maps the path of each key a v1alpha manifest may carry
+// and the decoder drops to the message of the warning it gives.
+var v1alphaRetiredKeys = map[string]string{
+	"spec.dependsOn": "spec.dependsOn is retired and was ignored; " +
+		"declare the dependency with spec.requires as a capability the target provides",
+}
+
 // readV1Alpha reads root strictly into a V1AlphaManifest and folds a
 // top-level type: block into Kind. A type other than block, or a kind beside
-// it other than Block, is refused.
-func readV1Alpha(root *yamlNode) (*V1AlphaManifest, error) {
+// it other than Block, is refused. It also returns the manifest's warnings,
+// as v1alphaWarnings gives them.
+func readV1Alpha(root *yamlNode) (*V1AlphaManifest, []ManifestWarning, error) {
 	var doc v1alphaDocument
-	if err := v1alphaDecoder.decode(root, reflect.ValueOf(&doc).Elem(), ""); err != nil {
-		return nil, err
+	var dropped []string
+	d := v1alphaDecoder
+	d.dropped = &dropped
+	if err := d.decode(root, reflect.ValueOf(&doc).Elem(), ""); err != nil {
+		return nil, nil, err
 	}
 	if doc.Type != "" {
 		if doc.Type != v1alphaTypeBlock {
-			return nil, fmt.Errorf("type is %q, but the type of a %s manifest must be %q",
+			return nil, nil, fmt.Errorf("type is %q, but the type of a %s manifest must be %q",
 				doc.Type, ManifestAPIVersionV1Alpha, v1alphaTypeBlock)
 		}
 		if doc.Kind != "" && doc.Kind != v1alphaKindBlock {
-			return nil, fmt.Errorf("type %q and kind %q disagree: kind must be %q beside type, or be left out",
+			return nil, nil, fmt.Errorf("type %q and kind %q disagree: kind must be %q beside type, or be left out",
 				doc.Type, doc.Kind, v1alphaKindBlock)
 		}
 		doc.Kind = v1alphaKindBlock
 	}
-	return &V1AlphaManifest{
+	a := &V1AlphaManifest{
 		ID:           doc.Metadata.ID,
 		Version:      strings.TrimSpace(doc.Spec.Version),
 		ReleaseClass: strings.TrimSpace(doc.Spec.ReleaseClass),
@@ -304,7 +315,33 @@ func readV1Alpha(root *yamlNode) (*V1AlphaManifest, error) {
 		Kind:         doc.Kind,
 		Metadata:     doc.Metadata,
 		Spec:         doc.Spec,
-	}, nil
+	}
+	return a, v1alphaWarnings(dropped, a.Spec.Requires), nil
+}
+
+// v1alphaWarnings returns one warning per retired key among the dropped
+// paths, then one per requirement whose optional is true, in requirement
+// order and keyed by its capability as written, untrimmed.
+func v1alphaWarnings(dropped []string, requires []V1AlphaRequirement) []ManifestWarning {
+	var warnings []ManifestWarning
+	for _, path := range dropped {
+		if message, ok := v1alphaRetiredKeys[path]; ok {
+			warnings = append(warnings, ManifestWarning{Path: path, Message: message})
+		}
+	}
+	for _, r := range requires {
+		if !r.Optional {
+			continue
+		}
+		entry := "spec.requires[" + r.Capability + "]"
+		warnings = append(warnings, ManifestWarning{
+			Path: entry + ".optional",
+			Message: "the optional flag on " + entry + " is retired and its value is still honoured; " +
+				"a requires entry either names a capability the block needs or leaves it out, " +
+				"so drop the entry rather than the flag when the block runs without a provider",
+		})
+	}
+	return warnings
 }
 
 // trimmedNames returns a copy of names with each name trimmed.

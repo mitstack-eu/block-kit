@@ -20,7 +20,9 @@ import (
 // through contract.ParseBlockID, and given a base manifest (the
 // --base-manifest path) a changed spec.version needs a release class and a
 // release note. A manifest the parser refuses fails with its reason; under
-// v1alpha the parser refuses no field it does not know.
+// v1alpha the parser refuses no field it does not know. Each warning the
+// parser gives for a retired key is appended to the pass detail and never
+// fails the suite.
 func manifestSuite(target, baseManifest string) SuiteResult {
 	const name = "manifest"
 
@@ -54,7 +56,17 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 	if m.V1Alpha == nil {
 		checked = "a " + m.APIVersion + " manifest declares no outputs or reads for the registry to resolve; "
 	}
-	return SuiteResult{name, "pass", checked + note}
+	return SuiteResult{name, "pass", checked + note + warningNotes(m.Warnings)}
+}
+
+// warningNotes renders each parser warning for the pass detail, naming its
+// path, or gives "" when there is none.
+func warningNotes(warnings []contract.ManifestWarning) string {
+	var b strings.Builder
+	for _, w := range warnings {
+		fmt.Fprintf(&b, "; warning: %s: %s", w.Path, w.Message)
+	}
+	return b.String()
 }
 
 // readManifest reads and parses the manifest at path. An error names path.
