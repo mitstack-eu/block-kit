@@ -30,7 +30,10 @@ const ManifestAPIVersion = "mitstack/v1beta"
 // in text from elsewhere in the document, so the parser refuses the
 // manifest rather than guessing.
 func ParseManifest(raw []byte) (Manifest, error) {
-	root := parseYAML(string(raw))
+	root, err := parseYAML(string(raw))
+	if err != nil {
+		return Manifest{}, err
+	}
 	switch root.kind {
 	case yamlNull:
 		return Manifest{}, apiVersionError("")

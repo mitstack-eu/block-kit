@@ -27,7 +27,7 @@ const manifestFile = "manifest.yaml"
 // that cannot be read, or a declared value blockverify has no rule for.
 // Neither falls through to the legacy rule, which would judge the block by a
 // contract it never declared.
-func contractRule(target string) (contract, detail string, ok bool) {
+func contractRule(target string) (rule, detail string, ok bool) {
 	c, err := declaredContract(target)
 	if err != nil {
 		return "", err.Error(), false
