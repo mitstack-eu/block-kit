@@ -1,0 +1,296 @@
+{
+  "$defs": {
+    "inputValue": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/inputValue"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "A resource input: a binding or a literal, or an object of named inputs."
+    }
+  },
+  "$id": "https://mitstack.dev/schemas/block/manifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A block manifest under mitstack/v1beta: its params, its requirements by kind, the resources it creates in creation order, the resources it provides, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice and a provides entry that names no resource.",
+  "properties": {
+    "apiVersion": {
+      "const": "mitstack/v1beta",
+      "minLength": 1,
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "spec": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "endpoint": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "operations": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "endpoint",
+            "operations",
+            "contract"
+          ],
+          "type": "object"
+        },
+        "observability": {
+          "additionalProperties": false,
+          "properties": {
+            "cost": {
+              "additionalProperties": false,
+              "properties": {
+                "groupBy": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "metrics": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "dimensions": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "namespace": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "region": {
+                    "type": "string"
+                  },
+                  "resource": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "series": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "metric": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "name": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "stat": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "unit": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "metric",
+                        "stat"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "namespace",
+                  "series"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "params": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "default": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "secret": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "provides": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "releaseClass": {
+          "type": "string"
+        },
+        "releaseNote": {
+          "type": "string"
+        },
+        "requires": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "in": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                ]
+              },
+              "kind": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "many": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "resources": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/inputValue"
+                },
+                "type": "object"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "on": {
+                "type": "string"
+              },
+              "type": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "type"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "version": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "resources",
+        "lifecycle"
+      ],
+      "type": "object"
+    },
+    "type": {
+      "const": "block",
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "type",
+    "metadata",
+    "spec"
+  ],
+  "title": "mitstack block manifest mitstack/v1beta",
+  "type": "object"
+}

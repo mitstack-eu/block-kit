@@ -66,6 +66,17 @@ with `contract.ParseBlockID` in its manifest suite. Write a private id in
 quotes, as in `id: "@acme/billing-db"`, because YAML does not allow `@` at
 the start of an unquoted value.
 
+`contract.ParseManifest` is the kit's one block manifest parser for both
+manifest versions, and blockverify reads every manifest through it. Under
+`mitstack/v1alpha` it reads only the fields the manifest suite checks, so a
+field it does not know is never refused. Under `mitstack/v1beta` it reads the
+whole manifest strictly into `contract.BlockManifest` and refuses any key those
+types do not name. The kit ships the JSON Schema for `mitstack/v1beta` as
+`contract/manifest.schema.json`, generated from the same types, and a contract
+test fails when the committed file differs from what the types generate.
+Regenerate it with
+`go run ./cmd/manifest-schema > contract/manifest.schema.json`.
+
 ## Importing it
 
 The module path is `github.com/mitstack-eu/operator-kit`. A block adds it the

@@ -114,8 +114,13 @@
 //
 // # The manifest suite
 //
-// The manifest suite reads four things of the target's manifest.yaml and
-// nothing else, so a manifest field it does not know is never refused:
+// The manifest suite reads the target's manifest.yaml, and the base's, through
+// contract.ParseManifest, the kit's one manifest parser. An apiVersion other
+// than mitstack/v1alpha or mitstack/v1beta, or none, fails. A mitstack/v1beta
+// manifest is read strictly, so a key its types do not name fails, and it
+// declares no outputs or reads for the registry to resolve. Of a
+// mitstack/v1alpha manifest the suite reads four things and nothing else, so a
+// manifest field it does not know is never refused:
 //
 //   - A metadata.id, when present and non-empty, must parse through
 //     contract.ParseBlockID: a bare slug for a community block, or
