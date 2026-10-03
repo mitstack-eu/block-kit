@@ -2,7 +2,7 @@ package contract_test
 
 // resourcetypes_test.go pins the resource-type catalogue the kit owns: the
 // facet vocabularies, the rules ValidateResourceTypes enforces, the released
-// catalogue's content, and the Ownership a step and a supplied resource carry.
+// catalogue's content, and the Ownership a supplied resource carries.
 
 import (
 	"encoding/json"
@@ -10,25 +10,50 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
+// validBudgets returns a fresh time budget for every resource verb.
+func validBudgets() map[string]time.Duration {
+	return map[string]time.Duration{
+		"ensure":  5 * time.Minute,
+		"observe": 30 * time.Second,
+		"delete":  5 * time.Minute,
+	}
+}
+
 // validType returns a fresh resource type every rule accepts, for a test to
-// mutate one field of.
+// mutate one field of. It is an ECR repository of the container-repository
+// kind, which requires registryHost.
 func validType() contract.ResourceType {
 	return contract.ResourceType{
 		ID:           "aws.ecr-repository",
 		Kind:         "container-repository",
-		Capability:   "aws",
+		ReliesOn:     []string{},
+		Hosts:        "",
 		Category:     "artifact-registry",
 		Languages:    []string{"any-container"},
 		ArtifactType: "container-image",
 		Lifecycle:    "replaceable",
+		Handover:     "",
+		Upgrade:      "in-place",
 		Scope:        "per-app",
 		Priced:       false,
 		PricingKey:   "",
-		Outputs:      []string{"ecrRegistry", "registryHost"},
+		Inputs: []contract.Input{
+			{Name: "name", Required: true, Secret: false, Accepts: "value", Replacement: "replace"},
+			{Name: "image_tag_mutability", Required: false, Secret: false, Accepts: "value", Replacement: "update"},
+		},
+		Outputs:     []string{"registryHost"},
+		Observe:     "DescribeRepositories finds the repository by name",
+		Absence:     "DescribeRepositories answers RepositoryNotFoundException for the name",
+		TimeBudgets: validBudgets(),
+		Failures: []contract.Failure{
+			{Class: "transient", Cause: "the ECR API throttled the call"},
+			{Class: "permanent", Cause: "the repository name is taken by another account's repository"},
+		},
 	}
 }
 
@@ -43,6 +68,26 @@ func catalogue(t *testing.T) []contract.ResourceType {
 	return ts
 }
 
+// copyType returns a copy of rt that shares no list, map or pointer with it.
+func copyType(rt contract.ResourceType) contract.ResourceType {
+	rt.ReliesOn = append([]string{}, rt.ReliesOn...)
+	rt.Languages = append([]string{}, rt.Languages...)
+	rt.Inputs = append([]contract.Input{}, rt.Inputs...)
+	rt.Outputs = append([]string{}, rt.Outputs...)
+	rt.Failures = append([]contract.Failure{}, rt.Failures...)
+	budgets := make(map[string]time.Duration, len(rt.TimeBudgets))
+	for k, v := range rt.TimeBudgets {
+		budgets[k] = v
+	}
+	rt.TimeBudgets = budgets
+	if rt.ProviderResource != nil {
+		pr := *rt.ProviderResource
+		pr.ReplaceOn = append([]string{}, pr.ReplaceOn...)
+		rt.ProviderResource = &pr
+	}
+	return rt
+}
+
 func TestValidateResourceTypes_AcceptsTheReleasedCatalogue(t *testing.T) {
 	if err := contract.ValidateResourceTypes(catalogue(t)); err != nil {
 		t.Errorf("ValidateResourceTypes(ResourceTypes()) = %v, want nil", err)
@@ -55,18 +100,49 @@ func TestValidateResourceTypes_AcceptsValidVariants(t *testing.T) {
 		"priced with a pricing key": func(rt *contract.ResourceType) {
 			rt.Priced, rt.PricingKey = true, "AmazonEC2"
 		},
-		"empty languages and outputs and no artifact type": func(rt *contract.ResourceType) {
+		"a kind with no outputs, empty languages and inputs and no artifact type": func(rt *contract.ResourceType) {
 			rt.ID, rt.Kind, rt.Category = "aws.security-group", "firewall", "network"
-			rt.Languages, rt.Outputs, rt.ArtifactType = []string{}, []string{}, ""
+			rt.Languages, rt.Outputs, rt.Inputs, rt.ArtifactType = []string{}, []string{}, []contract.Input{}, ""
 		},
 		"several distinct languages": func(rt *contract.ResourceType) {
 			rt.Languages = []string{"go", "node", "python"}
 		},
-		"a capability slug with a hyphen": func(rt *contract.ResourceType) {
-			rt.ID, rt.Capability = "app-host.container", "app-host"
+		"a type that lives on a kind": func(rt *contract.ResourceType) {
+			rt.ID, rt.Kind, rt.Category, rt.ArtifactType = "host.thing", "container", "compute", ""
+			rt.Outputs = []string{"url"}
 		},
-		"a dotted canonical output name": func(rt *contract.ResourceType) {
-			rt.Outputs = []string{"cloud.region", "host.type"}
+		"a type producing only its kind's required outputs, with dotted optional ones left out": func(rt *contract.ResourceType) {
+			rt.ID, rt.Kind, rt.Category, rt.ArtifactType = "hetzner.thing", "host", "compute", ""
+			rt.Outputs = []string{"execKind", "execTarget", "hostId"}
+		},
+		"a type producing dotted optional outputs of its kind": func(rt *contract.ResourceType) {
+			rt.ID, rt.Kind, rt.Category, rt.ArtifactType = "hetzner.thing", "host", "compute", ""
+			rt.Outputs = []string{"cloud.region", "execKind", "execTarget", "host.type", "hostId"}
+		},
+		"a type relying on another capability": func(rt *contract.ResourceType) {
+			rt.ID, rt.Kind, rt.Category, rt.ArtifactType = "ubicloud.thing", "ci-runner", "build-and-delivery", ""
+			rt.Outputs, rt.ReliesOn = []string{"runsOn"}, []string{"github"}
+		},
+		"a type hosting a capability": func(rt *contract.ResourceType) {
+			rt.ID, rt.Kind, rt.Category, rt.ArtifactType = "hetzner.thing", "kubernetes-cluster", "compute", ""
+			rt.Outputs, rt.Hosts = []string{"apiEndpoint", "caCertificate", "clusterCredential"}, "kubernetes"
+		},
+		"a stateful type with a snapshot handover": func(rt *contract.ResourceType) {
+			rt.Lifecycle, rt.Handover = "stateful", "snapshot"
+		},
+		"a secret input": func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "token", Required: true, Secret: true, Accepts: "value", Replacement: "update"})
+		},
+		"an input accepting a whole resource of a kind": func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "host", Required: true, Accepts: "resource:host", Replacement: "replace"})
+		},
+		"an input accepting an output of a kind": func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "target", Required: true, Accepts: "output:host/publicIp", Replacement: "update"})
+		},
+		"a type mapped one to one onto a provider resource": func(rt *contract.ResourceType) {
+			rt.ProviderResource = &contract.ProviderResource{
+				Provider: "registry.opentofu.org/hashicorp/aws", Resource: "aws_ecr_repository", ReplaceOn: []string{"name"},
+			}
 		},
 	}
 	for name, mutate := range cases {
@@ -105,11 +181,39 @@ func TestValidateResourceTypes_AcceptsEveryVocabularyValue(t *testing.T) {
 	for _, l := range contract.ResourceTypeLifecycles() {
 		rt := validType()
 		rt.Lifecycle = l
+		if l == "stateful" {
+			rt.Handover = "snapshot"
+		}
+		check(t, rt)
+	}
+	for _, h := range contract.Handovers() {
+		rt := validType()
+		rt.Lifecycle, rt.Handover = "stateful", h
 		check(t, rt)
 	}
 	for _, s := range contract.ResourceTypeScopes() {
 		rt := validType()
 		rt.Scope = s
+		check(t, rt)
+	}
+	for _, u := range contract.UpgradeBehaviours() {
+		rt := validType()
+		rt.Upgrade = u
+		check(t, rt)
+	}
+	for _, r := range contract.InputReplacements() {
+		rt := validType()
+		rt.Inputs[0].Replacement = r
+		check(t, rt)
+	}
+	for _, c := range contract.FailureClasses() {
+		rt := validType()
+		rt.Failures = []contract.Failure{{Class: c, Cause: "a cause"}}
+		check(t, rt)
+	}
+	for _, c := range contract.Capabilities() {
+		rt := validType()
+		rt.ReliesOn = []string{c}
 		check(t, rt)
 	}
 }
@@ -126,94 +230,92 @@ func TestValidateResourceTypes_RefusesADefectNamingTheTypeID(t *testing.T) {
 		rule   string
 		mutate func(rt *contract.ResourceType)
 	}{
-		// The capability equals the whole ID, so only the missing dot can
-		// refuse it, not a prefix that differs from the capability.
-		{"ID without a dot", "ID", func(rt *contract.ResourceType) {
-			rt.ID = "aws"
+		{"ID without a dot", "ID", func(rt *contract.ResourceType) { rt.ID = "aws" }},
+		{"ID with an empty name after the dot", "ID", func(rt *contract.ResourceType) { rt.ID = "aws." }},
+		{"ID with an empty place before the dot", "ID", func(rt *contract.ResourceType) { rt.ID = ".ecr-repository" }},
+		{"ID with an uppercase name", "ID", func(rt *contract.ResourceType) { rt.ID = "aws.EcrRepository" }},
+		{"ID with an underscore in the name", "ID", func(rt *contract.ResourceType) { rt.ID = "aws.ecr_repository" }},
+		{"ID with a second dot in the name", "ID", func(rt *contract.ResourceType) { rt.ID = "aws.ecr.repository" }},
+		{"ID prefix that is neither a capability nor a kind", "place", func(rt *contract.ResourceType) {
+			rt.ID = "nowhere.ecr-repository"
 		}},
-		{"ID with an empty name after the dot", "ID", func(rt *contract.ResourceType) {
-			rt.ID = "aws."
+		{"ID prefix of a retired capability", "place", func(rt *contract.ResourceType) {
+			rt.ID = "cloudformation.ecr-repository"
 		}},
-		{"ID with an uppercase name", "ID", func(rt *contract.ResourceType) {
-			rt.ID = "aws.EcrRepository"
+		{"empty kind", "kind", func(rt *contract.ResourceType) { rt.Kind = "" }},
+		{"kind with uppercase letters", "kind", func(rt *contract.ResourceType) { rt.Kind = "Container-Repository" }},
+		{"kind that is not a released kind", "kind", func(rt *contract.ResourceType) { rt.Kind = "message-queue" }},
+		{"empty category", "category", func(rt *contract.ResourceType) { rt.Category = "" }},
+		{"category outside the vocabulary", "category", func(rt *contract.ResourceType) { rt.Category = "registry" }},
+		{"empty lifecycle", "lifecycle", func(rt *contract.ResourceType) { rt.Lifecycle = "" }},
+		{"lifecycle outside the vocabulary", "lifecycle", func(rt *contract.ResourceType) { rt.Lifecycle = "ephemeral" }},
+		{"replaceable lifecycle with a handover", "handover", func(rt *contract.ResourceType) { rt.Handover = "snapshot" }},
+		{"handover outside the vocabulary", "handover", func(rt *contract.ResourceType) {
+			rt.Lifecycle, rt.Handover = "stateful", "teleport"
 		}},
-		{"ID with an underscore in the name", "ID", func(rt *contract.ResourceType) {
-			rt.ID = "aws.ecr_repository"
-		}},
-		{"ID with a second dot in the name", "ID", func(rt *contract.ResourceType) {
-			rt.ID = "aws.ecr.repository"
-		}},
-		{"ID prefix differs from the capability", "prefix", func(rt *contract.ResourceType) {
-			rt.ID = "hetzner.ecr-repository"
-		}},
-		// The ID's prefix is empty too, so it equals the empty capability. The
-		// community-grammar rule would also refuse it, so the fragment is the
-		// empty-capability rule's own words.
-		{"empty capability", "empty capability", func(rt *contract.ResourceType) {
-			rt.ID, rt.Capability = ".ecr-repository", ""
-		}},
-		{"empty kind", "kind", func(rt *contract.ResourceType) {
-			rt.Kind = ""
-		}},
-		{"kind with uppercase letters", "kind", func(rt *contract.ResourceType) {
-			rt.Kind = "Container-Repository"
-		}},
-		{"kind with an underscore", "kind", func(rt *contract.ResourceType) {
-			rt.Kind = "container_repository"
-		}},
-		{"kind with a space", "kind", func(rt *contract.ResourceType) {
-			rt.Kind = "container repository"
-		}},
-		{"empty category", "category", func(rt *contract.ResourceType) {
-			rt.Category = ""
-		}},
-		{"category outside the vocabulary", "category", func(rt *contract.ResourceType) {
-			rt.Category = "registry"
-		}},
-		{"category in the wrong case", "category", func(rt *contract.ResourceType) {
-			rt.Category = "Artifact-Registry"
-		}},
-		{"empty lifecycle", "lifecycle", func(rt *contract.ResourceType) {
-			rt.Lifecycle = ""
-		}},
-		{"lifecycle outside the vocabulary", "lifecycle", func(rt *contract.ResourceType) {
-			rt.Lifecycle = "ephemeral"
-		}},
-		{"empty scope", "scope", func(rt *contract.ResourceType) {
-			rt.Scope = ""
-		}},
-		{"scope outside the vocabulary", "scope", func(rt *contract.ResourceType) {
-			rt.Scope = "global"
-		}},
-		{"language outside the vocabulary", "language", func(rt *contract.ResourceType) {
-			rt.Languages = []string{"golang"}
-		}},
-		{"language repeated", "language", func(rt *contract.ResourceType) {
-			rt.Languages = []string{"go", "node", "go"}
-		}},
-		{"nil languages", "language", func(rt *contract.ResourceType) {
-			rt.Languages = nil
-		}},
-		{"artifact type outside the vocabulary", "artifact type", func(rt *contract.ResourceType) {
-			rt.ArtifactType = "docker-image"
-		}},
-		{"priced without a pricing key", "pricing key", func(rt *contract.ResourceType) {
-			rt.Priced, rt.PricingKey = true, ""
-		}},
-		{"pricing key without priced", "pricing key", func(rt *contract.ResourceType) {
-			rt.Priced, rt.PricingKey = false, "AmazonEC2"
-		}},
-		{"nil outputs", "output", func(rt *contract.ResourceType) {
-			rt.Outputs = nil
-		}},
+		{"empty upgrade behaviour", "upgrade", func(rt *contract.ResourceType) { rt.Upgrade = "" }},
+		{"upgrade behaviour outside the vocabulary", "upgrade", func(rt *contract.ResourceType) { rt.Upgrade = "rolling" }},
+		{"empty scope", "scope", func(rt *contract.ResourceType) { rt.Scope = "" }},
+		{"scope outside the vocabulary", "scope", func(rt *contract.ResourceType) { rt.Scope = "global" }},
+		{"language outside the vocabulary", "language", func(rt *contract.ResourceType) { rt.Languages = []string{"golang"} }},
+		{"language repeated", "language", func(rt *contract.ResourceType) { rt.Languages = []string{"go", "node", "go"} }},
+		{"nil languages", "language", func(rt *contract.ResourceType) { rt.Languages = nil }},
+		{"artifact type outside the vocabulary", "artifact type", func(rt *contract.ResourceType) { rt.ArtifactType = "docker-image" }},
+		{"priced without a pricing key", "pricing key", func(rt *contract.ResourceType) { rt.Priced, rt.PricingKey = true, "" }},
+		{"pricing key without priced", "pricing key", func(rt *contract.ResourceType) { rt.Priced, rt.PricingKey = false, "AmazonEC2" }},
+		{"nil outputs", "output", func(rt *contract.ResourceType) { rt.Outputs = nil }},
 		{"output the registry does not hold", "output", func(rt *contract.ResourceType) {
-			rt.Outputs = []string{"ecrRegistry", "noSuchOutput"}
+			rt.Outputs = []string{"registryHost", "noSuchOutput"}
 		}},
 		{"output named by a registry alias, not its canonical name", "output", func(rt *contract.ResourceType) {
-			rt.Outputs = []string{"region"}
+			rt.Outputs = []string{"registryHost", "region"}
 		}},
 		{"output repeated", "output", func(rt *contract.ResourceType) {
-			rt.Outputs = []string{"ecrRegistry", "registryHost", "ecrRegistry"}
+			rt.Outputs = []string{"registryHost", "registryHost"}
+		}},
+		{"nil reliesOn", "reliesOn", func(rt *contract.ResourceType) { rt.ReliesOn = nil }},
+		{"reliesOn naming no capability", "reliesOn", func(rt *contract.ResourceType) { rt.ReliesOn = []string{"tracker"} }},
+		{"reliesOn naming a capability twice", "reliesOn", func(rt *contract.ResourceType) { rt.ReliesOn = []string{"github", "github"} }},
+		{"hosts naming no capability", "hosts", func(rt *contract.ResourceType) { rt.Hosts = "kube-cluster" }},
+		{"nil inputs", "input", func(rt *contract.ResourceType) { rt.Inputs = nil }},
+		{"input with no name", "input", func(rt *contract.ResourceType) { rt.Inputs[0].Name = "" }},
+		{"input listed twice", "name", func(rt *contract.ResourceType) { rt.Inputs[1].Name = "name" }},
+		{"input replacement outside the vocabulary", "replacement", func(rt *contract.ResourceType) {
+			rt.Inputs[0].Replacement = "sometimes"
+		}},
+		{"input accepting nothing", "accepts", func(rt *contract.ResourceType) { rt.Inputs[0].Accepts = "" }},
+		{"input accepting a resource of no kind", "accepts", func(rt *contract.ResourceType) {
+			rt.Inputs[0].Accepts = "resource:no-such-kind"
+		}},
+		{"input accepting an output its kind does not name", "accepts", func(rt *contract.ResourceType) {
+			rt.Inputs[0].Accepts = "output:host/repo"
+		}},
+		{"input accepting a form outside the grammar", "accepts", func(rt *contract.ResourceType) {
+			rt.Inputs[0].Accepts = "anything"
+		}},
+		{"no failure declared", "failure", func(rt *contract.ResourceType) { rt.Failures = nil }},
+		{"failure class outside the vocabulary", "failure", func(rt *contract.ResourceType) {
+			rt.Failures = []contract.Failure{{Class: "retryable", Cause: "a cause"}}
+		}},
+		{"failure with no cause", "failure", func(rt *contract.ResourceType) {
+			rt.Failures = []contract.Failure{{Class: "transient", Cause: ""}}
+		}},
+		{"time budget for a verb that is not a resource verb", "time budget", func(rt *contract.ResourceType) {
+			rt.TimeBudgets["subscribe"] = time.Minute
+		}},
+		{"negative time budget", "time budget", func(rt *contract.ResourceType) {
+			rt.TimeBudgets["delete"] = -time.Minute
+		}},
+		{"provider resource with no provider", "provider", func(rt *contract.ResourceType) {
+			rt.ProviderResource = &contract.ProviderResource{Resource: "aws_ecr_repository", ReplaceOn: []string{}}
+		}},
+		{"provider resource with no resource", "provider", func(rt *contract.ResourceType) {
+			rt.ProviderResource = &contract.ProviderResource{Provider: "registry.opentofu.org/hashicorp/aws", ReplaceOn: []string{}}
+		}},
+		{"provider resource replacing on an input the type does not declare", "provider", func(rt *contract.ResourceType) {
+			rt.ProviderResource = &contract.ProviderResource{
+				Provider: "registry.opentofu.org/hashicorp/aws", Resource: "aws_ecr_repository", ReplaceOn: []string{"no_such_input"},
+			}
 		}},
 	}
 	for _, c := range cases {
@@ -248,7 +350,7 @@ func TestValidateResourceTypes_RefusesADuplicateID(t *testing.T) {
 func TestValidateResourceTypes_NamesTheDefectiveTypeNotItsValidNeighbour(t *testing.T) {
 	good := validType()
 	bad := validType()
-	bad.ID, bad.Capability, bad.Kind = "hetzner.volume", "hetzner", ""
+	bad.ID, bad.Kind = "hetzner.volume", ""
 	err := contract.ValidateResourceTypes([]contract.ResourceType{good, bad})
 	if err == nil {
 		t.Fatal("ValidateResourceTypes with an empty kind on the second entry = nil, want an error")
@@ -264,9 +366,9 @@ func TestValidateResourceTypes_NamesTheDefectiveTypeNotItsValidNeighbour(t *test
 func TestValidateResourceTypes_EmptyIDIsRefusedNamingItsIndex(t *testing.T) {
 	a := validType()
 	b := validType()
-	b.ID, b.Capability = "hetzner.firewall", "hetzner"
+	b.ID = "hetzner.ecr-repository"
 	c := validType()
-	c.ID, c.Capability = "github.commit", "github"
+	c.ID = "github.ecr-repository"
 	empty := validType()
 	empty.ID = ""
 	err := contract.ValidateResourceTypes([]contract.ResourceType{a, b, c, empty})
@@ -333,26 +435,49 @@ func TestResourceTypes_ReturnsCopiesACallerCanMutate(t *testing.T) {
 	before := contract.ResourceTypes()
 	snapshot := make([]contract.ResourceType, len(before))
 	for i, rt := range before {
-		rt.Languages = append([]string{}, rt.Languages...)
-		rt.Outputs = append([]string{}, rt.Outputs...)
-		snapshot[i] = rt
+		snapshot[i] = copyType(rt)
 	}
 
 	got := catalogue(t)
-	mutatedASlice := false
+	mutated := map[string]bool{}
 	for i := range got {
 		for j := range got[i].Languages {
 			got[i].Languages[j] = "mutated"
-			mutatedASlice = true
+			mutated["languages"] = true
 		}
 		for j := range got[i].Outputs {
 			got[i].Outputs[j] = "mutated"
-			mutatedASlice = true
+			mutated["outputs"] = true
+		}
+		for j := range got[i].Inputs {
+			got[i].Inputs[j].Name = "mutated"
+			mutated["inputs"] = true
+		}
+		for j := range got[i].ReliesOn {
+			got[i].ReliesOn[j] = "mutated"
+			mutated["reliesOn"] = true
+		}
+		for j := range got[i].Failures {
+			got[i].Failures[j].Class = "mutated"
+			mutated["failures"] = true
+		}
+		for verb := range got[i].TimeBudgets {
+			got[i].TimeBudgets[verb] = -1
+			mutated["time budgets"] = true
+		}
+		if pr := got[i].ProviderResource; pr != nil {
+			pr.Resource = "mutated"
+			for j := range pr.ReplaceOn {
+				pr.ReplaceOn[j] = "mutated"
+			}
+			mutated["provider resource"] = true
 		}
 		got[i].ID = "mutated"
 	}
-	if !mutatedASlice {
-		t.Fatal("no catalogue entry has a language or an output for this test to mutate")
+	for _, what := range []string{"languages", "outputs", "inputs", "reliesOn", "failures", "time budgets", "provider resource"} {
+		if !mutated[what] {
+			t.Errorf("no catalogue entry has %s for this test to mutate", what)
+		}
 	}
 
 	if after := contract.ResourceTypes(); !reflect.DeepEqual(after, snapshot) {
@@ -374,15 +499,16 @@ func TestLookupResourceType_ReturnsACopyACallerCanMutate(t *testing.T) {
 	if !ok {
 		t.Fatal(`LookupResourceType("aws.ecr-repository") found nothing`)
 	}
-	if len(first.Languages) == 0 || len(first.Outputs) == 0 {
-		t.Fatalf("aws.ecr-repository needs a language and an output for this test to mutate, got %+v", first)
+	if len(first.Languages) == 0 || len(first.Outputs) == 0 || len(first.Inputs) == 0 || first.ProviderResource == nil {
+		t.Fatalf("aws.ecr-repository needs a language, an output, an input and a provider resource for this test to mutate, got %+v", first)
 	}
-	want := first
-	want.Languages = append([]string{}, first.Languages...)
-	want.Outputs = append([]string{}, first.Outputs...)
+	want := copyType(first)
 
 	first.Languages[0] = "mutated"
 	first.Outputs[0] = "mutated"
+	first.Inputs[0].Name = "mutated"
+	first.TimeBudgets["ensure"] = -1
+	first.ProviderResource.Resource = "mutated"
 
 	if again, _ := contract.LookupResourceType("aws.ecr-repository"); !reflect.DeepEqual(again, want) {
 		t.Errorf("mutating a looked-up type changed the catalogue: a later lookup returned %+v, want %+v", again, want)
@@ -390,7 +516,7 @@ func TestLookupResourceType_ReturnsACopyACallerCanMutate(t *testing.T) {
 }
 
 func TestLookupResourceType_UnknownOrMiscasedIDIsNotFound(t *testing.T) {
-	for _, id := range []string{"", "github.repo", "GitHub.repository", "github", "repository", "aws.ecr-images"} {
+	for _, id := range []string{"", "github.repo", "GitHub.repository", "github", "repository", "aws.ecr-images", "tracker.api-token", "app-host.container"} {
 		if rt, ok := contract.LookupResourceType(id); ok {
 			t.Errorf("LookupResourceType(%q) found %q, want not found", id, rt.ID)
 		}
@@ -398,7 +524,7 @@ func TestLookupResourceType_UnknownOrMiscasedIDIsNotFound(t *testing.T) {
 }
 
 func TestResourceTypes_ADR0078FixesTheRepositoryCommitAndImageRows(t *testing.T) {
-	want := []struct{ id, kind, capability string }{
+	want := []struct{ id, kind, place string }{
 		{"github.repository", "git-repository", "github"},
 		{"github.commit", "source-revision", "github"},
 		{"aws.ecr-image", "container-image", "aws"},
@@ -409,203 +535,27 @@ func TestResourceTypes_ADR0078FixesTheRepositoryCommitAndImageRows(t *testing.T)
 			t.Errorf("the catalogue has no %q", w.id)
 			continue
 		}
-		if rt.Kind != w.kind || rt.Capability != w.capability {
-			t.Errorf("%q: kind %q, capability %q; want kind %q, capability %q", w.id, rt.Kind, rt.Capability, w.kind, w.capability)
+		if rt.Kind != w.kind || rt.Place() != w.place {
+			t.Errorf("%q: kind %q, place %q; want kind %q, place %q", w.id, rt.Kind, rt.Place(), w.kind, w.place)
 		}
-	}
-}
-
-// TestResourceTypes_AppRunnerResourcesMapToCataloguedTypes checks the three
-// types app-runner's spec.resources entries map to. Its runner lanes are the
-// ci-runner kind ADR 0078 has managed-ci and managed-cd require, publishing
-// the four outputs that requirement reads, while its runner group and its host
-// configuration publish nothing.
-func TestResourceTypes_AppRunnerResourcesMapToCataloguedTypes(t *testing.T) {
-	want := []struct {
-		id, kind, capability string
-		outputs              []string
-	}{
-		{"github.self-hosted-runner", "ci-runner", "github", []string{"runnerLabel", "runsOn", "runsOnPr", "awsCredential"}},
-		{"github.runner-group", "runner-group", "github", nil},
-		{"app-host.host-configuration", "host-configuration", "app-host", nil},
-	}
-	for _, w := range want {
-		t.Run(w.id, func(t *testing.T) {
-			rt, ok := contract.LookupResourceType(w.id)
-			if !ok {
-				t.Fatalf("the catalogue has no %q", w.id)
-			}
-			if rt.Kind != w.kind || rt.Capability != w.capability {
-				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, w.kind, w.capability)
-			}
-			if rt.Outputs == nil {
-				t.Error("Outputs is nil, want an empty list when the type publishes none")
-			}
-			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
-				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
-			}
-		})
-	}
-}
-
-// TestResourceTypes_AppScaffoldResourcesMapToCataloguedTypes checks the two
-// types app-scaffold's spec.resources entries map to. Its scaffold commit maps
-// to github.commit, which publishes scaffoldCommit beside the source branch
-// and sha, and its scaffold pull request maps to github.pull-request, a
-// change-request publishing scaffoldPullRequest.
-func TestResourceTypes_AppScaffoldResourcesMapToCataloguedTypes(t *testing.T) {
-	want := []struct {
-		id, kind, capability string
-		outputs              []string
-	}{
-		{"github.commit", "source-revision", "github", []string{"sourceBranch", "sourceSha", "scaffoldCommit"}},
-		{"github.pull-request", "change-request", "github", []string{"scaffoldPullRequest", "standardPullRequest"}},
-	}
-	for _, w := range want {
-		t.Run(w.id, func(t *testing.T) {
-			rt, ok := contract.LookupResourceType(w.id)
-			if !ok {
-				t.Fatalf("the catalogue has no %q", w.id)
-			}
-			if rt.Kind != w.kind || rt.Capability != w.capability {
-				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, w.kind, w.capability)
-			}
-			if rt.Outputs == nil {
-				t.Error("Outputs is nil, want an empty list when the type publishes none")
-			}
-			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
-				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
-			}
-		})
-	}
-}
-
-// TestResourceTypes_BoardAutomationResourcesMapToCataloguedTypes checks the
-// types board-automation's spec.resources entries map to. Its tracker ledger
-// token maps to tracker.api-token, its TRACKER_TOKEN Actions secret to
-// github.actions-secret and its TRACKER_BASE_URL Actions variable to
-// github.actions-variable, each a replaceable per-app type that is not priced
-// and publishes nothing. Its board repository maps to github.repository, which
-// publishes boardRepo beside its existing outputs, and its seeded workflows to
-// github.workflow-file, which publishes ciCheckContribution beside workflowUrl.
-func TestResourceTypes_BoardAutomationResourcesMapToCataloguedTypes(t *testing.T) {
-	newTypes := []struct{ id, kind, capability, category string }{
-		{"tracker.api-token", "api-token", "tracker", "identity-and-access"},
-		{"github.actions-secret", "secret", "github", "secrets"},
-		{"github.actions-variable", "ci-variable", "github", "build-and-delivery"},
-	}
-	for _, w := range newTypes {
-		t.Run(w.id, func(t *testing.T) {
-			rt, ok := contract.LookupResourceType(w.id)
-			if !ok {
-				t.Fatalf("the catalogue has no %q", w.id)
-			}
-			if rt.Kind != w.kind || rt.Capability != w.capability {
-				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, w.kind, w.capability)
-			}
-			if rt.Category != w.category {
-				t.Errorf("Category = %q, want %q", rt.Category, w.category)
-			}
-			if rt.Lifecycle != "replaceable" {
-				t.Errorf("Lifecycle = %q, want %q", rt.Lifecycle, "replaceable")
-			}
-			if rt.Scope != "per-app" {
-				t.Errorf("Scope = %q, want %q", rt.Scope, "per-app")
-			}
-			if rt.Priced || rt.PricingKey != "" {
-				t.Errorf("Priced, PricingKey = %v, %q; want false, %q", rt.Priced, rt.PricingKey, "")
-			}
-			if rt.Languages == nil || len(rt.Languages) != 0 {
-				t.Errorf("Languages = %#v, want an empty, non-nil list", rt.Languages)
-			}
-			if rt.ArtifactType != "" {
-				t.Errorf("ArtifactType = %q, want %q", rt.ArtifactType, "")
-			}
-			if rt.Outputs == nil || len(rt.Outputs) != 0 {
-				t.Errorf("Outputs = %#v, want an empty, non-nil list", rt.Outputs)
-			}
-		})
-	}
-
-	widened := []struct {
-		id      string
-		outputs []string
-	}{
-		{"github.repository", []string{"cdRepo", "ciRepo", "repo", "repoUrl", "boardRepo"}},
-		{"github.workflow-file", []string{"agentEndpoint", "workflowUrl", "ciCheckContribution", "workflowPath"}},
-	}
-	for _, w := range widened {
-		t.Run(w.id, func(t *testing.T) {
-			rt, ok := contract.LookupResourceType(w.id)
-			if !ok {
-				t.Fatalf("the catalogue has no %q", w.id)
-			}
-			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
-				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
-			}
-		})
-	}
-}
-
-// TestResourceTypes_DevStackClaudeCodeResourcesMapToCataloguedTypes checks the
-// two types dev-stack-claude-code's spec.resources entries map to. Its agent
-// workflow file maps to github.workflow-file, which publishes agentEndpoint and
-// workflowPath beside ciCheckContribution and workflowUrl, and its standard pull
-// request maps to github.pull-request, which publishes standardPullRequest
-// beside scaffoldPullRequest. The platform refuses a resource whose produces
-// list is not a subset of its type's outputs, so each type must carry every
-// name the block publishes, and each added name must be a canonical registry
-// resource.
-func TestResourceTypes_DevStackClaudeCodeResourcesMapToCataloguedTypes(t *testing.T) {
-	want := []struct {
-		id, kind, capability string
-		outputs              []string
-		added                []string
-	}{
-		{"github.workflow-file", "ci-workflow", "github", []string{"agentEndpoint", "ciCheckContribution", "workflowPath", "workflowUrl"}, []string{"agentEndpoint", "workflowPath"}},
-		{"github.pull-request", "change-request", "github", []string{"scaffoldPullRequest", "standardPullRequest"}, []string{"standardPullRequest"}},
-	}
-	for _, w := range want {
-		t.Run(w.id, func(t *testing.T) {
-			rt, ok := contract.LookupResourceType(w.id)
-			if !ok {
-				t.Fatalf("the catalogue has no %q", w.id)
-			}
-			if rt.Kind != w.kind || rt.Capability != w.capability {
-				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, w.kind, w.capability)
-			}
-			if got, want := sortedCopy(rt.Outputs), sortedCopy(w.outputs); !reflect.DeepEqual(got, want) {
-				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
-			}
-			for _, name := range w.added {
-				entry, ok := contract.LookupResource(name)
-				if !ok {
-					t.Errorf("the resource registry has no %q", name)
-					continue
-				}
-				if entry.Name != name {
-					t.Errorf("LookupResource(%q).Name = %q, want the canonical %q", name, entry.Name, name)
-				}
-			}
-		})
 	}
 }
 
 // TestResourceTypes_CrossplaneReconcileClaimIsCatalogued checks the type
 // crossplane-reconcile's one created resource maps to: the ReconcileClaim it
 // applies on a Crossplane control plane. It is crossplane.reconcile-claim, a
-// reconcile-claim of the crossplane capability in build-and-delivery, a
-// replaceable per-app type that serves no particular language, holds no
-// artifact and is not priced. It publishes the claim's name, its drift policy,
-// the resources found drifted and the count of resources kept converged.
+// reconcile-claim living in crossplane in build-and-delivery, a replaceable
+// per-app type that serves no particular language, holds no artifact and is
+// not priced. It publishes the claim's name, its drift policy, the resources
+// found drifted and the count of resources kept converged.
 func TestResourceTypes_CrossplaneReconcileClaimIsCatalogued(t *testing.T) {
 	const id = "crossplane.reconcile-claim"
 	rt, ok := contract.LookupResourceType(id)
 	if !ok {
 		t.Fatalf("the catalogue has no %q", id)
 	}
-	if rt.Kind != "reconcile-claim" || rt.Capability != "crossplane" {
-		t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, "reconcile-claim", "crossplane")
+	if rt.Kind != "reconcile-claim" || rt.Place() != "crossplane" {
+		t.Errorf("kind %q, place %q; want kind %q, place %q", rt.Kind, rt.Place(), "reconcile-claim", "crossplane")
 	}
 	if rt.Category != "build-and-delivery" {
 		t.Errorf("Category = %q, want %q", rt.Category, "build-and-delivery")
@@ -630,93 +580,28 @@ func TestResourceTypes_CrossplaneReconcileClaimIsCatalogued(t *testing.T) {
 	}
 }
 
-// sharedAWSNames are the seven names ADR 0081 catalogues under the
-// cloudformation and crossplane capabilities as well as under aws, since each
-// capability owns the lifecycle of the resources it creates.
-var sharedAWSNames = []string{"ec2-instance", "security-group", "ebs-volume", "ecr-repository", "iam-role", "ssm-association", "vpc"}
-
-// TestResourceTypes_CloudFormationAndCrossplaneEC2InstanceAreHosts checks that
-// an EC2 instance created through CloudFormation or through Crossplane has a
-// type of its own capability, and that both are the host kind aws.ec2-instance
-// is, so a requirement for a host is met whichever capability made it.
-func TestResourceTypes_CloudFormationAndCrossplaneEC2InstanceAreHosts(t *testing.T) {
-	for _, capability := range []string{"cloudformation", "crossplane"} {
-		id := capability + ".ec2-instance"
-		t.Run(id, func(t *testing.T) {
-			rt, ok := contract.LookupResourceType(id)
-			if !ok {
-				t.Fatalf("the catalogue has no %q", id)
-			}
-			if rt.Kind != "host" || rt.Capability != capability {
-				t.Errorf("kind %q, capability %q; want kind %q, capability %q", rt.Kind, rt.Capability, "host", capability)
-			}
-		})
-	}
-}
-
-// TestResourceTypes_CloudFormationAndCrossplaneTwinsMatchTheirAWSType checks,
-// for each of the seven shared names, that the cloudformation and crossplane
-// types equal the aws type on every field but ID and Capability: kind,
-// category, languages, artifact type, lifecycle, scope, pricing and outputs.
-// It compares the looked-up entries with each other, so a later change to the
-// aws type that its twins do not follow fails here.
-func TestResourceTypes_CloudFormationAndCrossplaneTwinsMatchTheirAWSType(t *testing.T) {
-	for _, name := range sharedAWSNames {
-		aws, ok := contract.LookupResourceType("aws." + name)
-		if !ok {
-			t.Errorf("the catalogue has no %q", "aws."+name)
-			continue
-		}
-		for _, capability := range []string{"cloudformation", "crossplane"} {
-			id := capability + "." + name
-			t.Run(id, func(t *testing.T) {
-				twin, ok := contract.LookupResourceType(id)
-				if !ok {
-					t.Fatalf("the catalogue has no %q", id)
-				}
-				want := aws
-				want.ID, want.Capability = id, capability
-				if !reflect.DeepEqual(twin, want) {
-					t.Errorf("%q = %+v; want %+v, the aws type with only ID and Capability changed", id, twin, want)
-				}
-			})
-		}
-	}
-}
-
-// TestValidateResourceTypes_RefusesAReleasedSharedNameWithTwoKinds changes the
-// kind of the released cloudformation.vpc so it no longer matches aws.vpc's,
-// and checks ValidateResourceTypes refuses the catalogue naming both IDs and
-// both kinds: types reached through different capabilities under one name
-// must share a kind.
-func TestValidateResourceTypes_RefusesAReleasedSharedNameWithTwoKinds(t *testing.T) {
+// TestValidateResourceTypes_RefusesAReleasedNameGivenAnotherKind adds a
+// hetzner.vpc of kind virtual-network beside the released aws.vpc of kind
+// network, and checks ValidateResourceTypes refuses the catalogue naming both
+// IDs and both kinds: a name after the dot names one real thing in every
+// place, so every type sharing a name shares its kind.
+func TestValidateResourceTypes_RefusesAReleasedNameGivenAnotherKind(t *testing.T) {
 	ts := catalogue(t)
-	changed := false
-	for i := range ts {
-		if ts[i].ID == "cloudformation.vpc" {
-			ts[i].Kind = "virtual-network"
-			changed = true
-		}
+	clash := validType()
+	clash.ID, clash.Kind, clash.Category, clash.ArtifactType = "hetzner.vpc", "network", "network", ""
+	clash.Languages, clash.Outputs = []string{}, []string{}
+	if err := contract.ValidateResourceTypes(append(ts, clash)); err != nil {
+		t.Fatalf("ValidateResourceTypes with hetzner.vpc of kind network beside aws.vpc = %v, want nil so only the kind can refuse the clash", err)
 	}
-	if !changed {
-		t.Fatal("the catalogue has no cloudformation.vpc to change the kind of")
-	}
-	err := contract.ValidateResourceTypes(ts)
+	clash.Kind = "firewall"
+	err := contract.ValidateResourceTypes(append(ts, clash))
 	if err == nil {
-		t.Fatal("ValidateResourceTypes with cloudformation.vpc of kind virtual-network beside aws.vpc of kind network = nil, want an error")
+		t.Fatal("ValidateResourceTypes with hetzner.vpc of kind firewall beside aws.vpc of kind network = nil, want an error")
 	}
-	msg := err.Error()
-	for _, id := range []string{"cloudformation.vpc", "aws.vpc"} {
-		if !strings.Contains(msg, id) {
-			t.Errorf("error %q does not name %q", msg, id)
+	for _, want := range []string{"hetzner.vpc", "aws.vpc", `"firewall"`, `"network"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err, want)
 		}
-	}
-	if !strings.Contains(msg, "virtual-network") {
-		t.Errorf("error %q does not name the kind %q", msg, "virtual-network")
-	}
-	// "network" sits inside "virtual-network", so that kind is removed first.
-	if rest := strings.ReplaceAll(msg, "virtual-network", ""); !strings.Contains(rest, "network") {
-		t.Errorf("error %q does not name the kind %q", msg, "network")
 	}
 }
 
@@ -726,9 +611,9 @@ func TestValidateResourceTypes_RefusesAReleasedSharedNameWithTwoKinds(t *testing
 // since the rule must not depend on which type comes first.
 func TestValidateResourceTypes_RefusesASharedNameWithTwoKinds(t *testing.T) {
 	a := validType()
-	a.ID, a.Capability, a.Kind = "aws.thing", "aws", "thing-alpha"
+	a.ID, a.Kind, a.Category, a.ArtifactType, a.Outputs = "aws.thing", "firewall", "network", "", []string{}
 	b := validType()
-	b.ID, b.Capability, b.Kind = "hetzner.thing", "hetzner", "thing-beta"
+	b.ID, b.Kind, b.Category, b.ArtifactType, b.Outputs = "hetzner.thing", "network", "network", "", []string{}
 	for _, rt := range []contract.ResourceType{a, b} {
 		if err := contract.ValidateResourceTypes([]contract.ResourceType{rt}); err != nil {
 			t.Fatalf("ValidateResourceTypes(%+v) alone = %v, want nil so only the shared name can refuse the pair", rt, err)
@@ -742,11 +627,11 @@ func TestValidateResourceTypes_RefusesASharedNameWithTwoKinds(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			err := contract.ValidateResourceTypes(ts)
 			if err == nil {
-				t.Fatal("ValidateResourceTypes with aws.thing of kind thing-alpha and hetzner.thing of kind thing-beta = nil, want an error")
+				t.Fatal("ValidateResourceTypes with aws.thing of kind firewall and hetzner.thing of kind network = nil, want an error")
 			}
-			for _, want := range []string{"aws.thing", "hetzner.thing", "thing-alpha", "thing-beta"} {
+			for _, want := range []string{"aws.thing", "hetzner.thing", `"firewall"`, `"network"`} {
 				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error %q does not name %q", err, want)
+					t.Errorf("error %q does not name %s", err, want)
 				}
 			}
 		})
@@ -754,87 +639,74 @@ func TestValidateResourceTypes_RefusesASharedNameWithTwoKinds(t *testing.T) {
 }
 
 // TestValidateResourceTypes_AcceptsASharedNameWithOneKind checks the
-// shared-name rule refuses only a kind mismatch: two types under different
-// capabilities may share a name when they carry the same kind.
+// shared-name rule refuses only a kind mismatch: two types in different
+// places may share a name when they carry the same kind.
 func TestValidateResourceTypes_AcceptsASharedNameWithOneKind(t *testing.T) {
 	a := validType()
-	a.ID, a.Capability, a.Kind = "aws.thing", "aws", "thing"
+	a.ID = "aws.thing"
 	b := validType()
-	b.ID, b.Capability, b.Kind = "hetzner.thing", "hetzner", "thing"
+	b.ID = "hetzner.thing"
 	if err := contract.ValidateResourceTypes([]contract.ResourceType{a, b}); err != nil {
-		t.Errorf("ValidateResourceTypes with aws.thing and hetzner.thing both of kind thing = %v, want nil", err)
+		t.Errorf("ValidateResourceTypes with aws.thing and hetzner.thing both of kind container-repository = %v, want nil", err)
 	}
 }
 
-// catalogueRow is one released resource type: its ID, its kind and capability,
-// the six facets ADR 0077 gives a type, and its outputs. A nil languages or
-// outputs list means the type has none, and pricingKey is "" when the type is
-// not priced.
+// catalogueRow is one released resource type: its ID, its kind, the catalogue
+// facets, its outputs, the capabilities it relies on and the capability it
+// hosts. A nil languages, outputs or reliesOn list means the type has none,
+// and pricingKey is "" when the type is not priced.
 type catalogueRow struct {
-	id, kind, capability, category string
-	languages                      []string
-	artifactType                   string
-	lifecycle, scope               string
-	pricingKey                     string
-	outputs                        []string
+	id, kind, category string
+	languages          []string
+	artifactType       string
+	lifecycle, scope   string
+	pricingKey         string
+	outputs            []string
+	reliesOn           []string
+	hosts              string
 }
 
 // catalogueTable pins every type the kit releases, so adding, removing or
-// changing a type means changing this table. The github.repository,
-// github.commit, aws.ecr-image and github.self-hosted-runner rows carry the
-// kinds and capabilities ADR 0078 fixes. The cloudformation and crossplane rows
-// repeat seven aws rows under the capability ADR 0081 gives them, and
-// cloudformation.llm-endpoint is the one CloudFormation type with no aws twin.
+// changing a type means changing this table. Each type lives in the place its
+// id prefix names: a capability, or, for the host types, a resource of the
+// host kind.
 var catalogueTable = []catalogueRow{
-	{"aws.ec2-instance", "host", "aws", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
-	{"aws.security-group", "firewall", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
-	{"aws.ebs-volume", "block-volume", "aws", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}},
-	{"aws.ecr-repository", "container-repository", "aws", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"ecrRegistry", "registryHost"}},
-	{"aws.ecr-image", "container-image", "aws", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"artifact", "imageRepo"}},
-	{"aws.iam-role", "iam-role", "aws", "identity-and-access", nil, "", "replaceable", "per-app", "", []string{"deployRoleArn", "ecrPushRoleArn"}},
-	{"aws.iam-oidc-provider", "oidc-provider", "aws", "identity-and-access", nil, "", "replaceable", "org-wide", "", []string{"oidcProviderArn"}},
-	{"aws.ssm-association", "host-configuration", "aws", "compute", nil, "", "replaceable", "per-app", "", nil},
-	{"aws.ssm-parameter", "secret", "aws", "secrets", nil, "", "stateful", "per-app", "", nil},
-	{"aws.egress-proxy", "egress-proxy", "aws", "network", nil, "", "replaceable", "per-app", "AmazonEC2", nil},
-	{"aws.vpc", "network", "aws", "network", nil, "", "replaceable", "per-app", "", nil},
-	{"aws.route53-record", "app-address", "aws", "network", nil, "", "replaceable", "per-app", "", []string{"appHostname", "appUrl"}},
-	{"github.repository", "git-repository", "github", "source-and-work", nil, "", "stateful", "per-app", "", []string{"boardRepo", "cdRepo", "ciRepo", "repo", "repoUrl"}},
-	{"github.commit", "source-revision", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldCommit", "sourceBranch", "sourceSha"}},
-	{"github.pull-request", "change-request", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldPullRequest", "standardPullRequest"}},
-	{"github.repository-webhook", "webhook", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
-	{"github.workflow-file", "ci-workflow", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"agentEndpoint", "ciCheckContribution", "workflowPath", "workflowUrl"}},
-	{"github.container-image", "container-image", "github", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"artifact", "imageRepo"}},
-	{"github.self-hosted-runner", "ci-runner", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"awsCredential", "runnerLabel", "runsOn", "runsOnPr"}},
-	{"github.runner-group", "runner-group", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
-	{"github.actions-secret", "secret", "github", "secrets", nil, "", "replaceable", "per-app", "", nil},
-	{"github.actions-variable", "ci-variable", "github", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil},
-	{"github.scaffold-contribution", "scaffold-contribution", "github", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldContribution"}},
-	{"tracker.api-token", "api-token", "tracker", "identity-and-access", nil, "", "replaceable", "per-app", "", nil},
-	{"crossplane.reconcile-claim", "reconcile-claim", "crossplane", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"claim", "driftPolicy", "driftedResources", "reconciledResources"}},
-	{"hetzner.server", "host", "hetzner", "compute", []string{"any-container"}, "", "replaceable", "per-app", "HetznerCloud", []string{"cloud.region", "execTarget", "host.type", "hostId"}},
-	{"hetzner.primary-ip", "ip-address", "hetzner", "network", nil, "", "replaceable", "per-app", "", []string{"publicIp"}},
-	{"hetzner.firewall", "firewall", "hetzner", "network", nil, "", "replaceable", "per-app", "", nil},
-	{"hetzner.volume", "block-volume", "hetzner", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}},
-	{"hetzner.ssh-key", "ssh-key", "hetzner", "identity-and-access", nil, "", "replaceable", "per-app", "", nil},
-	{"app-host.container", "container", "app-host", "compute", []string{"any-container"}, "", "replaceable", "per-app", "", []string{"url"}},
-	{"app-host.postgres-database", "postgres-database", "app-host", "database", nil, "", "stateful", "per-app", "", []string{"dbName", "host", "port", "username"}},
-	{"app-host.deployment", "deployment", "app-host", "build-and-delivery", []string{"any-container"}, "", "replaceable", "per-app", "", []string{"deployment"}},
-	{"app-host.host-configuration", "host-configuration", "app-host", "compute", nil, "", "replaceable", "per-app", "", nil},
-	{"cloudformation.ec2-instance", "host", "cloudformation", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
-	{"cloudformation.security-group", "firewall", "cloudformation", "network", nil, "", "replaceable", "per-app", "", nil},
-	{"cloudformation.ebs-volume", "block-volume", "cloudformation", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}},
-	{"cloudformation.ecr-repository", "container-repository", "cloudformation", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"ecrRegistry", "registryHost"}},
-	{"cloudformation.iam-role", "iam-role", "cloudformation", "identity-and-access", nil, "", "replaceable", "per-app", "", []string{"deployRoleArn", "ecrPushRoleArn"}},
-	{"cloudformation.ssm-association", "host-configuration", "cloudformation", "compute", nil, "", "replaceable", "per-app", "", nil},
-	{"cloudformation.vpc", "network", "cloudformation", "network", nil, "", "replaceable", "per-app", "", nil},
-	{"cloudformation.llm-endpoint", "llm-endpoint", "cloudformation", "ai-model", nil, "", "replaceable", "per-app", "AmazonEC2", []string{"llmEndpoint", "model"}},
-	{"crossplane.ec2-instance", "host", "crossplane", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"execTarget", "host.type", "hostId", "instanceId", "publicIp"}},
-	{"crossplane.security-group", "firewall", "crossplane", "network", nil, "", "replaceable", "per-app", "", nil},
-	{"crossplane.ebs-volume", "block-volume", "crossplane", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}},
-	{"crossplane.ecr-repository", "container-repository", "crossplane", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"ecrRegistry", "registryHost"}},
-	{"crossplane.iam-role", "iam-role", "crossplane", "identity-and-access", nil, "", "replaceable", "per-app", "", []string{"deployRoleArn", "ecrPushRoleArn"}},
-	{"crossplane.ssm-association", "host-configuration", "crossplane", "compute", nil, "", "replaceable", "per-app", "", nil},
-	{"crossplane.vpc", "network", "crossplane", "network", nil, "", "replaceable", "per-app", "", nil},
+	{"aws.ebs-volume", "block-volume", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}, nil, ""},
+	{"aws.ec2-instance", "host", "compute", []string{"any-container"}, "", "replaceable", "per-app", "AmazonEC2", []string{"cloud.region", "execKind", "execTarget", "host.type", "hostId", "publicIp"}, nil, ""},
+	{"aws.ecr-image", "container-image", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"imageRepo"}, nil, ""},
+	{"aws.ecr-repository", "container-repository", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"registryHost"}, nil, ""},
+	{"aws.egress-proxy", "egress-proxy", "network", nil, "", "replaceable", "per-app", "AmazonEC2", nil, nil, ""},
+	{"aws.iam-oidc-provider", "oidc-provider", "identity-and-access", nil, "", "replaceable", "org-wide", "", []string{"oidcProviderArn"}, nil, ""},
+	{"aws.iam-role", "iam-role", "identity-and-access", nil, "", "replaceable", "per-app", "", []string{"roleArn"}, nil, ""},
+	{"aws.route53-record", "app-address", "network", nil, "", "replaceable", "per-app", "", []string{"appHostname", "appUrl"}, nil, ""},
+	{"aws.security-group", "firewall", "network", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"aws.ssm-association", "host-configuration", "compute", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"aws.ssm-parameter", "secret", "secrets", nil, "", "stateful", "per-app", "", nil, nil, ""},
+	{"aws.vllm-instance", "llm-endpoint", "ai-model", nil, "", "replaceable", "per-app", "AmazonEC2", []string{"llmEndpoint", "model"}, nil, ""},
+	{"aws.vpc", "network", "network", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"crossplane.reconcile-claim", "reconcile-claim", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"claim", "driftPolicy", "driftedResources", "reconciledResources"}, nil, ""},
+	{"github.actions-secret", "secret", "secrets", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"github.actions-variable", "ci-variable", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"github.commit", "source-revision", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"sourceBranch", "sourceSha"}, nil, ""},
+	{"github.container-image", "container-image", "artifact-registry", []string{"any-container"}, "container-image", "replaceable", "per-app", "", []string{"imageRepo"}, nil, ""},
+	{"github.pull-request", "change-request", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"pullRequestUrl"}, nil, ""},
+	{"github.repository", "git-repository", "source-and-work", nil, "", "stateful", "per-app", "", []string{"repo"}, nil, ""},
+	{"github.repository-webhook", "webhook", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"github.runner-group", "runner-group", "build-and-delivery", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"github.scaffold-contribution", "scaffold-contribution", "source-and-work", nil, "", "replaceable", "per-app", "", []string{"scaffoldContribution"}, nil, ""},
+	{"github.self-hosted-runner", "ci-runner", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"awsCredential", "runnerLabel", "runsOn"}, nil, ""},
+	{"github.workflow-file", "ci-workflow", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"ciCheckContribution", "workflowPath", "workflowUrl"}, nil, ""},
+	{"hetzner.firewall", "firewall", "network", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"hetzner.k3s-cluster", "kubernetes-cluster", "compute", nil, "", "replaceable", "org-wide", "HetznerCloud", []string{"apiEndpoint", "caCertificate", "clusterCredential", "cloud.region", "issuerUrl", "privateEndpoint"}, nil, "kubernetes"},
+	{"hetzner.primary-ip", "ip-address", "network", nil, "", "replaceable", "per-app", "", []string{"publicIp"}, nil, ""},
+	{"hetzner.server", "host", "compute", []string{"any-container"}, "", "replaceable", "per-app", "HetznerCloud", []string{"cloud.region", "execKind", "execTarget", "host.type", "hostId"}, nil, ""},
+	{"hetzner.ssh-key", "ssh-key", "identity-and-access", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"hetzner.volume", "block-volume", "storage", nil, "", "stateful", "per-app", "", []string{"dataSnapshotId"}, nil, ""},
+	{"host.configuration", "host-configuration", "compute", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"host.container", "container", "compute", []string{"any-container"}, "", "replaceable", "per-app", "", []string{"url"}, nil, ""},
+	{"host.postgres-database", "postgres-database", "database", nil, "", "stateful", "per-app", "", []string{"dbName", "host", "password", "port", "username"}, nil, ""},
+	{"plain.api-token", "api-token", "identity-and-access", nil, "", "replaceable", "per-app", "", nil, nil, ""},
+	{"ubicloud.runner", "ci-runner", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"runsOn"}, []string{"github"}, ""},
 }
 
 // sortedCopy returns s sorted, as a non-nil list, so two lists compare as sets.
@@ -845,8 +717,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 49 {
-		t.Fatalf("catalogueTable has %d rows, want 49", len(catalogueTable))
+	if len(catalogueTable) != 36 {
+		t.Fatalf("catalogueTable has %d rows, want 36", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))
@@ -859,9 +731,6 @@ func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
 			}
 			if rt.Kind != row.kind {
 				t.Errorf("Kind = %q, want %q", rt.Kind, row.kind)
-			}
-			if rt.Capability != row.capability {
-				t.Errorf("Capability = %q, want %q", rt.Capability, row.capability)
 			}
 			if rt.Category != row.category {
 				t.Errorf("Category = %q, want %q", rt.Category, row.category)
@@ -883,6 +752,12 @@ func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
 			}
 			if got, want := sortedCopy(rt.Outputs), sortedCopy(row.outputs); !reflect.DeepEqual(got, want) {
 				t.Errorf("Outputs = %q, want %q", rt.Outputs, want)
+			}
+			if got, want := sortedCopy(rt.ReliesOn), sortedCopy(row.reliesOn); !reflect.DeepEqual(got, want) {
+				t.Errorf("ReliesOn = %q, want %q", rt.ReliesOn, want)
+			}
+			if rt.Hosts != row.hosts {
+				t.Errorf("Hosts = %q, want %q", rt.Hosts, row.hosts)
 			}
 		})
 	}

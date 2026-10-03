@@ -22,7 +22,7 @@ func validBlockSteps() contract.BlockSteps {
 	return contract.BlockSteps{
 		Params: []string{"appName"},
 		Requires: []contract.ResourceRequirement{
-			{Resource: "image", Kind: "container-image", Reads: []string{"artifact"}},
+			{Resource: "image", Kind: "container-image", Reads: []string{"imageRepo"}},
 			{Resource: "workflows", Type: "github.workflow-file", Many: true},
 		},
 		Steps: []contract.Step{
@@ -30,8 +30,8 @@ func validBlockSteps() contract.BlockSteps {
 				Inputs: map[string]string{"name": "params.appName"}},
 			{ID: "build-image", Type: "aws.ecr-image", Ownership: contract.OwnershipCreated,
 				Inputs: map[string]string{
-					"registry": "steps.registry.outputs.ecrRegistry",
-					"base":     "requires.image.outputs.artifact",
+					"registry": "steps.registry.outputs.registryHost",
+					"base":     "requires.image.outputs.imageRepo",
 				}},
 		},
 		Offers: []contract.Offer{{Step: "build-image"}},
@@ -67,7 +67,7 @@ func TestValidateBlockSteps_RefusesEachDefectNamingWhatItIsAbout(t *testing.T) {
 		}, []string{`step "registry"`, "ownership", `"borrowed"`}},
 		{"step with an empty id", func(b *contract.BlockSteps) {
 			b.Steps[0].ID = ""
-			b.Steps[1].Inputs = map[string]string{"base": "requires.image.outputs.artifact"}
+			b.Steps[1].Inputs = map[string]string{"base": "requires.image.outputs.imageRepo"}
 		}, []string{"step at index 0", "id"}},
 		{"duplicate step id", func(b *contract.BlockSteps) {
 			b.Steps[1].ID = "registry"
@@ -81,10 +81,10 @@ func TestValidateBlockSteps_RefusesEachDefectNamingWhatItIsAbout(t *testing.T) {
 			b.Steps[0].Inputs = map[string]string{"name": "params.region"}
 		}, []string{`step "registry"`, `input "name"`, `param "region"`}},
 		{"binding to a later step", func(b *contract.BlockSteps) {
-			b.Steps[0].Inputs = map[string]string{"name": "steps.build-image.outputs.artifact"}
+			b.Steps[0].Inputs = map[string]string{"name": "steps.build-image.outputs.imageRepo"}
 		}, []string{`step "registry"`, `input "name"`, `"build-image"`, "earlier step"}},
 		{"binding to the step itself", func(b *contract.BlockSteps) {
-			b.Steps[0].Inputs = map[string]string{"name": "steps.registry.outputs.ecrRegistry"}
+			b.Steps[0].Inputs = map[string]string{"name": "steps.registry.outputs.registryHost"}
 		}, []string{`step "registry"`, `input "name"`, `"registry"`, "earlier step"}},
 		{"binding to an output the earlier step's type lacks", func(b *contract.BlockSteps) {
 			b.Steps[1].Inputs = map[string]string{"registry": "steps.registry.outputs.imageRepo"}
@@ -93,8 +93,8 @@ func TestValidateBlockSteps_RefusesEachDefectNamingWhatItIsAbout(t *testing.T) {
 			b.Steps[1].Inputs = map[string]string{"base": "requires.runner.outputs.runsOn"}
 		}, []string{`step "build-image"`, `input "base"`, `requirement "runner"`}},
 		{"binding to an output missing from the requirement's reads", func(b *contract.BlockSteps) {
-			b.Steps[1].Inputs = map[string]string{"base": "requires.image.outputs.imageRepo"}
-		}, []string{`step "build-image"`, `input "base"`, `"imageRepo"`, "reads"}},
+			b.Steps[1].Inputs = map[string]string{"base": "requires.image.outputs.registryHost"}
+		}, []string{`step "build-image"`, `input "base"`, `"registryHost"`, "reads"}},
 		{"requirement with neither kind nor type", func(b *contract.BlockSteps) {
 			b.Requires[0].Kind = ""
 		}, []string{`requirement "image"`, "neither", "kind", "type"}},
@@ -120,12 +120,12 @@ func TestValidateBlockSteps_RefusesEachDefectNamingWhatItIsAbout(t *testing.T) {
 			b.Steps[1].Inputs = nil
 		}, []string{`requirement "image"`, `"runsOn"`, `kind "container-image"`}},
 		{"kind requirement whose reads no single type of the kind outputs", func(b *contract.BlockSteps) {
-			// aws.ec2-instance outputs publicIp but not cloud.region, and
-			// hetzner.server the reverse, so no host type meets both reads.
+			// Every host type outputs publicIp or cloud.region, but none
+			// outputs dbName, so no host type meets all three reads.
 			b.Requires[0].Kind = "host"
-			b.Requires[0].Reads = []string{"publicIp", "cloud.region"}
+			b.Requires[0].Reads = []string{"publicIp", "cloud.region", "dbName"}
 			b.Steps[1].Inputs = nil
-		}, []string{`requirement "image"`, `kind "host"`, `"publicIp"`, `"cloud.region"`}},
+		}, []string{`requirement "image"`, `kind "host"`, `"dbName"`}},
 		{"binding to a many-provider requirement", func(b *contract.BlockSteps) {
 			b.Requires[1].Reads = []string{"workflowPath"}
 			b.Steps[1].Inputs = map[string]string{"path": "requires.workflows.outputs.workflowPath"}
@@ -173,14 +173,14 @@ func TestValidateBlockSteps_ReportsEveryDefectNotOnlyTheFirst(t *testing.T) {
 }
 
 func TestResourceRequirement_KindMatchesEveryTypeOfThatKindThatOutputsTheReads(t *testing.T) {
-	req := contract.ResourceRequirement{Resource: "image", Kind: "container-image", Reads: []string{"artifact"}}
+	req := contract.ResourceRequirement{Resource: "image", Kind: "container-image", Reads: []string{"imageRepo"}}
 	for _, id := range []string{"aws.ecr-image", "github.container-image"} {
 		typ, ok := contract.LookupResourceType(id)
 		if !ok {
 			t.Fatalf("%s is not catalogued", id)
 		}
 		if !req.Matches(typ) {
-			t.Errorf("kind container-image reading artifact does not match %s", id)
+			t.Errorf("kind container-image reading imageRepo does not match %s", id)
 		}
 	}
 }
@@ -199,7 +199,7 @@ func TestResourceRequirement_KindRefusesAnotherKindAndAMissingRead(t *testing.T)
 }
 
 func TestResourceRequirement_NarrowedToATypeRefusesEveryOtherType(t *testing.T) {
-	req := contract.ResourceRequirement{Resource: "image", Type: "aws.ecr-image", Reads: []string{"artifact"}}
+	req := contract.ResourceRequirement{Resource: "image", Type: "aws.ecr-image", Reads: []string{"imageRepo"}}
 	ecr, _ := contract.LookupResourceType("aws.ecr-image")
 	ghcr, ok := contract.LookupResourceType("github.container-image")
 	if !ok {
@@ -218,14 +218,12 @@ func TestResourceTypes_GitHubContainerImageIsTheGHCRType(t *testing.T) {
 	if !ok {
 		t.Fatal("github.container-image is not catalogued")
 	}
-	want := contract.ResourceType{
-		ID: "github.container-image", Kind: "container-image", Capability: "github",
-		Category: "artifact-registry", Languages: []string{"any-container"},
-		ArtifactType: "container-image", Lifecycle: "replaceable", Scope: "per-app",
-		Outputs: []string{"artifact", "imageRepo"},
+	if got.Kind != "container-image" || got.Place() != "github" || got.Category != "artifact-registry" ||
+		got.ArtifactType != "container-image" || got.Lifecycle != "replaceable" || got.Scope != "per-app" || got.Priced {
+		t.Errorf("github.container-image = %+v, want an unpriced replaceable per-app container-image in github's artifact-registry", got)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("github.container-image = %+v, want %+v", got, want)
+	if !reflect.DeepEqual(got.Languages, []string{"any-container"}) || !reflect.DeepEqual(got.Outputs, []string{"imageRepo"}) {
+		t.Errorf("github.container-image languages %q, outputs %q; want [any-container], [imageRepo]", got.Languages, got.Outputs)
 	}
 }
 
