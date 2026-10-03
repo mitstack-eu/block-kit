@@ -77,22 +77,22 @@ func TestLookupResource_LocationAndServerTypeResolveToNothing(t *testing.T) {
 func TestResources_CloudRegionAndHostTypeAreUnchanged(t *testing.T) {
 	want := []contract.ResourceEntry{
 		{
-			Name:         "cloud.region",
-			Kind:         "Host & network",
-			Meaning:      "The cloud region the app runs in.",
-			Shape:        "cloud region code",
-			Example:      "eu-central-1",
-			Secret:       false,
-			Aliases:      []string{"region"},
+			Name:    "cloud.region",
+			Kind:    "Host & network",
+			Meaning: "The cloud region the app runs in.",
+			Shape:   "cloud region code",
+			Example: "eu-central-1",
+			Secret:  false,
+			Aliases: []string{"region"},
 		},
 		{
-			Name:         "host.type",
-			Kind:         "Host & network",
-			Meaning:      "The machine type the app runs on.",
-			Shape:        "cloud instance type",
-			Example:      "t3.small",
-			Secret:       false,
-			Aliases:      []string{"instanceType"},
+			Name:    "host.type",
+			Kind:    "Host & network",
+			Meaning: "The machine type the app runs on.",
+			Shape:   "cloud instance type",
+			Example: "t3.small",
+			Secret:  false,
+			Aliases: []string{"instanceType"},
 		},
 	}
 	for _, w := range want {
