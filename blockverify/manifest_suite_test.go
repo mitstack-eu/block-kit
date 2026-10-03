@@ -574,6 +574,22 @@ func TestManifestSuite_PassesAnOldFormManifestWithDependsOnAndProvidedSlugs(t *t
 	requireManifestPass(t, manifestSuite(manifestDir(t, manifestHead+spec), ""))
 }
 
+// A manifest carrying the retired spec.dependsOn still passes, and the
+// suite prints the parser's warning, naming spec.dependsOn.
+func TestManifestSuite_PassesAManifestWithDependsOnAndPrintsItsWarning(t *testing.T) {
+	spec := `  dependsOn:
+    - weather-app
+  requires:
+    - capability: repo
+      reads: [repo]
+`
+	got := manifestSuite(manifestDir(t, manifestHead+spec), "")
+	requireManifestPass(t, got)
+	if !strings.Contains(got.Detail, "spec.dependsOn") {
+		t.Errorf("manifest detail = %q, want it to print the warning naming %q", got.Detail, "spec.dependsOn")
+	}
+}
+
 // --- a manifest the reader cannot follow ----------------------------------
 
 func TestManifestSuite_AManifestTheReaderCannotFollowIsAFailure(t *testing.T) {
