@@ -758,6 +758,40 @@ func TestParseManifest_V1AlphaIntegerFieldsTakeIntegersOnly(t *testing.T) {
 	})
 }
 
+// An integer field reads a plain number as the platform's decoder does for a
+// typed int: a float is truncated toward zero, and an integer may be written
+// in hexadecimal, in octal, with underscores or with a plus sign. A quoted
+// number, a boolean and a mapping are refused, naming the path.
+func TestParseManifest_V1AlphaIntegerFieldsReadNumbersAsTheirInteger(t *testing.T) {
+	verify := func(status string) string {
+		return "  requires:\n    - capability: github\n      verify:\n        urlTemplate: https://api.example.test/user\n" +
+			"        expectStatus: [" + status + "]\n"
+	}
+	for _, tc := range []struct {
+		written string
+		want    int
+	}{
+		{"200.0", 200},
+		{"200.9", 200},
+		{"0x10", 16},
+		{"0o17", 15},
+		{"1_000", 1000},
+		{"+200", 200},
+	} {
+		t.Run("reads "+tc.written, func(t *testing.T) {
+			a := alphaSpec(t, verify(tc.written))
+			requireLen(t, "spec.requires", a.Spec.Requires, 1)
+			requirePresent(t, "spec.requires[0].verify", a.Spec.Requires[0].Verify)
+			wantField(t, "spec.requires[0].verify.expectStatus", a.Spec.Requires[0].Verify.ExpectStatus, []int{tc.want})
+		})
+	}
+	for _, written := range []string{`"200"`, "true", "{code: 200}"} {
+		t.Run("refuses "+written, func(t *testing.T) {
+			requireRefusedNaming(t, []byte(alphaHead+verify(written)), "spec.requires[0].verify.expectStatus[0]")
+		})
+	}
+}
+
 // A mapping or a list where a scalar is declared, a scalar or a mapping
 // where a list is declared, and a list where a mapping is declared are each
 // refused naming the path.
