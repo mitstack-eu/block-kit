@@ -3,6 +3,7 @@ package contract
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 )
 
@@ -14,11 +15,27 @@ var blockManifestType = reflect.TypeOf(BlockManifest{})
 // a struct of fields.
 var inputValueType = reflect.TypeOf(InputValue{})
 
+// The YAML 1.2 core schema reads a plain scalar matching one of these as a
+// null, a boolean or a number rather than as a string.
+var (
+	plainNull    = regexp.MustCompile(`^(null|Null|NULL|~)$`)
+	plainBoolean = regexp.MustCompile(`^(true|True|TRUE|false|False|FALSE)$`)
+	plainNumber  = regexp.MustCompile(`^([-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+|` +
+		`[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN))$`)
+)
+
+// isNull reports whether YAML reads n as a null.
+func isNull(n *yamlNode) bool {
+	return n.kind == yamlNull || n.kind == yamlScalar && !n.str && plainNull.MatchString(n.value)
+}
+
 // manifestField is one field of a manifest struct as its json tag names it.
 type manifestField struct {
 	name  string
 	index int
-	// required is a field whose tag has no omitempty.
+	// required is a field whose tag has no omitempty. A required field must
+	// be present and, for a string or a list, not empty; the schema says so
+	// with minLength and minItems.
 	required bool
 	// oneOrList is a list field that also takes a single value, as a
 	// requirement's in takes one capability or a list of them.
@@ -98,10 +115,21 @@ func readable(n *yamlNode, path string) error {
 	return nil
 }
 
-// decodeValue reads n into v, which n must not be null for.
+// noValue refuses a null, which the schema allows nowhere: a key is left
+// out or given a value.
+func noValue(path string) error {
+	return fmt.Errorf("%s has no value, so leave it out or give it one", describe(path))
+}
+
+// decodeValue reads n into v. A null is refused, and so is a plain scalar
+// YAML reads as a number or a boolean where v takes a string; quoting it
+// makes it a string.
 func decodeValue(n *yamlNode, v reflect.Value, path string) error {
 	if err := readable(n, path); err != nil {
 		return err
+	}
+	if isNull(n) {
+		return noValue(path)
 	}
 	if v.Type() == inputValueType {
 		in, err := decodeInput(n, path)
@@ -113,9 +141,12 @@ func decodeValue(n *yamlNode, v reflect.Value, path string) error {
 		if n.kind != yamlScalar {
 			return fmt.Errorf("%s must be one value, not a mapping or a list", path)
 		}
+		if !n.str && (plainBoolean.MatchString(n.value) || plainNumber.MatchString(n.value)) {
+			return fmt.Errorf("%s is %s, which YAML reads as a number or a boolean, but it takes a string, so quote it", path, n.value)
+		}
 		v.SetString(n.value)
 	case reflect.Bool:
-		if n.kind != yamlScalar || n.quoted || n.value != "true" && n.value != "false" {
+		if n.kind != yamlScalar || n.str || n.value != "true" && n.value != "false" {
 			return fmt.Errorf("%s takes true or false only", path)
 		}
 		v.SetBool(n.value == "true")
@@ -152,9 +183,6 @@ func decodeList(n *yamlNode, v reflect.Value, path string, oneOrList bool) error
 	list := reflect.MakeSlice(v.Type(), len(n.items), len(n.items))
 	for i, item := range n.items {
 		itemPath := fmt.Sprintf("%s[%d]", path, i)
-		if item.kind == yamlNull {
-			return fmt.Errorf("%s has no value", itemPath)
-		}
 		if err := decodeValue(item, list.Index(i), itemPath); err != nil {
 			return err
 		}
@@ -182,8 +210,7 @@ func mapEntries(n *yamlNode, path string) error {
 	return nil
 }
 
-// decodeMap reads the mapping n into the map v. A key with no value is
-// refused, since a mapping's entries each hold one.
+// decodeMap reads the mapping n into the map v.
 func decodeMap(n *yamlNode, v reflect.Value, path string) error {
 	if err := mapEntries(n, path); err != nil {
 		return err
@@ -191,9 +218,6 @@ func decodeMap(n *yamlNode, v reflect.Value, path string) error {
 	m := reflect.MakeMapWithSize(v.Type(), len(n.keys))
 	for i, key := range n.keys {
 		keyPath := fieldPath(path, key)
-		if n.vals[i].kind == yamlNull {
-			return fmt.Errorf("%s has no value", keyPath)
-		}
 		elem := reflect.New(v.Type().Elem()).Elem()
 		if err := decodeValue(n.vals[i], elem, keyPath); err != nil {
 			return err
@@ -204,8 +228,8 @@ func decodeMap(n *yamlNode, v reflect.Value, path string) error {
 	return nil
 }
 
-// decodeInput reads one resource input: a scalar, or a mapping of named
-// inputs.
+// decodeInput reads one resource input: a scalar, which may be a number or
+// a boolean, or a mapping of named inputs.
 func decodeInput(n *yamlNode, path string) (InputValue, error) {
 	switch n.kind {
 	case yamlScalar:
@@ -219,8 +243,8 @@ func decodeInput(n *yamlNode, path string) (InputValue, error) {
 }
 
 // decodeStruct reads the mapping n into the struct v by its json tags. A
-// key no field names is refused, and so is a required field that is absent,
-// null or, for a string, empty.
+// key no field names is refused, and so is a required field that is absent
+// or, for a string or a list, empty.
 func decodeStruct(n *yamlNode, v reflect.Value, path string) error {
 	if err := mapEntries(n, path); err != nil {
 		return err
@@ -238,13 +262,13 @@ func decodeStruct(n *yamlNode, v reflect.Value, path string) error {
 			return fmt.Errorf("%s is not a field of a %s manifest", keyPath, ManifestAPIVersion)
 		}
 		val := n.vals[i]
-		if val.kind == yamlNull {
-			continue
-		}
 		var err error
-		if f.oneOrList {
+		switch {
+		case f.oneOrList && isNull(val):
+			err = noValue(keyPath)
+		case f.oneOrList:
 			err = decodeList(val, v.Field(f.index), keyPath, true)
-		} else {
+		default:
 			err = decodeValue(val, v.Field(f.index), keyPath)
 		}
 		if err != nil {
@@ -253,9 +277,15 @@ func decodeStruct(n *yamlNode, v reflect.Value, path string) error {
 		present[key] = true
 	}
 	for _, f := range fields {
+		if !f.required {
+			continue
+		}
 		fv := v.Field(f.index)
-		if f.required && (!present[f.name] || fv.Kind() == reflect.String && fv.String() == "") {
+		switch {
+		case !present[f.name]:
 			return fmt.Errorf("%s is required", fieldPath(path, f.name))
+		case (fv.Kind() == reflect.String || fv.Kind() == reflect.Slice) && fv.Len() == 0:
+			return fmt.Errorf("%s is required and must not be empty", fieldPath(path, f.name))
 		}
 	}
 	return nil

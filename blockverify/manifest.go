@@ -123,8 +123,10 @@ func readProblem(capability, name string) string {
 // It returns a note for the pass detail, or a problem when the version
 // changed without a release class or note. No base path, or a base path
 // that does not exist (a block new on this branch), compares nothing. A
-// base that is present but cannot be read or parsed is an error, never an
-// absence.
+// base that is present but cannot be read is an error, never an absence. A
+// base contract.ParseManifest refuses leaves its version unknown, so m
+// needs a release class and note as for a changed version, and a pull
+// request that fixes the base is not held back by it.
 func compareVersion(m contract.Manifest, base string) (note, problem string, err error) {
 	if base == "" {
 		return "no --base-manifest given, so spec.version was not compared", "", nil
@@ -136,15 +138,30 @@ func compareVersion(m contract.Manifest, base string) (note, problem string, err
 	if err != nil {
 		return "", "", fmt.Errorf("base manifest %s is present but could not be read, so spec.version was not compared: %v", base, err)
 	}
-	parsed, err := contract.ParseManifest(raw)
-	if err != nil {
-		return "", "", fmt.Errorf("base manifest %s: %v", base, err)
+	version := m.Version()
+	missing := missingRelease(m)
+	parsed, parseErr := contract.ParseManifest(raw)
+	if parseErr != nil {
+		unknown := fmt.Sprintf("base manifest %s could not be parsed (%v), so its spec.version is unknown", base, parseErr)
+		if len(missing) > 0 {
+			return "", fmt.Sprintf("%s and spec.version %q needs %s", unknown, version, strings.Join(missing, " and ")), nil
+		}
+		return unknown + "; spec.version " + version + " carries a release class and note", "", nil
 	}
-	baseVersion, version := parsed.Version(), m.Version()
+	baseVersion := parsed.Version()
 	if baseVersion == version {
 		return fmt.Sprintf("spec.version %s is unchanged from the base manifest", version), "", nil
 	}
+	if len(missing) > 0 {
+		return "", fmt.Sprintf("spec.version changed from %q in the base manifest to %q, which needs %s",
+			baseVersion, version, strings.Join(missing, " and ")), nil
+	}
+	return fmt.Sprintf("spec.version changed from %s to %s with a release class and note", baseVersion, version), "", nil
+}
 
+// missingRelease names the release fields m lacks of spec.releaseClass and
+// spec.releaseNote.
+func missingRelease(m contract.Manifest) []string {
 	var missing []string
 	if m.ReleaseClass() == "" {
 		missing = append(missing, "spec.releaseClass")
@@ -152,9 +169,5 @@ func compareVersion(m contract.Manifest, base string) (note, problem string, err
 	if m.ReleaseNote() == "" {
 		missing = append(missing, "spec.releaseNote")
 	}
-	if len(missing) > 0 {
-		return "", fmt.Sprintf("spec.version changed from %q in the base manifest to %q, which needs %s",
-			baseVersion, version, strings.Join(missing, " and ")), nil
-	}
-	return fmt.Sprintf("spec.version changed from %s to %s with a release class and note", baseVersion, version), "", nil
+	return missing
 }

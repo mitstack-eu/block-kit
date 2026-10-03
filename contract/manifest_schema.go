@@ -25,10 +25,10 @@ const inputValueRef = "#/$defs/inputValue"
 // GenerateManifestSchema builds the JSON Schema for a block manifest under
 // ManifestAPIVersion by reflection over BlockManifest's types and json
 // tags. Every object is closed, a field whose tag has no omitempty is
-// required, and a required string must not be empty, as ParseManifest
-// holds a manifest. A requirement's in is one string or a list of strings,
-// and a resource input is a scalar or an object of inputs. The output ends
-// in a line break and is the same on every call.
+// required, and a required string or list must not be empty, as
+// ParseManifest holds a manifest. A requirement's in is one string or a
+// list of strings, and a resource input is a scalar or an object of inputs.
+// The output ends in a line break and is the same on every call.
 func GenerateManifestSchema() ([]byte, error) {
 	doc, err := typeSchema(blockManifestType, false)
 	if err != nil {
@@ -65,7 +65,7 @@ func GenerateManifestSchema() ([]byte, error) {
 }
 
 // typeSchema returns the schema for a value of Go type t. required marks a
-// string that must not be empty.
+// string or a list that must not be empty.
 func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 	if t == inputValueType {
 		return map[string]any{"$ref": inputValueRef}, nil
@@ -86,7 +86,11 @@ func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"type": "array", "items": items}, nil
+		s := map[string]any{"type": "array", "items": items}
+		if required {
+			s["minItems"] = 1
+		}
+		return s, nil
 	case reflect.Map:
 		values, err := typeSchema(t.Elem(), false)
 		if err != nil {

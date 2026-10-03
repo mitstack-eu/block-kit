@@ -30,9 +30,10 @@ type yamlNode struct {
 	// flow marks a mapping or sequence written in flow style, as in
 	// {a: b} or [a, b].
 	flow bool
-	// quoted marks a scalar written in quotes, which YAML never reads as
-	// a boolean.
-	quoted bool
+	// str marks a scalar written in quotes or as a block scalar, which YAML
+	// reads as a string whatever its text, never as a null, a number or a
+	// boolean.
+	str bool
 	// misplaced marks a mapping holding a line that is neither a key of it
 	// nor inside one of its values.
 	misplaced bool
@@ -210,7 +211,7 @@ func (r *yamlReader) inline(text string, owner int) *yamlNode {
 		if err != nil {
 			return &yamlNode{kind: yamlOpaque}
 		}
-		return &yamlNode{kind: yamlScalar, value: v, quoted: true}
+		return &yamlNode{kind: yamlScalar, value: v, str: true}
 	}
 	return r.plainScalar(text, owner)
 }
@@ -300,7 +301,7 @@ func (r *yamlReader) blockScalar(header string, owner int) *yamlNode {
 			value += strings.Repeat("\n", trailing+1)
 		}
 	}
-	return &yamlNode{kind: yamlScalar, value: value}
+	return &yamlNode{kind: yamlScalar, value: value, str: true}
 }
 
 // foldLines joins the lines of a folded block scalar: a break between two
@@ -481,7 +482,7 @@ func (p *flowParser) quoted() *yamlNode {
 		p.failed = true
 		return &yamlNode{kind: yamlOpaque}
 	}
-	return &yamlNode{kind: yamlScalar, value: v, quoted: true}
+	return &yamlNode{kind: yamlScalar, value: v, str: true}
 }
 
 // sequence reads "[a, b]" at the cursor.

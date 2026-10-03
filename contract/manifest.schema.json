@@ -71,6 +71,7 @@
               "items": {
                 "type": "string"
               },
+              "minItems": 1,
               "type": "array"
             }
           },
@@ -144,6 +145,7 @@
                       ],
                       "type": "object"
                     },
+                    "minItems": 1,
                     "type": "array"
                   }
                 },
@@ -265,6 +267,7 @@
             ],
             "type": "object"
           },
+          "minItems": 1,
           "type": "array"
         },
         "version": {

@@ -115,8 +115,9 @@
 // # The manifest suite
 //
 // The manifest suite reads the target's manifest.yaml, and the base's, through
-// contract.ParseManifest, the kit's one manifest parser. An apiVersion other
-// than mitstack/v1alpha or mitstack/v1beta, or none, fails. A mitstack/v1beta
+// contract.ParseManifest, the kit's one manifest parser. A target the parser
+// refuses fails with its reason, as one whose apiVersion is other than
+// mitstack/v1alpha or mitstack/v1beta, or missing, does. A mitstack/v1beta
 // manifest is read strictly, so a key its types do not name fails, and it
 // declares no outputs or reads for the registry to resolve. Of a
 // mitstack/v1alpha manifest the suite reads four things and nothing else, so a
@@ -141,7 +142,12 @@
 //     needs spec.releaseClass and a non-blank spec.releaseNote. The class
 //     value is not checked here; the platform validates it at apply. A base
 //     path that does not exist is a block new on this branch, and no version
-//     is compared. A base that is present but cannot be read fails.
+//     is compared. A base that is present but cannot be read fails. A base
+//     the parser refuses leaves its version unknown, so the target needs
+//     spec.releaseClass and spec.releaseNote as for a changed version, and
+//     a failure names the base and the parser's reason. A pull request that
+//     fixes a broken base manifest therefore passes once it carries a
+//     release class and note.
 //
 // The same keys nested anywhere else, under another spec field or inside a
 // block scalar, are not read. A manifest.yaml that is present but cannot be
