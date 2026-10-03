@@ -172,7 +172,7 @@ func TestWorkflow_PRKeyGatePinsCheckoutToTheSameSHAAsTest(t *testing.T) {
 	}
 	gotSHA := firstUsesSHA(job, "actions/checkout")
 	if gotSHA == "" {
-		t.Fatalf("%s job has no actions/checkout step at all", prKeyGateJob)
+		t.Fatalf("%s job never uses actions/checkout", prKeyGateJob)
 	}
 	if gotSHA != wantSHA {
 		t.Errorf("%s job pins actions/checkout@%s, want the same sha the test job pins (%s)", prKeyGateJob, gotSHA, wantSHA)
@@ -189,7 +189,7 @@ func TestWorkflow_PRKeyGatePinsSetupGoToTheSameSHAAsTest(t *testing.T) {
 	}
 	gotSHA := firstUsesSHA(job, "actions/setup-go")
 	if gotSHA == "" {
-		t.Fatalf("%s job has no actions/setup-go step at all", prKeyGateJob)
+		t.Fatalf("%s job never uses actions/setup-go", prKeyGateJob)
 	}
 	if gotSHA != wantSHA {
 		t.Errorf("%s job pins actions/setup-go@%s, want the same sha the test job pins (%s)", prKeyGateJob, gotSHA, wantSHA)

@@ -155,7 +155,7 @@ func TestWorkflow_RecordDeliveryPinsCheckoutToTheSameSHAAsTest(t *testing.T) {
 	}
 	gotSHA := firstUsesSHA(job, "actions/checkout")
 	if gotSHA == "" {
-		t.Fatalf("%s job has no actions/checkout step at all", recordDeliveryJob)
+		t.Fatalf("%s job never uses actions/checkout", recordDeliveryJob)
 	}
 	if gotSHA != wantSHA {
 		t.Errorf("%s job pins actions/checkout@%s, want the same sha the test job pins (%s)", recordDeliveryJob, gotSHA, wantSHA)
@@ -172,7 +172,7 @@ func TestWorkflow_RecordDeliveryPinsSetupGoToTheSameSHAAsTest(t *testing.T) {
 	}
 	gotSHA := firstUsesSHA(job, "actions/setup-go")
 	if gotSHA == "" {
-		t.Fatalf("%s job has no actions/setup-go step at all", recordDeliveryJob)
+		t.Fatalf("%s job never uses actions/setup-go", recordDeliveryJob)
 	}
 	if gotSHA != wantSHA {
 		t.Errorf("%s job pins actions/setup-go@%s, want the same sha the test job pins (%s)", recordDeliveryJob, gotSHA, wantSHA)

@@ -55,7 +55,7 @@ func (r *testRepo) commit(t *testing.T, subject, body string) string {
 }
 
 // runPRKeys invokes Run with --repo/--base/--head/--title exactly as the
-// workflow step will set them.
+// workflow job will set them.
 func runPRKeys(t *testing.T, repoDir, base, head, title string) (stdout string, exitCode int) {
 	t.Helper()
 	args := []string{"--repo", repoDir, "--base", base, "--head", head, "--title", title}
@@ -141,7 +141,7 @@ func TestRun_MissingBaseFlag_ExitsTwo(t *testing.T) {
 }
 
 // TestRun_TitleFallsBackToEnvWhenFlagOmitted pins that the title can arrive
-// through PR_TITLE, not only through --title, since the workflow step reads
+// through PR_TITLE, not only through --title, since the workflow job reads
 // it from the pull_request event either way.
 func TestRun_TitleFallsBackToEnvWhenFlagOmitted(t *testing.T) {
 	repo := newTestRepo(t)

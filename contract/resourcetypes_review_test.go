@@ -100,30 +100,31 @@ func TestResourceTypes_ReviewAddsTheScaffoldContributionAndLLMEndpointAndAnAppAd
 }
 
 // Each former extension point or capability-only requirement ADR 0079 lists
-// is met by a catalogued type living in one place. A requirement narrowed to
-// a type names it; one matched by kind names the kind and the outputs the
-// requiring manifests read, and the test names the type expected to meet it.
-// The deployment requirement has no case: a CD registration is its
-// operator's bookkeeping, and no type meets it.
+// is met by a catalogued type living in one place: the test names the type
+// expected to meet it, the kind a requiring manifest asks for, and the
+// outputs it reads, which that type publishes. The deployment requirement has
+// no case: a CD registration is its operator's bookkeeping, and no type meets
+// it.
 func TestResourceTypes_EveryADR0079RequirementHasACataloguedType(t *testing.T) {
 	cases := []struct {
 		requirement string
-		req         contract.ResourceRequirement
+		kind        string
+		reads       []string
 		meetingType string
 		place       string
 	}{
-		{"scaffold-contribution", contract.ResourceRequirement{Resource: "contributions", Type: "github.scaffold-contribution", Many: true}, "github.scaffold-contribution", "github"},
-		{"ci-check", contract.ResourceRequirement{Resource: "checks", Type: "github.workflow-file", Reads: []string{"ciCheckContribution"}, Many: true}, "github.workflow-file", "github"},
-		{"runner", contract.ResourceRequirement{Resource: "runner", Kind: "ci-runner", Reads: []string{"runnerLabel", "runsOn", "awsCredential"}}, "github.self-hosted-runner", "github"},
-		{"runner from ubicloud", contract.ResourceRequirement{Resource: "runner", Kind: "ci-runner", Reads: []string{"runsOn"}}, "ubicloud.runner", "ubicloud"},
-		{"plain", contract.ResourceRequirement{Resource: "token", Type: "plain.api-token"}, "plain.api-token", "plain"},
-		{"llm", contract.ResourceRequirement{Resource: "llm", Kind: "llm-endpoint", Reads: []string{"llmEndpoint"}}, "aws.vllm-instance", "aws"},
-		{"host container", contract.ResourceRequirement{Resource: "container", Kind: "container"}, "host.container", "host"},
-		{"aws-topology", contract.ResourceRequirement{Resource: "address", Kind: "app-address", Reads: []string{"appUrl"}}, "aws.route53-record", "aws"},
-		{"aws-iam", contract.ResourceRequirement{Resource: "role", Kind: "iam-role", Reads: []string{"roleArn"}}, "aws.iam-role", "aws"},
-		{"database", contract.ResourceRequirement{Resource: "database", Kind: "postgres-database", Reads: []string{"host", "port", "dbName", "username", "password"}}, "host.postgres-database", "host"},
-		{"generated-source", contract.ResourceRequirement{Resource: "source", Kind: "source-revision", Reads: []string{"sourceBranch", "sourceSha"}}, "github.commit", "github"},
-		{"kubernetes cluster", contract.ResourceRequirement{Resource: "cluster", Kind: "kubernetes-cluster", Reads: []string{"apiEndpoint", "caCertificate", "clusterCredential"}}, "hetzner.k3s-cluster", "hetzner"},
+		{"scaffold-contribution", "scaffold-contribution", nil, "github.scaffold-contribution", "github"},
+		{"ci-check", "ci-workflow", []string{"ciCheckContribution"}, "github.workflow-file", "github"},
+		{"runner", "ci-runner", []string{"runnerLabel", "runsOn", "awsCredential"}, "github.self-hosted-runner", "github"},
+		{"runner from ubicloud", "ci-runner", []string{"runsOn"}, "ubicloud.runner", "ubicloud"},
+		{"plain", "api-token", nil, "plain.api-token", "plain"},
+		{"llm", "llm-endpoint", []string{"llmEndpoint"}, "aws.vllm-instance", "aws"},
+		{"host container", "container", nil, "host.container", "host"},
+		{"aws-topology", "app-address", []string{"appUrl"}, "aws.route53-record", "aws"},
+		{"aws-iam", "iam-role", []string{"roleArn"}, "aws.iam-role", "aws"},
+		{"database", "postgres-database", []string{"host", "port", "dbName", "username", "password"}, "host.postgres-database", "host"},
+		{"generated-source", "source-revision", []string{"sourceBranch", "sourceSha"}, "github.commit", "github"},
+		{"kubernetes cluster", "kubernetes-cluster", []string{"apiEndpoint", "caCertificate", "clusterCredential"}, "hetzner.k3s-cluster", "hetzner"},
 	}
 	for _, c := range cases {
 		t.Run(c.requirement, func(t *testing.T) {
@@ -134,8 +135,13 @@ func TestResourceTypes_EveryADR0079RequirementHasACataloguedType(t *testing.T) {
 			if rt.Place() != c.place {
 				t.Errorf("%s lives in %q, want %q", c.meetingType, rt.Place(), c.place)
 			}
-			if !c.req.Matches(rt) {
-				t.Errorf("requirement %+v does not match %s (kind %q, outputs %q)", c.req, rt.ID, rt.Kind, rt.Outputs)
+			if rt.Kind != c.kind {
+				t.Errorf("%s is of kind %q, want %q", c.meetingType, rt.Kind, c.kind)
+			}
+			for _, read := range c.reads {
+				if !slices.Contains(rt.Outputs, read) {
+					t.Errorf("%s outputs %q, which lacks %q the %s requirement reads", c.meetingType, rt.Outputs, read, c.requirement)
+				}
 			}
 		})
 	}
