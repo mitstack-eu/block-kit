@@ -2,7 +2,7 @@ package contract
 
 import (
 	"errors"
-	"strconv"
+	"fmt"
 	"strings"
 )
 
@@ -36,9 +36,12 @@ type yamlNode struct {
 	misplaced bool
 	// alias marks an opaque node written as an alias, *name.
 	alias bool
-	// reserved is the character, @ or `, that starts an unquoted scalar YAML
-	// refuses. Such a node is opaque.
+	// reserved is the character, @, ` or %, that starts an unquoted scalar
+	// YAML refuses. Such a node is opaque.
 	reserved byte
+	// tag is the tag of an opaque node written with a tag YAML or the reader
+	// refuses on its value, and tagNote says why.
+	tag, tagNote string
 }
 
 // get returns the value under key in a mapping, or nil. A key written twice
@@ -59,35 +62,48 @@ func (n *yamlNode) get(key string) *yamlNode {
 // sequences, flow collections and scalars, including block scalars.
 // Anything else becomes an opaque node, which the manifest decoder refuses
 // wherever it sits. A leading byte order mark is not part of the document.
-// The content is one YAML document: a document start marker before it and
-// a document end marker after it are read past, and a second document is an
-// error.
+// The content is one YAML document: a %YAML 1.1 directive and a document
+// start marker before it, content on that marker's line, and a document end
+// marker after it are read, while any other directive, a second document
+// and a line outside the document's top-level value are errors.
 func parseYAML(content string) (*yamlNode, error) {
 	r := &yamlReader{lines: strings.Split(strings.TrimPrefix(content, "\ufeff"), "\n")}
 	root := r.nested(-1, false)
-	r.peek()
-	if r.another {
-		return nil, errors.New("the manifest holds more than one YAML document, and a manifest is one document, so write it without a second ---")
+	_, _, outside := r.peek()
+	switch {
+	case r.err != nil:
+		return nil, r.err
+	case outside:
+		return nil, fmt.Errorf("line %d is outside the document's top-level value", r.pos+1)
 	}
 	return root, nil
 }
+
+// errSecondDocument refuses a stream holding more than one YAML document.
+var errSecondDocument = errors.New("the manifest holds more than one YAML document, and a manifest is one document, so write it without a second ---")
 
 type yamlReader struct {
 	lines []string
 	pos   int
 	// started marks that a line of the document's content has been read.
 	started bool
+	// opened marks a document start marker, "---", before the content.
+	opened bool
+	// directive marks a %YAML directive before the document.
+	directive bool
 	// ended marks a document end marker, "...", after the document.
 	ended bool
-	// another marks the start of a second document, where reading stops.
-	another bool
+	// err stops reading: a second document or a directive the reader does
+	// not take.
+	err error
 }
 
-// isDocumentMarker reports whether line is a document start marker, "---",
-// or a document end marker, "...", at column 0.
-func isDocumentMarker(line string) bool {
+// atDocumentMarker reports whether s starts with a document start marker,
+// "---", or a document end marker, "...", followed by a blank, a line break
+// or the end of s.
+func atDocumentMarker(s string) bool {
 	for _, marker := range []string{"---", "..."} {
-		if rest, ok := strings.CutPrefix(line, marker); ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
+		if rest, ok := strings.CutPrefix(s, marker); ok && (rest == "" || strings.IndexByte(" \t\n", rest[0]) >= 0) {
 			return true
 		}
 	}
@@ -95,31 +111,50 @@ func isDocumentMarker(line string) bool {
 }
 
 // peek returns the indent and text of the next line holding content,
-// skipping over blank lines, comment lines, directives and document
-// markers. A document start marker after the document's content, or
-// content after a document end marker, begins a second document, so peek
-// reports no further line.
+// skipping over blank lines, comment lines, a %YAML 1.1 directive and
+// document markers. Content written on a document start marker's line is
+// returned at its own column. A second document start marker, or content
+// after a document end marker, begins a second document, and a directive
+// other than %YAML 1.1, or one not followed by a document start marker, is
+// one the reader does not take; either sets r.err, and peek then reports no
+// further line.
 func (r *yamlReader) peek() (indent int, text string, ok bool) {
-	for ; !r.another && r.pos < len(r.lines); r.pos++ {
+	for ; r.err == nil && r.pos < len(r.lines); r.pos++ {
 		line := strings.TrimSuffix(r.lines[r.pos], "\r")
 		text := strings.TrimLeft(line, " \t")
 		indent := len(line) - len(text)
 		if text == "" || text[0] == '#' {
 			continue
 		}
-		if indent == 0 && isDocumentMarker(line) {
-			if strings.HasPrefix(line, "...") {
-				r.ended = true
-			} else if r.started || r.ended {
-				r.another = true
+		switch {
+		case indent == 0 && strings.HasPrefix(line, "...") && atDocumentMarker(line):
+			r.ended = true
+			continue
+		case indent == 0 && atDocumentMarker(line):
+			if r.started || r.ended || r.opened {
+				r.err = errSecondDocument
+				continue
 			}
+			r.opened = true
+			if rest, err := stripYAMLComment(line[3:]); err == nil && strings.TrimSpace(rest) == "" {
+				continue
+			}
+			r.lines[r.pos] = "   " + line[3:]
+			text = strings.TrimLeft(line[3:], " \t")
+			indent = len(line) - len(text)
+		case indent == 0 && text[0] == '%' && !r.started && !r.opened:
+			if directive, err := stripYAMLComment(text); err != nil || strings.Join(strings.Fields(directive), " ") != "%YAML 1.1" {
+				r.err = fmt.Errorf("%s is a directive the kit's YAML reader does not take, and a manifest needs none", strings.TrimSpace(text))
+			}
+			r.directive = true
 			continue
 		}
-		if indent == 0 && text[0] == '%' && !r.started {
+		switch {
+		case r.ended:
+			r.err = errSecondDocument
 			continue
-		}
-		if r.ended {
-			r.another = true
+		case r.directive && !r.opened:
+			r.err = errors.New("a %YAML directive must be followed by a document start marker, ---")
 			continue
 		}
 		r.started = true
@@ -244,16 +279,24 @@ func (r *yamlReader) inline(text string, owner int) *yamlNode {
 
 // quotedScalar reads the single- or double-quoted scalar that starts text.
 // It runs, as YAML lets a quoted scalar run, over the following lines up to
-// its closing quote whatever their indent, and its lines fold as YAML folds
-// them. A scalar a document marker or the end of the input leaves open, text
+// its closing quote whatever their indent, and is read as scanQuoted reads
+// it. A scalar a document marker or the end of the input leaves open, text
 // other than a comment after its closing quote, and a line indented deeper
 // than owner after it are not a scalar YAML reads, so the value is opaque.
 func (r *yamlReader) quotedScalar(text string, owner int) *yamlNode {
-	lines := []string{text}
 	end := closingQuote(text)
+	if end < 0 && r.pos > 0 {
+		// The blanks that end the scalar's first line are part of it when
+		// they are escaped, so the line is read up to its end.
+		raw := strings.TrimSuffix(r.lines[r.pos-1], "\r")
+		if trimmed := strings.TrimRight(raw, " \t"); strings.HasSuffix(trimmed, text) {
+			text = raw[len(trimmed)-len(text):]
+		}
+	}
+	lines := []string{text}
 	for end < 0 && r.pos < len(r.lines) {
 		line := strings.TrimSuffix(r.lines[r.pos], "\r")
-		if isDocumentMarker(line) {
+		if atDocumentMarker(line) {
 			break
 		}
 		r.pos++
@@ -272,8 +315,8 @@ func (r *yamlReader) quotedScalar(text string, owner int) *yamlNode {
 		r.skipDeeper(owner)
 		return opaque
 	}
-	v, err := readYAMLScalar(foldQuoted(joined[:end+1]))
-	if err != nil {
+	v, scanned, ok := scanQuoted(joined)
+	if !ok || scanned != end+1 {
 		return opaque
 	}
 	return &yamlNode{kind: yamlScalar, value: v, str: true}
@@ -290,56 +333,6 @@ func closingQuote(s string) int {
 		}
 	}
 	return -1
-}
-
-// foldQuoted folds the lines of the quoted scalar s, quotes included, into
-// one line as YAML folds them: blanks around each line break are dropped, a
-// break between two lines of text becomes a blank, a run of empty lines
-// becomes that many line breaks, and in a double-quoted scalar a break
-// escaped with a backslash is dropped. The result is still quoted, with a
-// line break in a double-quoted scalar written as \n.
-func foldQuoted(s string) string {
-	quote := s[0]
-	parts := strings.Split(s[1:len(s)-1], "\n")
-	var b strings.Builder
-	breaks, escaped := 0, false
-	for i, p := range parts {
-		if i > 0 {
-			p = strings.TrimLeft(p, " \t")
-		}
-		last := i == len(parts)-1
-		if !last {
-			p = strings.TrimRight(p, " \t")
-		}
-		if i > 0 && p == "" && !last {
-			breaks++
-			continue
-		}
-		if i > 0 {
-			switch {
-			case breaks > 0:
-				b.WriteString(strings.Repeat("\n", breaks))
-			case !escaped:
-				b.WriteString(" ")
-			}
-		}
-		breaks = 0
-		escaped = quote == '"' && !last && trailingBackslashes(p)%2 == 1
-		if escaped {
-			p = p[:len(p)-1]
-		}
-		b.WriteString(p)
-	}
-	inner := b.String()
-	if quote == '"' {
-		inner = strings.ReplaceAll(inner, "\n", `\n`)
-	}
-	return string(quote) + inner + string(quote)
-}
-
-// trailingBackslashes counts the backslashes s ends with.
-func trailingBackslashes(s string) int {
-	return len(s) - len(strings.TrimRight(s, `\`))
 }
 
 // plainScalar reads an unquoted scalar and the lines indented deeper than
@@ -556,8 +549,15 @@ func (p *flowParser) node() *yamlNode {
 	tag := ""
 	p.skipBlanks()
 	for p.i < len(p.s) && (p.s[p.i] == '&' || p.s[p.i] == '!') {
+		// An anchor ends at a flow indicator. A tag, as yaml.v3 scans it,
+		// also takes in a comma or a bracket, so a tag written straight
+		// before one swallows it.
+		end := " \t,[]{}"
+		if p.s[p.i] == '!' {
+			end = " \t{}"
+		}
 		start := p.i
-		for p.i < len(p.s) && strings.IndexByte(" \t,[]{}", p.s[p.i]) < 0 {
+		for p.i < len(p.s) && strings.IndexByte(end, p.s[p.i]) < 0 {
 			p.i++
 		}
 		if p.s[start] == '!' {
@@ -746,67 +746,6 @@ func splitKey(text string) (key, rest string, ok bool) {
 		}
 	}
 	return "", "", false
-}
-
-// splitProperties splits a leading anchor ("&name") and tag ("!tag") from a
-// value, returning the value and the tag, "" when it has none. An anchor
-// only names the value, so it is dropped.
-func splitProperties(s string) (rest, tag string) {
-	for s != "" && (s[0] == '&' || s[0] == '!') {
-		end := strings.IndexAny(s, " \t")
-		if end < 0 {
-			end = len(s)
-		}
-		if s[0] == '!' {
-			tag = s[:end]
-		}
-		s = strings.TrimLeft(s[end:], " \t")
-	}
-	return s, tag
-}
-
-// strTags are the spellings of YAML's string tag.
-var strTags = map[string]bool{"!!str": true, "!<tag:yaml.org,2002:str>": true}
-
-// withTag applies the tag a value was written with to n. A string tag makes
-// a scalar a string whatever its text, and makes a value left empty the
-// empty string rather than a null. Any other tag leaves n as YAML resolves
-// it untagged.
-func withTag(n *yamlNode, tag string) *yamlNode {
-	if !strTags[tag] {
-		return n
-	}
-	switch n.kind {
-	case yamlNull:
-		return &yamlNode{kind: yamlScalar, str: true}
-	case yamlScalar:
-		n.str = true
-	}
-	return n
-}
-
-// readYAMLScalar reads s as one flow scalar: surrounding blanks removed, and
-// the quotes and escapes of a quoted value decoded. A quote left open, or
-// text after the closing quote, is an error.
-func readYAMLScalar(s string) (string, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", nil
-	}
-	switch s[0] {
-	case '"':
-		return strconv.Unquote(s)
-	case '\'':
-		if len(s) < 2 || s[len(s)-1] != '\'' {
-			return "", errors.New("unterminated single-quoted scalar")
-		}
-		inner := s[1 : len(s)-1]
-		if strings.Contains(strings.ReplaceAll(inner, "''", ""), "'") {
-			return "", errors.New("unescaped quote inside single-quoted scalar")
-		}
-		return strings.ReplaceAll(inner, "''", "'"), nil
-	}
-	return s, nil
 }
 
 // stripYAMLComment returns s up to the "#" that starts a comment: one at the

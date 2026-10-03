@@ -114,6 +114,8 @@ func readable(n *yamlNode, path string) error {
 	switch {
 	case n.alias:
 		return fmt.Errorf("%s is an alias, which the reader does not follow, so what it declares is unknown", describe(path))
+	case n.tag != "":
+		return fmt.Errorf("%s is tagged %s, but %s", describe(path), n.tag, n.tagNote)
 	case n.reserved != 0:
 		return fmt.Errorf("%s starts with %q, which YAML does not allow at the start of an unquoted value, so quote it", describe(path), n.reserved)
 	case n.kind == yamlOpaque:
