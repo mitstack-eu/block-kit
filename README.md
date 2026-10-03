@@ -14,27 +14,41 @@ The `contract` package also holds the resource-type catalogue, which is the
 one list of resource types a block can create or reference.
 `contract.ResourceTypes` returns every type, sorted by its ID, and
 `contract.LookupResourceType` returns the one type with a given ID, such as
-`aws.ecr-repository`. Each type carries a kind, which names what the
+`aws.ecr-repository`. Each type implements a kind, which names what the
 resource is without naming a provider: the kind of `aws.ecr-repository` is
-`container-repository`. Each type also carries the capability it belongs to
-and a category. It lists the languages it serves and the artifact type it
-holds, if any. Its lifecycle says whether replacing the resource loses
-data, and its scope says whether it serves one app or the whole
-organisation. It says whether the resource is priced, and it names the
-registry outputs the resource produces.
+`container-repository`. A kind is an interface of outputs. `contract.Kinds`
+and `contract.LookupKind` return each kind's required and optional outputs,
+each marked secret or not, and a type produces every required output of its
+kind, may produce the optional ones and names no other output.
 
-A type belongs to the capability that owns its lifecycle, which is the
-capability that creates the resource and later deletes it. One thing reached
-through several capabilities is therefore several types. An EC2 instance is
-`aws.ec2-instance`, `cloudformation.ec2-instance` or
-`crossplane.ec2-instance`, depending on which capability creates it, and all
-three have the kind `host`. Types that share a name, the part of the ID after
-the first dot, share a kind, and `contract.ValidateResourceTypes` refuses a
-catalogue in which they do not. That rule is stricter than ADR 0081, and the
-reason is naming: a name means one real thing in every capability, so a
-different thing gets a different name. Every catalogue type has a bare
-name that mitstack assigns, so `contract.ValidateResourceTypes` also refuses an
-ID whose capability is not a bare slug, such as `reconcile/crossplane.claim`.
+Each type lives in one place, which `ResourceType.Place` reads from the ID
+prefix. The place is a capability from `contract.Capabilities`, as
+`aws.ec2-instance` lives in `aws`, or a kind, as `host.container` lives on a
+host. A type also names the capabilities it relies on and the one it hosts,
+if any. It declares its inputs, each with a secret mark, what it accepts and
+whether changing it replaces the resource. It declares its lifecycle, with a
+handover when it is stateful, its upgrade behaviour, its pricing, how it is
+observed and proven absent, a time budget for each of `ensure`, `observe` and
+`delete`, and the failures it can meet, each `permanent` or `transient`. It
+also carries a category, the languages it serves, the artifact type it holds
+and its scope.
+
+A type that maps one to one onto an OpenTofu provider resource names that
+resource, and its inputs are generated from the provider's schema by
+`cmd/catalogue-inputs` into `contract/provider-inputs.json`. Regenerate them
+with
+`go run ./cmd/catalogue-inputs -schema cmd/catalogue-inputs/testdata/provider-schema-extract.json > contract/provider-inputs.json`.
+A provider schema carries no replacement rule, so each such type lists by
+hand the inputs its provider forces a new resource on.
+
+Types that share a name, the part of the ID after the first dot, share a
+kind, and `contract.ValidateResourceTypes` refuses a catalogue in which they
+do not. That rule is stricter than ADR 0081, and the reason is naming: a name
+means one real thing in every place, so a different thing gets a different
+name. Every catalogue type has a bare name that mitstack assigns, so
+`contract.ValidateResourceTypes` also refuses an ID whose prefix is not a bare
+slug, such as `reconcile/crossplane.claim`, and an ID whose prefix is neither
+a capability nor a kind.
 
 The `contract` package also owns the grammar of block, capability and
 resource-type ids, which the platform's ADR 0080 sets. A community name is
@@ -74,7 +88,7 @@ spec:
   requires:
     - resource: image
       kind: container-image
-      reads: [artifact]
+      reads: [imageRepo]
     - resource: workflows
       type: github.workflow-file
       reads: [workflowPath]
@@ -89,8 +103,8 @@ spec:
       type: aws.ecr-image
       ownership: created
       inputs:
-        registry: steps.registry.outputs.ecrRegistry
-        base: requires.image.outputs.artifact
+        registry: steps.registry.outputs.registryHost
+        base: requires.image.outputs.imageRepo
   provides:
     - step: build-image
 ```
@@ -120,9 +134,10 @@ without offering it matches no other block's requirement.
 `contract.ValidateBlockSteps` checks all of this against the catalogue. Each
 refusal names what it is about, as in
 `step "registry": type "aws.not-a-type" is not in the resource-type catalogue`.
-`contract.DeriveCapabilities` returns the capabilities that own the block's
-step types and narrowed requirement types, so a manifest never lists them by
-hand.
+`contract.DeriveCapabilities` returns the capabilities the block's resource
+types and narrowed requirement types live in, so a manifest never lists them
+by hand. A type that lives on a kind, such as `host.container`, adds no
+capability.
 
 blockverify's manifest suite runs the same check on any manifest that
 declares `spec.steps`. Such a manifest is also refused two older kinds of
