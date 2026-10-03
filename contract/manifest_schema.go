@@ -107,7 +107,7 @@ func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 func structSchema(t reflect.Type) (map[string]any, error) {
 	props := map[string]any{}
 	required := []any{}
-	for _, f := range manifestFields(t) {
+	for _, f := range manifestFields(t, v1betaDecoder.tag) {
 		var s map[string]any
 		var err error
 		if f.oneOrList {

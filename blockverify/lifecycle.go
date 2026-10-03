@@ -6,9 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 
+	"github.com/mitstack-eu/operator-kit/contract"
 	"github.com/mitstack-eu/operator-kit/kitbinding"
 )
 
@@ -28,7 +27,7 @@ const manifestFile = "manifest.yaml"
 // that cannot be read, or a declared value blockverify has no rule for.
 // Neither falls through to the legacy rule, which would judge the block by a
 // contract it never declared.
-func contractRule(target string) (contract, detail string, ok bool) {
+func contractRule(target string) (rule, detail string, ok bool) {
 	c, err := declaredContract(target)
 	if err != nil {
 		return "", err.Error(), false
@@ -43,10 +42,11 @@ func contractRule(target string) (contract, detail string, ok bool) {
 }
 
 // declaredContract returns spec.lifecycle.contract from target's manifest,
-// or "" when the manifest is absent or declares no lifecycle contract. A
-// manifest that is present but cannot be opened (a directory, a dangling
-// symlink) or walked (a structure the reader cannot follow) is an error,
-// because a read that could not run is never an absence.
+// which it reads through contract.ParseManifest under either manifest
+// version, or "" when the manifest is absent or declares no lifecycle
+// contract. A manifest that is present but cannot be opened (a directory, a
+// dangling symlink) or that the parser refuses is an error carrying the
+// reason, because a read that could not run is never an absence.
 func declaredContract(target string) (string, error) {
 	path := filepath.Join(target, manifestFile)
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
@@ -56,113 +56,17 @@ func declaredContract(target string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s is present but could not be read, so the lifecycle contract that judges %s is unknown: %v", path, target, err)
 	}
-	value, walkable := parseLifecycleContract(string(raw))
-	if !walkable {
-		return "", fmt.Errorf("%s holds a structure the reader cannot follow under spec or spec.lifecycle, so the lifecycle contract that judges %s is unknown", path, target)
+	m, err := contract.ParseManifest(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: %v, so the lifecycle contract that judges %s is unknown", path, err, target)
 	}
-	return value, nil
-}
-
-var (
-	yamlKeyRe      = regexp.MustCompile(`^[A-Za-z0-9_.-]+[ \t]*:`)
-	yamlAnchorOnly = regexp.MustCompile(`^&[A-Za-z0-9_-]+$`)
-)
-
-// parseLifecycleContract walks a manifest by indentation and returns the
-// value of the key nested at spec.lifecycle.contract. It follows block
-// mappings only: a contract: key inside a block scalar, under params or
-// anywhere else is not the lifecycle contract. walkable is false when spec
-// or spec.lifecycle is not a block mapping (a flow mapping, an alias), or a
-// direct child of spec.lifecycle is neither a parseable key nor a list item,
-// since the contract could hide there under a spelling the reader cannot see.
-func parseLifecycleContract(content string) (value string, walkable bool) {
-	type frame struct {
-		indent int
-		key    string
+	switch {
+	case m.Block != nil:
+		return m.Block.Spec.Lifecycle.Contract, nil
+	case m.V1Alpha != nil && m.V1Alpha.Spec.Lifecycle != nil:
+		return m.V1Alpha.Spec.Lifecycle.Contract, nil
 	}
-	var stack []frame
-	scalar, life, child := -1, -1, -1
-
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		rest := strings.TrimLeft(line, " \t")
-		if rest == "" {
-			continue
-		}
-		ind := len(line) - len(rest)
-		if scalar >= 0 {
-			if ind > scalar {
-				continue
-			}
-			scalar = -1
-		}
-		if strings.HasPrefix(rest, "#") {
-			continue
-		}
-		if life >= 0 && ind <= life {
-			life, child = -1, -1
-		}
-		isKey := yamlKeyRe.MatchString(rest)
-		if life >= 0 {
-			if child < 0 {
-				child = ind
-			}
-			isItem := strings.HasPrefix(rest, "- ") || strings.HasPrefix(rest, "-\t")
-			if ind == child && !isKey && !isItem {
-				return "", false
-			}
-		}
-		if !isKey {
-			continue
-		}
-
-		colon := strings.Index(rest, ":")
-		key := strings.TrimRight(rest[:colon], " \t")
-		val := strings.TrimLeft(rest[colon+1:], " \t")
-		for len(stack) > 0 && stack[len(stack)-1].indent >= ind {
-			stack = stack[:len(stack)-1]
-		}
-		stack = append(stack, frame{ind, key})
-		if strings.HasPrefix(val, "|") || strings.HasPrefix(val, ">") {
-			scalar = ind
-		}
-
-		blockMapping := val == "" || strings.HasPrefix(val, "#") || yamlAnchorOnly.MatchString(val)
-		depth := len(stack)
-		underSpec := stack[0].key == "spec"
-		if depth == 1 && underSpec && !blockMapping {
-			return "", false
-		}
-		if depth == 2 && underSpec && stack[1].key == "lifecycle" {
-			if !blockMapping {
-				return "", false
-			}
-			life, child = ind, -1
-		}
-		if depth == 3 && underSpec && stack[1].key == "lifecycle" && stack[2].key == "contract" {
-			return scalarValue(val), true
-		}
-	}
-	return "", true
-}
-
-// scalarValue strips an inline comment, surrounding blanks and one pair of
-// quotes from a plain YAML scalar.
-func scalarValue(val string) string {
-	if strings.HasPrefix(val, "#") {
-		return ""
-	}
-	if hash := strings.Index(val, " #"); hash >= 0 {
-		val = val[:hash]
-	}
-	val = strings.TrimRight(val, " \t")
-	if val != "" && strings.ContainsRune(`"'`, rune(val[0])) {
-		val = val[1:]
-	}
-	if val != "" && strings.ContainsRune(`"'`, rune(val[len(val)-1])) {
-		val = val[:len(val)-1]
-	}
-	return val
+	return "", nil
 }
 
 // checkKitHandlerImport requires some file under target to import

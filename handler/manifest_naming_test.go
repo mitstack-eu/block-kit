@@ -4,9 +4,9 @@
 // provider's length limit for that resource, and the maxLength the block
 // claims for the app name.
 //
-// The reader anchors on indentation the same way manifestHooks anchors
-// spec.lifecycle.hooks. A manifest with no spec.naming.appName declares
-// nothing, and a value the reader cannot read is an error, never an absence.
+// The reader reads the manifest through contract.ParseManifest. A manifest
+// with no spec.naming.appName declares nothing, and a manifest the parser
+// refuses is an error carrying the parser's message, never an absence.
 package handler_test
 
 import (
@@ -109,9 +109,8 @@ func TestManifestAppNameNaming_ADerivedNameMissingAKeyIsAnError(t *testing.T) {
 
 func TestManifestAppNameNaming_AbsentDeclaresNothing(t *testing.T) {
 	cases := map[string]string{
-		"empty manifest":         "",
-		"no spec.naming":         namingManifestHead,
-		"naming with no appName": namingManifestHead + "  naming:\n    somethingElse:\n      maxLength: 10\n",
+		"no spec.naming":    namingManifestHead,
+		"a v1beta manifest": string(plainV1Beta(t)),
 	}
 	for label, manifest := range cases {
 		t.Run(label, func(t *testing.T) {
@@ -128,9 +127,9 @@ func TestManifestAppNameNaming_AbsentDeclaresNothing(t *testing.T) {
 
 func TestManifestAppNameNaming_AnUnreadableValueIsAnError(t *testing.T) {
 	cases := map[string]string{
-		"maxLength is not an integer": strings.Replace(awsAppInfraNaming, "maxLength: 27", "maxLength: twenty-seven", 1),
-		"limit is not an integer":     strings.Replace(awsAppInfraNaming, "limit: 64", "limit: sixty-four", 1),
-		"appName is a flow mapping":   "  naming:\n    appName: {maxLength: 27}\n",
+		"maxLength is not an integer":    strings.Replace(awsAppInfraNaming, "maxLength: 27", "maxLength: twenty-seven", 1),
+		"limit is not an integer":        strings.Replace(awsAppInfraNaming, "limit: 64", "limit: sixty-four", 1),
+		"appName carries an unknown key": "  naming:\n    appName:\n      maxLength: 27\n      bogus: 1\n",
 	}
 	for label, spec := range cases {
 		t.Run(label, func(t *testing.T) {
@@ -140,6 +139,44 @@ func TestManifestAppNameNaming_AnUnreadableValueIsAnError(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), contract.AppNameNamingField) {
 				t.Errorf("error = %q, want it to name %s", err, contract.AppNameNamingField)
+			}
+		})
+	}
+}
+
+// A manifest contract.ParseManifest refuses is an error carrying the
+// parser's message, so the naming suite fails it rather than reading it as
+// declaring no limit: an empty manifest, which has no apiVersion, a key
+// under spec.naming other than appName, an unknown spec field beside a
+// valid declaration, and spec.naming in a v1beta manifest, which has no
+// such field.
+func TestManifestAppNameNaming_AManifestTheParserRefusesIsAnErrorCarryingItsMessage(t *testing.T) {
+	cases := []struct {
+		label, path, manifest string
+	}{
+		{"an empty manifest", "apiVersion", ""},
+		{"naming with no appName", "spec.naming.somethingElse",
+			namingManifestHead + "  naming:\n    somethingElse:\n      maxLength: 10\n"},
+		{"an unknown spec field beside the declaration", "spec.bogus",
+			namingManifestHead + "  bogus: 1\n" + awsAppInfraNaming},
+		{"spec.naming in a v1beta manifest", "spec.naming",
+			strings.Replace(string(plainV1Beta(t)), "  version: 3.0.0\n", "  version: 3.0.0\n"+awsAppInfraNaming, 1)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			_, perr := contract.ParseManifest([]byte(tc.manifest))
+			if perr == nil {
+				t.Fatalf("contract.ParseManifest accepts the manifest, which must be refused naming %s:\n%s", tc.path, tc.manifest)
+			}
+			if !strings.Contains(perr.Error(), tc.path) {
+				t.Errorf("contract.ParseManifest error = %q, want it to name %s", perr, tc.path)
+			}
+			got, err := handler.ManifestAppNameNaming([]byte(tc.manifest))
+			if err == nil {
+				t.Fatalf("ManifestAppNameNaming = %+v, nil error, for a manifest contract.ParseManifest refuses (%v)", got, perr)
+			}
+			if !strings.Contains(err.Error(), perr.Error()) {
+				t.Errorf("ManifestAppNameNaming error = %q, want it to carry the parser's message %q", err, perr)
 			}
 		})
 	}

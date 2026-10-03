@@ -3,9 +3,9 @@ package contract_test
 // blockmanifest_test.go pins contract.ParseManifest, the one manifest parser
 // the kit ships. It switches on apiVersion: under mitstack/v1beta it reads
 // the whole manifest strictly into BlockManifest, and under mitstack/v1alpha
-// it reads what blockverify's manifest suite checks into V1AlphaManifest,
-// refusing no field it does not know. The two worked manifests of ADR 0083
-// are read from the embedded manifest goldens and checked field by field.
+// it reads the whole manifest strictly into V1AlphaManifest. The two worked
+// manifests of ADR 0083 are read from the embedded manifest goldens and
+// checked field by field.
 
 import (
 	"reflect"
@@ -516,8 +516,8 @@ func TestParseManifest_V1BetaAcceptsAQuotedStringAndATypedInput(t *testing.T) {
 	})
 }
 
-// v1alphaManifest carries a field no schema defines, a padded quoted id and
-// version, a folded release note, and outputs and reads in both list forms.
+// v1alphaManifest carries a padded quoted id and version, a folded release
+// note, and outputs and reads in both list forms.
 const v1alphaManifest = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -529,8 +529,6 @@ spec:
   releaseClass: feature
   releaseNote: >
     Adds the reads.
-  futureSection:
-    outputs: not-the-outputs
   outputs:
     - dbName
     - host.type
@@ -543,8 +541,8 @@ spec:
         - region
 `
 
-// Under v1alpha the parser reads what blockverify's manifest suite checks
-// and refuses no field it does not know, under either top-level spelling.
+// Under v1alpha the parser reads the fields blockverify's manifest suite
+// checks into V1AlphaManifest's own fields, under either top-level spelling.
 func TestParseManifest_V1AlphaReadsOutputsAndRequiresReads(t *testing.T) {
 	for label, raw := range map[string]string{
 		"kind: Block": v1alphaManifest,

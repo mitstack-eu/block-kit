@@ -47,10 +47,9 @@ func manifestWithRetains(value string, hooks ...string) []byte {
 }
 
 // manifestWithDecoyTopLevelRetains carries a top-level retainsOnUnsubscribe
-// key — a decoy sitting outside spec.lifecycle entirely — ahead of a
-// spec.lifecycle that declares no retainsOnUnsubscribe of its own. Only the
-// one anchored at spec.lifecycle.retainsOnUnsubscribe may ever count, the
-// same anchoring manifestHooks already applies to spec.lifecycle.hooks.
+// key, a decoy outside spec.lifecycle, ahead of a spec.lifecycle that
+// declares no retainsOnUnsubscribe of its own. No manifest field is named
+// retainsOnUnsubscribe at the top level.
 const manifestWithDecoyTopLevelRetains = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -300,37 +299,20 @@ func TestNew_ErrorsWhenRetainsOnUnsubscribeValueIsNotABoolean(t *testing.T) {
 	if !strings.Contains(err.Error(), "retainsOnUnsubscribe") {
 		t.Errorf("error %q does not name the field retainsOnUnsubscribe", err.Error())
 	}
+	requireNewRefusesWithTheParsersMessage(t, cfg, "spec.lifecycle.retainsOnUnsubscribe")
 }
 
-// TestNew_DecoyTopLevelRetainsOnUnsubscribeIsIgnored pins that a
-// retainsOnUnsubscribe: key outside spec.lifecycle — a decoy at the
-// document's top level — is ignored, exactly as manifestHooks ignores a
-// decoy hooks: key outside spec.lifecycle. The real spec.lifecycle here
-// declares no retainsOnUnsubscribe of its own, so the handler must behave
-// exactly like the no-declaration default: full-budget polling,
-// absent:false.
-func TestNew_DecoyTopLevelRetainsOnUnsubscribeIsIgnored(t *testing.T) {
+// TestNew_DecoyTopLevelRetainsOnUnsubscribeIsRefusedAsUnknown pins that a
+// retainsOnUnsubscribe: key outside spec.lifecycle, a decoy at the
+// document's top level, is a key no manifest field names, so New refuses
+// the manifest with the parser's message rather than reading the decoy or
+// passing over it.
+func TestNew_DecoyTopLevelRetainsOnUnsubscribeIsRefusedAsUnknown(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
-	present := contract.Present
-	f := &kittest.FakeResource{Count: 1, ObserveState: &present}
-	h := newHandler(t, f, s, func(c *handler.Config) {
-		c.Manifest = []byte(manifestWithDecoyTopLevelRetains)
-		c.VerbBudget = 3
-	})
+	cfg := baseConfig(t, &kittest.FakeResource{}, s)
+	cfg.Manifest = []byte(manifestWithDecoyTopLevelRetains)
 
-	status, raw := postHook(t, h, s, envelope(t, s, "nonce-retains-decoy", map[string]any{"operation": "unsubscribe"}))
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200, body: %s", status, raw)
-	}
-	assertConforms(t, raw)
-
-	resp := decodeResponse(t, raw)
-	if resp.Absent == nil || *resp.Absent != false {
-		t.Errorf("Absent = %v, want a non-nil false — a retainsOnUnsubscribe key outside spec.lifecycle must be ignored", resp.Absent)
-	}
-	if f.ObserveCalls != 3 {
-		t.Errorf("ObserveCalls = %d, want exactly the VerbBudget (3) — the top-level decoy must not trigger the short-circuit", f.ObserveCalls)
-	}
+	requireNewRefusesWithTheParsersMessage(t, cfg, "retainsOnUnsubscribe")
 }
 
 // --- Criterion 6: validate is unaffected by the declaration ----------------

@@ -15,7 +15,8 @@ package main
 //     metadata.id and both forms; a manifest with no metadata.id keeps the
 //     verdict its spec earns;
 //   - both manifest spellings (type/format/store and kind in all three
-//     places) pass, and an unknown spec field passes;
+//     places) pass, and a manifest carrying an unknown spec field fails,
+//     naming the field;
 //   - a block that declares no reads passes, since operators add their
 //     declarations one at a time;
 //   - no manifest is a skip (trust-plumbing fails that), and a manifest the
@@ -30,6 +31,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mitstack-eu/operator-kit/contract"
 )
 
 // manifestHead is a manifest's header and spec up to its description. A test
@@ -445,7 +448,7 @@ func TestManifestSuite_AMetadataTheReaderCannotFollowIsAFailure(t *testing.T) {
 	spec := "spec:\n  layer: backend\n  version: 1.0.0\n"
 	cases := map[string]string{
 		"metadata is a flow mapping": head + "metadata: {id: \"@Acme/x\", owner: blockverify-tests}\n" + spec,
-		"metadata.id is an alias":    "x-shared: &bad \"@Acme/x\"\n" + head + "metadata:\n  id: *bad\n" + spec,
+		"metadata.id is an alias":    head + "metadata:\n  name: &bad \"@Acme/x\"\n  id: *bad\n" + spec,
 		"metadata.id is a mapping":   head + "metadata:\n  id:\n    org: Acme\n" + spec,
 	}
 	for label, content := range cases {
@@ -528,16 +531,30 @@ func TestManifestSuite_BothManifestSpellingsPass(t *testing.T) {
 	}
 }
 
-// unknownFieldSpec is spec content no manifest schema defines, as a scalar
-// and as a nested mapping.
-const unknownFieldSpec = `  frobnicate: true
-  futureSection:
-    outputs: not-the-outputs
-    reads: [not, the, reads]
-`
+// unknownSpecFields are spec lines carrying a field no manifest field
+// names, at several depths, by the path the suite must name.
+var unknownSpecFields = map[string]string{
+	"spec.frobnicate":    "  frobnicate: true\n",
+	"spec.futureSection": "  futureSection:\n    outputs: not-the-outputs\n    reads: [not, the, reads]\n",
+	"spec.requires[0].frobnicate": "  requires:\n    - capability: database\n      reads: [host]\n" +
+		"      frobnicate: true\n",
+	"spec.lifecycle.frobnicate": "  lifecycle:\n    contract: kit/v1\n    frobnicate: true\n",
+}
 
-func TestManifestSuite_AnUnknownSpecFieldPasses(t *testing.T) {
-	requireManifestPass(t, manifestSuite(manifestDir(t, manifestHead+unknownFieldSpec), ""))
+// A manifest carrying a spec field no manifest field names fails the suite,
+// and the detail names the manifest, the field's path and the parser's
+// message.
+func TestManifestSuite_AnUnknownSpecFieldFailsNamingIt(t *testing.T) {
+	for path, spec := range unknownSpecFields {
+		t.Run(path, func(t *testing.T) {
+			content := manifestHead + spec
+			_, perr := contract.ParseManifest([]byte(content))
+			if perr == nil {
+				t.Fatalf("contract.ParseManifest accepts the manifest, which must be refused naming %s:\n%s", path, content)
+			}
+			requireManifestFail(t, manifestSuite(manifestDir(t, content), ""), "manifest.yaml", path, perr.Error())
+		})
+	}
 }
 
 func TestManifestSuite_PassesAnOldFormManifestWithDependsOnAndProvidedSlugs(t *testing.T) {
@@ -563,9 +580,9 @@ func TestManifestSuite_AManifestTheReaderCannotFollowIsAFailure(t *testing.T) {
 	cases := map[string]string{
 		"spec is a flow mapping":          "apiVersion: mitstack/v1alpha\nkind: Block\nspec: {version: 1.0.0, outputs: [nope]}\n",
 		"spec.outputs is a flow mapping":  manifestHead + "  outputs: {first: nope}\n",
-		"spec.outputs is an alias":        "x-shared: &outs [nope]\n" + manifestHead + "  outputs: *outs\n",
+		"spec.outputs is an alias":        manifestHead + "  tags: &outs [nope]\n  outputs: *outs\n",
 		"spec.requires is a flow mapping": manifestHead + "  requires: {capability: database, reads: [nope]}\n",
-		"spec.requires is an alias":       "x-shared: &reqs\n  - capability: database\n    reads: [nope]\n" + manifestHead + "  requires: *reqs\n",
+		"spec.requires is an alias":       manifestHead + "  resources: &reqs\n    - name: database\n  requires: *reqs\n",
 	}
 	for label, content := range cases {
 		t.Run(label, func(t *testing.T) {
@@ -604,19 +621,46 @@ func TestRun_BothManifestSpellingsPassBlockverify(t *testing.T) {
 	}
 }
 
-// Before the manifest suite, blockverify read nothing of the manifest but
-// spec.lifecycle.contract, so an unknown spec field never failed it. It still
-// does not.
-func TestRun_AnUnknownSpecFieldStillPassesBlockverify(t *testing.T) {
-	files := goldenFixtureFiles(t)
-	files["manifest.yaml"] = manifestYAML + unknownFieldSpec
-	stdout, exit := runBlockverify(t, "--json", "--standalone", newFixtureFrom(t, files))
-	r := decodeReport(t, stdout)
-	if exit != 0 || r.Verdict != "pass" {
-		t.Errorf("exit %d, verdict %q; want 0 and pass for a manifest carrying an unknown spec field\nstdout:\n%s", exit, r.Verdict, stdout)
+// blockverify fails a manifest carrying an unknown spec field, and its
+// output names the field: every suite that reads the manifest fails with
+// the parser's message, the verdict is fail, and the human-readable report
+// names the field too.
+func TestRun_AnUnknownSpecFieldFailsBlockverifyNamingIt(t *testing.T) {
+	const field = "spec.frobnicate"
+	content := manifestYAML + unknownSpecFields[field]
+	_, perr := contract.ParseManifest([]byte(content))
+	if perr == nil {
+		t.Fatalf("contract.ParseManifest accepts the manifest, which must be refused naming %s:\n%s", field, content)
 	}
-	if s := suiteByName(t, r, "manifest"); s.Status != "pass" {
-		t.Errorf("manifest status = %q, want %q; detail: %s", s.Status, "pass", s.Detail)
+	files := goldenFixtureFiles(t)
+	files["manifest.yaml"] = content
+	dir := newFixtureFrom(t, files)
+
+	stdout, exit := runBlockverify(t, "--json", "--standalone", dir)
+	r := decodeReport(t, stdout)
+	if exit != 1 || r.Verdict != "fail" {
+		t.Errorf("exit %d, verdict %q; want 1 and fail for a manifest carrying %s\nstdout:\n%s", exit, r.Verdict, field, stdout)
+	}
+	for _, name := range []string{"trust-plumbing", "contract", "manifest", "naming"} {
+		s := suiteByName(t, r, name)
+		if s.Status != "fail" {
+			t.Errorf("%s status = %q, want %q: a manifest the parser refuses fails every suite that reads it; detail: %s",
+				name, s.Status, "fail", s.Detail)
+			continue
+		}
+		for _, want := range []string{field, perr.Error()} {
+			if !strings.Contains(s.Detail, want) {
+				t.Errorf("%s detail = %q, want it to contain %q", name, s.Detail, want)
+			}
+		}
+	}
+
+	human, exit := runBlockverify(t, "--standalone", dir)
+	if exit != 1 {
+		t.Errorf("exit = %d without --json, want 1\nstdout:\n%s", exit, human)
+	}
+	if !strings.Contains(human, field) {
+		t.Errorf("the human-readable report does not name %s:\n%s", field, human)
 	}
 }
 

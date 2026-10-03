@@ -165,8 +165,9 @@ type Handler struct {
 // invariant: a nil Resource, an empty JWKSURL (webhook.AuthenticateHook
 // rejects every request on that before it ever consults PublicKey, so a
 // resolver configured without a JWKSURL would build and then answer 401 to
-// everything), a hook registered under an unknown name, a hook not declared
-// in the manifest, or Hooks set with no Manifest to check it against.
+// everything), a non-empty Manifest contract.ParseManifest refuses, a hook
+// registered under an unknown name, a hook not declared in the manifest, or
+// Hooks set with no Manifest to check it against.
 func New(cfg Config) (*Handler, error) {
 	if cfg.Resource == nil {
 		return nil, errNilResource
@@ -174,11 +175,11 @@ func New(cfg Config) (*Handler, error) {
 	if cfg.JWKSURL == "" {
 		return nil, errEmptyJWKSURL
 	}
-	if err := validateHooks(cfg); err != nil {
+	declared, err := readManifestDeclarations(cfg.Manifest)
+	if err != nil {
 		return nil, err
 	}
-	retainsOnUnsubscribe, err := manifestRetainsOnUnsubscribe(cfg.Manifest)
-	if err != nil {
+	if err := validateHooks(cfg, declared.hooks); err != nil {
 		return nil, err
 	}
 
@@ -190,7 +191,7 @@ func New(cfg Config) (*Handler, error) {
 	h := &Handler{
 		resource:             cfg.Resource,
 		hooks:                hooks,
-		retainsOnUnsubscribe: retainsOnUnsubscribe,
+		retainsOnUnsubscribe: declared.retainsOnUnsubscribe,
 		jwksURL:              cfg.JWKSURL,
 		publicKey:            cfg.PublicKey,
 		replay:               cfg.Replay,
@@ -288,7 +289,7 @@ func (h *Handler) serveLogs(w http.ResponseWriter, r *http.Request) {
 
 // serveHook is the POST /hook pipeline: read the bounded body, authenticate
 // it, decode the envelope, require and verify an OBO token, then dispatch
-// the verb — in that order, so a request that fails any earlier step never
+// the verb — in that order, so a request that fails any earlier check never
 // reaches the Resource.
 func (h *Handler) serveHook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxHookBodyBytes+1))

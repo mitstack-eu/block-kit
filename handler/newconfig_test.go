@@ -240,18 +240,14 @@ func TestNew_ErrorsWhenJWKSURLIsEmptyEvenWithPublicKeyOverride(t *testing.T) {
 	}
 }
 
-// --- The hook scan is anchored under spec.lifecycle (MIT-3070 review) -------
+// --- Only spec.lifecycle.hooks declares a hook ----------------------------
 //
-// manifestHooks used to take the first line anywhere in the file whose
-// trimmed text was "hooks:", so a manifest carrying any other hooks: key
-// earlier in the document made New read the wrong list. It is now anchored
-// by indentation: spec: at the document's top level, lifecycle: nested under
-// it, hooks: nested under that — and only that one counts.
+// New reads the manifest through contract.ParseManifest, so a hooks: key
+// anywhere but spec.lifecycle is a key no manifest field names, and the
+// parser refuses it, naming its path.
 
-// manifestWithDecoyTopLevelHooks carries a top-level "hooks:" key — a
-// plausible unrelated schema field — ahead of spec.lifecycle.hooks in the
-// document. The unanchored reader picks up "decoyHook" and never reaches the
-// real list at all.
+// manifestWithDecoyTopLevelHooks carries a top-level "hooks:" key ahead of
+// spec.lifecycle.hooks in the document.
 const manifestWithDecoyTopLevelHooks = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -266,33 +262,18 @@ spec:
       - beforeEnsure
 `
 
-func TestNew_ManifestAnchoring_DecoyHooksKeyAboveSpecLifecycleIsIgnored(t *testing.T) {
+func TestNew_ManifestAnchoring_DecoyHooksKeyAboveSpecLifecycleIsRefusedAsUnknown(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
-	var called bool
-	h := newHandler(t, &kittest.FakeResource{}, s, func(c *handler.Config) {
-		c.Manifest = []byte(manifestWithDecoyTopLevelHooks)
-		c.Hooks = map[string]handler.Hook{
-			handler.HookBeforeEnsure: func(context.Context, contract.Desired) error {
-				called = true
-				return nil
-			},
-		}
-	})
+	cfg := baseConfig(t, &kittest.FakeResource{}, s)
+	cfg.Manifest = []byte(manifestWithDecoyTopLevelHooks)
+	cfg.Hooks = map[string]handler.Hook{handler.HookBeforeEnsure: noopHook}
 
-	status, raw := postHook(t, h, s, envelope(t, s, "nonce-manifest-anchor-decoy-above", nil))
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200, body: %s", status, raw)
-	}
-	if !called {
-		t.Error("beforeEnsure was never called — New must read spec.lifecycle.hooks, not the decoy top-level hooks: key")
-	}
+	requireNewRefusesWithTheParsersMessage(t, cfg, "hooks")
 }
 
 // manifestWithDecoyTooDeepHooks carries a second "hooks:" key nested one
-// level deeper than spec.lifecycle.hooks (under spec.lifecycle.extra), ahead
-// of the real one in the document. The unanchored reader picks up
-// "afterEnsure" from the too-deep decoy; the real spec.lifecycle.hooks list
-// declares only "beforeEnsure".
+// level deeper than spec.lifecycle.hooks, under spec.lifecycle.extra, ahead
+// of the real one in the document.
 const manifestWithDecoyTooDeepHooks = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -308,32 +289,20 @@ spec:
       - beforeEnsure
 `
 
-func TestNew_ManifestAnchoring_DecoyHooksKeyOneLevelTooDeepIsIgnored(t *testing.T) {
+func TestNew_ManifestAnchoring_DecoyHooksKeyOneLevelTooDeepIsRefusedAsUnknown(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
-	f := &kittest.FakeResource{}
-	cfg := baseConfig(t, f, s)
+	cfg := baseConfig(t, &kittest.FakeResource{}, s)
 	cfg.Manifest = []byte(manifestWithDecoyTooDeepHooks)
-	cfg.Hooks = map[string]handler.Hook{
-		handler.HookAfterEnsure: noopHook,
-	}
+	cfg.Hooks = map[string]handler.Hook{handler.HookAfterEnsure: noopHook}
 
-	_, err := handler.New(cfg)
-	if err == nil {
-		t.Fatal("expected an error: afterEnsure is declared only by the too-deep decoy under spec.lifecycle.extra.hooks, " +
-			"not by spec.lifecycle.hooks itself, so registering it must be refused")
-	}
-	if !strings.Contains(err.Error(), handler.HookAfterEnsure) {
-		t.Errorf("error %q does not name the offending hook %q", err.Error(), handler.HookAfterEnsure)
-	}
+	requireNewRefusesWithTheParsersMessage(t, cfg, "spec.lifecycle.extra")
 }
 
 // --- An unreadable hooks declaration is refused, not read as none ----------
 //
-// "hooks: [beforeEnsure, afterDelete]" is valid YAML and matched neither the
-// "hooks: []" branch nor the block-sequence branch, so it declared nothing
-// and New then refused a hook the manifest does declare. The fix reads the
-// flow form too, and refuses a hooks: value that fits none of the supported
-// forms instead of silently treating it as declaring nothing.
+// The flow form "hooks: [beforeEnsure, afterDelete]" declares its hooks as
+// the block sequence does, and a hooks: value that is not a list is refused
+// rather than read as declaring nothing.
 
 func manifestWithLifecycleHooksLine(hooksLine string) []byte {
 	return []byte("apiVersion: mitstack/v1alpha\n" +
@@ -395,6 +364,7 @@ func TestNew_ManifestUnreadableHooksValueIsRefused(t *testing.T) {
 	if !strings.Contains(strings.ToLower(err.Error()), "manifest") {
 		t.Errorf("error %q does not name the manifest", err.Error())
 	}
+	requireNewRefusesWithTheParsersMessage(t, cfg, contract.LifecycleHooksField)
 }
 
 // --- A comment inside the hooks: block sequence does not shorten it --------
@@ -509,13 +479,11 @@ func TestNew_ManifestTabIndentedHooksSequenceFailsNamingManifest(t *testing.T) {
 	}
 }
 
-// --- A sibling stanza, a commented-out hooks: key, and CRLF endings all ---
-// --- keep today's behaviour --------------------------------------------
+// --- A sibling stanza, a commented-out hooks: key, and CRLF endings --------
 
 // manifestWithSiblingSpecOtherHooksStanza declares beforeEnsure under
-// spec.lifecycle.hooks and afterDelete under the unrelated sibling
-// spec.other.hooks. Only the former is spec.lifecycle.hooks; the sibling
-// must not be read as declaring anything.
+// spec.lifecycle.hooks and afterDelete under the sibling spec.other.hooks,
+// a key no manifest field names.
 const manifestWithSiblingSpecOtherHooksStanza = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -531,23 +499,13 @@ spec:
       - afterDelete
 `
 
-func TestNew_ManifestSiblingSpecOtherHooksStanzaIsIgnored(t *testing.T) {
+func TestNew_ManifestSiblingSpecOtherHooksStanzaIsRefusedAsUnknown(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
-	f := &kittest.FakeResource{}
-	cfg := baseConfig(t, f, s)
+	cfg := baseConfig(t, &kittest.FakeResource{}, s)
 	cfg.Manifest = []byte(manifestWithSiblingSpecOtherHooksStanza)
-	cfg.Hooks = map[string]handler.Hook{
-		handler.HookAfterDelete: noopHook, // declared only by the sibling spec.other.hooks
-	}
+	cfg.Hooks = map[string]handler.Hook{handler.HookBeforeEnsure: noopHook}
 
-	_, err := handler.New(cfg)
-	if err == nil {
-		t.Fatal("expected an error: afterDelete is declared only by the sibling spec.other.hooks stanza, " +
-			"not spec.lifecycle.hooks, so registering it must be refused")
-	}
-	if !strings.Contains(err.Error(), handler.HookAfterDelete) {
-		t.Errorf("error %q does not name the offending hook %q", err.Error(), handler.HookAfterDelete)
-	}
+	requireNewRefusesWithTheParsersMessage(t, cfg, "spec.other")
 }
 
 // manifestWithCommentedOutHooksKey comments out the entire hooks: stanza
