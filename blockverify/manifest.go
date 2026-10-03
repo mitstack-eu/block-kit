@@ -15,11 +15,6 @@ import (
 // manifestSuite checks the names target's manifest declares against the
 // kit's resource registry: every spec.outputs name, and every
 // spec.requires[].reads name together with its requirement's capability.
-// A manifest that declares spec.steps has its steps, resource requirements
-// and offers judged by contract.ValidateBlockSteps in place of the capability
-// reads check, and is refused a capability entry, an extension entry or a
-// dependsOn key, as ADR 0079 sets. A manifest without spec.steps gets the
-// capability reads check alone.
 // Given a base manifest (the --base-manifest path), it also asks a changed
 // spec.version for a release class and a release note. A metadata.id, when
 // present, must parse through contract.ParseBlockID. It reads nothing else
@@ -38,9 +33,6 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 	}
 
 	problems := registryProblems(m)
-	if m.stepped != nil {
-		problems = append(problems, steppedProblems(*m.stepped)...)
-	}
 	if m.id != "" {
 		if _, _, err := contract.ParseBlockID(m.id); err != nil {
 			problems = append(problems, "metadata.id: "+err.Error())
@@ -56,10 +48,6 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 	if len(problems) > 0 {
 		return SuiteResult{name, "fail", path + ": " + strings.Join(problems, "; ")}
 	}
-	if m.stepped != nil {
-		return SuiteResult{name, "pass",
-			"spec.outputs resolve through the resource registry, and spec.steps, its resource requirements and offers pass contract.ValidateBlockSteps; " + note}
-	}
 	return SuiteResult{name, "pass",
 		"spec.outputs and spec.requires[].reads resolve through the resource registry; " + note}
 }
@@ -72,9 +60,6 @@ type blockManifest struct {
 	releaseNote  string
 	outputs      []string
 	requires     []requirement
-	// stepped is what a manifest declaring spec.steps declares beside its
-	// steps, or nil for a manifest without them.
-	stepped *steppedManifest
 }
 
 // requirement is one item of spec.requires.
@@ -259,15 +244,6 @@ func specFields(spec *yamlNode) (blockManifest, error) {
 	if m.outputs, err = nameList(spec.get("outputs"), "spec.outputs"); err != nil {
 		return m, err
 	}
-	if hasSteps(spec) {
-		stepped, err := steppedFields(spec)
-		if err != nil {
-			return m, err
-		}
-		m.stepped = &stepped
-		return m, nil
-	}
-
 	requires := spec.get("requires")
 	switch {
 	case requires == nil || requires.kind == yamlNull:
@@ -405,7 +381,7 @@ type yamlReader struct {
 }
 
 // peek returns the indent and text of the next line holding content,
-// stepping over blank lines, comment lines and document markers.
+// skipping over blank lines, comment lines and document markers.
 func (r *yamlReader) peek() (indent int, text string, ok bool) {
 	for ; r.pos < len(r.lines); r.pos++ {
 		line := strings.TrimSuffix(r.lines[r.pos], "\r")
@@ -422,7 +398,7 @@ func (r *yamlReader) peek() (indent int, text string, ok bool) {
 	return 0, "", false
 }
 
-// skipDeeper steps over every line indented deeper than owner: the rest of
+// skipDeeper skips over every line indented deeper than owner: the rest of
 // a value the reader has already taken what it needs from.
 func (r *yamlReader) skipDeeper(owner int) {
 	for {
@@ -507,7 +483,7 @@ func (r *yamlReader) value(rest string, owner int, compact bool) *yamlNode {
 	return r.inline(rest, owner)
 }
 
-// inline reads a value that starts on the current line, then steps over the
+// inline reads a value that starts on the current line, then skips over the
 // lines that continue it.
 func (r *yamlReader) inline(text string, owner int) *yamlNode {
 	switch text[0] {
@@ -760,7 +736,7 @@ func stripYAMLComment(s string) (string, error) {
 	return s, nil
 }
 
-// skipQuotedYAML steps over the byte at s[i] inside a scalar opened by
+// skipQuotedYAML skips over the byte at s[i] inside a scalar opened by
 // *quote and returns the index to continue from. It consumes a backslash
 // escape in a double-quoted scalar and a doubled single quote in a
 // single-quoted one, and clears *quote when s[i] closes the scalar.

@@ -66,86 +66,6 @@ with `contract.ParseBlockID` in its manifest suite. Write a private id in
 quotes, as in `id: "@acme/billing-db"`, because YAML does not allow `@` at
 the start of an unquoted value.
 
-The types `contract.Step` and `contract.SuppliedResource` each carry an
-`ownership` field. Its value is `created` for a resource the block creates
-and deletes, or `referenced` for one the block only uses.
-
-## Steps, resource requirements and offers
-
-A step is one resource a block creates or references, of one catalogued
-type, and `spec.steps` lists a block's steps in the order it works on them.
-The platform's ADR 0079, at `docs/adr/0079-a-block-requires-only-resources-and-derives-its-capabilities.md`
-in `mitstack-eu/mitstack`, sets this shape. A stack is the set of blocks
-subscribed together for one app. A block offers a resource to the rest of
-its stack when it lists, under `spec.provides`, the step that creates it.
-A manifest that declares `spec.steps` requires only resources, never
-capabilities, and it reads like this:
-
-```yaml
-spec:
-  params:
-    - name: appName
-  requires:
-    - resource: image
-      kind: container-image
-      reads: [imageRepo]
-    - resource: workflows
-      type: github.workflow-file
-      reads: [workflowPath]
-      many: true
-  steps:
-    - id: registry
-      type: aws.ecr-repository
-      ownership: created
-      inputs:
-        name: params.appName
-    - id: build-image
-      type: aws.ecr-image
-      ownership: created
-      inputs:
-        registry: steps.registry.outputs.registryHost
-        base: requires.image.outputs.imageRepo
-  provides:
-    - step: build-image
-```
-
-Each entry under `requires` is a `contract.ResourceRequirement`, matched in
-one of two ways. A kind requirement names a `kind`, as `image` does above.
-It matches any catalogued type of that kind that outputs every name in
-`reads`, so both `aws.ecr-image` and `github.container-image` meet `image`.
-A narrowed requirement names one `type` in place of a kind, as `workflows`
-does, and matches that type alone.
-
-A requirement with `many: true`, like `workflows`, collects every matching
-offer in the stack. A requirement without it is met by exactly one offer, or
-by an existing resource the subscriber supplies.
-
-A step input binds in one of three forms. `params.<name>` reads a param the
-manifest declares. `steps.<id>.outputs.<name>` reads an output that the type
-of an earlier step produces. `requires.<id>.outputs.<name>` reads a name in
-the `reads` of a requirement without `many: true`. No form yet binds a
-requirement with `many: true`.
-
-`contract.Offer` holds one `- step: <id>` entry of `spec.provides`. A plain
-name under `spec.provides`, such as `app-host`, is a capability slug, and it
-still means the block runs that capability. A resource a block creates
-without offering it matches no other block's requirement.
-
-`contract.ValidateBlockSteps` checks all of this against the catalogue. Each
-refusal names what it is about, as in
-`step "registry": type "aws.not-a-type" is not in the resource-type catalogue`.
-`contract.DeriveCapabilities` returns the capabilities the block's resource
-types and narrowed requirement types live in, so a manifest never lists them
-by hand. A type that lives on a kind, such as `host.container`, adds no
-capability.
-
-blockverify's manifest suite runs the same check on any manifest that
-declares `spec.steps`. Such a manifest is also refused two older kinds of
-`requires` entry and one older key, each of which ADR 0079 retires. A
-`capability:` entry named a capability by hand. An `extension:` entry named a
-fan-in, which is now a requirement with `many: true`. A `dependsOn` key named
-blocks to order after, which resource requirements now order.
-
 ## Importing it
 
 The module path is `github.com/mitstack-eu/operator-kit`. A block adds it the
@@ -215,13 +135,7 @@ the same manifest golden, `contract.HooksManifestGolden`, so a change on
 either side turns the other side's tests red. Its twin,
 `contract.TypeBlockHooksManifestGolden`, is the same block written with
 `type: block`, `format` and `store` and without a layer, and the handler
-reads it exactly as it reads the first. A third golden,
-`contract.StepsManifestGolden`, declares steps, resource requirements and an
-offer. `contract.StepsManifestGoldenDeclares` returns that declaration as a
-`contract.BlockSteps`: the param names, the steps, the requirements and the
-offers, each in manifest order. blockverify's tests check that its reader
-turns the golden into exactly that value, so a change to either side shows
-up as a failing test.
+reads it exactly as it reads the first.
 
 A request that carries no OBO token is refused with 401 on every verb —
 subscribe, upgrade, validate, unsubscribe — before the Resource is ever
@@ -304,7 +218,7 @@ unlike the bare `Identity` Delete receives. A Resource that does not
 implement it is unaffected and keeps calling `Delete(ctx, Identity)` exactly
 as before. Returning an error from `DeleteWithRequest` aborts before
 anything is destroyed: the Handler answers the error response immediately,
-with no destroy step and no settle poll.
+with no destroy action and no settle poll.
 
 This is the shape the kit's own `handover` package exists for: a block reads
 `d.Params["dataHandover"] == "snapshot"` to decide whether to snapshot data
@@ -381,6 +295,17 @@ Every push to main that changes the tree cuts the next patch tag
 and each raise zeroes the levels below it. A skipped or failed release run is
 not lost: the next push resolves the base from the newest tag and cuts the
 release the earlier push owed.
+
+A breaking catalogue change takes `kit-release: major` and raises
+`contract.CatalogueMajor` by one in the same change. A breaking change is a
+type removed or renamed, a type changing its kind, an output removed or
+changing its secret mark, or a new required input. From v2 on, Go also
+requires the module path to end in `/v2` (or the matching major) for a major
+release. After a release whose catalogue changed, a follow-up change refreshes
+the golden with
+`go run ./cmd/catalogue-golden > contract/goldens/catalogue/resourcetypes.json`.
+A change that alters the catalogue never refreshes the golden itself, since
+the golden is what the comparison reads as the previous release.
 
 ## Recording a delivery on the board
 

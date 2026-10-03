@@ -1,6 +1,6 @@
 # Reusable block-publish workflow. A block's own ci.yml calls this with
 # `uses:` on every event it wants verified, rather than inlining its own
-# conformance and publish steps, so the provenance record every block writes
+# conformance and publish jobs, so the provenance record every block writes
 # beside its image comes from one implementation.
 #
 # Two jobs, and the ordering IS the acceptance criterion: `publish` needs
@@ -252,7 +252,7 @@ jobs:
           role-to-assume: ${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}
           aws-region: ${{ inputs.aws-region }}
 
-      # See the conformance job's identical step for the comment on scope.
+      # See the conformance job's identical "Mint kit token" for the comment on scope.
       - name: Mint kit token
         id: kit_token
         run: |
@@ -370,7 +370,7 @@ jobs:
           fi
 
           # The record signs this run's commit, so it is completed only for
-          # an image this commit built. The build step tags the image with
+          # an image this commit built. The build tags the image with
           # the commit sha, so that tag must resolve to the same digest.
           BUILT=$(probe "${GITHUB_SHA}") || BUILT="unanswered"
           if [ "$BUILT" != "$DIGEST" ]; then
@@ -493,8 +493,8 @@ jobs:
             --token-request-token "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             --out record.json
 
-      # Masked and handed to the next step as an env var, never as an
-      # argument — see that step's own comment for why.
+      # Masked and handed on as an env var, never as an argument — see the
+      # comment where it is read for why.
       - name: Fetch ECR password
         id: ecr_password
         if: steps.existing.outputs.record == 'false'
