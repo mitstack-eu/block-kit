@@ -126,3 +126,34 @@ func TestParseManifest_WarnsOfNothingWithoutARetiredKey(t *testing.T) {
 		})
 	}
 }
+
+// The optional warning names the requirement's capability as the manifest
+// writes it, untrimmed, in both its path and its message, as the platform's
+// warning does.
+func TestParseManifest_V1AlphaOptionalWarningKeepsTheRawCapability(t *testing.T) {
+	m := parseManifest(t, alphaHead+`  requires:
+    - capability: " app-host "
+      optional: true
+`)
+	want := []contract.ManifestWarning{optionalWarning(" app-host ")}
+	if !reflect.DeepEqual(m.Warnings, want) {
+		t.Errorf("Warnings = %#v, want %#v", m.Warnings, want)
+	}
+}
+
+// The dependsOn warning comes first, then one optional warning per
+// requirement in spec.requires order, whatever order the spec keys are
+// written in.
+func TestParseManifest_V1AlphaWarningsComeDependsOnFirstThenRequiresInOrder(t *testing.T) {
+	m := parseManifest(t, alphaHead+`  requires:
+    - capability: b-cap
+      optional: true
+    - capability: a-cap
+      optional: true
+  dependsOn: [weather-app]
+`)
+	want := []contract.ManifestWarning{dependsOnWarning, optionalWarning("b-cap"), optionalWarning("a-cap")}
+	if !reflect.DeepEqual(m.Warnings, want) {
+		t.Errorf("Warnings = %#v, want %#v", m.Warnings, want)
+	}
+}
