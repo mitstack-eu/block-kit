@@ -2,12 +2,17 @@ package contract_test
 
 // resourcetypes_test.go pins the resource-type catalogue the kit owns: the
 // facet vocabularies, the rules ValidateResourceTypes enforces, the released
-// catalogue's content, and the Ownership a supplied resource carries.
+// catalogue's content, and the comparison that keeps the catalogue compatible
+// with the previous release.
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -763,37 +768,6 @@ func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
 	}
 }
 
-func TestOwnerships_AreExactlyCreatedThenReferenced(t *testing.T) {
-	if contract.OwnershipCreated != "created" {
-		t.Errorf("OwnershipCreated = %q, want %q", contract.OwnershipCreated, "created")
-	}
-	if contract.OwnershipReferenced != "referenced" {
-		t.Errorf("OwnershipReferenced = %q, want %q", contract.OwnershipReferenced, "referenced")
-	}
-	want := []contract.Ownership{contract.OwnershipCreated, contract.OwnershipReferenced}
-	got := contract.Ownerships()
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Ownerships() = %q, want %q", got, want)
-	}
-	got[0] = "mutated"
-	if again := contract.Ownerships(); !reflect.DeepEqual(again, want) {
-		t.Errorf("mutating what Ownerships returned changed a later call's result to %q", again)
-	}
-}
-
-func TestOwnership_ValidOnlyForCreatedAndReferenced(t *testing.T) {
-	for _, o := range []contract.Ownership{"created", "referenced"} {
-		if !o.Valid() {
-			t.Errorf("Ownership(%q).Valid() = false, want true", o)
-		}
-	}
-	for _, o := range []contract.Ownership{"", "owned", "Created", "REFERENCED", "created ", "reference"} {
-		if o.Valid() {
-			t.Errorf("Ownership(%q).Valid() = true, want false", o)
-		}
-	}
-}
-
 // marshalToMap marshals v and decodes the JSON object back into a map, so a
 // test can assert on the wire keys.
 func marshalToMap(t *testing.T, v any) map[string]any {
@@ -809,57 +783,517 @@ func marshalToMap(t *testing.T, v any) map[string]any {
 	return m
 }
 
-func TestStep_MarshalsOwnershipUnderTheOwnershipKey(t *testing.T) {
-	step := contract.Step{
-		ID:        "image",
-		Type:      "aws.ecr-image",
-		Ownership: contract.OwnershipCreated,
-		Inputs:    map[string]string{"repository": "steps.registry.outputs.ecrRegistry"},
+func TestResourceTypes_GitHubContainerImageIsTheGHCRType(t *testing.T) {
+	got, ok := contract.LookupResourceType("github.container-image")
+	if !ok {
+		t.Fatal("github.container-image is not catalogued")
 	}
-	m := marshalToMap(t, step)
-	want := map[string]any{
-		"id":        "image",
-		"type":      "aws.ecr-image",
-		"ownership": "created",
-		"inputs":    map[string]any{"repository": "steps.registry.outputs.ecrRegistry"},
+	if got.Kind != "container-image" || got.Place() != "github" || got.Category != "artifact-registry" ||
+		got.ArtifactType != "container-image" || got.Lifecycle != "replaceable" || got.Scope != "per-app" || got.Priced {
+		t.Errorf("github.container-image = %+v, want an unpriced replaceable per-app container-image in github's artifact-registry", got)
 	}
-	if !reflect.DeepEqual(m, want) {
-		t.Errorf("Step marshals to %v, want %v", m, want)
-	}
-
-	var back contract.Step
-	raw, _ := json.Marshal(step)
-	if err := json.Unmarshal(raw, &back); err != nil {
-		t.Fatalf("decoding %s: %v", raw, err)
-	}
-	if !reflect.DeepEqual(back, step) {
-		t.Errorf("Step round-trips to %+v, want %+v", back, step)
+	if !reflect.DeepEqual(got.Languages, []string{"any-container"}) || !reflect.DeepEqual(got.Outputs, []string{"imageRepo"}) {
+		t.Errorf("github.container-image languages %q, outputs %q; want [any-container], [imageRepo]", got.Languages, got.Outputs)
 	}
 }
 
-func TestStep_OmitsEmptyInputs(t *testing.T) {
-	m := marshalToMap(t, contract.Step{ID: "repo", Type: "github.repository", Ownership: contract.OwnershipReferenced})
-	if _, ok := m["inputs"]; ok {
-		t.Errorf("Step with no inputs marshals an inputs key: %v", m)
+// The catalogue as a release ships it: a type removed or renamed, an output
+// removed or changing its type, or a new required input breaks a consumer,
+// and is allowed only when contract.CatalogueMajor is exactly one above the
+// major the previous release's golden records.
+
+// catalogueGoldenPath is the catalogue the previous kit release shipped, as
+// cmd/catalogue-golden prints it.
+const catalogueGoldenPath = "goldens/catalogue/resourcetypes.json"
+
+// catType builds one catalogue type for a fixture catalogue, with empty
+// rather than nil lists.
+func catType(id, kind string, inputs []contract.CatalogueInput, outputs ...contract.CatalogueOutput) contract.CatalogueType {
+	if inputs == nil {
+		inputs = []contract.CatalogueInput{}
 	}
-	if m["ownership"] != "referenced" {
-		t.Errorf(`Step marshals ownership as %v, want "referenced"`, m["ownership"])
+	return contract.CatalogueType{ID: id, Kind: kind, Inputs: inputs, Outputs: append([]contract.CatalogueOutput{}, outputs...)}
+}
+
+func reqInput(name string) contract.CatalogueInput {
+	return contract.CatalogueInput{Name: name, Required: true}
+}
+
+func optInput(name string) contract.CatalogueInput {
+	return contract.CatalogueInput{Name: name, Required: false}
+}
+
+func plainOutput(name string) contract.CatalogueOutput {
+	return contract.CatalogueOutput{Name: name, Secret: false}
+}
+
+func secretOutput(name string) contract.CatalogueOutput {
+	return contract.CatalogueOutput{Name: name, Secret: true}
+}
+
+// previousCatalogue returns a fresh fixture catalogue standing for the one the
+// previous release shipped, sorted as MarshalCatalogue writes it, for a test
+// to derive a current catalogue from.
+func previousCatalogue() contract.Catalogue {
+	return contract.Catalogue{
+		Major: 1,
+		Types: []contract.CatalogueType{
+			catType("aws.ec2-instance", "host",
+				[]contract.CatalogueInput{optInput("instanceType"), reqInput("namePrefix")},
+				plainOutput("execKind"), plainOutput("execTarget"), plainOutput("hostId"), plainOutput("publicIp")),
+			catType("aws.iam-role", "iam-role",
+				[]contract.CatalogueInput{reqInput("assume_role_policy"), optInput("name")},
+				secretOutput("roleArn")),
+			catType("aws.security-group", "firewall", nil),
+		},
 	}
 }
 
-func TestSuppliedResource_MarshalsOwnershipUnderTheOwnershipKey(t *testing.T) {
-	sr := contract.SuppliedResource{
-		Requirement: "source",
-		Type:        "github.repository",
-		Ownership:   contract.OwnershipReferenced,
+// withType returns c with the type whose ID is id changed by edit.
+func withType(t *testing.T, c contract.Catalogue, id string, edit func(*contract.CatalogueType)) contract.Catalogue {
+	t.Helper()
+	for i := range c.Types {
+		if c.Types[i].ID == id {
+			edit(&c.Types[i])
+			return c
+		}
 	}
-	m := marshalToMap(t, sr)
-	want := map[string]any{
-		"requirement": "source",
-		"type":        "github.repository",
-		"ownership":   "referenced",
+	t.Fatalf("fixture catalogue has no type %q", id)
+	return c
+}
+
+func TestCompareCatalogues_FlagsEachBreakUnderAMinorVersion(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(t *testing.T, c contract.Catalogue) contract.Catalogue
+		want []contract.Break
+	}{
+		{"a renamed type is the old ID removed and a new one added, naming the removed type",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				return withType(t, c, "aws.ec2-instance", func(ct *contract.CatalogueType) { ct.ID = "aws.ec2-host" })
+			},
+			[]contract.Break{{Type: "aws.ec2-instance", Reason: contract.BreakTypeRemoved}}},
+		{"a removed type",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				c.Types = c.Types[:2]
+				return c
+			},
+			[]contract.Break{{Type: "aws.security-group", Reason: contract.BreakTypeRemoved}}},
+		{"a type that implements another kind",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				return withType(t, c, "aws.security-group", func(ct *contract.CatalogueType) { ct.Kind = "network" })
+			},
+			[]contract.Break{{Type: "aws.security-group", Reason: contract.BreakKindChanged}}},
+		{"a removed output, naming the type and the output",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				return withType(t, c, "aws.ec2-instance", func(ct *contract.CatalogueType) {
+					ct.Outputs = []contract.CatalogueOutput{plainOutput("execKind"), plainOutput("execTarget"), plainOutput("hostId")}
+				})
+			},
+			[]contract.Break{{Type: "aws.ec2-instance", Reason: contract.BreakOutputRemoved, Output: "publicIp"}}},
+		{"a renamed output is the old output removed",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				return withType(t, c, "aws.ec2-instance", func(ct *contract.CatalogueType) {
+					ct.Outputs = []contract.CatalogueOutput{plainOutput("execKind"), plainOutput("execTarget"), plainOutput("hostId"), plainOutput("ipAddress")}
+				})
+			},
+			[]contract.Break{{Type: "aws.ec2-instance", Reason: contract.BreakOutputRemoved, Output: "publicIp"}}},
+		{"an output that becomes secret changes its type",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				return withType(t, c, "aws.ec2-instance", func(ct *contract.CatalogueType) {
+					ct.Outputs = []contract.CatalogueOutput{plainOutput("execKind"), plainOutput("execTarget"), plainOutput("hostId"), secretOutput("publicIp")}
+				})
+			},
+			[]contract.Break{{Type: "aws.ec2-instance", Reason: contract.BreakOutputSecretChanged, Output: "publicIp"}}},
+		{"an output that stops being secret changes its type",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				return withType(t, c, "aws.iam-role", func(ct *contract.CatalogueType) {
+					ct.Outputs = []contract.CatalogueOutput{plainOutput("roleArn")}
+				})
+			},
+			[]contract.Break{{Type: "aws.iam-role", Reason: contract.BreakOutputSecretChanged, Output: "roleArn"}}},
+		{"a new required input, naming the type and the input",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				return withType(t, c, "aws.security-group", func(ct *contract.CatalogueType) {
+					ct.Inputs = []contract.CatalogueInput{reqInput("vpc")}
+				})
+			},
+			[]contract.Break{{Type: "aws.security-group", Reason: contract.BreakRequiredInputAdded, Input: "vpc"}}},
+		{"an optional input that becomes required",
+			func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+				return withType(t, c, "aws.iam-role", func(ct *contract.CatalogueType) {
+					ct.Inputs = []contract.CatalogueInput{reqInput("assume_role_policy"), reqInput("name")}
+				})
+			},
+			[]contract.Break{{Type: "aws.iam-role", Reason: contract.BreakRequiredInputAdded, Input: "name"}}},
 	}
-	if !reflect.DeepEqual(m, want) {
-		t.Errorf("SuppliedResource marshals to %v, want %v", m, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			current := c.edit(t, previousCatalogue())
+			got := contract.CompareCatalogues(previousCatalogue(), current, false)
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("CompareCatalogues(previous, current, false) =\n%+v\nwant\n%+v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestCompareCatalogues_PassesAnAdditionUnderAMinorVersion(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(t *testing.T, c contract.Catalogue) contract.Catalogue
+	}{
+		{"the same catalogue", func(t *testing.T, c contract.Catalogue) contract.Catalogue { return c }},
+		{"the same catalogue listed in another order", func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+			slices.Reverse(c.Types)
+			for i := range c.Types {
+				slices.Reverse(c.Types[i].Inputs)
+				slices.Reverse(c.Types[i].Outputs)
+			}
+			return c
+		}},
+		{"a new type, even one with required inputs", func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+			c.Types = append(c.Types, catType("hetzner.server", "host",
+				[]contract.CatalogueInput{reqInput("name"), reqInput("server_type")},
+				plainOutput("execKind"), plainOutput("execTarget"), plainOutput("hostId")))
+			return c
+		}},
+		{"a new optional input", func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+			return withType(t, c, "aws.security-group", func(ct *contract.CatalogueType) {
+				ct.Inputs = []contract.CatalogueInput{optInput("description")}
+			})
+		}},
+		{"a new output", func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+			return withType(t, c, "aws.ec2-instance", func(ct *contract.CatalogueType) {
+				ct.Outputs = append(ct.Outputs, plainOutput("cloud.region"))
+			})
+		}},
+		{"a required input that becomes optional", func(t *testing.T, c contract.Catalogue) contract.Catalogue {
+			return withType(t, c, "aws.ec2-instance", func(ct *contract.CatalogueType) {
+				ct.Inputs = []contract.CatalogueInput{optInput("instanceType"), optInput("namePrefix")}
+			})
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			current := c.edit(t, previousCatalogue())
+			if got := contract.CompareCatalogues(previousCatalogue(), current, false); len(got) != 0 {
+				t.Errorf("CompareCatalogues(previous, current, false) = %+v, want no break", got)
+			}
+		})
+	}
+}
+
+func TestCompareCatalogues_AllowsEveryBreakWhenTheMajorIsRaised(t *testing.T) {
+	current := previousCatalogue()
+	current.Types = []contract.CatalogueType{
+		catType("aws.ec2-host", "host", []contract.CatalogueInput{reqInput("zone")}, plainOutput("hostId")),
+		catType("aws.iam-role", "iam-role", []contract.CatalogueInput{reqInput("assume_role_policy"), reqInput("name")}, plainOutput("roleArn")),
+		catType("aws.security-group", "network", nil),
+	}
+	if got := contract.CompareCatalogues(previousCatalogue(), current, false); len(got) == 0 {
+		t.Fatal("CompareCatalogues(previous, current, false) finds no break, so the raised-major case proves nothing")
+	}
+	if got := contract.CompareCatalogues(previousCatalogue(), current, true); len(got) != 0 {
+		t.Errorf("CompareCatalogues(previous, current, true) = %+v, want no break once the major is raised", got)
+	}
+}
+
+func TestCompareCatalogues_ListsBreaksSortedByType(t *testing.T) {
+	current := previousCatalogue()
+	current.Types = []contract.CatalogueType{
+		catType("aws.security-group", "network", nil),
+		catType("aws.iam-role", "iam-role", []contract.CatalogueInput{reqInput("assume_role_policy"), optInput("name")}, plainOutput("roleArn")),
+	}
+	var types []string
+	for _, b := range contract.CompareCatalogues(previousCatalogue(), current, false) {
+		types = append(types, b.Type)
+	}
+	want := []string{"aws.ec2-instance", "aws.iam-role", "aws.security-group"}
+	if !reflect.DeepEqual(types, want) {
+		t.Errorf("CompareCatalogues lists breaks for types %q, want %q", types, want)
+	}
+}
+
+func TestBreak_StringNamesTheTypeTheOutputOrInputAndTheReason(t *testing.T) {
+	cases := []struct {
+		b    contract.Break
+		want []string
+	}{
+		{contract.Break{Type: "aws.ec2-instance", Reason: contract.BreakTypeRemoved}, []string{"aws.ec2-instance"}},
+		{contract.Break{Type: "aws.security-group", Reason: contract.BreakKindChanged}, []string{"aws.security-group"}},
+		{contract.Break{Type: "aws.ec2-instance", Reason: contract.BreakOutputRemoved, Output: "publicIp"}, []string{"aws.ec2-instance", "publicIp"}},
+		{contract.Break{Type: "aws.iam-role", Reason: contract.BreakOutputSecretChanged, Output: "roleArn"}, []string{"aws.iam-role", "roleArn"}},
+		{contract.Break{Type: "aws.security-group", Reason: contract.BreakRequiredInputAdded, Input: "vpc"}, []string{"aws.security-group", "vpc"}},
+	}
+	for _, c := range cases {
+		s := c.b.String()
+		for _, w := range append(c.want, string(c.b.Reason)) {
+			if !strings.Contains(s, w) {
+				t.Errorf("Break%+v.String() = %q, does not name %q", c.b, s, w)
+			}
+		}
+	}
+}
+
+func TestBreakReasons_AreDistinctAndNonEmpty(t *testing.T) {
+	reasons := []contract.BreakReason{
+		contract.BreakTypeRemoved, contract.BreakKindChanged, contract.BreakOutputRemoved,
+		contract.BreakOutputSecretChanged, contract.BreakRequiredInputAdded,
+	}
+	seen := map[contract.BreakReason]bool{}
+	for _, r := range reasons {
+		if r == "" {
+			t.Error("a break reason is empty")
+		}
+		if seen[r] {
+			t.Errorf("break reason %q is used twice", r)
+		}
+		seen[r] = true
+	}
+}
+
+func TestCatalogueMajorRaised_AllowsBreaksOnlyAtExactlyOneAboveTheGolden(t *testing.T) {
+	cases := []struct {
+		golden, current int
+		raised          bool
+		refused         bool
+	}{
+		{golden: 1, current: 1, raised: false},
+		{golden: 1, current: 2, raised: true},
+		{golden: 2, current: 3, raised: true},
+		{golden: 1, current: 0, refused: true},
+		{golden: 2, current: 1, refused: true},
+		{golden: 1, current: 3, refused: true},
+	}
+	for _, c := range cases {
+		raised, err := contract.CatalogueMajorRaised(c.golden, c.current)
+		if c.refused {
+			if err == nil {
+				t.Errorf("CatalogueMajorRaised(%d, %d) = %v, nil; want an error", c.golden, c.current, raised)
+				continue
+			}
+			for _, n := range []string{strconv.Itoa(c.golden), strconv.Itoa(c.current)} {
+				if !strings.Contains(err.Error(), n) {
+					t.Errorf("CatalogueMajorRaised(%d, %d) error %q does not name %s", c.golden, c.current, err, n)
+				}
+			}
+			continue
+		}
+		if err != nil || raised != c.raised {
+			t.Errorf("CatalogueMajorRaised(%d, %d) = %v, %v; want %v, nil", c.golden, c.current, raised, err, c.raised)
+		}
+	}
+}
+
+func TestMarshalCatalogue_WritesSortedIndentedJSONWithEmptyListsNotNull(t *testing.T) {
+	c := contract.Catalogue{
+		Major: 1,
+		Types: []contract.CatalogueType{
+			{ID: "b.two", Kind: "firewall"},
+			{ID: "a.one", Kind: "host",
+				Inputs:  []contract.CatalogueInput{reqInput("zone"), optInput("az")},
+				Outputs: []contract.CatalogueOutput{plainOutput("publicIp"), secretOutput("hostId")}},
+		},
+	}
+	want := `{
+  "major": 1,
+  "types": [
+    {
+      "id": "a.one",
+      "kind": "host",
+      "inputs": [
+        {
+          "name": "az",
+          "required": false
+        },
+        {
+          "name": "zone",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "hostId",
+          "secret": true
+        },
+        {
+          "name": "publicIp",
+          "secret": false
+        }
+      ]
+    },
+    {
+      "id": "b.two",
+      "kind": "firewall",
+      "inputs": [],
+      "outputs": []
+    }
+  ]
+}
+`
+	if got := string(contract.MarshalCatalogue(c)); got != want {
+		t.Errorf("MarshalCatalogue =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestMarshalCatalogue_LeavesItsArgumentUnchanged(t *testing.T) {
+	c := previousCatalogue()
+	slices.Reverse(c.Types)
+	slices.Reverse(c.Types[2].Outputs)
+	before := fmt.Sprintf("%+v", c)
+	contract.MarshalCatalogue(c)
+	if after := fmt.Sprintf("%+v", c); after != before {
+		t.Errorf("MarshalCatalogue changed its argument from\n%s\nto\n%s", before, after)
+	}
+}
+
+func TestParseCatalogue_ReadsWhatMarshalCatalogueWrites(t *testing.T) {
+	want := previousCatalogue()
+	got, err := contract.ParseCatalogue(contract.MarshalCatalogue(want))
+	if err != nil {
+		t.Fatalf("ParseCatalogue(MarshalCatalogue(c)): %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseCatalogue(MarshalCatalogue(c)) =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestParseCatalogue_RefusesInputThatIsNotJSON(t *testing.T) {
+	if got, err := contract.ParseCatalogue([]byte("not json")); err == nil {
+		t.Errorf("ParseCatalogue(not json) = %+v, nil; want an error", got)
+	}
+}
+
+// CatalogueMajor must equal the major version the module path declares: no
+// suffix is major 1, and a /vN suffix is major N, which Go requires of every
+// release from v2 on. Raising the constant to let a breaking catalogue change
+// through therefore also forces the module path change only a major release
+// carries, so the comparison cannot be switched off under a minor version.
+func TestCatalogueMajor_EqualsTheModulePathsMajor(t *testing.T) {
+	raw, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	module := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			module = strings.TrimSpace(rest)
+			break
+		}
+	}
+	if module == "" {
+		t.Fatal("go.mod declares no module path")
+	}
+	want := 1
+	if i := strings.LastIndex(module, "/v"); i >= 0 {
+		if n, err := strconv.Atoi(module[i+2:]); err == nil && n >= 2 {
+			want = n
+		}
+	}
+	if contract.CatalogueMajor != want {
+		t.Errorf("CatalogueMajor = %d, but module path %q declares major %d", contract.CatalogueMajor, module, want)
+	}
+}
+
+func TestCurrentCatalogue_TakesItsMajorFromCatalogueMajor(t *testing.T) {
+	if got := contract.CurrentCatalogue().Major; got != contract.CatalogueMajor {
+		t.Errorf("CurrentCatalogue().Major = %d, want CatalogueMajor %d", got, contract.CatalogueMajor)
+	}
+}
+
+func TestCurrentCatalogue_HoldsEveryTypeWithItsKindInputsAndOutputs(t *testing.T) {
+	ts := catalogue(t)
+	got := contract.CurrentCatalogue().Types
+	if len(got) != len(ts) {
+		t.Fatalf("CurrentCatalogue() holds %d types, want the %d of ResourceTypes()", len(got), len(ts))
+	}
+	for i, rt := range ts {
+		ct := got[i]
+		if ct.ID != rt.ID || ct.Kind != rt.Kind {
+			t.Errorf("CurrentCatalogue().Types[%d] is %q of kind %q, want %q of kind %q, in ResourceTypes() order", i, ct.ID, ct.Kind, rt.ID, rt.Kind)
+			continue
+		}
+		wantInputs := []contract.CatalogueInput{}
+		for _, in := range rt.Inputs {
+			wantInputs = append(wantInputs, contract.CatalogueInput{Name: in.Name, Required: in.Required})
+		}
+		slices.SortFunc(wantInputs, func(a, b contract.CatalogueInput) int { return strings.Compare(a.Name, b.Name) })
+		if !reflect.DeepEqual(ct.Inputs, wantInputs) {
+			t.Errorf("%s: inputs %+v, want %+v", rt.ID, ct.Inputs, wantInputs)
+		}
+		kind, ok := contract.LookupKind(rt.Kind)
+		if !ok {
+			t.Fatalf("%s: kind %q is not released", rt.ID, rt.Kind)
+		}
+		wantOutputs := []contract.CatalogueOutput{}
+		for _, name := range sortedCopy(rt.Outputs) {
+			o := contract.CatalogueOutput{Name: name}
+			for _, ko := range append(append([]contract.KindOutput{}, kind.Required...), kind.Optional...) {
+				if ko.Name == name {
+					o.Secret = ko.Secret
+				}
+			}
+			wantOutputs = append(wantOutputs, o)
+		}
+		if !reflect.DeepEqual(ct.Outputs, wantOutputs) {
+			t.Errorf("%s: outputs %+v, want %+v, each with its kind's secret mark", rt.ID, ct.Outputs, wantOutputs)
+		}
+	}
+}
+
+func TestCurrentCatalogue_MarksASecretOutputSecret(t *testing.T) {
+	for _, ct := range contract.CurrentCatalogue().Types {
+		if ct.ID != "aws.iam-role" {
+			continue
+		}
+		if !reflect.DeepEqual(ct.Outputs, []contract.CatalogueOutput{secretOutput("roleArn")}) {
+			t.Errorf("aws.iam-role outputs %+v, want roleArn marked secret", ct.Outputs)
+		}
+		return
+	}
+	t.Fatal("CurrentCatalogue() has no aws.iam-role")
+}
+
+// readCatalogueGolden reads and parses the committed catalogue golden, failing
+// the test when it is missing, unreadable or holds no type.
+func readCatalogueGolden(t *testing.T) ([]byte, contract.Catalogue) {
+	t.Helper()
+	raw, err := os.ReadFile(catalogueGoldenPath)
+	if err != nil {
+		t.Fatalf("reading the catalogue golden: %v", err)
+	}
+	golden, err := contract.ParseCatalogue(raw)
+	if err != nil {
+		t.Fatalf("ParseCatalogue(%s): %v", catalogueGoldenPath, err)
+	}
+	if len(golden.Types) == 0 {
+		t.Fatalf("%s holds no type, so comparing against it proves nothing", catalogueGoldenPath)
+	}
+	return raw, golden
+}
+
+func TestCatalogueGolden_IsWhatMarshalCatalogueWritesForIt(t *testing.T) {
+	raw, golden := readCatalogueGolden(t)
+	if again := contract.MarshalCatalogue(golden); !bytes.Equal(raw, again) {
+		t.Errorf("%s is not in the form cmd/catalogue-golden prints; re-marshalled it reads\n%s", catalogueGoldenPath, again)
+	}
+}
+
+func TestCatalogueMajor_IsTheGoldensMajorOrExactlyOneAbove(t *testing.T) {
+	_, golden := readCatalogueGolden(t)
+	if _, err := contract.CatalogueMajorRaised(golden.Major, contract.CatalogueMajor); err != nil {
+		t.Errorf("CatalogueMajor %d against the golden's major %d: %v", contract.CatalogueMajor, golden.Major, err)
+	}
+}
+
+func TestResourceTypes_KeepEveryTypeOutputAndRequiredInputThePreviousReleaseShipped(t *testing.T) {
+	_, golden := readCatalogueGolden(t)
+	raised, err := contract.CatalogueMajorRaised(golden.Major, contract.CatalogueMajor)
+	if err != nil {
+		t.Fatalf("CatalogueMajorRaised(%d, %d): %v", golden.Major, contract.CatalogueMajor, err)
+	}
+	for _, b := range contract.CompareCatalogues(golden, contract.CurrentCatalogue(), raised) {
+		t.Errorf("catalogue break against the previous release (major %d): %s; a breaking catalogue change raises contract.CatalogueMajor by one and takes kit-release: major", golden.Major, b)
 	}
 }

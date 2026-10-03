@@ -111,9 +111,9 @@ jobs:
         with:
           go-version: '1.26.8'
       - name: Record this push's delivered board keys
-        # No shell override: this step is a single go run with no pipe, so
+        # No shell override: this runs a single go run with no pipe, so
         # naming bash would only add pipefail, which has nothing to act on
-        # here. The default shell's -e already fails the step, so a rejected
+        # here. The default shell's -e already fails it, so a rejected
         # board write or a git push failure already turns this run red.
         env:
           TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}

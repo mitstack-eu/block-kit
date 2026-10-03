@@ -95,8 +95,7 @@
 //     does not have as a standalone repository.
 //  6. manifest — checks the names the target's manifest.yaml declares
 //     against the resource registry package contract owns, its metadata.id
-//     against the block id grammar, and a declared spec.steps against
-//     contract.ValidateBlockSteps (see "The manifest suite" below).
+//     against the block id grammar (see "The manifest suite" below).
 //     Skipped when there is no manifest.yaml, which trust-plumbing already
 //     fails.
 //  7. naming — checks the app-name limit the target's manifest.yaml
@@ -115,7 +114,7 @@
 //
 // # The manifest suite
 //
-// The manifest suite reads five things of the target's manifest.yaml and
+// The manifest suite reads four things of the target's manifest.yaml and
 // nothing else, so a manifest field it does not know is never refused:
 //
 //   - A metadata.id, when present and non-empty, must parse through
@@ -133,13 +132,6 @@
 //     refused with the messages the platform gives at apply. A requirement
 //     with no reads passes, since operators add their declarations one at a
 //     time.
-//   - A manifest that declares spec.steps, as ADR 0079 sets it, has its
-//     spec.params names, its steps, the resource entries of spec.requires
-//     and the `- step:` offers in spec.provides judged by
-//     contract.ValidateBlockSteps, in place of the reads check above. Such
-//     a manifest is also refused a `capability:` or `extension:` entry in
-//     spec.requires and a spec.dependsOn key, each named. A manifest without
-//     spec.steps gets the reads check above and none of these.
 //   - With --base-manifest, a spec.version that differs from the base's
 //     needs spec.releaseClass and a non-blank spec.releaseNote. The class
 //     value is not checked here; the platform validates it at apply. A base

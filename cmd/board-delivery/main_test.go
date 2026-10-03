@@ -6,7 +6,7 @@ package main
 // Run(args []string, stdout io.Writer) int, following the kit's own
 // blockprov.Run idiom: the whole command is testable without a real
 // process, and TRACKER_BASE_URL / TRACKER_API_TOKEN are read from the
-// environment via t.Setenv, exactly as the workflow step will set them.
+// environment via t.Setenv, exactly as the workflow job will set them.
 //
 // The git half runs against a hermetic temporary repository built with
 // os/exec (git init/commit/tag), plus a bare "origin" remote, so the
@@ -157,7 +157,7 @@ func keysEqual(got, want []string) bool {
 // --- CLI fixture -----------------------------------------------------------
 
 // runBoardDelivery invokes Run with --repo/--before/--after flags and
-// TRACKER_BASE_URL/TRACKER_API_TOKEN set exactly as the workflow step will
+// TRACKER_BASE_URL/TRACKER_API_TOKEN set exactly as the workflow job will
 // set them.
 func runBoardDelivery(t *testing.T, repoDir, before, after, baseURL, token string) (stdout string, exitCode int) {
 	t.Helper()

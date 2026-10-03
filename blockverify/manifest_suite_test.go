@@ -540,6 +540,23 @@ func TestManifestSuite_AnUnknownSpecFieldPasses(t *testing.T) {
 	requireManifestPass(t, manifestSuite(manifestDir(t, manifestHead+unknownFieldSpec), ""))
 }
 
+func TestManifestSuite_PassesAnOldFormManifestWithDependsOnAndProvidedSlugs(t *testing.T) {
+	// An old-form manifest keeps its capability entries, its dependsOn and
+	// its provided capability slugs, and none of them is refused.
+	spec := `  dependsOn:
+    - weather-app
+  provides:
+    - runner
+  requires:
+    - capability: repo
+      reads: [repo]
+    - capability: app-host
+  outputs:
+    - repo
+`
+	requireManifestPass(t, manifestSuite(manifestDir(t, manifestHead+spec), ""))
+}
+
 // --- a manifest the reader cannot follow ----------------------------------
 
 func TestManifestSuite_AManifestTheReaderCannotFollowIsAFailure(t *testing.T) {
