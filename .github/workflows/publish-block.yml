@@ -252,7 +252,7 @@ jobs:
           role-to-assume: ${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}
           aws-region: ${{ inputs.aws-region }}
 
-      # See the conformance job's identical "Mint kit token" for the comment on scope.
+      # The conformance job's identical "Mint kit token" entry explains the scope.
       - name: Mint kit token
         id: kit_token
         run: |
@@ -493,8 +493,8 @@ jobs:
             --token-request-token "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             --out record.json
 
-      # Masked and handed on as an env var, never as an argument — see the
-      # comment where it is read for why.
+      # Masked and handed on as an env var, never as an argument. The comment
+      # on "blockprov push", which reads it, says why.
       - name: Fetch ECR password
         id: ecr_password
         if: steps.existing.outputs.record == 'false'

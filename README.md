@@ -296,12 +296,18 @@ and each raise zeroes the levels below it. A skipped or failed release run is
 not lost: the next push resolves the base from the newest tag and cuts the
 release the earlier push owed.
 
+`go test ./contract/...` compares the resource-type catalogue with the golden
+at `contract/goldens/catalogue/resourcetypes.json`, which holds the catalogue
+as the previous release shipped it, and fails a breaking change. A breaking
+change is a type removed or renamed, a type changing its kind, an output
+removed or changing its secret mark, or a new required input.
+`contract.CatalogueMajor` records the major version being released, and a test
+holds it equal to the major the module path declares.
+
 A breaking catalogue change takes `kit-release: major` and raises
-`contract.CatalogueMajor` by one in the same change. A breaking change is a
-type removed or renamed, a type changing its kind, an output removed or
-changing its secret mark, or a new required input. From v2 on, Go also
+`contract.CatalogueMajor` by one in the same change. From v2 on, Go also
 requires the module path to end in `/v2` (or the matching major) for a major
-release. After a release whose catalogue changed, a follow-up change refreshes
+release, so the same change moves the module path and every import. After a release whose catalogue changed, a follow-up change refreshes
 the golden with
 `go run ./cmd/catalogue-golden > contract/goldens/catalogue/resourcetypes.json`.
 A change that alters the catalogue never refreshes the golden itself, since

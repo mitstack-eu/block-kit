@@ -1165,11 +1165,34 @@ func TestParseCatalogue_RefusesInputThatIsNotJSON(t *testing.T) {
 	}
 }
 
-// The kit release that ships the comparison stays in the v1 line, since a v2
-// tag would need a /v2 module path, so the catalogue's major is 1.
-func TestCatalogueMajor_IsOneAtTheReleaseThatShipsTheComparison(t *testing.T) {
-	if contract.CatalogueMajor != 1 {
-		t.Errorf("CatalogueMajor = %d, want 1", contract.CatalogueMajor)
+// CatalogueMajor must equal the major version the module path declares: no
+// suffix is major 1, and a /vN suffix is major N, which Go requires of every
+// release from v2 on. Raising the constant to let a breaking catalogue change
+// through therefore also forces the module path change only a major release
+// carries, so the comparison cannot be switched off under a minor version.
+func TestCatalogueMajor_EqualsTheModulePathsMajor(t *testing.T) {
+	raw, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	module := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			module = strings.TrimSpace(rest)
+			break
+		}
+	}
+	if module == "" {
+		t.Fatal("go.mod declares no module path")
+	}
+	want := 1
+	if i := strings.LastIndex(module, "/v"); i >= 0 {
+		if n, err := strconv.Atoi(module[i+2:]); err == nil && n >= 2 {
+			want = n
+		}
+	}
+	if contract.CatalogueMajor != want {
+		t.Errorf("CatalogueMajor = %d, but module path %q declares major %d", contract.CatalogueMajor, module, want)
 	}
 }
 
