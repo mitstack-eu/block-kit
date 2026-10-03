@@ -56,11 +56,11 @@ func ParseManifest(raw []byte) (Manifest, error) {
 		}
 		return Manifest{APIVersion: apiVersion, Block: b}, nil
 	case ManifestAPIVersionV1Alpha:
-		a, err := readV1Alpha(root)
+		a, warnings, err := readV1Alpha(root)
 		if err != nil {
 			return Manifest{}, err
 		}
-		return Manifest{APIVersion: apiVersion, V1Alpha: a}, nil
+		return Manifest{APIVersion: apiVersion, V1Alpha: a, Warnings: warnings}, nil
 	}
 	return Manifest{}, apiVersionError(apiVersion)
 }
@@ -98,6 +98,23 @@ type Manifest struct {
 	Block *BlockManifest
 	// V1Alpha is the manifest under ManifestAPIVersionV1Alpha.
 	V1Alpha *V1AlphaManifest
+	// Warnings names each retired key the manifest carries that the parser
+	// still accepted, in the platform's order. Under
+	// ManifestAPIVersionV1Alpha a spec.dependsOn given a list comes first,
+	// then each requirement whose optional is true, in requirement order.
+	// Under ManifestAPIVersion it is empty.
+	Warnings []ManifestWarning
+}
+
+// ManifestWarning is one retired key a parsed manifest carries. A warning
+// never refuses the manifest.
+type ManifestWarning struct {
+	// Path names the key, such as spec.dependsOn or
+	// spec.requires[<capability>].optional.
+	Path string
+	// Message says what the key's retirement means for the manifest and
+	// what replaces it.
+	Message string
 }
 
 // ID returns metadata.id under either version, untrimmed, since every
