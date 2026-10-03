@@ -10,7 +10,8 @@ package main
 //
 //   - it enters as the bytes of a file read whose path is built from a
 //     manifest path (the manifestFile constant, a string naming a manifest,
-//     or a name or parameter carrying one, as --base-manifest does), as a
+//     a constant string expression that folds to one, or a name or
+//     parameter carrying one, as --base-manifest does), as a
 //     Config.Manifest value, or as a []byte parameter of a function whose
 //     name or parameter name says manifest;
 //   - it is followed through local variables, string and []byte
@@ -71,6 +72,7 @@ type manifestReadGuard struct {
 	funcs      []*guardFunc
 	byKey      map[string][]*guardFunc
 	imports    map[*ast.File]map[string]string
+	consts     map[string]map[string]ast.Expr
 	changed    bool
 	record     bool
 	sources    map[token.Pos]string
@@ -86,6 +88,7 @@ func guardManifestReads(fset *token.FileSet, pkgs []*guardPackage) (map[string]i
 		pkgs:       map[string]*guardPackage{},
 		byKey:      map[string][]*guardFunc{},
 		imports:    map[*ast.File]map[string]string{},
+		consts:     map[string]map[string]ast.Expr{},
 		sources:    map[token.Pos]string{},
 		violations: map[token.Pos]string{},
 	}
@@ -102,6 +105,7 @@ func guardManifestReads(fset *token.FileSet, pkgs []*guardPackage) (map[string]i
 				names[name] = path
 			}
 			g.imports[f] = names
+			g.collectConsts(p.path, f)
 			for _, d := range f.Decls {
 				decl, ok := d.(*ast.FuncDecl)
 				if !ok || decl.Body == nil {
@@ -162,6 +166,77 @@ func (g *manifestReadGuard) addFunc(p *guardPackage, f *ast.File, decl *ast.Func
 	}
 	g.funcs = append(g.funcs, fn)
 	g.byKey[key] = append(g.byKey[key], fn)
+}
+
+// collectConsts records the package-level constants of f that carry a
+// value, by name, so a constant string expression can be folded.
+func (g *manifestReadGuard) collectConsts(pkgPath string, f *ast.File) {
+	if g.consts[pkgPath] == nil {
+		g.consts[pkgPath] = map[string]ast.Expr{}
+	}
+	for _, d := range f.Decls {
+		gen, ok := d.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs := spec.(*ast.ValueSpec)
+			for i, name := range vs.Names {
+				if i < len(vs.Values) {
+					g.consts[pkgPath][name.Name] = vs.Values[i]
+				}
+			}
+		}
+	}
+}
+
+// constString folds e to the string it always holds: a string literal, a
+// sum of constant strings, or a constant declared in the function, in its
+// package or in another guarded package.
+func (st *funcState) constString(e ast.Expr, depth int) (string, bool) {
+	if depth > 16 {
+		return "", false
+	}
+	switch e := e.(type) {
+	case *ast.BasicLit:
+		if e.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(e.Value)
+		return v, err == nil
+	case *ast.ParenExpr:
+		return st.constString(e.X, depth+1)
+	case *ast.BinaryExpr:
+		if e.Op != token.ADD {
+			return "", false
+		}
+		x, okX := st.constString(e.X, depth+1)
+		y, okY := st.constString(e.Y, depth+1)
+		return x + y, okX && okY
+	case *ast.Ident:
+		if e.Obj != nil {
+			if e.Obj.Kind != ast.Con {
+				return "", false
+			}
+			if vs, ok := e.Obj.Decl.(*ast.ValueSpec); ok {
+				for i, name := range vs.Names {
+					if name.Name == e.Name && i < len(vs.Values) {
+						return st.constString(vs.Values[i], depth+1)
+					}
+				}
+			}
+		}
+		if v, ok := st.g.consts[st.fn.pkg.path][e.Name]; ok {
+			return st.constString(v, depth+1)
+		}
+	case *ast.SelectorExpr:
+		if path, ok := st.pkgOf(e.X); ok {
+			if v, ok := st.g.consts[path][e.Sel.Name]; ok {
+				return st.constString(v, depth+1)
+			}
+		}
+	}
+	return "", false
 }
 
 func saysManifest(name string) bool { return strings.Contains(strings.ToLower(name), "manifest") }
@@ -331,6 +406,9 @@ func (st *funcState) resolve(call *ast.CallExpr) []*guardFunc {
 
 // isPath reports whether e may hold the path of a manifest.
 func (st *funcState) isPath(e ast.Expr) bool {
+	if v, ok := st.constString(e, 0); ok && saysManifest(v) {
+		return true
+	}
 	switch e := e.(type) {
 	case *ast.Ident:
 		return saysManifest(e.Name) || e.Obj != nil && st.path[e.Obj]
@@ -776,6 +854,24 @@ func New(cfg Config) *holder {
 	h := &holder{}
 	h.raw = cfg.Manifest
 	return h
+}`,
+		violations: 1,
+	},
+	{
+		label: "a manifest path written as a constant concatenation",
+		blockverify: `func declared(target string) bool {
+	raw, _ := os.ReadFile(filepath.Join(target, "mani"+"fest.yaml"))
+	return bytes.Contains(raw, []byte("contract:"))
+}`,
+		violations: 1,
+	},
+	{
+		label: "a manifest path held in a constant built by concatenation",
+		blockverify: `const fileName = "mani" + "fest.yaml"
+
+func declared(target string) bool {
+	raw, _ := os.ReadFile(filepath.Join(target, fileName))
+	return bytes.Contains(raw, []byte("contract:"))
 }`,
 		violations: 1,
 	},
