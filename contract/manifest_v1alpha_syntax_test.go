@@ -191,3 +191,50 @@ func TestParseManifest_V1AlphaDropsANullListItem(t *testing.T) {
 	wantField(t, "spec.tags", a.Spec.Tags, []string{"fixture", "parser"})
 	wantField(t, "V1AlphaManifest.Outputs", a.Outputs, []string{"host", "port"})
 }
+
+// An escaped space before a line break in a double-quoted scalar is kept,
+// and the break then folds to a space, as the platform's decoder reads it.
+func TestParseManifest_V1AlphaKeepsAnEscapedSpaceBeforeALineBreak(t *testing.T) {
+	a := alphaSpec(t, "  description: \"a\\ \n    b\"\n")
+	wantField(t, "spec.description", a.Spec.Description, "a  b")
+}
+
+// A core tag whose text does not resolve to it is refused, naming the path,
+// as the platform's decoder refuses it: !!bool yes, !!int abc and !!null x.
+// A flow list ending in a bare tag and a %YAML 1.2 directive are refused
+// too. A !!binary value is base64, which the kit's YAML subset does not
+// decode, so the kit refuses the tag rather than read the base64 text as
+// the value.
+func TestParseManifest_V1AlphaRefusesATagOrDirectiveYAMLRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		label, raw string
+		wants      []string
+	}{
+		{"!!bool yes", alphaHead + "  optional: !!bool yes\n", []string{"spec.optional"}},
+		{"!!int abc", alphaHead + "  description: !!int abc\n", []string{"spec.description"}},
+		{"!!null x", alphaHead + "  description: !!null x\n", []string{"spec.description"}},
+		{"a flow list ending in a bare tag", alphaHead + "  tags: [!!str 5, !!str]\n", []string{"spec.tags"}},
+		{"a %YAML 1.2 directive", "%YAML 1.2\n---\n" + alphaHead, []string{"%YAML"}},
+		{"!!binary", alphaHead + "  description: !!binary aGk=\n", []string{"spec.description", "!!binary"}},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			requireRefusedNaming(t, []byte(tc.raw), tc.wants...)
+		})
+	}
+}
+
+// A document marker followed by a second one opens an empty document before
+// the manifest, which the platform's decoder takes as the whole manifest;
+// the kit refuses it as more than one YAML document.
+func TestParseManifest_V1AlphaRefusesAnEmptyDocumentBeforeTheManifest(t *testing.T) {
+	requireRefusedNaming(t, []byte("---\n---\n"+alphaHead), "more than one YAML document")
+}
+
+// A document may start on its marker line, as a flow mapping after ---.
+func TestParseManifest_V1AlphaReadsADocumentStartingOnItsMarkerLine(t *testing.T) {
+	a := parseAlpha(t, "--- {apiVersion: mitstack/v1alpha, kind: Block, metadata: {id: fixture-block, name: Fixture Block}, "+
+		"spec: {version: 1.0.0, description: hi}}\n")
+	wantField(t, "kind", a.Kind, "Block")
+	wantField(t, "metadata.id", a.Metadata.ID, "fixture-block")
+	wantField(t, "spec.description", a.Spec.Description, "hi")
+}
