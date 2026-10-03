@@ -27,9 +27,6 @@ type yamlNode struct {
 	keys  []string
 	vals  []*yamlNode
 	items []*yamlNode
-	// flow marks a mapping or sequence written in flow style, as in
-	// {a: b} or [a, b].
-	flow bool
 	// str marks a scalar written in quotes or as a block scalar, which YAML
 	// reads as a string whatever its text, never as a null, a number or a
 	// boolean.
@@ -58,20 +55,10 @@ func (n *yamlNode) get(key string) *yamlNode {
 	return nil
 }
 
-// followableMap reports whether n is a block mapping whose every line the
-// reader placed, with no merge key that could bring in keys from elsewhere.
-func (n *yamlNode) followableMap() bool {
-	return n.kind == yamlMap && !n.flow && !n.misplaced && n.get("<<") == nil
-}
-
-func unfollowable(field string) error {
-	return errors.New(field + " is in a form the reader cannot follow (a flow mapping, an alias, a merge key or a misplaced line), so what it declares is unknown")
-}
-
 // parseYAML reads content by indentation into block mappings, block
 // sequences, flow collections and scalars, including block scalars.
-// Anything else becomes an opaque node, so a caller refuses it only where it
-// reads.
+// Anything else becomes an opaque node, which the manifest decoder refuses
+// wherever it sits.
 func parseYAML(content string) *yamlNode {
 	r := &yamlReader{lines: strings.Split(content, "\n")}
 	return r.nested(-1, false)
@@ -487,7 +474,7 @@ func (p *flowParser) quoted() *yamlNode {
 
 // sequence reads "[a, b]" at the cursor.
 func (p *flowParser) sequence() *yamlNode {
-	n := &yamlNode{kind: yamlSeq, flow: true}
+	n := &yamlNode{kind: yamlSeq}
 	p.i++
 	for !p.failed {
 		p.skipBlanks()
@@ -509,7 +496,7 @@ func (p *flowParser) sequence() *yamlNode {
 
 // mapping reads "{a: b, c: d}" at the cursor.
 func (p *flowParser) mapping() *yamlNode {
-	n := &yamlNode{kind: yamlMap, flow: true}
+	n := &yamlNode{kind: yamlMap}
 	p.i++
 	for !p.failed {
 		p.skipBlanks()

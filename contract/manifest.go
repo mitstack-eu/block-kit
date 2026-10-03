@@ -18,22 +18,24 @@ const AppNameNamingField = "spec.naming.appName"
 
 // AppNameNaming is a block's AppNameNamingField declaration: the longest app
 // name the block claims to accept, and every name it derives from the app
-// name, which together set that limit.
+// name, which together set that limit. Its yaml tags name the keys
+// ParseManifest reads it under; a tag without omitempty is a key the parser
+// requires.
 type AppNameNaming struct {
 	// MaxLength is the longest app name the block claims to accept.
-	MaxLength int
+	MaxLength int `yaml:"maxLength"`
 	// DerivedNames lists every provider resource name the block builds from
 	// the app name.
-	DerivedNames []DerivedName
+	DerivedNames []DerivedName `yaml:"derivedNames,omitempty"`
 }
 
 // DerivedName is one provider resource name a block builds from the app
 // name.
 type DerivedName struct {
 	// Template is the name with the app name written as {appName}.
-	Template string
+	Template string `yaml:"template"`
 	// Limit is the provider's maximum length for the whole name.
-	Limit int
+	Limit int `yaml:"limit"`
 }
 
 // LifecycleHookPoints returns the closed set of lifecycle hook points, in the

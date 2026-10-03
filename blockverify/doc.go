@@ -38,9 +38,10 @@
 // The target's manifest.yaml declares the lifecycle contract it serves at
 // spec.lifecycle.contract, and trust-plumbing and contract judge the target
 // by that contract, the same branch the platform's operator gates take. The
-// value is read by walking the manifest's block mappings, so a contract: key
-// inside a block scalar, under params or anywhere else is not the contract,
-// and a lifecycle mapping with no contract key declares none.
+// value is read through contract.ParseManifest under either manifest
+// version, so a contract: key inside a block scalar or nested under another
+// field is not the contract, and a lifecycle mapping with no contract key
+// declares none.
 //
 //   - No declared contract, or no manifest at all: the legacy rule below.
 //   - kit/v1: kitshim.go and the three TestContract_* functions are waived,
@@ -56,9 +57,9 @@
 //     Both suites report pass or fail with a detail naming the kit/v1 rule.
 //   - Any other value: both suites fail, naming the value.
 //   - A manifest that is present but cannot be opened (a directory, a
-//     dangling symlink) or walked (a flow mapping or alias under spec or
-//     spec.lifecycle): both suites fail as a tooling failure naming the
-//     target's manifest.yaml, rather than judging it by the legacy rule.
+//     dangling symlink) or that contract.ParseManifest refuses: both suites
+//     fail as a tooling failure naming the target's manifest.yaml and the
+//     reason, rather than judging it by the legacy rule.
 //
 // # What it checks, in run order
 //
@@ -117,11 +118,11 @@
 // The manifest suite reads the target's manifest.yaml, and the base's, through
 // contract.ParseManifest, the kit's one manifest parser. A target the parser
 // refuses fails with its reason, as one whose apiVersion is other than
-// mitstack/v1alpha or mitstack/v1beta, or missing, does. A mitstack/v1beta
-// manifest is read strictly, so a key its types do not name fails, and it
-// declares no outputs or reads for the registry to resolve. Of a
-// mitstack/v1alpha manifest the suite reads four things and nothing else, so a
-// manifest field it does not know is never refused:
+// mitstack/v1alpha or mitstack/v1beta, or missing, does. The parser reads a
+// manifest of either version strictly, so a key its version does not name
+// fails, naming the key's path. A mitstack/v1beta manifest declares no
+// outputs or reads for the registry to resolve. Of a mitstack/v1alpha
+// manifest the suite checks four things:
 //
 //   - A metadata.id, when present and non-empty, must parse through
 //     contract.ParseBlockID: a bare slug for a community block, or
@@ -151,9 +152,8 @@
 //
 // The same keys nested anywhere else, under another spec field or inside a
 // block scalar, are not read. A manifest.yaml that is present but cannot be
-// read, or holds a flow mapping, an alias or a merge key where the suite
-// reads (spec, spec.outputs, spec.requires or one of its items, metadata or
-// metadata.id), fails rather than passing on what the reader could not see.
+// read, or holds an alias or a merge key anywhere, fails rather than passing
+// on what the parser could not see.
 //
 // On a pull request, publish-block.yml's conformance job writes the base
 // commit's manifest.yaml to a temporary file and passes it as

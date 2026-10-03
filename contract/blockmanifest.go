@@ -18,15 +18,17 @@ const ManifestAPIVersion = "mitstack/v1beta"
 // whole manifest strictly into a BlockManifest: a key the types do not name,
 // a missing required field, a many that is not true or false, a resource
 // name used twice and a provides entry naming no resource are each refused,
-// naming the path. Under ManifestAPIVersionV1Alpha it reads what
-// blockverify's manifest suite checks into a V1AlphaManifest and refuses no
-// field it does not know. Any other apiVersion, or none, is refused naming
-// both known versions.
+// naming the path. Under ManifestAPIVersionV1Alpha it reads the whole
+// manifest strictly into a V1AlphaManifest, every field the platform's
+// decoder reads and spec.naming.appName: a key the types do not name, a
+// value of the wrong shape and two spellings of one key that disagree are
+// each refused, naming the path. Any other apiVersion, or none, is refused
+// naming both known versions.
 //
 // The YAML it reads is a subset: block and flow mappings and sequences,
 // comments, quoted scalars and block scalars. An alias or a merge key brings
-// in text from elsewhere in the document, so where the parser reads one it
-// refuses the manifest rather than guessing.
+// in text from elsewhere in the document, so the parser refuses the
+// manifest rather than guessing.
 func ParseManifest(raw []byte) (Manifest, error) {
 	root := parseYAML(string(raw))
 	switch root.kind {
@@ -34,9 +36,12 @@ func ParseManifest(raw []byte) (Manifest, error) {
 		return Manifest{}, apiVersionError("")
 	case yamlMap:
 	default:
-		return Manifest{}, unfollowable("the document")
+		if err := readable(root, ""); err != nil {
+			return Manifest{}, err
+		}
+		return Manifest{}, mapEntries(root, "")
 	}
-	apiVersion, err := rawScalarField(root, "apiVersion", "apiVersion")
+	apiVersion, err := apiVersionOf(root)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -57,6 +62,22 @@ func ParseManifest(raw []byte) (Manifest, error) {
 	return Manifest{}, apiVersionError(apiVersion)
 }
 
+// apiVersionOf returns the apiVersion the root mapping declares, untrimmed,
+// or "" when it declares none.
+func apiVersionOf(root *yamlNode) (string, error) {
+	n := root.get("apiVersion")
+	if n == nil || isNull(n) {
+		return "", nil
+	}
+	if err := readable(n, "apiVersion"); err != nil {
+		return "", err
+	}
+	if n.kind != yamlScalar {
+		return "", fmt.Errorf("apiVersion must be one value, not a mapping or a list")
+	}
+	return n.value, nil
+}
+
 func apiVersionError(got string) error {
 	if got == "" {
 		return fmt.Errorf("apiVersion is missing, so the manifest's shape is unknown; it must be %s or %s",
@@ -72,8 +93,7 @@ type Manifest struct {
 	APIVersion string
 	// Block is the manifest under ManifestAPIVersion.
 	Block *BlockManifest
-	// V1Alpha is what the kit reads of a manifest under
-	// ManifestAPIVersionV1Alpha.
+	// V1Alpha is the manifest under ManifestAPIVersionV1Alpha.
 	V1Alpha *V1AlphaManifest
 }
 
@@ -121,28 +141,6 @@ func (m Manifest) ReleaseNote() string {
 		return strings.TrimSpace(m.V1Alpha.ReleaseNote)
 	}
 	return ""
-}
-
-// V1AlphaManifest is what the kit reads of a manifest under
-// ManifestAPIVersionV1Alpha: the fields blockverify's manifest suite checks.
-type V1AlphaManifest struct {
-	// ID is metadata.id, untrimmed.
-	ID string
-	// Version, ReleaseClass and ReleaseNote are spec.version,
-	// spec.releaseClass and spec.releaseNote, trimmed.
-	Version      string
-	ReleaseClass string
-	ReleaseNote  string
-	// Outputs is spec.outputs.
-	Outputs []string
-	// Requires is spec.requires.
-	Requires []V1AlphaRequirement
-}
-
-// V1AlphaRequirement is one item of a v1alpha spec.requires.
-type V1AlphaRequirement struct {
-	Capability string
-	Reads      []string
 }
 
 // BlockManifest is a block manifest under ManifestAPIVersion. The JSON

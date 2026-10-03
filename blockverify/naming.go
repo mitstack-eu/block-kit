@@ -21,8 +21,11 @@ const appNamePlaceholder = "{appName}"
 // and maxLength must equal the smallest of those. A template with no
 // {appName}, a template using {appName} more than once, a template whose
 // fixed text alone reaches its limit, and a maxLength with no derivedNames
-// behind it all fail. A manifest that declares no spec.naming.appName is
-// skipped.
+// behind it all fail. The declaration is read through
+// handler.ManifestAppNameNaming, which reads the manifest through
+// contract.ParseManifest, so a manifest the parser refuses fails with the
+// parser's message. A manifest the parser accepts that declares no
+// spec.naming.appName is skipped.
 func namingSuite(target string) SuiteResult {
 	const name = "naming"
 
