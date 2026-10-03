@@ -46,13 +46,10 @@ func TestResources_EveryEntryIsComplete(t *testing.T) {
 	}
 }
 
-func TestResources_AliasesAndCapabilitiesAreNeverNil(t *testing.T) {
+func TestResources_AliasesAreNeverNil(t *testing.T) {
 	for _, r := range registry(t) {
 		if r.Aliases == nil {
 			t.Errorf("%q: Aliases is nil, want an empty list when the entry has none", r.Name)
-		}
-		if r.Capabilities == nil {
-			t.Errorf("%q: Capabilities is nil, want an empty list when the entry has none", r.Name)
 		}
 	}
 }
@@ -140,7 +137,6 @@ func TestResources_ReturnsCopiesACallerCanMutate(t *testing.T) {
 	snapshot := make([]contract.ResourceEntry, len(before))
 	for i, r := range before {
 		r.Aliases = append([]string{}, r.Aliases...)
-		r.Capabilities = append([]string{}, r.Capabilities...)
 		snapshot[i] = r
 	}
 
@@ -151,9 +147,6 @@ func TestResources_ReturnsCopiesACallerCanMutate(t *testing.T) {
 	for i := range got {
 		for j := range got[i].Aliases {
 			got[i].Aliases[j] = "mutated"
-		}
-		for j := range got[i].Capabilities {
-			got[i].Capabilities[j] = "mutated"
 		}
 		got[i].Name = "mutated"
 	}
@@ -168,15 +161,13 @@ func TestLookupResource_ReturnsACopyACallerCanMutate(t *testing.T) {
 	if !ok {
 		t.Fatal(`LookupResource("cloud.region") found nothing`)
 	}
-	if len(first.Aliases) == 0 || len(first.Capabilities) == 0 {
-		t.Fatalf("cloud.region needs an alias and a capability for this test to mutate, got %+v", first)
+	if len(first.Aliases) == 0 {
+		t.Fatalf("cloud.region needs an alias for this test to mutate, got %+v", first)
 	}
 	want := first
 	want.Aliases = append([]string{}, first.Aliases...)
-	want.Capabilities = append([]string{}, first.Capabilities...)
 
 	first.Aliases[0] = "mutated"
-	first.Capabilities[0] = "mutated"
 
 	if again, _ := contract.LookupResource("cloud.region"); !reflect.DeepEqual(again, want) {
 		t.Errorf("mutating a looked-up entry changed the registry: a later lookup returned %+v, want %+v", again, want)

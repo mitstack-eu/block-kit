@@ -23,7 +23,7 @@ const steppedSpec = `  params:
   requires:
     - resource: image
       kind: container-image
-      reads: [artifact]
+      reads: [imageRepo]
     - resource: workflows
       type: github.workflow-file
       many: true
@@ -37,12 +37,12 @@ const steppedSpec = `  params:
       type: aws.ecr-image
       ownership: created
       inputs:
-        registry: steps.registry.outputs.ecrRegistry
-        base: requires.image.outputs.artifact
+        registry: steps.registry.outputs.registryHost
+        base: requires.image.outputs.imageRepo
   provides:
     - step: build-image
   outputs:
-    - artifact
+    - imageRepo
 `
 
 func TestManifestSuite_PassesAValidSteppedManifest(t *testing.T) {
@@ -106,10 +106,10 @@ func TestManifestSuite_FailsASteppedManifestTheContractRefuses(t *testing.T) {
 			[]string{`step "registry"`, "ownership"}},
 		{"binding to an undeclared param", "name: params.appName", "name: params.region",
 			[]string{`step "registry"`, `param "region"`}},
-		{"binding to a later step", "name: params.appName", "name: steps.build-image.outputs.artifact",
+		{"binding to a later step", "name: params.appName", "name: steps.build-image.outputs.imageRepo",
 			[]string{`step "registry"`, "earlier step"}},
-		{"read outside the requirement's reads", "base: requires.image.outputs.artifact", "base: requires.image.outputs.imageRepo",
-			[]string{`step "build-image"`, `"imageRepo"`}},
+		{"read outside the requirement's reads", "base: requires.image.outputs.imageRepo", "base: requires.image.outputs.registryHost",
+			[]string{`step "build-image"`, `"registryHost"`}},
 		{"offer naming no step", "- step: build-image", "- step: push",
 			[]string{"offer", `"push"`}},
 	}

@@ -110,7 +110,7 @@ func registryProblems(m blockManifest) []string {
 
 // readProblem judges one spec.requires[].reads name as the platform does at
 // apply: it must be non-empty, resolve through the registry, and name an
-// entry that lists capability.
+// entry v1alphaReadCapabilities gives under capability.
 func readProblem(capability, name string) string {
 	if name == "" {
 		return fmt.Sprintf("spec.requires[%s].reads: a name must not be empty", capability)
@@ -120,7 +120,7 @@ func readProblem(capability, name string) string {
 		return fmt.Sprintf("spec.requires[%s].reads: %q is not in the resource registry (nearest registered name: %q)",
 			capability, name, contract.NearestResource(name))
 	}
-	for _, c := range entry.Capabilities {
+	for _, c := range v1alphaReadCapabilities[entry.Name] {
 		if c == capability {
 			return ""
 		}

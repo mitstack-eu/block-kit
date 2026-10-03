@@ -265,9 +265,9 @@ func TestParseResourceTypeID_RefusesEveryOtherForm(t *testing.T) {
 }
 
 // Every catalogue entry is a community type: its ID parses with no
-// namespace, into its own capability and the name after the dot, and that
-// capability is a valid community capability id.
-func TestResourceTypes_EveryIDIsACommunityTypeOfItsOwnCapability(t *testing.T) {
+// namespace, into its own place and the name after the dot, and that
+// place is a valid community slug.
+func TestResourceTypes_EveryIDIsACommunityTypeOfItsOwnPlace(t *testing.T) {
 	for _, rt := range catalogue(t) {
 		ns, capability, name, err := contract.ParseResourceTypeID(rt.ID)
 		if err != nil {
@@ -277,20 +277,20 @@ func TestResourceTypes_EveryIDIsACommunityTypeOfItsOwnCapability(t *testing.T) {
 		if ns != "" {
 			t.Errorf("ParseResourceTypeID(%q) namespace = %q, want \"\" for a community type", rt.ID, ns)
 		}
-		if capability != rt.Capability {
-			t.Errorf("ParseResourceTypeID(%q) capability = %q, want the entry's own %q", rt.ID, capability, rt.Capability)
+		if capability != rt.Place() {
+			t.Errorf("ParseResourceTypeID(%q) capability = %q, want the entry's own %q", rt.ID, capability, rt.Place())
 		}
-		if want := strings.TrimPrefix(rt.ID, rt.Capability+"."); name != want {
+		if want := strings.TrimPrefix(rt.ID, rt.Place()+"."); name != want {
 			t.Errorf("ParseResourceTypeID(%q) name = %q, want %q", rt.ID, name, want)
 		}
 
-		capNS, capName, err := contract.ParseCapabilityID(rt.Capability)
+		capNS, capName, err := contract.ParseCapabilityID(rt.Place())
 		if err != nil {
-			t.Errorf("ParseCapabilityID(%q) error = %v, want the catalogue's capability accepted", rt.Capability, err)
+			t.Errorf("ParseCapabilityID(%q) error = %v, want the catalogue's place accepted", rt.Place(), err)
 			continue
 		}
-		if capNS != "" || capName != rt.Capability {
-			t.Errorf("ParseCapabilityID(%q) = (%q, %q), want (%q, %q)", rt.Capability, capNS, capName, "", rt.Capability)
+		if capNS != "" || capName != rt.Place() {
+			t.Errorf("ParseCapabilityID(%q) = (%q, %q), want (%q, %q)", rt.Place(), capNS, capName, "", rt.Place())
 		}
 	}
 }

@@ -249,16 +249,19 @@ func validateBinding(ref string, params map[string]bool, earlier map[string]Reso
 }
 
 // DeriveCapabilities returns the capabilities a block's steps and narrowed
-// requirements fix, as ADR 0079 sets them: the sorted union of the catalogue
-// capability of each step's type and of each narrowed requirement's type. A
-// kind requirement adds nothing here, since the type that meets it is known
-// only when the stack is checked. An uncatalogued type adds nothing either,
-// which ValidateBlockSteps refuses. The result is never nil.
+// requirements fix, as ADR 0079 sets them: the sorted union of the place of
+// each listed resource's type and of each narrowed requirement's type, where
+// that place is a capability. A type that lives on a kind adds nothing, since its place
+// is a resource, not a capability. A kind requirement adds nothing here,
+// since the type that meets it is known only when the stack is checked. An
+// uncatalogued type adds nothing either, which ValidateBlockSteps refuses.
+// The result is never nil.
 func DeriveCapabilities(steps []Step, requires []ResourceRequirement) []string {
 	out := []string{}
 	add := func(id string) {
-		if t, ok := LookupResourceType(id); ok && !slices.Contains(out, t.Capability) {
-			out = append(out, t.Capability)
+		t, ok := LookupResourceType(id)
+		if ok && isCapability(t.Place()) && !slices.Contains(out, t.Place()) {
+			out = append(out, t.Place())
 		}
 	}
 	for _, s := range steps {
@@ -298,7 +301,7 @@ func StepsManifestGolden() []byte {
 var stepsManifestGoldenDeclares = BlockSteps{
 	Params: []string{"appName"},
 	Requires: []ResourceRequirement{
-		{Resource: "image", Kind: "container-image", Reads: []string{"artifact"}},
+		{Resource: "image", Kind: "container-image", Reads: []string{"imageRepo"}},
 		{Resource: "workflows", Type: "github.workflow-file", Reads: []string{"workflowPath"}, Many: true},
 	},
 	Steps: []Step{
@@ -306,8 +309,8 @@ var stepsManifestGoldenDeclares = BlockSteps{
 			Inputs: map[string]string{"name": "params.appName"}},
 		{ID: "build-image", Type: "aws.ecr-image", Ownership: OwnershipCreated,
 			Inputs: map[string]string{
-				"registry": "steps.registry.outputs.ecrRegistry",
-				"base":     "requires.image.outputs.artifact",
+				"registry": "steps.registry.outputs.registryHost",
+				"base":     "requires.image.outputs.imageRepo",
 			}},
 	},
 	Offers: []Offer{{Step: "build-image"}},

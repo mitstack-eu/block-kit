@@ -13,7 +13,7 @@ spec:
   requires:
     - resource: image
       kind: container-image
-      reads: [artifact]
+      reads: [imageRepo]
     - resource: workflows
       type: github.workflow-file
       reads: [workflowPath]
@@ -28,12 +28,12 @@ spec:
       type: aws.ecr-image
       ownership: created
       inputs:
-        registry: steps.registry.outputs.ecrRegistry
-        base: requires.image.outputs.artifact
+        registry: steps.registry.outputs.registryHost
+        base: requires.image.outputs.imageRepo
   provides:
     - step: build-image
   outputs:
-    - artifact
+    - imageRepo
   lifecycle:
     endpoint: https://steps-golden.example.com/hook
     operations: [subscribe, unsubscribe, upgrade, validate]

@@ -9,7 +9,6 @@ package contract_test
 import (
 	"reflect"
 	"regexp"
-	"slices"
 	"testing"
 
 	"github.com/mitstack-eu/operator-kit/contract"
@@ -25,7 +24,7 @@ var kubeClusterOutputs = []string{
 	"enrolmentTokenSha256",
 }
 
-func TestLookupResource_KubeClusterOutputsAreNonSecretKubeClusterEntriesWithNoAliases(t *testing.T) {
+func TestLookupResource_KubeClusterOutputsAreNonSecretEntriesWithNoAliases(t *testing.T) {
 	for _, name := range kubeClusterOutputs {
 		r, ok := contract.LookupResource(name)
 		if !ok {
@@ -37,9 +36,6 @@ func TestLookupResource_KubeClusterOutputsAreNonSecretKubeClusterEntriesWithNoAl
 		}
 		if r.Secret {
 			t.Errorf("%q is secret, want it not secret", name)
-		}
-		if !slices.Contains(r.Capabilities, "kube-cluster") {
-			t.Errorf("%q: capabilities %q do not include %q", name, r.Capabilities, "kube-cluster")
 		}
 		if len(r.Aliases) != 0 {
 			t.Errorf("%q: aliases = %q, want none", name, r.Aliases)
@@ -81,24 +77,22 @@ func TestLookupResource_LocationAndServerTypeResolveToNothing(t *testing.T) {
 func TestResources_CloudRegionAndHostTypeAreUnchanged(t *testing.T) {
 	want := []contract.ResourceEntry{
 		{
-			Name:         "cloud.region",
-			Kind:         "Host & network",
-			Meaning:      "The cloud region the app runs in.",
-			Shape:        "cloud region code",
-			Example:      "eu-central-1",
-			Secret:       false,
-			Aliases:      []string{"region"},
-			Capabilities: []string{"app-host", "aws-topology"},
+			Name:    "cloud.region",
+			Kind:    "Host & network",
+			Meaning: "The cloud region the app runs in.",
+			Shape:   "cloud region code",
+			Example: "eu-central-1",
+			Secret:  false,
+			Aliases: []string{"region"},
 		},
 		{
-			Name:         "host.type",
-			Kind:         "Host & network",
-			Meaning:      "The machine type the app runs on.",
-			Shape:        "cloud instance type",
-			Example:      "t3.small",
-			Secret:       false,
-			Aliases:      []string{"instanceType"},
-			Capabilities: []string{"app-host", "aws-topology"},
+			Name:    "host.type",
+			Kind:    "Host & network",
+			Meaning: "The machine type the app runs on.",
+			Shape:   "cloud instance type",
+			Example: "t3.small",
+			Secret:  false,
+			Aliases: []string{"instanceType"},
 		},
 	}
 	for _, w := range want {
