@@ -430,27 +430,90 @@ func TestParseManifest_V1BetaReadsInAsOneCapabilityOrAList(t *testing.T) {
 
 // An alias or a merge key brings in text from elsewhere in the document,
 // which the reader does not follow, so it refuses the manifest rather than
-// guessing what it declares.
+// guessing what it declares, and says which it found and where.
 func TestParseManifest_RefusesAnAliasOrAMergeKey(t *testing.T) {
 	parseBeta(t, []byte(betaManifest))
-	cases := map[string][]byte{
-		"an alias as an input": editBeta(t,
+	cases := []struct {
+		label string
+		raw   []byte
+		wants []string
+	}{
+		{"an alias as an input", editBeta(t,
 			"    - name: fallback-network\n", "    - name: &net fallback-network\n",
 			"inputs: { network: resources.fallback-network }", "inputs:\n        network: *net"),
-		"a merge key in a resource": editBeta(t,
+			[]string{"spec.resources[1].inputs.network", "alias"}},
+		{"a merge key in a resource", editBeta(t,
 			"      type: aws.vpc\n", "      type: aws.vpc\n      inputs: &shared\n        zone: a\n",
 			"      inputs: { network: resources.fallback-network }\n", "      inputs:\n        <<: *shared\n"),
-		"an alias as a list": editBeta(t,
+			[]string{"spec.resources[1].inputs", "merge key"}},
+		{"a merge key written as a flow mapping", editBeta(t,
+			"      inputs: { network: resources.fallback-network }\n", "      inputs:\n        <<: { zone: a }\n"),
+			[]string{"spec.resources[1].inputs", "merge key"}},
+		{"an alias as a list", editBeta(t,
 			"  provides: [app-security-group]\n", "  provides: &provided [app-security-group]\n",
 			"    operations: [subscribe, unsubscribe]\n", "    operations: *provided\n"),
+			[]string{"spec.lifecycle.operations", "alias"}},
 	}
-	for label, raw := range cases {
-		t.Run(label, func(t *testing.T) {
-			if m, err := contract.ParseManifest(raw); err == nil {
-				t.Errorf("ParseManifest accepted a manifest holding %s (%+v), want an error:\n%s", label, m, raw)
-			}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			requireRefusedNaming(t, tc.raw, tc.wants...)
 		})
 	}
+}
+
+// The parser accepts nothing manifest.schema.json refuses: a null value, a
+// plain number or boolean where the schema wants a string, and an empty
+// list where a block must declare at least one entry. Each refusal names
+// its path.
+func TestParseManifest_V1BetaRefusesWhatTheSchemaRefusesNamingItsPath(t *testing.T) {
+	cases := []struct {
+		label, path string
+		edits       []string
+	}{
+		{"a null input", "spec.resources[1].inputs.network", []string{
+			"inputs: { network: resources.fallback-network }", "inputs: { network: }"}},
+		{"a null optional field", "metadata.owner", []string{
+			"  name: Fixture Block\n", "  name: Fixture Block\n  owner:\n"}},
+		{"a plain number in a string field", "metadata.name", []string{
+			"  name: Fixture Block\n", "  name: 2048\n"}},
+		{"a plain number as a param default", "spec.params[0].default", []string{
+			"      label: Container image\n", "      label: Container image\n      default: 8080\n"}},
+		{"a plain boolean in a string field", "spec.params[0].label", []string{
+			"      label: Container image\n", "      label: true\n"}},
+		{"no resources", "spec.resources", []string{
+			"  resources:\n    - name: fallback-network\n      type: aws.vpc\n    - name: app-security-group\n" +
+				"      type: aws.security-group\n      inputs: { network: resources.fallback-network }\n" +
+				"  provides: [app-security-group]\n",
+			"  resources: []\n"}},
+		{"no lifecycle operations", "spec.lifecycle.operations", []string{
+			"    operations: [subscribe, unsubscribe]\n", "    operations: []\n"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			requireRefusedNaming(t, editBeta(t, tc.edits...), tc.path)
+		})
+	}
+}
+
+// A quoted value is a string wherever it is written, and an input takes a
+// number or a boolean, since the schema allows one there.
+func TestParseManifest_V1BetaAcceptsAQuotedStringAndATypedInput(t *testing.T) {
+	t.Run("a quoted number as a param default", func(t *testing.T) {
+		b := parseBeta(t, editBeta(t, "      label: Container image\n", "      label: Container image\n      default: \"8080\"\n"))
+		if got := b.Spec.Params[0].Default; got != "8080" {
+			t.Errorf("spec.params[0].default = %q, want %q", got, "8080")
+		}
+	})
+	t.Run("a number and a boolean as inputs", func(t *testing.T) {
+		b := parseBeta(t, editBeta(t, "inputs: { network: resources.fallback-network }",
+			"inputs: { network: resources.fallback-network, port: 8080, public: true }"))
+		want := map[string]contract.InputValue{
+			"network": scalar("resources.fallback-network"), "port": scalar("8080"), "public": scalar("true"),
+		}
+		if got := b.Spec.Resources[1].Inputs; !sameInputs(got, want) {
+			t.Errorf("spec.resources[1].inputs = %+v, want %+v", got, want)
+		}
+	})
 }
 
 // v1alphaManifest carries a field no schema defines, a padded quoted id and

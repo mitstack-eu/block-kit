@@ -135,4 +135,15 @@ func TestManifestSchema_RequirementAndResourceCarryExactlyTheirKeys(t *testing.T
 			}
 		})
 	}
+
+	// A block that creates nothing, or answers no operation, is not a block.
+	for _, path := range [][]string{
+		{"properties", "spec", "properties", "resources"},
+		{"properties", "spec", "properties", "lifecycle", "properties", "operations"},
+	} {
+		list := schemaAt(t, doc, doc, path...)
+		if list["minItems"] != float64(1) {
+			t.Errorf("%s minItems = %v, want 1", strings.Join(path, "."), list["minItems"])
+		}
+	}
 }

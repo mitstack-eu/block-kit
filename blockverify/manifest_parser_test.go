@@ -5,8 +5,11 @@ package main
 // manifest parser, and that manifest.go keeps no YAML reader of its own:
 //
 //   - a mitstack/v1beta manifest, ADR 0083's worked plain block, passes;
-//   - a manifest the kit's parser refuses fails the suite with the parser's
-//     reason, whether it is the target or the base;
+//   - a target the kit's parser refuses fails the suite with the parser's
+//     reason;
+//   - a base the kit's parser refuses leaves the base version unknown, so
+//     the target needs a release class and note, and the detail names the
+//     base and the parser's reason;
 //   - manifest.go declares nothing named for YAML, imports no package a
 //     text reader is built from, scans no characters and calls
 //     contract.ParseManifest.
@@ -64,7 +67,15 @@ func TestManifestSuite_FailsAManifestTheKitParserRefuses(t *testing.T) {
 			content: strings.Replace(manifestHead, "apiVersion: mitstack/v1alpha\n", "", 1),
 			wants:   []string{"manifest.yaml", contract.ManifestAPIVersionV1Alpha, contract.ManifestAPIVersion},
 		},
+		{
+			// app-host gives region, so read as a block mapping this item passes.
+			label:   "a v1alpha requires item written as a flow mapping",
+			content: manifestHead + "  requires:\n    - {capability: app-host, reads: [region]}\n",
+			wants:   []string{"manifest.yaml", "spec.requires", "cannot follow"},
+		},
 	}
+	requireManifestPass(t, manifestSuite(manifestDir(t,
+		manifestHead+"  requires:\n    - capability: app-host\n      reads: [region]\n"), ""))
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
 			if tc.content == manifestHead || tc.content == plainV1Beta(t) {
@@ -73,14 +84,33 @@ func TestManifestSuite_FailsAManifestTheKitParserRefuses(t *testing.T) {
 			requireManifestFail(t, manifestSuite(manifestDir(t, tc.content), ""), tc.wants...)
 		})
 	}
+}
 
-	t.Run("a base manifest under an unknown apiVersion", func(t *testing.T) {
-		base := baseManifestFile(t, strings.Replace(withVersion("1.0.0"),
-			"apiVersion: mitstack/v1alpha", "apiVersion: mitstack/v2", 1))
-		target := withVersion("1.1.0") + "  releaseClass: feature\n  releaseNote: Adds the reads declaration.\n"
-		requireManifestFail(t, manifestSuite(manifestDir(t, target), base),
-			base, "mitstack/v2", contract.ManifestAPIVersion)
-	})
+// A base manifest the parser refuses must not trap the pull request that
+// fixes it: its version counts as unknown, so the target needs a release
+// class and a release note, as it does for a changed version, and the
+// detail names the base and why it could not be read.
+func TestManifestSuite_ABaseTheParserRefusesLeavesItsVersionUnknown(t *testing.T) {
+	bases := map[string]string{
+		"a base under mitstack/v2": strings.Replace(withVersion("1.0.0"),
+			"apiVersion: mitstack/v1alpha", "apiVersion: mitstack/v2", 1),
+		"a base with an unquoted private id": withID("@acme/billing-db"),
+	}
+	for label, content := range bases {
+		t.Run(label, func(t *testing.T) {
+			_, parseErr := contract.ParseManifest([]byte(content))
+			if parseErr == nil {
+				t.Fatalf("the base fixture parses, so it proves nothing:\n%s", content)
+			}
+			base := baseManifestFile(t, content)
+
+			released := withVersion("1.0.0") + "  releaseClass: feature\n  releaseNote: Fixes the base manifest.\n"
+			requireManifestPass(t, manifestSuite(manifestDir(t, released), base))
+
+			requireManifestFail(t, manifestSuite(manifestDir(t, withVersion("1.0.0")), base),
+				base, parseErr.Error(), "spec.releaseClass", "spec.releaseNote")
+		})
+	}
 }
 
 // readerImports are the packages a text reader is built from, none of which
