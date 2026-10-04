@@ -446,7 +446,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		ID: "github.self-hosted-runner", Kind: "ci-runner", ReliesOn: none,
 		Category: "build-and-delivery", Languages: none, Lifecycle: "replaceable", Upgrade: "recreate", Scope: "per-app",
 		Inputs: []Input{
-			// capability:aws is the narrowest reading the evidence supports: the only creator installs the runner on an AWS EC2 box, until where a runner host may live is decided.
+			// capability:aws is the narrowest place the evidence supports: the only creator installs the runner on an AWS EC2 box.
 			{Name: "host", Required: true, Accepts: "resource:host", Place: "capability:aws", Replacement: "replace"},
 			{Name: "label", Required: true, Accepts: "value", Replacement: "replace"},
 			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "own", Replacement: "replace"},
