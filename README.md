@@ -466,6 +466,84 @@ go vet ./... && go test ./...
 The module is stdlib-only by design: no third-party dependency has ever been
 needed, and none is added.
 
+### Reading a manifest in a test
+
+`kittest.ReadManifest` parses a block manifest file through
+`contract.ParseManifest` and fails the test, naming the path, when the file
+cannot be read or the parser refuses it. The `kittest.Manifest` it returns
+embeds the parsed `contract.Manifest`, so `ID()`, `Version()`, `Block` and
+`V1Alpha` stay reachable.
+
+`Section` reads a value by dotted key path, such as `spec.lifecycle` or
+`spec.lifecycle.verbBudgets.subscribe`. Each segment is a manifest key: the
+json tag on the `mitstack/v1beta` types or the yaml tag on the
+`mitstack/v1alpha` types. It returns the field's typed Go value, so
+`spec.resources` under v1beta is a `[]contract.ManifestResource`, and it
+returns false for a key the manifest leaves unset. A key the types do not
+name, or a key below a scalar, fails the test rather than reading as unset.
+
+`SpecScalar` reads `spec.<key>` as text, trimmed, so a folded `>` description
+reads as one line. It renders a boolean or an integer with `fmt.Sprint`,
+reads a blank string as unset, and fails the test when the key is a section.
+
+```go
+m := kittest.ReadManifest(t, "manifest.yaml")
+lifecycle, ok := m.Section("spec.lifecycle")
+description, ok := m.SpecScalar("description")
+```
+
+### Proving no secret leaks
+
+`kittest.AssertNoSecretLeak` drives an operator's own handler with signed
+webhook requests that carry seeded secrets, and fails the test for each place
+a secret or a minted OBO token shows up: a `/hook` response, the standard
+logger's output, or a line `GET /logs` serves. `kittest.CheckNoSecretLeak`
+does the same work without a `*testing.T` and returns the problems as
+strings. A problem names the channel and shows a secret only in redacted
+form.
+
+The harness signs each request and adds a fresh `nonce`, `createdAt`, an
+`idempotencyKey` when the body has none, and an OBO token for the body's
+`orgId` and `subscriptionId`. It also reports a fixture whose passing would
+prove nothing. A seeded secret that is empty or in no request body is a
+problem. So is a fixture with no request marked `Fails`, and a `Fails`
+request that answers below 400. A `/hook` that answers 401 is a problem too,
+since the handler did not trust the harness's signer and no verb ran. A
+`GET /logs` that answers other than 200 or serves no lines is the last.
+
+An operator's test hands the harness its handler and the requests to send:
+
+```go
+func TestNoSecretLeak_LogsEndpoint(t *testing.T) {
+	kittest.AssertNoSecretLeak(t, kittest.SecretLeak{
+		Secrets: []string{apiToken},
+		Serve: func(logs *webhook.LogBuffer) (http.Handler, *kittest.Signer) {
+			signer := kittest.NewSigner(t, "sample-kid", 3)
+			h, err := newHandler(signer.JWKSServer(t), logs)
+			if err != nil {
+				t.Fatalf("newHandler: %v", err)
+			}
+			return h, signer
+		},
+		Requests: []kittest.LeakRequest{{
+			Name: "subscribe whose Ensure quotes the API token",
+			Body: map[string]any{
+				"operation":      "subscribe",
+				"subscriptionId": "sub-1",
+				"orgId":          "org-1",
+				"secrets":        map[string]any{"api": map[string]any{"token": apiToken}},
+			},
+			Fails: true,
+		}},
+	})
+}
+```
+
+While it runs, the harness redirects the standard logger into its own
+capture, the `/logs` buffer it hands to `Serve`, and the writer set before,
+and it restores that writer when it returns. The test must therefore not run
+in parallel with a test that logs.
+
 ## Release
 
 Every push to main that changes the tree cuts the next patch tag

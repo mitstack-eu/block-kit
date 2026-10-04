@@ -71,6 +71,10 @@ func (s *Signer) SignBody(body []byte) string {
 // HookRequest builds a correctly-signed POST /hook request for body.
 func (s *Signer) HookRequest(t *testing.T, path string, body []byte) *http.Request {
 	t.Helper()
+	return s.hookRequest(path, body)
+}
+
+func (s *Signer) hookRequest(path string, body []byte) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(body)))
 	r.Header.Set("X-Mitstack-Key-Id", s.Kid)
 	r.Header.Set("X-Mitstack-Signature-Ed25519", s.SignBody(body))
@@ -82,6 +86,10 @@ func (s *Signer) HookRequest(t *testing.T, path string, body []byte) *http.Reque
 // anti-replay timestamp in X-Mitstack-Timestamp.
 func (s *Signer) LogsRequest(t *testing.T, path string, at time.Time) *http.Request {
 	t.Helper()
+	return s.logsRequest(path, at)
+}
+
+func (s *Signer) logsRequest(path string, at time.Time) *http.Request {
 	r := httptest.NewRequest(http.MethodGet, path, nil)
 	ts := at.UTC().Format(time.RFC3339)
 	canonical := []byte("GET\n" + r.URL.RequestURI() + "\n" + ts)
