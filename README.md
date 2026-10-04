@@ -323,6 +323,12 @@ verb the same way and is answered by its kind, as for a single `Resource`.
 Validate answers present when every resource is present, `absent:true` when
 every resource is absent, and `pending:true` for any other mix.
 
+The Handler checks the request's context before each resource's first call.
+Once the context is done, the verb stops before that resource and names it
+in `statusDetail`. Subscribe, upgrade and validate then answer
+`pending:true`, and unsubscribe answers `absent:false`. The `resources` map
+holds only the resources the verb reached before it stopped.
+
 Every answer, an error included, reports each resource the verb reached in
 the response's `resources` map. A key under a resource means that call ran
 for it, and a resource the verb never reached has no entry. This subscribe
@@ -353,6 +359,41 @@ secrets, and each entry's `outputs` pass the output-secret gate above. A
 block served over a single `Resource` reports no `resources` map and
 answers exactly as it always has.
 
+A declared resource that also implements `handler.ReportingResource` reports
+what its ensure did. The Handler calls its `EnsureWithReport` in place of
+`Ensure`, never both. The `contract.Ensured` it returns carries the identity
+the ensure stored for the resource and the outputs it published. Both go on
+that resource's `ensure` entry:
+
+```json
+"firewall": {
+  "ensure": {
+    "outputs": {"groupArn": "arn:aws:ec2:eu-west-1:123456789012:security-group/sg-0abc"},
+    "identity": {"groupId": "sg-0abc"}
+  },
+  "observe": {"state": "present", "outputs": {"groupId": "sg-0abc"}}
+}
+```
+
+An identity or output value equal to a request secret is refused with the
+`secret-in-output` class, as an observe output is. The top-level `outputs`
+stay the union of what each resource's observe found.
+
+A request may name one declared resource under `resource`, and carry that
+resource's inputs under `resourceInputs`. Each input is a scalar or a
+mapping, kept as raw JSON. The verb then runs on that resource alone.
+Subscribe and upgrade ensure it and settle it present, unsubscribe deletes
+it and settles it absent, and validate observes it once. Its ensure
+receives a `Desired` whose `Resource` and `ResourceInputs` are the
+request's. The answer's `resources` map holds that resource's entry alone,
+and the top-level `outputs` are its own. A name the manifest does not
+declare answers 400 naming it, and no resource is reached. A block served
+over a single `Resource` answers any named request the same way. The
+idempotency cache keys on the name too, so one idempotency key naming
+different resources runs each of them, and a repeat of the same named
+request replays. `contract.DecodeRequest` refuses `resourceInputs` sent
+without a `resource`.
+
 A block proves its declared resources in its own tests with
 `kittest.AssertDeclaredResources`, which takes the manifest, the
 implementations, any resources the app supplies and the subscription to
@@ -360,8 +401,13 @@ drive. It ensures each declared resource twice in manifest order, observing
 it present after each ensure with the same outputs both times. It then
 deletes each in reverse order and observes it absent. A resource the app
 supplies must be present before the first ensure and still present after the
-last delete, since a block never deletes what the app supplies. Each problem
-names the resource it concerns. blockverify's resources suite requires a
+last delete, since a block never deletes what the app supplies. With
+`Resource` set, the check drives that one declared resource alone, under a
+`Desired` naming it, and a name the manifest does not declare is one
+problem. A resource that implements `handler.ReportingResource` is ensured
+through `EnsureWithReport`, and a second ensure that reports a different
+identity from the first is a problem. Each problem names the resource it
+concerns. blockverify's resources suite requires a
 `TestDeclaredResources` test that calls `kittest.AssertDeclaredResources`,
 and runs it.
 

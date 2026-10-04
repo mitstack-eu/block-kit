@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -36,6 +37,11 @@ type DeclaredResources struct {
 	// Desired is the subscription every call is made for. Ensure receives
 	// it whole; Observe and Delete receive its Identity.
 	Desired contract.Desired
+	// Resource names one declared resource to drive alone, the way the
+	// engine drives a request naming it, and Ensure then receives Desired
+	// with its Resource set to this name. Optional; empty drives every
+	// declared resource.
+	Resource string
 }
 
 // CheckDeclaredResources drives each declared resource through its
@@ -52,6 +58,15 @@ type DeclaredResources struct {
 //   - observes each supplied resource again, which must still be present,
 //     since a block never deletes what the app supplies.
 //
+// With DeclaredResources.Resource set, the creation pass and the teardown
+// drive that one resource alone, under a Desired naming it, as the engine
+// does for a request naming a resource; a name the manifest does not
+// declare is one problem, and nothing is driven. A resource implementing
+// handler.ReportingResource is ensured through EnsureWithReport, never
+// Ensure, and a second ensure reporting a different identity from the first
+// is a problem, since it means the ensure created another resource rather
+// than converging the one it stored.
+//
 // A resource that fails stops the creation pass there, and a resource not
 // proved absent stops the teardown there, so a resource created earlier is
 // never deleted while a later one still stands. A missing handler, a
@@ -66,7 +81,16 @@ func CheckDeclaredResources(in DeclaredResources) []string {
 		return problems
 	}
 
-	c := &declaredCheck{in: in, ctx: context.Background()}
+	desired := in.Desired
+	if in.Resource != "" {
+		if !slices.Contains(order, in.Resource) {
+			return []string{fmt.Sprintf("resource %q: the manifest's spec.resources does not declare it, so there is no resource to drive", in.Resource)}
+		}
+		order = []string{in.Resource}
+		desired.Resource = in.Resource
+	}
+
+	c := &declaredCheck{in: in, desired: desired, ctx: context.Background()}
 	supplied := sortedKeys(in.Supplied)
 	if !c.suppliedStand(supplied, "before the first ensure") {
 		return c.problems
@@ -132,8 +156,11 @@ func pairDeclaredResources(in DeclaredResources) ([]string, []string) {
 }
 
 // declaredCheck is one run of CheckDeclaredResources, collecting problems.
+// desired is the Desired every call is made for: the one the check was
+// given, naming the driven resource when the check drives one alone.
 type declaredCheck struct {
 	in       DeclaredResources
+	desired  contract.Desired
 	ctx      context.Context
 	problems []string
 }
@@ -148,7 +175,7 @@ func (c *declaredCheck) resourceProblem(name, format string, args ...any) {
 func (c *declaredCheck) suppliedStand(names []string, when string) bool {
 	ok := true
 	for _, name := range names {
-		obs, err := c.in.Supplied[name].Observe(c.ctx, c.in.Desired.Identity)
+		obs, err := c.in.Supplied[name].Observe(c.ctx, c.desired.Identity)
 		switch {
 		case err != nil:
 			c.problems = append(c.problems, fmt.Sprintf("supplied resource %q: Observe %s failed: %v", name, when, err))
@@ -164,21 +191,26 @@ func (c *declaredCheck) suppliedStand(names []string, when string) bool {
 }
 
 // ensureTwice ensures one resource, observes it present, ensures it again
-// and observes it present with the same outputs and secret outputs. It
-// reports whether the resource ended present, so the creation pass may move
-// on to the next.
+// and observes it present with the same outputs and secret outputs, and,
+// for a resource that reports its ensure, the same identity. It reports
+// whether the resource ended present, so the creation pass may move on to
+// the next.
 func (c *declaredCheck) ensureTwice(name string) bool {
 	r := c.in.Resources[name]
 
-	first, ok := c.ensureAndObserve(name, r, "the first")
+	first, firstIdentity, ok := c.ensureAndObserve(name, r, "the first")
 	if !ok {
 		return false
 	}
-	second, ok := c.ensureAndObserve(name, r, "the second")
+	second, secondIdentity, ok := c.ensureAndObserve(name, r, "the second")
 	if !ok {
 		return false
 	}
 
+	if changed := changedKeys(firstIdentity, secondIdentity); len(changed) > 0 {
+		c.resourceProblem(name, "the second Ensure reported a different identity from the first, changing %s; Ensure must converge the resource it stored, not create another",
+			strings.Join(changed, ", "))
+	}
 	if !reflect.DeepEqual(first.Outputs, second.Outputs) {
 		c.resourceProblem(name, "the second Ensure changed its outputs from %v to %v; Ensure must converge, not change what it created",
 			first.Outputs, second.Outputs)
@@ -190,24 +222,37 @@ func (c *declaredCheck) ensureTwice(name string) bool {
 	return true
 }
 
-// ensureAndObserve calls Ensure then Observe once, recording a problem when
-// either fails or the resource is not present. which names the ensure in
-// the problem.
-func (c *declaredCheck) ensureAndObserve(name string, r handler.DeclaredResource, which string) (contract.Observation, bool) {
-	if err := r.Ensure(c.ctx, c.in.Desired); err != nil {
+// ensureAndObserve ensures the resource then calls Observe once, recording
+// a problem when either fails or the resource is not present. It returns
+// the observation and the identity the ensure reported, nil for a resource
+// that does not report its ensure. which names the ensure in the problem.
+func (c *declaredCheck) ensureAndObserve(name string, r handler.DeclaredResource, which string) (contract.Observation, map[string]string, bool) {
+	identity, err := c.ensure(r)
+	if err != nil {
 		c.resourceProblem(name, "%s Ensure failed: %v", which, err)
-		return contract.Observation{}, false
+		return contract.Observation{}, nil, false
 	}
-	obs, err := r.Observe(c.ctx, c.in.Desired.Identity)
+	obs, err := r.Observe(c.ctx, c.desired.Identity)
 	if err != nil {
 		c.resourceProblem(name, "Observe after %s Ensure failed: %v", which, err)
-		return contract.Observation{}, false
+		return contract.Observation{}, nil, false
 	}
 	if obs.State != contract.Present {
 		c.resourceProblem(name, "observed %s after %s Ensure, want present", obs.State, which)
-		return contract.Observation{}, false
+		return contract.Observation{}, nil, false
 	}
-	return obs, true
+	return obs, identity, true
+}
+
+// ensure ensures one resource the way the Handler does: through
+// EnsureWithReport when it implements handler.ReportingResource, returning
+// the identity it reported, and through Ensure otherwise.
+func (c *declaredCheck) ensure(r handler.DeclaredResource) (map[string]string, error) {
+	if reporting, ok := r.(handler.ReportingResource); ok {
+		report, err := reporting.EnsureWithReport(c.ctx, c.desired)
+		return report.Identity, err
+	}
+	return nil, r.Ensure(c.ctx, c.desired)
 }
 
 // deleteAndProveAbsent deletes one resource and observes it once, which
@@ -215,11 +260,11 @@ func (c *declaredCheck) ensureAndObserve(name string, r handler.DeclaredResource
 // teardown may move on to the resource created before it.
 func (c *declaredCheck) deleteAndProveAbsent(name string) bool {
 	r := c.in.Resources[name]
-	if err := r.Delete(c.ctx, c.in.Desired.Identity); err != nil {
+	if err := r.Delete(c.ctx, c.desired.Identity); err != nil {
 		c.resourceProblem(name, "Delete failed: %v", err)
 		return false
 	}
-	obs, err := r.Observe(c.ctx, c.in.Desired.Identity)
+	obs, err := r.Observe(c.ctx, c.desired.Identity)
 	if err != nil {
 		c.resourceProblem(name, "Observe after Delete failed, so its absence is unproved: %v", err)
 		return false

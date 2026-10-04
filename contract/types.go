@@ -58,7 +58,11 @@ type BuildRequest struct {
 
 // Request is the typed form of a lifecycle webhook envelope, decoded from
 // the wire shape envelope.schema.json pins. Its JSON tags mirror the
-// engine's own request struct field for field.
+// engine's own request struct field for field. Resource names the one
+// declared resource the verb runs on, and ResourceInputs carries that
+// resource's inputs, each a scalar or a mapping kept as raw JSON; a request
+// naming no resource leaves both empty and runs the verb on every declared
+// resource.
 type Request struct {
 	Operation      string                         `json:"operation"`
 	SubscriptionID string                         `json:"subscriptionId"`
@@ -81,6 +85,8 @@ type Request struct {
 	Nonce          string                         `json:"nonce"`
 	PriorOutputs   map[string]string              `json:"priorOutputs,omitempty"`
 	BuildRequest   *BuildRequest                  `json:"buildRequest,omitempty"`
+	Resource       string                         `json:"resource,omitempty"`
+	ResourceInputs map[string]json.RawMessage     `json:"resourceInputs,omitempty"`
 }
 
 // Response is the typed form of a lifecycle webhook response, mirroring the
@@ -113,13 +119,25 @@ type ResourceOutcome struct {
 
 // CallOutcome is the result of one ensure, observe or delete call on a
 // resource. Error is set when the call failed. State and Outputs are what
-// an observe found; StatusDetail is the human-readable detail the call left.
-// The zero value is a call that ran and succeeded with nothing to report.
+// an observe found, and on an ensure Outputs are the outputs it published.
+// Identity is what an ensure stored as its resource's identity.
+// StatusDetail is the human-readable detail the call left. The zero value
+// is a call that ran and succeeded with nothing to report.
 type CallOutcome struct {
 	Error        string            `json:"error,omitempty"`
 	State        State             `json:"state,omitempty"`
 	Outputs      map[string]string `json:"outputs,omitempty"`
 	StatusDetail string            `json:"statusDetail,omitempty"`
+	Identity     map[string]string `json:"identity,omitempty"`
+}
+
+// Ensured is what an ensure reports about the resource it converged:
+// Identity is what it stored as the resource's identity, the values that
+// address the resource where it lives, and Outputs are the outputs it
+// published.
+type Ensured struct {
+	Identity map[string]string
+	Outputs  map[string]string
 }
 
 // Identity is the subset of a Request that names which subscription an
@@ -147,7 +165,9 @@ type Identity struct {
 // desired for and where its resource lives, and adds the params, secrets
 // and bindings that describe the target state. The instances reach a block
 // through the embedded Identity, so d.Instances inside Ensure resolves to
-// the same map Delete and Observe are handed.
+// the same map Delete and Observe are handed. Resource and ResourceInputs
+// are the request's own: the declared resource it names and that
+// resource's inputs, both empty when the request names no resource.
 type Desired struct {
 	Identity
 
@@ -158,6 +178,9 @@ type Desired struct {
 	Bindings     map[string]map[string]string
 	BindingsAll  map[string][]map[string]string
 	BuildRequest *BuildRequest
+
+	Resource       string
+	ResourceInputs map[string]json.RawMessage
 }
 
 // Observation is what an operator's validate/unsubscribe check found about
@@ -230,9 +253,10 @@ var validOperations = map[string]bool{
 
 // DecodeRequest decodes raw into a Request and validates it against
 // envelope.schema.json's required set and operation enum, including the
-// nested required sets cloudIdentity and buildRequest carry when present.
-// Every error names the JSON field it concerns, so an operator author can
-// act on it without reading the schema.
+// nested required sets cloudIdentity and buildRequest carry when present,
+// and refuses resource inputs that name no resource to bind them to. Every
+// error names the JSON field it concerns, so an operator author can act on
+// it without reading the schema.
 func DecodeRequest(raw []byte) (Request, error) {
 	var probe envelopeCreatedAt
 	if err := json.Unmarshal(raw, &probe); err != nil {
@@ -257,6 +281,11 @@ func DecodeRequest(raw []byte) (Request, error) {
 		return Request{}, fmt.Errorf(
 			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, got %q",
 			"operation", req.Operation)
+	}
+
+	if len(req.ResourceInputs) > 0 && req.Resource == "" {
+		return Request{}, fmt.Errorf("contract: envelope field %q needs a non-empty %q naming the resource the inputs are for",
+			"resourceInputs", "resource")
 	}
 
 	return req, nil
@@ -311,18 +340,21 @@ func (r Request) Identity() Identity {
 }
 
 // Desired returns the subset of r describing what an operator should
-// converge its resource to. The instances arrive through the embedded
-// Identity, which is why no field here repeats them.
+// converge its resource to, with the resource it names and that resource's
+// inputs. The instances arrive through the embedded Identity, which is why
+// no field here repeats them.
 func (r Request) Desired() Desired {
 	return Desired{
-		Identity:     r.Identity(),
-		Params:       r.Params,
-		SecretInputs: r.SecretInputs,
-		AppSecrets:   r.AppSecrets,
-		Secrets:      r.Secrets,
-		Bindings:     r.Bindings,
-		BindingsAll:  r.BindingsAll,
-		BuildRequest: r.BuildRequest,
+		Identity:       r.Identity(),
+		Params:         r.Params,
+		SecretInputs:   r.SecretInputs,
+		AppSecrets:     r.AppSecrets,
+		Secrets:        r.Secrets,
+		Bindings:       r.Bindings,
+		BindingsAll:    r.BindingsAll,
+		BuildRequest:   r.BuildRequest,
+		Resource:       r.Resource,
+		ResourceInputs: r.ResourceInputs,
 	}
 }
 

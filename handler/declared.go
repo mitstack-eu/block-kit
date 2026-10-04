@@ -10,16 +10,39 @@ import (
 	"github.com/mitstack-eu/operator-kit/safe"
 )
 
+// classUndeclaredResource is the refusal class a request naming a resource
+// the block does not declare is answered with.
+const classUndeclaredResource = "undeclared-resource"
+
 // dispatchDeclared serves one verb over a block's declared resources:
 // subscribe and upgrade ensure each resource in creation order and settle it
 // present before the next, unsubscribe deletes each in reverse order and
-// settles it absent before the next, and validate observes each once. Every
-// answer, an error included, carries the resources map: an entry for each
-// resource the verb reached, holding the calls that ran for it. A resource
-// still converging, left standing or failing stops the verb there, so no
-// later resource is reached.
+// settles it absent before the next, and validate observes each once. A
+// request naming one declared resource runs the verb on that resource
+// alone, its Ensure handed a Desired carrying the name and the request's
+// resource inputs, and its answer carries that resource's entry and outputs
+// alone. A name the manifest does not declare is refused with a 400 before
+// any resource is reached. A resource implementing ReportingResource is
+// ensured through EnsureWithReport, and its ensure entry carries the
+// identity and outputs it reported. Every answer, an error included,
+// carries the resources map: an entry for each resource the verb reached,
+// holding the calls that ran for it. A resource still converging, left
+// standing or failing stops the verb there, so no later resource is
+// reached. The request context is checked before each resource's first
+// call, and once it is done the verb stops too, answering that it has not
+// finished and naming the first resource it did not reach.
 func (h *Handler) dispatchDeclared(ctx context.Context, operation string, d contract.Desired, secrets []string) (int, contract.Response) {
-	run := &declaredRun{h: h, d: d, secrets: secrets, outcomes: map[string]contract.ResourceOutcome{}}
+	resources := h.declared
+	if d.Resource != "" {
+		nr, ok := h.declaredResource(d.Resource)
+		if !ok {
+			return h.errorResponse(Refuse(classUndeclaredResource,
+				"resource %q is not declared under the manifest's spec.resources", d.Resource), secrets)
+		}
+		resources = []namedResource{nr}
+	}
+
+	run := &declaredRun{h: h, d: d, secrets: secrets, resources: resources, outcomes: map[string]contract.ResourceOutcome{}}
 	switch operation {
 	case "subscribe", "upgrade":
 		return run.ensureEach(ctx)
@@ -32,28 +55,45 @@ func (h *Handler) dispatchDeclared(ctx context.Context, operation string, d cont
 	}
 }
 
-// declaredRun is one verb's pass over the declared resources, collecting
-// each resource's outcome under its name.
+// declaredResource returns the declared resource the manifest names name,
+// and whether there is one.
+func (h *Handler) declaredResource(name string) (namedResource, bool) {
+	for _, nr := range h.declared {
+		if nr.name == name {
+			return nr, true
+		}
+	}
+	return namedResource{}, false
+}
+
+// declaredRun is one verb's pass over the resources it runs on, in creation
+// order, collecting each resource's outcome under its name.
 type declaredRun struct {
-	h        *Handler
-	d        contract.Desired
-	secrets  []string
-	outcomes map[string]contract.ResourceOutcome
+	h         *Handler
+	d         contract.Desired
+	secrets   []string
+	resources []namedResource
+	outcomes  map[string]contract.ResourceOutcome
 }
 
 // ensureEach ensures each resource in creation order and polls its Observe
 // until Present before moving to the next. Every resource present answers
 // 200 with the union of their outputs and secret outputs, a later resource
-// winning a key both produce. A resource not present within the verb budget
-// answers 200 pending:true and stops there.
+// winning a key both produce. A resource not present within the verb budget,
+// or not reached because the request context is done, answers 200
+// pending:true and stops there.
 func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 	var outputs, secretOutputs map[string]string
-	for _, nr := range r.h.declared {
+	for _, nr := range r.resources {
+		if ctx.Err() != nil {
+			return http.StatusOK, contract.Response{Pending: true, StatusDetail: r.notReached(nr.name), Resources: r.outcomes}
+		}
 		var entry contract.ResourceOutcome
-		if err := nr.resource.Ensure(ctx, r.d); err != nil {
+		ensured, err := r.ensure(ctx, nr)
+		if err != nil {
 			return r.fail(nr.name, &entry, &entry.Ensure, err)
 		}
-		entry.Ensure = &contract.CallOutcome{}
+		entry.Ensure = ensured
 
 		obs, attempts, err := r.settle(ctx, nr, contract.Present, &entry)
 		if err != nil {
@@ -76,16 +116,48 @@ func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 	return http.StatusOK, resp
 }
 
+// ensure runs one resource's ensure and returns its ensure outcome: through
+// EnsureWithReport when the resource implements ReportingResource, carrying
+// the identity and outputs it reported, and through Ensure otherwise, with
+// nothing to report. A reported identity or output value equal to a
+// request secret is refused rather than reported.
+func (r *declaredRun) ensure(ctx context.Context, nr namedResource) (*contract.CallOutcome, error) {
+	reporting, ok := nr.resource.(ReportingResource)
+	if !ok {
+		if err := nr.resource.Ensure(ctx, r.d); err != nil {
+			return nil, err
+		}
+		return &contract.CallOutcome{}, nil
+	}
+
+	report, err := reporting.EnsureWithReport(ctx, r.d)
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseSecretOutputs(report.Identity, r.d.Secrets); err != nil {
+		return nil, err
+	}
+	if err := refuseSecretOutputs(report.Outputs, r.d.Secrets); err != nil {
+		return nil, err
+	}
+	return &contract.CallOutcome{Identity: report.Identity, Outputs: report.Outputs}, nil
+}
+
 // deleteEach deletes each resource in reverse creation order and polls its
 // Observe until Absent before moving to the next, so a resource created
 // earlier outlives every one created after it. Every resource absent
 // answers 200 absent:true with the union of the absent observations'
-// outputs. A resource not absent within the verb budget answers 200
-// absent:false and stops there.
+// outputs. A resource not absent within the verb budget, or not reached
+// because the request context is done, answers 200 absent:false and stops
+// there.
 func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	var outputs map[string]string
-	for i := len(r.h.declared) - 1; i >= 0; i-- {
-		nr := r.h.declared[i]
+	for i := len(r.resources) - 1; i >= 0; i-- {
+		nr := r.resources[i]
+		if ctx.Err() != nil {
+			absent := false
+			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: r.notReached(nr.name), Resources: r.outcomes}
+		}
 		var entry contract.ResourceOutcome
 		if err := nr.resource.Delete(ctx, r.d.Identity); err != nil {
 			return r.fail(nr.name, &entry, &entry.Delete, err)
@@ -117,12 +189,16 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 // the union of their outputs and secret outputs; every resource absent
 // answers absent:true; any other mix answers pending:true naming each
 // resource's state. An Observe error is classified, never folded into
-// pending, and stops the probe there.
+// pending, and stops the probe there. A resource not reached because the
+// request context is done answers pending:true naming it.
 func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response) {
 	var outputs, secretOutputs map[string]string
 	present, absent := 0, 0
-	states := make([]string, 0, len(r.h.declared))
-	for _, nr := range r.h.declared {
+	states := make([]string, 0, len(r.resources))
+	for _, nr := range r.resources {
+		if ctx.Err() != nil {
+			return http.StatusOK, contract.Response{Pending: true, StatusDetail: r.notReached(nr.name), Resources: r.outcomes}
+		}
 		var entry contract.ResourceOutcome
 		obs, err := nr.resource.Observe(ctx, r.d.Identity)
 		if err != nil {
@@ -147,7 +223,7 @@ func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response)
 	}
 
 	var resp contract.Response
-	switch len(r.h.declared) {
+	switch len(r.resources) {
 	case present:
 		resp = contract.Observation{State: contract.Present, Outputs: outputs, SecretOutputs: secretOutputs}.Response()
 	case absent:
@@ -160,6 +236,13 @@ func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response)
 	}
 	resp.Resources = r.outcomes
 	return http.StatusOK, resp
+}
+
+// notReached is the statusDetail of a verb that stopped because the request
+// context was done before it reached the named resource, scrubbed of
+// request secrets.
+func (r *declaredRun) notReached(name string) string {
+	return safe.Scrub(fmt.Sprintf("resource %q not reached: the request ended before the verb got to it", name), r.secrets...)
 }
 
 // settle polls one resource's Observe up to the verb budget, stopping early

@@ -15,7 +15,8 @@
 // DeclaredResource for each one instead, under Config.Resources. The
 // Handler then runs each verb resource by resource in the manifest's
 // creation order, tearing down in reverse, and reports each resource's
-// calls by name in the response's resources map.
+// calls by name in the response's resources map. A request that names one
+// declared resource runs the verb on that resource alone.
 package handler
 
 import (
@@ -72,7 +73,11 @@ type Resource interface {
 // mitstack/v1beta manifest declares under spec.resources. The calls mean
 // what Resource's do, scoped to the one resource: the Handler ensures each
 // in creation order and settles it present before the next, and deletes
-// each in reverse order and settles it absent before the next.
+// each in reverse order and settles it absent before the next. A request
+// that names a declared resource runs the verb on that resource alone, and
+// its Ensure receives a Desired carrying the name and the request's
+// resource inputs. A DeclaredResource that also implements
+// ReportingResource is ensured through EnsureWithReport instead.
 type DeclaredResource interface {
 	// Ensure converges this resource for the subscription d.Identity names.
 	// It may be called more than once and must converge rather than
@@ -85,6 +90,18 @@ type DeclaredResource interface {
 	// Delete tears this resource down. Absence is success: Delete must not
 	// error when the resource was never created.
 	Delete(ctx context.Context, id contract.Identity) error
+}
+
+// ReportingResource is an optional interface a DeclaredResource implements
+// to report what its ensure stored and published. When a declared resource
+// implements it, the Handler calls EnsureWithReport in place of Ensure,
+// never both, and puts the returned Identity and Outputs on that resource's
+// ensure entry in the response's resources map. An identity or output value
+// exactly equal to a request secret is refused as secret-in-output.
+type ReportingResource interface {
+	// EnsureWithReport converges this resource the way Ensure does and
+	// reports the identity it stored and the outputs it published.
+	EnsureWithReport(ctx context.Context, d contract.Desired) (contract.Ensured, error)
 }
 
 // Hook is a declared extension point a block registers at one of the four
@@ -126,7 +143,10 @@ type Config struct {
 	// mitstack/v1beta manifest declares, keyed by its name under
 	// spec.resources. Every declared resource needs one, and a key the
 	// manifest does not declare is refused. Set it or Resource, never both;
-	// Manifest is required with it, and Hooks is refused with it.
+	// Manifest is required with it, and Hooks is refused with it. A request
+	// naming one of these resources runs the verb on it alone; a request
+	// naming a resource the manifest does not declare, or any resource when
+	// the block is served over Resource, is refused with a 400.
 	Resources map[string]DeclaredResource
 
 	// Manifest is the block's manifest.yaml. Required when Hooks or

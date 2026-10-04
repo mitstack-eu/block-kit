@@ -84,10 +84,11 @@ func InvalidResponseGoldens(t *testing.T) map[string][]byte {
 // body an operator's webhook handler wrote, mirroring
 // api/internal/lifecycle/contract/response.schema.json without depending on
 // a JSON-Schema library (the kit module has no third-party dependencies).
-// It returns one human-readable problem per offending top-level property —
-// an empty slice means the response conforms — and every problem string
-// names the property so an operator author can act on it without reading
-// anything else.
+// It returns one human-readable problem per offending top-level property,
+// and per offending part of the resources a response reports — an empty
+// slice means the response conforms — and every problem string names the
+// property, or the dotted path within resources, so an operator author can
+// act on it without reading anything else.
 //
 // An unknown top-level property is accepted, never flagged: the contract is
 // additive-friendly (mirrors additionalProperties:true in the schema), so a
@@ -152,8 +153,105 @@ func CheckResponse(raw []byte) []string {
 	checkString("error")
 	checkString("statusDetail")
 	checkString("lastError")
+	problems = append(problems, checkResources(doc)...)
 
 	return problems
+}
+
+// resourceCalls are the calls a resources entry may report, each an object.
+var resourceCalls = []string{"ensure", "observe", "delete"}
+
+// checkResources checks the resources property when present: an object of
+// entries, each an object whose ensure, observe and delete calls are
+// objects with string error, state and statusDetail and with outputs and
+// identity that are objects of string values. A key the contract does not
+// name is accepted at every level. Each problem names the dotted, quoted
+// path it concerns, such as "resources"."network"."ensure"."identity".
+func checkResources(doc map[string]any) []string {
+	v, present := doc["resources"]
+	if !present {
+		return nil
+	}
+	entries, ok := v.(map[string]any)
+	if !ok {
+		return []string{fmt.Sprintf("%q must be an object of resource entries, got %s", "resources", jsonKind(v))}
+	}
+
+	var problems []string
+	for _, name := range sortedKeys(entries) {
+		entryPath := fmt.Sprintf("%q.%q", "resources", name)
+		entry, ok := entries[name].(map[string]any)
+		if !ok {
+			problems = append(problems, fmt.Sprintf("%s must be an object, got %s", entryPath, jsonKind(entries[name])))
+			continue
+		}
+		for _, call := range resourceCalls {
+			cv, present := entry[call]
+			if !present {
+				continue
+			}
+			callPath := fmt.Sprintf("%s.%q", entryPath, call)
+			fields, ok := cv.(map[string]any)
+			if !ok {
+				problems = append(problems, fmt.Sprintf("%s must be an object, got %s", callPath, jsonKind(cv)))
+				continue
+			}
+			problems = append(problems, checkCallOutcome(callPath, fields)...)
+		}
+	}
+	return problems
+}
+
+// checkCallOutcome checks one call's fields, path naming the call.
+func checkCallOutcome(path string, fields map[string]any) []string {
+	var problems []string
+	for _, field := range []string{"error", "state", "statusDetail"} {
+		v, present := fields[field]
+		if !present {
+			continue
+		}
+		if _, ok := v.(string); !ok {
+			problems = append(problems, fmt.Sprintf("%s.%q must be a string, got %s", path, field, jsonKind(v)))
+		}
+	}
+	for _, field := range []string{"outputs", "identity"} {
+		v, present := fields[field]
+		if !present {
+			continue
+		}
+		fieldPath := fmt.Sprintf("%s.%q", path, field)
+		obj, ok := v.(map[string]any)
+		if !ok {
+			problems = append(problems, fmt.Sprintf("%s must be an object of string values, got %s", fieldPath, jsonKind(v)))
+			continue
+		}
+		for _, k := range sortedKeys(obj) {
+			if _, ok := obj[k].(string); !ok {
+				problems = append(problems, fmt.Sprintf("%s.%q must be a string value, got %s", fieldPath, k, jsonKind(obj[k])))
+			}
+		}
+	}
+	return problems
+}
+
+// jsonKind names the JSON type of a value json.Unmarshal decoded into any.
+func jsonKind(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "a boolean"
+	case float64:
+		return "a number"
+	case string:
+		return "a string"
+	case []any:
+		return "an array"
+	case map[string]any:
+		return "an object"
+	default:
+		return fmt.Sprintf("%T", v)
+	}
 }
 
 // AssertEmitsConformingResponses proves every response body an operator's
