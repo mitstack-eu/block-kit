@@ -56,7 +56,7 @@ func TestDecodeResponse_ReadsEachResourceOutcomeByName(t *testing.T) {
 	}
 	if network.Ensure == nil {
 		t.Error(`network.Ensure = nil, want the ensure outcome ({} means ensure ran and succeeded)`)
-	} else if *network.Ensure != (contract.CallOutcome{}) {
+	} else if !reflect.DeepEqual(*network.Ensure, contract.CallOutcome{}) {
 		t.Errorf("network.Ensure = %+v, want the zero CallOutcome", *network.Ensure)
 	}
 	if network.Delete != nil {
