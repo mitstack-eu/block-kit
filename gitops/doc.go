@@ -12,6 +12,12 @@
 // those notifications from the platform, and NotificationsFromContext builds
 // it from the events callback the handler stashes on a request.
 //
+// The platform answers a block only the notifications of the cluster its
+// kubernetes-cluster requirement binds, within the block's own org, and a
+// block that binds no cluster or several reads none. A cluster that hosts
+// apps of several orgs needs a scoping rule of its own, which the platform
+// does not provide.
+//
 // CommitManifests refuses, before anything is written, a file carrying any
 // secret value verbatim or as the standard base64 encoding of that value on
 // its own, and SecretValues collects every secret a request carries for it

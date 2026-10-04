@@ -147,10 +147,11 @@ func (r *Resource) Observe(ctx context.Context, id contract.Identity) (contract.
 // In a repository that holds other apps' commits it answers unknown until
 // Argo CD reports on the app.
 //
-// Notifications are scoped by org and Argo CD app name, not by cluster: the
-// read names the app alone, and the token fixes the org. An app name must
-// therefore be unique across all of an org's clusters, or the newest
-// notification for it may come from another cluster.
+// The platform answers a block only the notifications of the cluster its
+// kubernetes-cluster requirement binds, within the block's own org. A block
+// that binds no cluster, or several, reads none, so its resource stays
+// unknown. A cluster that hosts apps of several orgs needs a scoping rule of
+// its own, which the platform does not provide.
 func (r *Resource) ObserveWithRequest(ctx context.Context, d contract.Desired) (contract.Observation, error) {
 	out, err := r.render(d)
 	if err != nil {

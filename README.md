@@ -513,9 +513,12 @@ happens, and it has not been observed yet. A revision whose sync reports phase
 `Succeeded` and health `Healthy` is deployed, while the sync status and the
 images are never read.
 
-The platform keeps notifications by org and Argo CD app name, without the
-cluster, so an app name must be unique across all of an org's clusters. A
-notification looks like this:
+The platform answers a block only the notifications of the cluster its
+`kubernetes-cluster` requirement binds, within the block's own org. A block
+whose requirement binds no cluster, or several, reads none, so its observe
+answers unknown. A cluster that hosts apps of several orgs needs a scoping
+rule of its own, which the platform does not provide. A notification looks
+like this:
 
 ```json
 {"app":"app-alpha","project":"app-alpha","sync":"Synced","revision":"9ee9b7e28c000b16a89b7b717e5f3b9fa6fcf611","health":"Healthy","phase":"Succeeded","message":"successfully synced (all tasks run)","images":null,"reconciledAt":"2026-09-28T10:47:23Z"}
