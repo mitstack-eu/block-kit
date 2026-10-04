@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	pathpkg "path"
 	"strings"
 
 	"github.com/mitstack-eu/operator-kit/contract"
@@ -69,11 +68,13 @@ func (r *Resource) Ensure(ctx context.Context, d contract.Desired) error {
 // paths, the last being the sorted rendered paths joined by commas, and the
 // rendered outputs.
 //
-// The same commit removes each path d.ResourceIdentity records that the
-// render no longer has, as when an upgrade drops or renames a file. It
-// removes such a path only when the render could own it, meaning a rendered
-// file stands in the same directory, so a recorded path under another app's
-// directory is never touched. A removed path is not reported.
+// When d.ResourceIdentity records the render's own app, the same commit
+// removes each path that record names and the render no longer has, as when
+// an upgrade drops, renames or moves a file, wherever it stands. Only this
+// resource's own ensure writes that record, so it names only paths the
+// resource wrote. A record of another app, or no record, removes nothing,
+// which keeps a record handed over from another app from removing its
+// files. A removed path is not reported.
 //
 // A rendered file carrying a secret is refused with class
 // secret-in-manifest, and a path holding a comma with class
@@ -100,7 +101,7 @@ func (r *Resource) EnsureWithReport(ctx context.Context, d contract.Desired) (co
 	for path, content := range out.Files {
 		changes[path] = content
 	}
-	for _, path := range stalePaths(recordedPaths(d), out.Files) {
+	for _, path := range stalePaths(d, out) {
 		changes[path] = nil
 	}
 	rev, changed, err := CommitManifests(ctx, repo, changes, out.App+": update manifests", SecretValues(d))
@@ -267,16 +268,15 @@ func recordedPaths(d contract.Desired) []string {
 	return paths
 }
 
-// stalePaths returns the recorded paths files lacks whose directory holds
-// one of files, which are the only recorded paths the render could own.
-func stalePaths(recorded []string, files map[string][]byte) []string {
-	dirs := make(map[string]bool, len(files))
-	for path := range files {
-		dirs[pathpkg.Dir(path)] = true
+// stalePaths returns the paths d's record names that out no longer renders,
+// and none when the record is of another app than out's or is absent.
+func stalePaths(d contract.Desired, out Rendered) []string {
+	if d.ResourceIdentity[identityApp] != out.App {
+		return nil
 	}
 	var stale []string
-	for _, path := range recorded {
-		if _, rendered := files[path]; !rendered && dirs[pathpkg.Dir(path)] {
+	for _, path := range recordedPaths(d) {
+		if _, rendered := out.Files[path]; !rendered {
 			stale = append(stale, path)
 		}
 	}

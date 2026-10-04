@@ -488,9 +488,11 @@ resource := &gitops.Resource{
 
 Its ensure commits the rendered files and reports the app, the revision and
 the paths as the resource's identity. When the recorded identity names a path
-the render no longer has, as after an upgrade renames a file, the same commit
-removes that path. The ensure removes only a path in a directory the render
-writes to, so it never touches another app's files.
+the render no longer has, as after an upgrade renames or moves a file, the
+same commit removes that path, in whatever directory it stands. Only the
+resource's own ensure writes that record, so it names only paths the resource
+wrote. The ensure removes anything only when the record's app is the render's
+own app, so a record of another app, or no record, removes nothing.
 
 A rendered file that carries any of the request's secrets, verbatim or
 base64-encoded on its own, is refused as `secret-in-manifest` before anything

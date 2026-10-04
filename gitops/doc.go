@@ -21,9 +21,11 @@
 //
 // Resource serves one declared resource through the kit's per-resource
 // hooks, so the Handler drives each declared resource per call with that
-// call's own Desired. Its ensure commits the rendered files and, in the same
-// commit, removes a path the recorded identity names that the render no
-// longer has in a directory it writes to. Its observe
+// call's own Desired. Its ensure commits the rendered files and, when the
+// recorded identity is of the render's own app, removes in the same commit
+// every path that record names and the render no longer has. Only the
+// resource's own ensure writes that record, and the app check keeps another
+// app's record from removing anything. Its observe
 // judges the app's newest notification by the files at that notification's
 // revision, and its delete commits their removal.
 //
