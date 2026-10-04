@@ -18,12 +18,21 @@ const ManifestAPIVersion = "mitstack/v1beta"
 // whole manifest strictly into a BlockManifest: a key the types do not name,
 // a missing required field, a many that is not true or false, a resource
 // name used twice and a provides entry naming no resource are each refused,
-// naming the path. Under ManifestAPIVersionV1Alpha it reads the whole
-// manifest strictly into a V1AlphaManifest, every field the platform's
-// decoder reads and spec.naming.appName: a key the types do not name, a
-// value of the wrong shape and two spellings of one key that disagree are
-// each refused, naming the path. Any other apiVersion, or none, is refused
-// naming both known versions.
+// naming the path. So is an input, top-level or nested as env is, bound to
+// a resources.<name> or requires.<name> the block does not have, or to an
+// output the bound resource's type does not publish or the requirement's
+// kind does not name, and a top-level input its type declares as taking one
+// kind bound to a resource or requirement of another, each naming the
+// resource and the input. A param, a platform value and a literal are not
+// judged, nor is the kind of an input the type does not declare, nor
+// anything that needs a type or kind the catalogue does not hold.
+//
+// Under ManifestAPIVersionV1Alpha it reads the whole manifest strictly into
+// a V1AlphaManifest, every field the platform's decoder reads and
+// spec.naming.appName: a key the types do not name, a value of the wrong
+// shape and two spellings of one key that disagree are each refused, naming
+// the path. Any other apiVersion, or none, is refused naming both known
+// versions.
 //
 // The YAML it reads is a subset: block and flow mappings and sequences,
 // comments, quoted scalars and block scalars. An alias or a merge key brings
