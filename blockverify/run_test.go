@@ -128,8 +128,8 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 	if r.Mode != "standalone" {
 		t.Errorf("mode = %q, want %q", r.Mode, "standalone")
 	}
-	if r.SuiteVersion != "1.2.0" {
-		t.Errorf("suiteVersion = %q, want %q (the suite set includes naming)", r.SuiteVersion, "1.2.0")
+	if r.SuiteVersion != "1.3.0" {
+		t.Errorf("suiteVersion = %q, want %q (the suite set includes resources)", r.SuiteVersion, "1.3.0")
 	}
 	if r.KitVersion != "v0.1.0" {
 		t.Errorf("kitVersion = %q, want %q (the kit pin floor)", r.KitVersion, "v0.1.0")
@@ -151,7 +151,7 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 		t.Errorf("resultsDigest = %q, want %q (sha256 over the compact [{name,status}] array)", r.ResultsDigest, wantResultsDigest)
 	}
 
-	wantOrder := []string{"trust-plumbing", "contract", "secret-safety", "teardown", "deliverable", "manifest", "naming"}
+	wantOrder := []string{"trust-plumbing", "contract", "secret-safety", "teardown", "resources", "deliverable", "manifest", "naming"}
 	if len(r.Suites) != len(wantOrder) {
 		t.Fatalf("suites = %d entries, want %d: %+v", len(r.Suites), len(wantOrder), r.Suites)
 	}
@@ -176,6 +176,13 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 		t.Error("naming must carry a reason in detail, not a silent skip")
 	}
 
+	resources := suiteByName(t, r, "resources")
+	if resources.Status != "skipped" {
+		t.Errorf("resources status = %q, want %q — the golden fixture's manifest is mitstack/v1alpha, so it declares no resources", resources.Status, "skipped")
+	}
+	if resources.Detail == "" {
+		t.Error("resources must carry a reason in detail, not a silent skip")
+	}
 }
 
 // --- 2. Failure modes -----------------------------------------------------
