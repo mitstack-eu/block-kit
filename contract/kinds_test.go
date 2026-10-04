@@ -46,6 +46,7 @@ var kindTable = []kindRow{
 	{"iam-role", []contract.KindOutput{secretOut("roleArn")}, nil},
 	{"ip-address", []contract.KindOutput{out("publicIp")}, nil},
 	{"kubernetes-cluster", []contract.KindOutput{out("apiEndpoint"), out("caCertificate"), secretOut("clusterCredential")}, []contract.KindOutput{out("cloud.region"), out("issuerUrl"), out("privateEndpoint")}},
+	{"kubernetes-namespace", []contract.KindOutput{out("namespace"), out("serviceAccount")}, nil},
 	{"llm-endpoint", []contract.KindOutput{out("llmEndpoint")}, []contract.KindOutput{out("model")}},
 	{"network", nil, nil},
 	{"oidc-provider", []contract.KindOutput{secretOut("oidcProviderArn")}, nil},

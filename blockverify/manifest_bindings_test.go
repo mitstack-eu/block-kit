@@ -2,7 +2,7 @@ package main
 
 // manifest_bindings_test.go pins that blockverify fails its manifest suite on
 // a mitstack/v1beta manifest whose input bindings the kit's parser refuses,
-// printing the parser's reason. Each fixture under testdata holds one
+// printing the parser's reason. Each fixture this file names holds one
 // manifest.yaml: ADR 0083's worked aws-app-infra manifest with one edit, so
 // the edit is the only defect.
 //
