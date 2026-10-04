@@ -402,6 +402,13 @@ runs each of them, and a repeat of the same named request replays.
 `contract.DecodeRequest` refuses `resourceInputs` or `resourceIdentity` sent
 without a `resource`.
 
+The Handler scrubs each secret input of the named resource from the answer,
+the event it emits for the verb and every log line it writes, as it scrubs
+`secretInputs`. An input is
+secret when the manifest binds it to a param marked `secret: true`, at the
+top level or inside a mapping. It is also secret when the resource's
+catalogued type marks it secret, and then every string inside it is secret.
+
 Some declared resources can only find what they created through the inputs
 the engine recorded at subscribe and the identity their ensure stored. The
 engine sends both back on a later request naming the resource. Such a

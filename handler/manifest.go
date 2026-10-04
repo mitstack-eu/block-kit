@@ -32,15 +32,18 @@ var knownHooks = contract.LifecycleHookPoints()
 
 // manifestDeclarations is what New reads of a block's manifest: its
 // apiVersion, the hook points spec.lifecycle.hooks declares,
-// spec.lifecycle.retainsOnUnsubscribe, and the names spec.resources
-// declares. A mitstack/v1beta lifecycle has neither hooks nor
-// retainsOnUnsubscribe, so a v1beta manifest declares no hook and does not
-// retain its resource; only a v1beta manifest declares resources.
+// spec.lifecycle.retainsOnUnsubscribe, the resources spec.resources
+// declares with their types and inputs, and the names of the params
+// spec.params marks secret. A mitstack/v1beta lifecycle has neither hooks
+// nor retainsOnUnsubscribe, so a v1beta manifest declares no hook and does
+// not retain its resource; only a v1beta manifest declares resources and
+// params.
 type manifestDeclarations struct {
 	apiVersion           string
 	hooks                []string
 	retainsOnUnsubscribe bool
-	resources            []string
+	resources            []contract.ManifestResource
+	secretParams         map[string]bool
 }
 
 // readManifestDeclarations reads Config.Manifest through
@@ -56,11 +59,17 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 		return manifestDeclarations{}, fmt.Errorf("handler: Config.Manifest is not a manifest the kit's parser accepts: %w", err)
 	}
 	if m.Block != nil {
-		names := make([]string, 0, len(m.Block.Spec.Resources))
-		for _, r := range m.Block.Spec.Resources {
-			names = append(names, r.Name)
+		secretParams := map[string]bool{}
+		for _, p := range m.Block.Spec.Params {
+			if p.Secret {
+				secretParams[p.Name] = true
+			}
 		}
-		return manifestDeclarations{apiVersion: m.APIVersion, resources: names}, nil
+		return manifestDeclarations{
+			apiVersion:   m.APIVersion,
+			resources:    m.Block.Spec.Resources,
+			secretParams: secretParams,
+		}, nil
 	}
 	if m.V1Alpha == nil || m.V1Alpha.Spec.Lifecycle == nil {
 		return manifestDeclarations{apiVersion: m.APIVersion}, nil
@@ -69,11 +78,12 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 	return manifestDeclarations{apiVersion: m.APIVersion, hooks: l.Hooks, retainsOnUnsubscribe: l.RetainsOnUnsubscribe}, nil
 }
 
-// namedResource is one declared resource and the name the manifest gives
-// it.
+// namedResource is one declared resource, the name the manifest gives it,
+// and its manifest declaration, which holds its type and inputs.
 type namedResource struct {
-	name     string
-	resource DeclaredResource
+	name        string
+	resource    DeclaredResource
+	declaration contract.ManifestResource
 }
 
 // declaredResources pairs each resource the manifest's spec.resources
@@ -96,13 +106,13 @@ func declaredResources(cfg Config, declared manifestDeclarations) ([]namedResour
 
 	declaredSet := make(map[string]bool, len(declared.resources))
 	out := make([]namedResource, 0, len(declared.resources))
-	for _, name := range declared.resources {
-		declaredSet[name] = true
-		r := cfg.Resources[name]
+	for _, decl := range declared.resources {
+		declaredSet[decl.Name] = true
+		r := cfg.Resources[decl.Name]
 		if r == nil {
-			return nil, fmt.Errorf("handler: the manifest declares resource %q, but Config.Resources has no handler for it", name)
+			return nil, fmt.Errorf("handler: the manifest declares resource %q, but Config.Resources has no handler for it", decl.Name)
 		}
-		out = append(out, namedResource{name: name, resource: r})
+		out = append(out, namedResource{name: decl.Name, resource: r, declaration: decl})
 	}
 
 	var undeclared []string

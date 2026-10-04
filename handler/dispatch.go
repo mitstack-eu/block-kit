@@ -33,7 +33,7 @@ import (
 // panic in the Resource or a hook is recovered inside run, so the calling
 // delivery and every waiter on its key receive the same retryable 500.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
-	secrets := secretsFor(req)
+	secrets := h.secretsFor(req)
 
 	var callback *events.Callback
 	if req.EventsCallback != nil {
@@ -445,9 +445,11 @@ func scrubResponse(resp contract.Response, secrets []string) contract.Response {
 
 // secretsFor collects every literal secret value a request carries —
 // secrets, secretInputs, appSecrets, the OBO token, the events callback
-// token — so the handler can scrub all of them out of anything it writes to
-// the response body or a log line.
-func secretsFor(req contract.Request) []string {
+// token, and each secret value in the resourceInputs of the declared
+// resource the request names (see secretResourceInputs) — so the handler
+// can scrub all of them out of anything it writes to the response body or
+// a log line.
+func (h *Handler) secretsFor(req contract.Request) []string {
 	var out []string
 	for _, group := range req.Secrets {
 		for _, v := range group {
@@ -465,6 +467,11 @@ func secretsFor(req contract.Request) []string {
 	}
 	if req.EventsCallback != nil && req.EventsCallback.Token != "" {
 		out = append(out, req.EventsCallback.Token)
+	}
+	if req.Resource != "" {
+		if nr, ok := h.declaredResource(req.Resource); ok {
+			out = append(out, secretResourceInputs(nr.declaration, h.secretParams, req.ResourceInputs)...)
+		}
 	}
 	return out
 }

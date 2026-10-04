@@ -224,6 +224,9 @@ type Handler struct {
 	// declared holds the block's declared resources in creation order. It
 	// is nil for a block served over a single Resource.
 	declared []namedResource
+	// secretParams names the params the manifest marks secret, so a
+	// resource input bound to one is scrubbed like any request secret.
+	secretParams map[string]bool
 
 	retainsOnUnsubscribe bool
 
@@ -284,6 +287,7 @@ func New(cfg Config) (*Handler, error) {
 		resource:             cfg.Resource,
 		hooks:                hooks,
 		declared:             resources,
+		secretParams:         declared.secretParams,
 		retainsOnUnsubscribe: declared.retainsOnUnsubscribe,
 		jwksURL:              cfg.JWKSURL,
 		publicKey:            cfg.PublicKey,
