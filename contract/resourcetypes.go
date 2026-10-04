@@ -29,6 +29,12 @@ type Input struct {
 	// a released kind, or "output:<kind>/<output>" for one output that kind
 	// names.
 	Accepts string `json:"accepts"`
+	// Place says where the resource the input takes must live, in exactly
+	// one of three forms: "own" for the type's own capability,
+	// "capability:<slug>" for a named capability of Capabilities(), or
+	// "carrier" for the capability of the resource the type lives on. It is
+	// empty exactly when the input accepts "value".
+	Place string `json:"place"`
 	// Replacement is one of InputReplacements(): whether changing the input
 	// updates the resource in place or replaces it.
 	Replacement string `json:"replacement"`
@@ -423,6 +429,9 @@ func validateInputs(t ResourceType) error {
 		if err := validateAccepts(in.Accepts); err != nil {
 			return fmt.Errorf("input %q: %w", in.Name, err)
 		}
+		if err := validateInputPlace(in, isCapability(t.Place())); err != nil {
+			return fmt.Errorf("input %q: %w", in.Name, err)
+		}
 	}
 	pr := t.ProviderResource
 	if pr == nil {
@@ -467,6 +476,42 @@ func validateAccepts(accepts string) error {
 		return nil
 	}
 	return fmt.Errorf("accepts %q is none of value, resource:<kind> or output:<kind>/<output>", accepts)
+}
+
+// validateInputPlace checks where the resource an input takes must live. A
+// value input carries no place. A resource-taking input carries "own" when
+// its type lives in a capability, "carrier" when its type lives on a
+// released kind, or "capability:<slug>" naming one of Capabilities() on
+// either.
+func validateInputPlace(in Input, livesInCapability bool) error {
+	if in.Accepts == "value" {
+		if in.Place != "" {
+			return fmt.Errorf("place %q is declared on an input accepting a value; only a resource-taking input declares one", in.Place)
+		}
+		return nil
+	}
+	switch in.Place {
+	case "":
+		return fmt.Errorf("accepts %q but declares no place, where the taken resource must live", in.Accepts)
+	case "own":
+		if !livesInCapability {
+			return fmt.Errorf("place %q needs a type living in a capability; a type living on a kind takes \"carrier\" or \"capability:<slug>\"", in.Place)
+		}
+		return nil
+	case "carrier":
+		if livesInCapability {
+			return fmt.Errorf("place %q needs a type living on a kind; a type living in a capability takes \"own\" or \"capability:<slug>\"", in.Place)
+		}
+		return nil
+	}
+	slug, ok := strings.CutPrefix(in.Place, "capability:")
+	if !ok || slug == "" {
+		return fmt.Errorf("place %q is none of own, carrier or capability:<slug>", in.Place)
+	}
+	if !isCapability(slug) {
+		return fmt.Errorf("place %q names no capability of %q", in.Place, Capabilities())
+	}
+	return nil
 }
 
 // validateDeclarations checks the observe and absence declarations, the time
