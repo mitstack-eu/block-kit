@@ -521,9 +521,13 @@ notification looks like this:
 {"app":"app-alpha","project":"app-alpha","sync":"Synced","revision":"9ee9b7e28c000b16a89b7b717e5f3b9fa6fcf611","health":"Healthy","phase":"Succeeded","message":"successfully synced (all tasks run)","images":null,"reconciledAt":"2026-09-28T10:47:23Z"}
 ```
 
-The kit has no GitHub implementation of `gitops.Repository` yet, so a block
-supplies its own. In tests, `gitopstest.NewRepository` and
-`gitopstest.NewNotifications` give in-memory fakes of both.
+`gitops.NewGitHubRepository` gives the kit's implementation of
+`gitops.Repository` over GitHub, and it commits to the repository's `main`. It
+takes the API base from the request's `github` instance, resolved through
+`ghapi.BaseFromEnv`, and the token from the request's `github` secret. A
+commit whose parent is no longer the tip lands nothing, so `CommitManifests`
+and `Revert` retry it on a fresh head. In tests, `gitopstest.NewRepository`
+and `gitopstest.NewNotifications` give in-memory fakes of both.
 
 ## Testing
 

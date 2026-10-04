@@ -38,7 +38,11 @@
 // inside one poll interval would show which way Argo CD behaves; it has not
 // been observed. Check and Wait keep the exact-revision rule.
 //
-// The package defines Repository but does not yet implement it over GitHub.
-// A block supplies its own implementation, and gitopstest provides
-// in-memory fakes of Repository and Notifications for tests.
+// GitHubRepository implements Repository over GitHub's REST API and commits
+// to the repository's main branch. NewGitHubRepository builds it from a
+// request, taking the API base from the github instance through the host
+// allowlist and the token from the github secret. A commit whose parent is
+// no longer the tip lands nothing and wraps ErrStaleBase, so CommitManifests
+// and Revert retry it on a fresh head. gitopstest provides in-memory fakes
+// of Repository and Notifications for tests.
 package gitops
