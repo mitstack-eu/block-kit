@@ -119,13 +119,21 @@ func TestHandovers_IncludeSnapshotAndAreReturnedFresh(t *testing.T) {
 
 func TestInput_MarshalsItsFields(t *testing.T) {
 	m := marshalToMap(t, contract.Input{Name: "value", Required: true, Secret: true, Accepts: "value", Replacement: "update"})
-	want := map[string]any{"name": "value", "required": true, "secret": true, "accepts": "value", "replacement": "update"}
+	want := map[string]any{"name": "value", "required": true, "secret": true, "accepts": "value", "place": "", "replacement": "update"}
 	if !reflect.DeepEqual(m, want) {
 		t.Errorf("Input marshals to %v, want %v", m, want)
 	}
 	m = marshalToMap(t, contract.Input{Name: "tags", Accepts: "value", Replacement: "update"})
 	if m["required"] != false || m["secret"] != false {
 		t.Errorf("Input marshals to %v, want required and secret written as false", m)
+	}
+	if place, ok := m["place"]; !ok || place != "" {
+		t.Errorf("a value input marshals to %v, want place written as \"\"", m)
+	}
+	m = marshalToMap(t, contract.Input{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:github", Replacement: "replace"})
+	want = map[string]any{"name": "repository", "required": true, "secret": false, "accepts": "output:git-repository/repo", "place": "capability:github", "replacement": "replace"}
+	if !reflect.DeepEqual(m, want) {
+		t.Errorf("a resource-taking Input marshals to %v, want %v", m, want)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"slices"
@@ -60,6 +61,14 @@ func validType() contract.ResourceType {
 			{Class: "permanent", Cause: "the repository name is taken by another account's repository"},
 		},
 	}
+}
+
+// toHostType turns the valid fixture into a valid type that lives on a
+// resource of the host kind rather than in a capability: host.thing, a
+// container publishing its url.
+func toHostType(rt *contract.ResourceType) {
+	rt.ID, rt.Kind, rt.Category, rt.ArtifactType = "host.thing", "container", "compute", ""
+	rt.Outputs = []string{"url"}
 }
 
 // catalogue returns contract.ResourceTypes(), failing the test when it is
@@ -139,10 +148,28 @@ func TestValidateResourceTypes_AcceptsValidVariants(t *testing.T) {
 			rt.Inputs = append(rt.Inputs, contract.Input{Name: "token", Required: true, Secret: true, Accepts: "value", Replacement: "update"})
 		},
 		"an input accepting a whole resource of a kind": func(rt *contract.ResourceType) {
-			rt.Inputs = append(rt.Inputs, contract.Input{Name: "host", Required: true, Accepts: "resource:host", Replacement: "replace"})
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "host", Required: true, Accepts: "resource:host", Place: "own", Replacement: "replace"})
 		},
 		"an input accepting an output of a kind": func(rt *contract.ResourceType) {
-			rt.Inputs = append(rt.Inputs, contract.Input{Name: "target", Required: true, Accepts: "output:host/publicIp", Replacement: "update"})
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "target", Required: true, Accepts: "output:host/publicIp", Place: "own", Replacement: "update"})
+		},
+		"a resource input in its own capability on a type living in a capability": func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Place: "own", Replacement: "update"})
+		},
+		"an output input in a named capability on a type living in a capability": func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:github", Replacement: "replace"})
+		},
+		"a resource input on its carrier on a type living on a kind": func(rt *contract.ResourceType) {
+			toHostType(rt)
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "dataVolume", Required: true, Accepts: "resource:block-volume", Place: "carrier", Replacement: "replace"})
+		},
+		"an optional output input on its carrier on a type living on a kind": func(rt *contract.ResourceType) {
+			toHostType(rt)
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "target", Accepts: "output:host/publicIp", Place: "carrier", Replacement: "update"})
+		},
+		"an output input in a named capability on a type living on a kind": func(rt *contract.ResourceType) {
+			toHostType(rt)
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:github", Replacement: "replace"})
 		},
 		"a type mapped one to one onto a provider resource": func(rt *contract.ResourceType) {
 			rt.ProviderResource = &contract.ProviderResource{
@@ -219,6 +246,18 @@ func TestValidateResourceTypes_AcceptsEveryVocabularyValue(t *testing.T) {
 	for _, c := range contract.Capabilities() {
 		rt := validType()
 		rt.ReliesOn = []string{c}
+		check(t, rt)
+	}
+	// A named capability place is valid whichever kind of place the type
+	// lives in.
+	for _, c := range contract.Capabilities() {
+		in := contract.Input{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:" + c, Replacement: "replace"}
+		rt := validType()
+		rt.Inputs = append(rt.Inputs, in)
+		check(t, rt)
+		rt = validType()
+		toHostType(&rt)
+		rt.Inputs = append(rt.Inputs, in)
 		check(t, rt)
 	}
 }
@@ -339,6 +378,190 @@ func TestValidateResourceTypes_RefusesADefectNamingTheTypeID(t *testing.T) {
 				t.Errorf("error %q does not carry %q, the rule that should refuse the type", err, c.rule)
 			}
 		})
+	}
+}
+
+// TestValidateResourceTypes_RefusesAnInputPlaceNamingTheTypeAndTheInput
+// mutates a valid fixture so that only the place rule refuses it, then checks
+// the error names the type's ID, the input's name and the place rule. A
+// resource-taking input must say where the resource it takes lives; a value
+// input takes no resource, so it carries no place.
+func TestValidateResourceTypes_RefusesAnInputPlaceNamingTheTypeAndTheInput(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		// mutate turns the fixture into one whose only defect is the place
+		// of the input named input.
+		mutate func(rt *contract.ResourceType)
+	}{
+		{"a value input with a place", "image_tag_mutability", func(rt *contract.ResourceType) {
+			rt.Inputs[1].Place = "own"
+		}},
+		{"a value input with a named capability place", "image_tag_mutability", func(rt *contract.ResourceType) {
+			rt.Inputs[1].Place = "capability:aws"
+		}},
+		{"a resource input with no place", "securityGroup", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Replacement: "update"})
+		}},
+		{"an optional output input with no place", "repository", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "repository", Accepts: "output:git-repository/repo", Replacement: "replace"})
+		}},
+		{"an output input with no place on a type living on a kind", "dataVolume", func(rt *contract.ResourceType) {
+			toHostType(rt)
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "dataVolume", Required: true, Accepts: "resource:block-volume", Replacement: "replace"})
+		}},
+		{"a place in none of the three forms", "securityGroup", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Place: "anywhere", Replacement: "update"})
+		}},
+		{"a bare capability slug without its prefix", "securityGroup", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Place: "aws", Replacement: "update"})
+		}},
+		{"a miscased own", "securityGroup", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Place: "Own", Replacement: "update"})
+		}},
+		{"own with a suffix", "securityGroup", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Place: "own:aws", Replacement: "update"})
+		}},
+		{"a capability prefix with no slug", "repository", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:", Replacement: "replace"})
+		}},
+		{"a capability place naming no capability", "repository", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:nowhere", Replacement: "replace"})
+		}},
+		{"a capability place naming a kind, not a capability", "repository", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:host", Replacement: "replace"})
+		}},
+		{"own on a type living on a kind", "dataVolume", func(rt *contract.ResourceType) {
+			toHostType(rt)
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "dataVolume", Required: true, Accepts: "resource:block-volume", Place: "own", Replacement: "replace"})
+		}},
+		{"carrier on a type living in a capability", "securityGroup", func(rt *contract.ResourceType) {
+			rt.Inputs = append(rt.Inputs, contract.Input{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Place: "carrier", Replacement: "update"})
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rt := validType()
+			c.mutate(&rt)
+			err := contract.ValidateResourceTypes([]contract.ResourceType{rt})
+			if err == nil {
+				t.Fatalf("ValidateResourceTypes(%+v) = nil, want an error", rt)
+			}
+			if !strings.Contains(err.Error(), rt.ID) {
+				t.Errorf("error %q does not name the type's ID %q", err, rt.ID)
+			}
+			// The ID is removed first so a fragment cannot match inside it.
+			rest := strings.ReplaceAll(err.Error(), rt.ID, "")
+			if want := strconv.Quote(c.input); !strings.Contains(rest, want) {
+				t.Errorf("error %q does not name the input %s", err, want)
+			}
+			if !strings.Contains(rest, "place") {
+				t.Errorf("error %q does not carry %q, the rule that should refuse the input", err, "place")
+			}
+		})
+	}
+}
+
+// isResourceTaking reports whether an input takes a whole resource or one
+// output of a resource, rather than a literal value.
+func isResourceTaking(in contract.Input) bool {
+	return strings.HasPrefix(in.Accepts, "resource:") || strings.HasPrefix(in.Accepts, "output:")
+}
+
+// TestResourceTypes_EveryResourceTakingInputDeclaresAPlace walks the released
+// catalogue directly, so a place rule dropped from the validator still fails
+// here: every input taking a resource or a resource's output says where that
+// resource lives, and every value input carries no place.
+func TestResourceTypes_EveryResourceTakingInputDeclaresAPlace(t *testing.T) {
+	taking := 0
+	for _, rt := range catalogue(t) {
+		for _, in := range rt.Inputs {
+			if !isResourceTaking(in) {
+				if in.Place != "" {
+					t.Errorf("%s: value input %q declares place %q, want none", rt.ID, in.Name, in.Place)
+				}
+				continue
+			}
+			taking++
+			if in.Place == "" {
+				t.Errorf("%s: input %q accepts %q but declares no place", rt.ID, in.Name, in.Accepts)
+			}
+		}
+	}
+	if taking == 0 {
+		t.Fatal("no released input takes a resource, so the walk proves nothing")
+	}
+}
+
+// resourceInputPlaces pins every resource-taking input the kit releases,
+// keyed by "<type id> <input name>", with the place each carries. own is the
+// type's own capability, carrier the capability of the resource a host type
+// lives on, and capability:<slug> a named capability. The self-hosted runner's
+// host is capability:aws, the narrowest reading of where it may run.
+var resourceInputPlaces = map[string]string{
+	"aws.ec2-instance securityGroup":        "own",
+	"aws.ecr-image repository":              "own",
+	"aws.egress-proxy network":              "own",
+	"github.commit repository":              "own",
+	"github.container-image repository":     "own",
+	"github.self-hosted-runner repository":  "own",
+	"github.self-hosted-runner host":        "capability:aws",
+	"hetzner.k3s-cluster clusterRepository": "capability:github",
+	"host.configuration dataVolume":         "carrier",
+	"host.postgres-database dataVolume":     "carrier",
+	"ubicloud.runner repository":            "capability:github",
+}
+
+func TestResourceTypes_ResourceTakingInputsAreExactlyThePinnedOnesInTheirPinnedPlaces(t *testing.T) {
+	if len(resourceInputPlaces) != 11 {
+		t.Fatalf("resourceInputPlaces has %d entries, want 11", len(resourceInputPlaces))
+	}
+	got := map[string]string{}
+	for _, rt := range catalogue(t) {
+		for _, in := range rt.Inputs {
+			if isResourceTaking(in) {
+				got[rt.ID+" "+in.Name] = in.Place
+			}
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(resourceInputPlaces)) {
+		place, ok := got[key]
+		switch {
+		case !ok:
+			t.Errorf("%s: no such resource-taking input in the catalogue", key)
+		case place != resourceInputPlaces[key]:
+			t.Errorf("%s: place %q, want %q", key, place, resourceInputPlaces[key])
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(got)) {
+		if _, ok := resourceInputPlaces[key]; !ok {
+			t.Errorf("%s: a resource-taking input with place %q that the table does not pin", key, got[key])
+		}
+	}
+}
+
+// TestLookupResourceType_ReadsAnInputPlaceInEachForm reads one input in each
+// place form through LookupResourceType: a named capability, the carrier, and
+// the type's own capability.
+func TestLookupResourceType_ReadsAnInputPlaceInEachForm(t *testing.T) {
+	for _, c := range []struct{ id, input, place string }{
+		{"ubicloud.runner", "repository", "capability:github"},
+		{"host.postgres-database", "dataVolume", "carrier"},
+		{"aws.ec2-instance", "securityGroup", "own"},
+	} {
+		rt, ok := contract.LookupResourceType(c.id)
+		if !ok {
+			t.Errorf("LookupResourceType(%q) found nothing", c.id)
+			continue
+		}
+		i := slices.IndexFunc(rt.Inputs, func(in contract.Input) bool { return in.Name == c.input })
+		if i < 0 {
+			t.Errorf("%s has no input %q", c.id, c.input)
+			continue
+		}
+		if got := rt.Inputs[i].Place; got != c.place {
+			t.Errorf("%s input %q: place %q, want %q", c.id, c.input, got, c.place)
+		}
 	}
 }
 
