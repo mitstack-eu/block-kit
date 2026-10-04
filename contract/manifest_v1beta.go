@@ -20,7 +20,8 @@ var v1betaDecoder = manifestDecoder{version: ManifestAPIVersion, tag: "json"}
 
 // decodeBlockManifest reads root strictly into a BlockManifest, then holds
 // it to what the types cannot say: type is "block", a resource name appears
-// once, every spec.provides entry names a resource, and every input bound to
+// once, a requirement's reference appears once, every spec.provides entry
+// names a resource, and every input bound to
 // resources.<name> or requires.<name> resolves, as checkBindings judges: the
 // name is one of the block's resources or requirements, an output it binds
 // is one the resource's type publishes or the requirement's kind names, and
@@ -40,6 +41,14 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 			return nil, fmt.Errorf("spec.resources[%d].name: %q names an earlier resource too, and a resource name appears once in a block", i, r.Name)
 		}
 		names[r.Name] = true
+	}
+	refs := make(map[string]int, len(b.Spec.Requires))
+	for i, q := range b.Spec.Requires {
+		ref := q.Reference()
+		if j, ok := refs[ref]; ok {
+			return nil, fmt.Errorf("spec.requires[%d]: %q is the reference of spec.requires[%d] too, and a requirement's reference appears once in a block", i, ref, j)
+		}
+		refs[ref] = i
 	}
 	for i, p := range b.Spec.Provides {
 		if !names[p] {
