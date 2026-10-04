@@ -457,6 +457,49 @@ resource that implements `handler.RequestObserver` or
 suite requires a `TestDeclaredResources` test that calls
 `kittest.AssertDeclaredResources`, and runs it.
 
+### Deploying a declared resource through GitOps
+
+The `gitops` package serves a declared resource that deploys through Argo CD.
+It commits the block's rendered manifests to the GitOps repository and judges
+the deploy from Argo CD's notification, which the platform relays. A
+`gitops.Resource` implements `handler.DeclaredResource` along with the
+reporting, request-observer and request-deleter interfaces. The Handler
+therefore drives it per call, with that call's own `Desired`.
+
+You give a `gitops.Resource` three functions: one returns the
+`gitops.Repository` the resource lives in, one returns its notification source
+and one renders its files. `gitops.NotificationsFromContext` builds that
+source from the events callback on the request.
+
+```go
+resource := &gitops.Resource{
+	Repository: func(ctx context.Context, d contract.Desired) (gitops.Repository, error) {
+		return repoFor(ctx, d)
+	},
+	Notifications: func(ctx context.Context, _ contract.Desired) (gitops.Notifications, error) {
+		return gitops.NotificationsFromContext(ctx)
+	},
+	Render: renderNamespace,
+}
+```
+
+Its ensure commits the rendered files and reports the app, the revision and
+the paths as the resource's identity. A rendered file that carries any of the
+request's secrets, verbatim or base64-encoded, is refused as
+`secret-in-manifest` before anything is written, so the package never writes a
+secret. Its observe reads the app's newest notification and judges it by the
+files at that notification's revision. A revision whose sync reports phase
+`Succeeded` and health `Healthy` is deployed, while the sync status and the
+images are never read. A notification looks like this:
+
+```json
+{"app":"app-alpha","project":"app-alpha","sync":"Synced","revision":"9ee9b7e28c000b16a89b7b717e5f3b9fa6fcf611","health":"Healthy","phase":"Succeeded","message":"successfully synced (all tasks run)","images":null,"reconciledAt":"2026-09-28T10:47:23Z"}
+```
+
+The kit has no GitHub implementation of `gitops.Repository` yet, so a block
+supplies its own. In tests, `gitopstest.NewRepository` and
+`gitopstest.NewNotifications` give in-memory fakes of both.
+
 ## Testing
 
 ```

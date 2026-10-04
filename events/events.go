@@ -48,6 +48,17 @@ func WithEnvelope(ctx context.Context, env Envelope) context.Context {
 	return context.WithValue(ctx, envelopeKey{}, &env)
 }
 
+// EnvelopeFrom returns the envelope WithEnvelope stashed on ctx, and false
+// when ctx carries none. An envelope with no callback is still found, with a
+// nil Callback, so a caller that needs the callback checks it itself.
+func EnvelopeFrom(ctx context.Context) (Envelope, bool) {
+	env, ok := ctx.Value(envelopeKey{}).(*Envelope)
+	if !ok || env == nil {
+		return Envelope{}, false
+	}
+	return *env, true
+}
+
 // httpClient is used to POST events; kept short-timeout so a slow/dead ingest
 // endpoint never blocks operator lifecycle handling for long.
 var httpClient = &http.Client{Timeout: 10 * time.Second}
