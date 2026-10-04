@@ -23,6 +23,15 @@
 // judges the app's newest notification by the files at that notification's
 // revision, and its delete commits their removal.
 //
+// Observe works under one constraint: Argo CD may sync a later revision than
+// the one committed, because it syncs whatever revision it resolves when it
+// polls. In a repository several apps share, the notification for a change
+// can then name a later commit, and none may name the committed one. Judging
+// the newest notification by the files at its revision holds whether or not
+// that happens. A live sync on a scratch cluster in which two commits land
+// inside one poll interval would show which way Argo CD behaves; it has not
+// been observed. Check and Wait keep the exact-revision rule.
+//
 // The package defines Repository but does not yet implement it over GitHub.
 // A block supplies its own implementation, and gitopstest provides
 // in-memory fakes of Repository and Notifications for tests.

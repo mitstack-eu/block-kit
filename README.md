@@ -488,7 +488,11 @@ the paths as the resource's identity. A rendered file that carries any of the
 request's secrets, verbatim or base64-encoded, is refused as
 `secret-in-manifest` before anything is written, so the package never writes a
 secret. Its observe reads the app's newest notification and judges it by the
-files at that notification's revision. A revision whose sync reports phase
+files at that notification's revision. It does so because Argo CD may sync a
+later revision than the one committed, so the notification for a change can
+name a later commit. A live sync on a scratch cluster with two commits inside
+one poll interval would show whether that happens, and it has not been
+observed yet. A revision whose sync reports phase
 `Succeeded` and health `Healthy` is deployed, while the sync status and the
 images are never read. A notification looks like this:
 
