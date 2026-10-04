@@ -1,10 +1,11 @@
-// Package ghapi_test pins the host-resolution contract of kit/ghapi (MIT-1565):
-// the GitHub API host is the OPERATOR's decision, never the caller's
-// (MIT-1325), extracted once from the six near-duplicate urlguard.go copies
+// Package ghapi_test pins the host-resolution contract of kit/ghapi:
+// the GitHub API host is the OPERATOR's decision, never the caller's,
+// extracted once from the six near-duplicate urlguard.go copies
 // (examples/web-app-aws/app-scaffold/urlguard.go is the reference).
 package ghapi_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestBase_ResolvesLegitimateEndpointToTheAllowlistEntry(t *testing.T) {
 }
 
 func TestBase_ReturnsTheAllowlistEntryNeverTheCallerHost(t *testing.T) {
-	// The whole point (MIT-1325 / MIT-1565): a request-supplied endpoint may
+	// The whole point: a request-supplied endpoint may
 	// only be COMPARED, never propagated into the returned Base. Vary the
 	// caller's casing/trailing-slash and prove the output is byte-identical
 	// every time — it must be built from the constant, not from whatever the
@@ -161,4 +162,70 @@ func TestBase_AnOperatorExtraHostCanNeverReopenAnInternalOrMetadataAddress(t *te
 			t.Errorf("Base(%q, extraHosts=%q) succeeded; an operator config value must not reopen an internal/metadata/bare-IP host", c.endpoint, c.host)
 		}
 	}
+}
+
+// --- BaseFromEnv: extra hosts come from MITSTACK_GITHUB_API_HOSTS ------------
+
+func TestBaseFromEnv_ResolvesAgainstTheOperatorsEnvAllowlist(t *testing.T) {
+	const envVar = "MITSTACK_GITHUB_API_HOSTS"
+	cases := []struct {
+		name     string
+		env      *string
+		endpoint string
+		want     string
+	}{
+		{name: "unset env accepts api.github.com", endpoint: "https://api.github.com", want: "https://api.github.com"},
+		{name: "unset env refuses an enterprise host", endpoint: "https://ghe.example.com/api/v3"},
+		{name: "listed enterprise host resolves with the path dropped", env: envOf("ghe.example.com"), endpoint: "https://ghe.example.com/api/v3", want: "https://ghe.example.com"},
+		{name: "entries are trimmed and lower-cased", env: envOf(" GHE.Example.com , other.example "), endpoint: "https://ghe.example.com", want: "https://ghe.example.com"},
+		{name: "second trimmed entry is honoured", env: envOf(" GHE.Example.com , other.example "), endpoint: "https://other.example", want: "https://other.example"},
+		{name: "an extra host never removes api.github.com", env: envOf("ghe.example.com"), endpoint: "https://api.github.com", want: "https://api.github.com"},
+		{name: "empty entries refuse an enterprise host", env: envOf(",, ,"), endpoint: "https://ghe.example.com/api/v3"},
+		{name: "empty entries still accept api.github.com", env: envOf(",, ,"), endpoint: "https://api.github.com", want: "https://api.github.com"},
+		{name: "an entry carrying a scheme is not a host", env: envOf("https://ghe.example.com"), endpoint: "https://ghe.example.com"},
+		{name: "listed metadata IP is refused", env: envOf("169.254.169.254"), endpoint: "https://169.254.169.254"},
+		{name: "listed public IP literal is refused", env: envOf("8.8.8.8"), endpoint: "https://8.8.8.8"},
+		{name: "listed localhost is refused", env: envOf("localhost"), endpoint: "https://localhost"},
+		{name: "listed metadata hostname is refused", env: envOf("metadata.google.internal"), endpoint: "https://metadata.google.internal"},
+		{name: "listed host over http is refused", env: envOf("ghe.example.com"), endpoint: "http://ghe.example.com"},
+		{name: "unset env has no loopback carve-out", endpoint: "http://127.0.0.1:8080"},
+		{name: "listed loopback has no http carve-out", env: envOf("127.0.0.1:8080"), endpoint: "http://127.0.0.1:8080"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.env == nil {
+				t.Setenv(envVar, "")
+				if err := os.Unsetenv(envVar); err != nil {
+					t.Fatalf("unset %s: %v", envVar, err)
+				}
+			} else {
+				t.Setenv(envVar, *c.env)
+			}
+			b, err := ghapi.BaseFromEnv(c.endpoint)
+			if c.want == "" {
+				if err == nil {
+					t.Fatalf("BaseFromEnv(%q) with %s=%s = %q, want an error", c.endpoint, envVar, describeEnv(c.env), b.String())
+				}
+				if !b.IsZero() {
+					t.Errorf("BaseFromEnv(%q) returned a non-zero Base %q alongside its error", c.endpoint, b.String())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("BaseFromEnv(%q) with %s=%s: unexpected error: %v", c.endpoint, envVar, describeEnv(c.env), err)
+			}
+			if b.String() != c.want {
+				t.Errorf("BaseFromEnv(%q).String() = %q, want %q", c.endpoint, b.String(), c.want)
+			}
+		})
+	}
+}
+
+func envOf(v string) *string { return &v }
+
+func describeEnv(v *string) string {
+	if v == nil {
+		return "<unset>"
+	}
+	return "\"" + *v + "\""
 }
