@@ -497,7 +497,8 @@ func TestResourceTypes_EveryResourceTakingInputDeclaresAPlace(t *testing.T) {
 // keyed by "<type id> <input name>", with the place each carries. own is the
 // type's own capability, carrier the capability of the resource a host type
 // lives on, and capability:<slug> a named capability. The self-hosted runner's
-// host is capability:aws, the narrowest reading of where it may run.
+// host is capability:aws, the narrowest reading of where it may run, and the
+// namespace's cluster is capability:hetzner, where a kubernetes-cluster lives.
 var resourceInputPlaces = map[string]string{
 	"aws.ec2-instance securityGroup":        "own",
 	"aws.ecr-image repository":              "own",
@@ -509,12 +510,13 @@ var resourceInputPlaces = map[string]string{
 	"hetzner.k3s-cluster clusterRepository": "capability:github",
 	"host.configuration dataVolume":         "carrier",
 	"host.postgres-database dataVolume":     "carrier",
+	"kubernetes.namespace cluster":          "capability:hetzner",
 	"ubicloud.runner repository":            "capability:github",
 }
 
 func TestResourceTypes_ResourceTakingInputsAreExactlyThePinnedOnesInTheirPinnedPlaces(t *testing.T) {
-	if len(resourceInputPlaces) != 11 {
-		t.Fatalf("resourceInputPlaces has %d entries, want 11", len(resourceInputPlaces))
+	if len(resourceInputPlaces) != 12 {
+		t.Fatalf("resourceInputPlaces has %d entries, want 12", len(resourceInputPlaces))
 	}
 	got := map[string]string{}
 	for _, rt := range catalogue(t) {
@@ -933,6 +935,7 @@ var catalogueTable = []catalogueRow{
 	{"host.configuration", "host-configuration", "compute", nil, "", "replaceable", "per-app", "", nil, nil, ""},
 	{"host.container", "container", "compute", []string{"any-container"}, "", "replaceable", "per-app", "", []string{"url"}, nil, ""},
 	{"host.postgres-database", "postgres-database", "database", nil, "", "stateful", "per-app", "", []string{"dbName", "host", "password", "port", "username"}, nil, ""},
+	{"kubernetes.namespace", "kubernetes-namespace", "compute", nil, "", "replaceable", "per-app", "", []string{"namespace", "serviceAccount"}, nil, ""},
 	{"plain.api-token", "api-token", "identity-and-access", nil, "", "replaceable", "per-app", "", nil, nil, ""},
 	{"ubicloud.runner", "ci-runner", "build-and-delivery", nil, "", "replaceable", "per-app", "", []string{"runsOn"}, []string{"github"}, ""},
 }
@@ -945,8 +948,8 @@ func sortedCopy(s []string) []string {
 }
 
 func TestResourceTypes_HoldExactlyThePinnedTypes(t *testing.T) {
-	if len(catalogueTable) != 36 {
-		t.Fatalf("catalogueTable has %d rows, want 36", len(catalogueTable))
+	if len(catalogueTable) != 37 {
+		t.Fatalf("catalogueTable has %d rows, want 37", len(catalogueTable))
 	}
 	if got := len(catalogue(t)); got != len(catalogueTable) {
 		t.Errorf("ResourceTypes() holds %d types, want %d: a type the table does not pin was added, or a pinned one is missing", got, len(catalogueTable))
