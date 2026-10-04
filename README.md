@@ -383,7 +383,7 @@ A request may name one declared resource under `resource`, and carry that
 resource's inputs under `resourceInputs`. Each input is a scalar or a
 mapping, kept as raw JSON. The verb then runs on that resource alone.
 Subscribe and upgrade ensure it and settle it present, unsubscribe deletes
-it and settles it absent, and validate observes it once. Its `Ensure`
+it and settles it absent, and validate observes it once. Its ensure
 receives a `Desired` whose `Resource` and `ResourceInputs` are the
 request's. The answer's `resources` map holds that resource's entry alone,
 and the top-level `outputs` are its own. A name the manifest does not

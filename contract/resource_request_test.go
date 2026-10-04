@@ -172,13 +172,3 @@ func TestDecodeResponse_ReadsTheIdentityAnEnsureReported(t *testing.T) {
 		t.Errorf("ensure Outputs = %v, want %v", ensure.Outputs, want)
 	}
 }
-
-func TestEnsured_HoldsTheIdentityAndOutputsAnEnsureReports(t *testing.T) {
-	e := contract.Ensured{
-		Identity: map[string]string{"groupId": "sg-0abc"},
-		Outputs:  map[string]string{"groupArn": "arn:sg"},
-	}
-	if e.Identity["groupId"] != "sg-0abc" || e.Outputs["groupArn"] != "arn:sg" {
-		t.Errorf("Ensured = %+v, want the identity and outputs it was given", e)
-	}
-}

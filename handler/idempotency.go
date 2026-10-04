@@ -61,8 +61,8 @@ type inflightCall struct {
 }
 
 // idempotencyCache remembers the status and response bytes a verb produced
-// for a given (subscriptionID, idempotencyKey, resource), so a repeat delivery of the
-// same request replays them without calling the Resource again, and makes
+// for a given (subscriptionID, idempotencyKey, resource), so a repeat
+// delivery of the same request replays them without calling the Resource again, and makes
 // that behaviour single-flight: an overlapping delivery of a key still in
 // flight waits for the first to finish and receives its exact response. It
 // stores only a settled answer: a pending answer, or an unsubscribe answered

@@ -26,12 +26,12 @@ import (
 // again. A subscribe or upgrade answer that carries absent:false is settled
 // and stored as usual. The cache key carries the resource the request
 // names, so one idempotency key naming different resources runs each of
-// them, and a repeat of the same named request replays. An empty idempotencyKey and a validate both skip the
-// cache entirely, so neither is ever stored, replayed or single-flighted:
-// validate is a read-only probe, and a replayed probe would report a state
-// the resource may have left. A panic in the Resource or a hook is recovered
-// inside run, so the calling delivery and every waiter on its key receive
-// the same retryable 500.
+// them, and a repeat of the same named request replays. An empty
+// idempotencyKey and a validate both skip the cache entirely, so neither is
+// ever stored, replayed or single-flighted: validate is a read-only probe,
+// and a replayed probe would report a state the resource may have left. A
+// panic in the Resource or a hook is recovered inside run, so the calling
+// delivery and every waiter on its key receive the same retryable 500.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := secretsFor(req)
 
