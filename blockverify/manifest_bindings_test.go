@@ -11,7 +11,10 @@ package main
 //   - manifest-binding-missing-output binds it to an output app-instance's
 //     type does not have;
 //   - manifest-binding-wrong-kind binds app-instance's securityGroup, which
-//     accepts a firewall, to a resource of kind postgres-database.
+//     accepts a firewall, to a resource of kind postgres-database;
+//   - manifest-binding-shared-requirement-reference adds a second unnamed
+//     git-repository requirement, so two requirements share the reference
+//     git-repository that requires.git-repository names.
 
 import (
 	"os"
@@ -57,6 +60,14 @@ var bindingFixtures = []struct {
 			"        securityGroup: resources.app-database\n",
 		},
 		wants: []string{"app-instance", "securityGroup", "firewall", "postgres-database"},
+	},
+	{
+		dir: "manifest-binding-shared-requirement-reference",
+		edits: []string{
+			"    - kind: git-repository\n      in: github\n",
+			"    - kind: git-repository\n      in: github\n    - kind: git-repository\n",
+		},
+		wants: []string{"spec.requires[0]", "spec.requires[1]", `"git-repository"`, "appears once"},
 	},
 }
 
