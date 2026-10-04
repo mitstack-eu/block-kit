@@ -26,7 +26,12 @@ prefix. The place is a capability from `contract.Capabilities`, as
 `aws.ec2-instance` lives in `aws`, or a kind, as `host.container` lives on a
 host. A type also names the capabilities it relies on and the one it hosts,
 if any. It declares its inputs, each with a secret mark, what it accepts and
-whether changing it replaces the resource. It declares its lifecycle, with a
+whether changing it replaces the resource. An input that takes a resource
+also says where that resource must live. The place is `own` for the type's
+own capability, `capability:<slug>` for a named capability, or `carrier` for
+the capability of the resource the type lives on. For example, the
+`repository` input of `ubicloud.runner` takes `capability:github`. A value
+input has no place. It declares its lifecycle, with a
 handover when it is stateful, its upgrade behaviour, its pricing, how it is
 observed and proven absent, a time budget for each of `ensure`, `observe` and
 `delete`, and the failures it can meet, each `permanent` or `transient`. It

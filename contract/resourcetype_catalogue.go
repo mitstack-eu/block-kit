@@ -94,7 +94,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		Inputs: []Input{
 			{Name: "instanceType", Accepts: "value", Replacement: "update"},
 			{Name: "namePrefix", Required: true, Accepts: "value", Replacement: "replace"},
-			{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Replacement: "update"},
+			{Name: "securityGroup", Required: true, Accepts: "resource:firewall", Place: "own", Replacement: "update"},
 		},
 		Outputs:     []string{"cloud.region", "execKind", "execTarget", "host.type", "hostId", "publicIp"},
 		Observe:     "DescribeInstances returns the instance in state running, and SSM reports its agent online",
@@ -111,7 +111,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		Category: "artifact-registry", Languages: []string{"any-container"}, ArtifactType: "container-image",
 		Lifecycle: "replaceable", Upgrade: "recreate", Scope: "per-app",
 		Inputs: []Input{
-			{Name: "repository", Required: true, Accepts: "output:container-repository/registryHost", Replacement: "replace"},
+			{Name: "repository", Required: true, Accepts: "output:container-repository/registryHost", Place: "own", Replacement: "replace"},
 			{Name: "tag", Required: true, Accepts: "value", Replacement: "replace"},
 		},
 		Outputs:     []string{"imageRepo"},
@@ -144,7 +144,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		Category: "network", Languages: none, Lifecycle: "replaceable", Upgrade: "recreate", Scope: "per-app",
 		Priced: true, PricingKey: "AmazonEC2",
 		Inputs: []Input{
-			{Name: "network", Required: true, Accepts: "resource:network", Replacement: "replace"},
+			{Name: "network", Required: true, Accepts: "resource:network", Place: "own", Replacement: "replace"},
 		},
 		Outputs:     none,
 		Observe:     "DescribeInstances returns the proxy instance running with its public address, and the proxy answers on its port",
@@ -339,7 +339,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 			{Name: "branch", Required: true, Accepts: "value", Replacement: "replace"},
 			{Name: "files", Required: true, Accepts: "value", Replacement: "replace"},
 			{Name: "message", Required: true, Accepts: "value", Replacement: "replace"},
-			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Replacement: "replace"},
+			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "own", Replacement: "replace"},
 		},
 		Outputs:     []string{"sourceBranch", "sourceSha"},
 		Observe:     "the git commits API returns the commit, and the branch ref points at it or at a descendant",
@@ -356,7 +356,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		Category: "artifact-registry", Languages: []string{"any-container"}, ArtifactType: "container-image",
 		Lifecycle: "replaceable", Upgrade: "recreate", Scope: "per-app",
 		Inputs: []Input{
-			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Replacement: "replace"},
+			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "own", Replacement: "replace"},
 			{Name: "tag", Required: true, Accepts: "value", Replacement: "replace"},
 		},
 		Outputs:     []string{"imageRepo"},
@@ -446,9 +446,10 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		ID: "github.self-hosted-runner", Kind: "ci-runner", ReliesOn: none,
 		Category: "build-and-delivery", Languages: none, Lifecycle: "replaceable", Upgrade: "recreate", Scope: "per-app",
 		Inputs: []Input{
-			{Name: "host", Required: true, Accepts: "resource:host", Replacement: "replace"},
+			// capability:aws is the narrowest reading the evidence supports: the only creator installs the runner on an AWS EC2 box, until where a runner host may live is decided.
+			{Name: "host", Required: true, Accepts: "resource:host", Place: "capability:aws", Replacement: "replace"},
 			{Name: "label", Required: true, Accepts: "value", Replacement: "replace"},
-			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Replacement: "replace"},
+			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "own", Replacement: "replace"},
 		},
 		Outputs:     []string{"awsCredential", "runnerLabel", "runsOn"},
 		Observe:     "the Actions runners API lists the runner online with its label",
@@ -494,7 +495,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		Category: "compute", Languages: none, Lifecycle: "replaceable", Upgrade: "recreate", Scope: "org-wide",
 		Priced: true, PricingKey: "HetznerCloud",
 		Inputs: []Input{
-			{Name: "clusterRepository", Required: true, Accepts: "output:git-repository/repo", Replacement: "update"},
+			{Name: "clusterRepository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:github", Replacement: "update"},
 			{Name: "location", Required: true, Accepts: "value", Replacement: "replace"},
 			{Name: "nodeDisk", Accepts: "value", Replacement: "replace"},
 			{Name: "serverType", Required: true, Accepts: "value", Replacement: "update"},
@@ -577,7 +578,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		Category: "compute", Languages: none, Lifecycle: "replaceable", Upgrade: "in-place", Scope: "per-app",
 		Inputs: []Input{
 			{Name: "customDomain", Accepts: "value", Replacement: "update"},
-			{Name: "dataVolume", Accepts: "resource:block-volume", Replacement: "replace"},
+			{Name: "dataVolume", Accepts: "resource:block-volume", Place: "carrier", Replacement: "replace"},
 			{Name: "domain", Accepts: "value", Replacement: "update"},
 		},
 		Outputs:     none,
@@ -612,7 +613,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		ID: "host.postgres-database", Kind: "postgres-database", ReliesOn: none,
 		Category: "database", Languages: none, Lifecycle: "stateful", Handover: "copy", Upgrade: "in-place", Scope: "per-app",
 		Inputs: []Input{
-			{Name: "dataVolume", Required: true, Accepts: "resource:block-volume", Replacement: "replace"},
+			{Name: "dataVolume", Required: true, Accepts: "resource:block-volume", Place: "carrier", Replacement: "replace"},
 			{Name: "dbName", Required: true, Accepts: "value", Replacement: "replace"},
 			{Name: "username", Required: true, Accepts: "value", Replacement: "replace"},
 		},
@@ -645,7 +646,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		ID: "ubicloud.runner", Kind: "ci-runner", ReliesOn: []string{"github"},
 		Category: "build-and-delivery", Languages: none, Lifecycle: "replaceable", Upgrade: "in-place", Scope: "per-app",
 		Inputs: []Input{
-			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Replacement: "replace"},
+			{Name: "repository", Required: true, Accepts: "output:git-repository/repo", Place: "capability:github", Replacement: "replace"},
 			{Name: "runnerSize", Accepts: "value", Replacement: "update"},
 		},
 		Outputs:     []string{"runsOn"},
