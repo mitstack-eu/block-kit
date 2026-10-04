@@ -7,11 +7,15 @@ package kittest_test
 // Desired the check drives. A resource implementing handler.RequestObserver
 // or handler.RequestDeleter is observed or deleted through it, handed that
 // Desired; one implementing neither keeps getting the Identity alone.
+// Recorded inputs or a stored identity with no resource named are a
+// request the engine never sends, since DecodeRequest refuses it, so the
+// check reports one problem naming the fields and drives nothing.
 
 import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -135,5 +139,73 @@ func TestCheckDeclaredResources_ObservesAndDeletesAResourceWithOnlyTheThreeCalls
 	}
 	if got := declaredOnly(*b.log); !reflect.DeepEqual(got, want) {
 		t.Errorf("calls =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	}
+}
+
+// resourceField matches the field name Resource standing alone, not as the
+// start of ResourceInputs or ResourceIdentity.
+var resourceField = regexp.MustCompile(`\bResource\b`)
+
+func TestCheckDeclaredResources_ProblemForRecordedInputsOrIdentityWithNoResourceNamedAndNothingDriven(t *testing.T) {
+	cases := []struct {
+		name       string
+		arrange    func(in *kittest.DeclaredResources)
+		wantFields []string
+	}{
+		{
+			name:       "inputs on DeclaredResources",
+			arrange:    func(in *kittest.DeclaredResources) { in.ResourceInputs = recordedInputs },
+			wantFields: []string{"ResourceInputs"},
+		},
+		{
+			name:       "identity on DeclaredResources",
+			arrange:    func(in *kittest.DeclaredResources) { in.ResourceIdentity = storedIdentity },
+			wantFields: []string{"ResourceIdentity"},
+		},
+		{
+			name:       "identity on the Desired",
+			arrange:    func(in *kittest.DeclaredResources) { in.Desired.ResourceIdentity = storedIdentity },
+			wantFields: []string{"ResourceIdentity"},
+		},
+		{
+			name:       "inputs on the Desired",
+			arrange:    func(in *kittest.DeclaredResources) { in.Desired.ResourceInputs = recordedInputs },
+			wantFields: []string{"ResourceInputs"},
+		},
+		{
+			name: "inputs and identity on DeclaredResources",
+			arrange: func(in *kittest.DeclaredResources) {
+				in.ResourceInputs = recordedInputs
+				in.ResourceIdentity = storedIdentity
+			},
+			wantFields: []string{"ResourceInputs", "ResourceIdentity"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := newCheckedBlock()
+			in := b.input()
+			c.arrange(&in)
+
+			problems := kittest.CheckDeclaredResources(in)
+			if len(problems) != 1 {
+				t.Fatalf("problems = %q, want exactly one: the engine never sends %s with no resource named",
+					problems, strings.Join(c.wantFields, " or "))
+			}
+			for _, field := range c.wantFields {
+				if !strings.Contains(problems[0], field) {
+					t.Errorf("problem %q does not name the field %s", problems[0], field)
+				}
+			}
+			if !resourceField.MatchString(problems[0]) {
+				t.Errorf("problem %q does not name the field Resource that must name the resource they are for", problems[0])
+			}
+			if len(*b.log) != 0 {
+				t.Errorf("calls = %q, want none: nothing may be driven, supplied resources included", *b.log)
+			}
+			if !untouched(b.network) || !untouched(b.instance) {
+				t.Error("the check drove a declared resource for a request the engine never sends")
+			}
+		})
 	}
 }
