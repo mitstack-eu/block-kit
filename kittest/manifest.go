@@ -30,7 +30,6 @@ func ReadManifest(tb testing.TB, path string) Manifest {
 	return Manifest{Manifest: m, tb: tb}
 }
 
-// v1alphaRoot names the top-level keys of a v1alpha manifest, which V1AlphaManifest holds untagged.
 type v1alphaRoot struct {
 	APIVersion string                   `yaml:"apiVersion"`
 	Kind       string                   `yaml:"kind"`
@@ -69,7 +68,6 @@ func (m Manifest) SpecScalar(key string) (string, bool) {
 	return text, text != ""
 }
 
-// lookup walks path through the manifest's types, returning the zero value of the field's type when the manifest does not set it.
 func (m Manifest) lookup(path string) reflect.Value {
 	m.tb.Helper()
 	var v reflect.Value

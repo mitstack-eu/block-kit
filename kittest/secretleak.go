@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mitstack-eu/operator-kit/contract"
 	"github.com/mitstack-eu/operator-kit/webhook"
 )
 
@@ -98,18 +99,22 @@ type leakRun struct {
 	logOutput  string
 }
 
-// driveLeak tees the standard logger for the whole run and restores its writer on every path, a panic in Serve included.
 func driveLeak(f SecretLeak) (run leakRun, ok bool) {
 	logs := webhook.NewLogBuffer(0)
 	var captured bytes.Buffer
 	prev := log.Writer()
-	log.SetOutput(io.MultiWriter(&captured, logs.Writer(), prev))
+	tee := io.MultiWriter(&captured, logs.Writer(), prev)
+	log.SetOutput(tee)
+	// The previous writer comes back on every path, a panic in Serve included.
 	defer func() {
 		log.SetOutput(prev)
 		run.logOutput = captured.String()
 	}()
 
 	h, signer := f.Serve(logs)
+	if log.Writer() != tee {
+		run.problems = append(run.problems, "Serve replaced the standard logger's writer, so the log output check would read nothing")
+	}
 	if h == nil || signer == nil {
 		run.problems = append(run.problems, "Serve returned no handler or no signer, so nothing was driven")
 		return run, false
@@ -118,6 +123,11 @@ func driveLeak(f SecretLeak) (run leakRun, ok bool) {
 		body, obo, err := envelope(lr.Body, signer, time.Now())
 		if err != nil {
 			run.problems = append(run.problems, fmt.Sprintf("request %q: building its signed body: %v", lr.Name, err))
+			continue
+		}
+		// The decoder's error is not quoted, since it can carry a field's value.
+		if _, err := contract.DecodeRequest(body); err != nil {
+			run.problems = append(run.problems, fmt.Sprintf("request %q: its body is not an envelope the kit's decoder accepts, so no verb ran", lr.Name))
 			continue
 		}
 		run.sent = append(run.sent, string(body))
@@ -132,7 +142,6 @@ func driveLeak(f SecretLeak) (run leakRun, ok bool) {
 	return run, true
 }
 
-// envelope returns fields as a signed-webhook body with a fresh nonce, createdAt, idempotencyKey when absent, and an OBO token, which it also returns.
 func envelope(fields map[string]any, signer *Signer, now time.Time) ([]byte, string, error) {
 	body := make(map[string]any, len(fields)+4)
 	for k, v := range fields {
@@ -183,13 +192,12 @@ func logsProblems(status int, body string, guards []guarded) []string {
 	return problems
 }
 
-// guarded is a value that must not appear on any channel; label names it without carrying it.
 type guarded struct {
+	// label never carries the value it names.
 	label string
 	value string
 }
 
-// in reports whether text carries the value as is or JSON-escaped.
 func (g guarded) in(text string) bool {
 	if strings.Contains(text, g.value) {
 		return true

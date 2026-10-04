@@ -495,23 +495,34 @@ description, ok := m.SpecScalar("description")
 ### Proving no secret leaks
 
 `kittest.AssertNoSecretLeak` drives an operator's own handler with signed
-webhook requests that carry seeded secrets, and fails the test for each place
-a secret or a minted OBO token shows up: a `/hook` response, the standard
-logger's output, or a line `GET /logs` serves. `kittest.CheckNoSecretLeak`
-does the same work without a `*testing.T` and returns the problems as
-strings. A problem names the channel and shows a secret only in redacted
-form.
+webhook requests that carry seeded secrets. It fails the test for each place
+a secret or an OBO token shows up: a `/hook` response, the standard logger's
+output, or a line `GET /logs` serves. The OBO token is the on-behalf-of token
+the platform signs for each request. `kittest.CheckNoSecretLeak` does the
+same work without a `*testing.T` and returns the problems as strings. A
+problem names the channel and shows a secret only in redacted form.
+
+Seed each secret wherever the operator reads it: under `secrets`, as a
+secret param, or as a secret resource input. Mark a request `Fails` when the
+operator's verb answers it with an error, so that the verb's error path runs
+and its error text is checked too.
 
 The harness signs each request and adds a fresh `nonce`, `createdAt`, an
 `idempotencyKey` when the body has none, and an OBO token for the body's
 `orgId` and `subscriptionId`. It also reports a fixture whose passing would
 prove nothing. A seeded secret that is empty or in no request body is a
 problem. So is a fixture with no request marked `Fails`, and a `Fails`
-request that answers below 400. A `/hook` that answers 401 is a problem too,
-since the handler did not trust the harness's signer and no verb ran. A
+request that answers below 400. A body the kit's envelope decoder refuses is
+a problem, since no verb ran, and it drives no error path. A `/hook` that
+answers 401 is a problem too, since the handler did not trust the harness's
+signer and no verb ran. A `Serve` that replaces the standard logger's writer
+is a problem, since the log output check would then read nothing. A
 `GET /logs` that answers other than 200 or serves no lines is the last.
 
-An operator's test hands the harness its handler and the requests to send:
+In the example below, `newHandler` is the operator's own constructor, taking
+the JWKS URL and the `/logs` buffer, and `apiToken` is the seeded secret. The
+kid and seed given to `kittest.NewSigner` only make the signing key
+deterministic.
 
 ```go
 func TestNoSecretLeak_LogsEndpoint(t *testing.T) {
@@ -530,6 +541,7 @@ func TestNoSecretLeak_LogsEndpoint(t *testing.T) {
 			Body: map[string]any{
 				"operation":      "subscribe",
 				"subscriptionId": "sub-1",
+				"blockId":        "secretleak-sample",
 				"orgId":          "org-1",
 				"secrets":        map[string]any{"api": map[string]any{"token": apiToken}},
 			},
@@ -540,9 +552,9 @@ func TestNoSecretLeak_LogsEndpoint(t *testing.T) {
 ```
 
 While it runs, the harness redirects the standard logger into its own
-capture, the `/logs` buffer it hands to `Serve`, and the writer set before,
-and it restores that writer when it returns. The test must therefore not run
-in parallel with a test that logs.
+capture, the `/logs` buffer it hands to `Serve`, and the writer the standard
+logger had before the call. It restores that writer when it returns. The
+test must therefore not run in parallel with a test that logs.
 
 ## Release
 
