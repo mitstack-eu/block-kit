@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,9 +16,10 @@ import (
 )
 
 // Client is a GitHub REST API client. Base is an ALREADY-RESOLVED base URL —
-// production callers build it via Base(endpoint, extraHosts...).String()
-// (see base.go); by the time it reaches Client the trust decision has
-// already been made once, so Client itself carries no host-trust logic and a
+// production callers resolve the endpoint once with BaseFromEnv and pass the
+// resulting base's String() (see base.go); by the time it reaches Client the
+// trust decision has already been made once, so Client itself carries no
+// host-trust logic and a
 // test fixture can supply an httptest URL directly. Token is never a
 // package-level global — each Client carries its own.
 type Client struct {
@@ -97,8 +99,8 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name string) (string, erro
 }
 
 // DeleteRepo idempotently deletes org/name. A 404 (already gone) and a
-// 200/204 are all success — the MIT-1302/MIT-1124 teardown contract. Any
-// other status is a real failure.
+// 200/204 are all success, so a teardown can repeat safely. Any other status
+// is a real failure.
 func (c *Client) DeleteRepo(ctx context.Context, org, name string) error {
 	repo, err := SafeRepo(org + "/" + name)
 	if err != nil {
@@ -122,11 +124,15 @@ func (c *Client) DeleteRepo(ctx context.Context, org, name string) error {
 	return fmt.Errorf("ghapi: github DELETE /repos/%s returned %d: %s", repo, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
 }
 
-// CommitFiles commits files onto repoFullName's default branch (main) in a
-// single atomic commit via the Git Data API. When a base commit already
-// exists AND the posted tree resolves to the SAME tree sha as the base
-// (GitHub returns the identical sha for byte-identical content), this is a
-// TRUE no-op (MIT-1230): no commit is created and the ref is not moved.
+// maxFastForwardAttempts caps the PATCHes of main that one CommitFiles makes.
+const maxFastForwardAttempts = 3
+
+var errStaleBase = errors.New("ghapi: main moved before the ref update")
+
+// CommitFiles commits files onto repoFullName's main branch in one Git Data
+// API commit, making no commit when the tree is unchanged and replaying a lost
+// fast-forward race on a fresh read of main, rebuilding the tree and commit
+// rather than retrying the PATCH alone.
 func (c *Client) CommitFiles(ctx context.Context, repoFullName, message string, files map[string]string) error {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
@@ -147,31 +153,63 @@ func (c *Client) CommitFiles(ctx context.Context, repoFullName, message string, 
 	for _, p := range paths {
 		entries = append(entries, map[string]string{"path": p, "mode": "100644", "type": "blob", "content": files[p]})
 	}
-	treeReq := map[string]any{"tree": entries}
-	if haveBase {
-		treeReq["base_tree"] = baseTreeSHA
-	}
-	treeSHA, err := c.postForSHA(ctx, "/repos/"+repo+"/git/trees", treeReq)
-	if err != nil {
-		return err
-	}
-	if haveBase && treeSHA == baseTreeSHA {
-		return nil
-	}
 
-	commitReq := map[string]any{"message": message, "tree": treeSHA}
-	if haveBase {
-		commitReq["parents"] = []string{baseSHA}
+	if !haveBase {
+		return c.createMain(ctx, repo, message, entries)
 	}
-	commitSHA, err := c.postForSHA(ctx, "/repos/"+repo+"/git/commits", commitReq)
+	for attempt := 1; ; attempt++ {
+		err = c.commitOnto(ctx, repo, message, entries, baseSHA, baseTreeSHA)
+		if !errors.Is(err, errStaleBase) || attempt == maxFastForwardAttempts {
+			return err
+		}
+		baseSHA, baseTreeSHA, haveBase, err = c.baseCommit(ctx, repo)
+		if err != nil {
+			return err
+		}
+		if !haveBase {
+			return fmt.Errorf("ghapi: main of %s disappeared while replaying a lost fast forward race", repo)
+		}
+	}
+}
+
+func (c *Client) createMain(ctx context.Context, repo, message string, entries []map[string]string) error {
+	treeSHA, err := c.postForSHA(ctx, "/repos/"+repo+"/git/trees", map[string]any{"tree": entries})
 	if err != nil {
 		return err
 	}
-	if haveBase {
-		return c.patch(ctx, "/repos/"+repo+"/git/refs/heads/main", map[string]any{"sha": commitSHA})
+	commitSHA, err := c.postForSHA(ctx, "/repos/"+repo+"/git/commits", map[string]any{"message": message, "tree": treeSHA})
+	if err != nil {
+		return err
 	}
 	_, err = c.postForSHA(ctx, "/repos/"+repo+"/git/refs", map[string]any{"ref": "refs/heads/main", "sha": commitSHA})
 	return err
+}
+
+// commitOnto wraps errStaleBase only when GitHub refuses the PATCH as not a fast forward.
+func (c *Client) commitOnto(ctx context.Context, repo, message string, entries []map[string]string, baseSHA, baseTreeSHA string) error {
+	treeSHA, err := c.postForSHA(ctx, "/repos/"+repo+"/git/trees", map[string]any{"tree": entries, "base_tree": baseTreeSHA})
+	if err != nil {
+		return err
+	}
+	if treeSHA == baseTreeSHA {
+		return nil
+	}
+	commitSHA, err := c.postForSHA(ctx, "/repos/"+repo+"/git/commits", map[string]any{"message": message, "tree": treeSHA, "parents": []string{baseSHA}})
+	if err != nil {
+		return err
+	}
+	path := "/repos/" + repo + "/git/refs/heads/main"
+	status, raw, err := c.patchStatus(ctx, path, map[string]any{"sha": commitSHA})
+	if err != nil {
+		return err
+	}
+	if status < 300 {
+		return nil
+	}
+	if status == http.StatusUnprocessableEntity && strings.Contains(strings.ToLower(raw), "fast forward") {
+		return fmt.Errorf("%w: github PATCH %s lost the fast forward race: %s", errStaleBase, path, safe.LogSafe(raw, c.Token))
+	}
+	return fmt.Errorf("ghapi: github PATCH %s returned %d: %s", path, status, safe.LogSafe(raw, c.Token))
 }
 
 // baseCommit returns the current main commit sha + its tree sha. haveBase is
@@ -248,16 +286,25 @@ func (c *Client) postForSHA(ctx context.Context, path string, payload any) (stri
 }
 
 func (c *Client) patch(ctx context.Context, path string, payload any) error {
-	resp, err := c.doJSON(ctx, http.MethodPatch, path, payload)
+	status, raw, err := c.patchStatus(ctx, path, payload)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("ghapi: github PATCH %s returned %d: %s", path, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
+	if status >= 300 {
+		return fmt.Errorf("ghapi: github PATCH %s returned %d: %s", path, status, safe.LogSafe(raw, c.Token))
 	}
 	return nil
+}
+
+// patchStatus returns the body unscrubbed, so a caller must pass it through safe.LogSafe.
+func (c *Client) patchStatus(ctx context.Context, path string, payload any) (int, string, error) {
+	resp, err := c.doJSON(ctx, http.MethodPatch, path, payload)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	return resp.StatusCode, string(raw), nil
 }
 
 // SetVariable idempotently sets (creates or updates) an Actions repo
