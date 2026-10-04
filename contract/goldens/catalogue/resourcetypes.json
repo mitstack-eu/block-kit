@@ -1506,6 +1506,26 @@
       ]
     },
     {
+      "id": "kubernetes.namespace",
+      "kind": "kubernetes-namespace",
+      "inputs": [
+        {
+          "name": "cluster",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "namespace",
+          "secret": false
+        },
+        {
+          "name": "serviceAccount",
+          "secret": false
+        }
+      ]
+    },
+    {
       "id": "plain.api-token",
       "kind": "api-token",
       "inputs": [
