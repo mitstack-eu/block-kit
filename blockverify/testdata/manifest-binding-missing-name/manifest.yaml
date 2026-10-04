@@ -1,0 +1,63 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: aws-app-infra
+  name: AWS App Infrastructure
+spec:
+  version: 2.0.0
+  releaseClass: breaking
+  releaseNote: AWS App Infrastructure offers its host, data volume, registry, deploy role and address as separate resources.
+  description: >
+    Creates the app's host, data volume and image registry in the
+    consumer's own AWS account, and the app's public address.
+  params:
+    - name: instanceType
+      label: EC2 instance type
+    - name: domain
+      label: Your own domain pointed at the app
+    - name: customDomain
+      label: Extra hostname served alongside the app's address
+  requires:
+    - kind: git-repository
+      in: github
+  resources:
+    - name: fallback-network
+      type: aws.vpc
+    - name: app-security-group
+      type: aws.security-group
+      inputs: { network: resources.fallback-network }
+    - name: app-instance
+      type: aws.ec2-instance
+      inputs:
+        namePrefix: app.name
+        instanceType: params.instanceType
+        securityGroup: resources.app-security-group
+    - name: app-data
+      type: aws.ebs-volume
+      inputs: { attachTo: resources.app-instance }
+    - name: image-repo
+      type: aws.ecr-repository
+      inputs: { namePrefix: app.name }
+    - name: ecr-push-role
+      type: aws.iam-role
+      inputs: { trustedRepository: requires.git-repository.outputs.repo }
+    - name: deploy-role
+      type: aws.iam-role
+    - name: egress-proxy
+      type: aws.egress-proxy
+      inputs: { network: resources.fallback-network }
+    - name: box-configuration
+      type: aws.ssm-association
+      inputs:
+        host: resources.app-instance
+        dataVolume: resources.app-data
+        domain: params.domain
+        customDomain: params.customDomain
+    - name: app-hostname
+      type: aws.route53-record
+      inputs: { target: resources.missing.outputs.publicIp }
+  provides: [app-instance, app-data, image-repo, deploy-role, app-hostname]
+  lifecycle:
+    endpoint: https://api.mitstack.dev/operators/aws-app-infra/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
