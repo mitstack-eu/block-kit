@@ -45,8 +45,8 @@ type DeclaredResources struct {
 //   - observes each supplied resource once, which must be present;
 //   - for each declared resource in manifest order, calls Ensure, Observe
 //     (present), Ensure again and Observe again (present, with the same
-//     outputs and secret outputs as the first), so a retried or repeated
-//     ensure converges rather than duplicating or changing the resource;
+//     outputs and secret outputs as the first), so a repeated ensure that
+//     changes what Observe reports is caught;
 //   - for each resource it ensured, in reverse manifest order, calls Delete
 //     then Observe, which must report absent: the absence proof;
 //   - observes each supplied resource again, which must still be present,

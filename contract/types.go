@@ -87,7 +87,7 @@ type Request struct {
 // wire shape response.schema.json pins. Outputs has no omitempty: a Go nil
 // map must still encode as JSON null, the shape the engine tolerates from a
 // verb with nothing to return. Resources is omitted when nil, so a response
-// that reports no resource encodes exactly as one did before the field.
+// that reports no resource encodes with no resources key.
 type Response struct {
 	Outputs       map[string]string `json:"outputs"`
 	SecretOutputs map[string]string `json:"secretOutputs,omitempty"`
