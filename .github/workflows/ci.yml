@@ -48,6 +48,22 @@ jobs:
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}"
 
+  comment-check:
+    name: comment check
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the base commit has to be in the clone
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+      - name: Judge the comments this pull request adds
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: go run ./cmd/commentcheck -base "$BASE_SHA" .
+
   # This repository IS the kit, so a change reaching main without a tag is
   # unreachable to every block importing it. A thin caller by design: the
   # script owns the decision and the version arithmetic, and no copy of
