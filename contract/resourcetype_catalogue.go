@@ -631,6 +631,7 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		ID: "kubernetes.namespace", Kind: "kubernetes-namespace", ReliesOn: none,
 		Category: "compute", Languages: none, Lifecycle: "replaceable", Upgrade: "in-place", Scope: "per-app",
 		Inputs: []Input{
+			// capability:hetzner is the narrowest place the evidence supports: hetzner.k3s-cluster is the only kubernetes-cluster type, and it lives in hetzner.
 			{Name: "cluster", Required: true, Accepts: "resource:kubernetes-cluster", Place: "capability:hetzner", Replacement: "replace"},
 		},
 		Outputs:     []string{"namespace", "serviceAccount"},
