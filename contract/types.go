@@ -59,34 +59,36 @@ type BuildRequest struct {
 // Request is the typed form of a lifecycle webhook envelope, decoded from
 // the wire shape envelope.schema.json pins. Its JSON tags mirror the
 // engine's own request struct field for field. Resource names the one
-// declared resource the verb runs on, and ResourceInputs carries that
-// resource's inputs, each a scalar or a mapping kept as raw JSON; a request
-// naming no resource leaves both empty and runs the verb on every declared
-// resource.
+// declared resource the verb runs on, ResourceInputs carries that
+// resource's inputs, each a scalar or a mapping kept as raw JSON, and
+// ResourceIdentity carries the identity that resource's ensure stored; a
+// request naming no resource leaves all three empty and runs the verb on
+// every declared resource.
 type Request struct {
-	Operation      string                         `json:"operation"`
-	SubscriptionID string                         `json:"subscriptionId"`
-	IdempotencyKey string                         `json:"idempotencyKey"`
-	BlockID        string                         `json:"blockId"`
-	BlockVersion   string                         `json:"blockVersion"`
-	OrgID          string                         `json:"orgId"`
-	AppID          string                         `json:"appId"`
-	Params         map[string]string              `json:"params"`
-	Instances      map[string]InstanceConfig      `json:"instances,omitempty"`
-	Secrets        map[string]map[string]string   `json:"secrets,omitempty"`
-	OBO            string                         `json:"obo,omitempty"`
-	EventsCallback *EventsCallback                `json:"eventsCallback,omitempty"`
-	SecretInputs   map[string]string              `json:"secretInputs,omitempty"`
-	AppSecrets     map[string]string              `json:"appSecrets,omitempty"`
-	Bindings       map[string]map[string]string   `json:"bindings,omitempty"`
-	BindingsAll    map[string][]map[string]string `json:"bindingsAll,omitempty"`
-	CloudIdentity  *CloudIdentity                 `json:"cloudIdentity,omitempty"`
-	CreatedAt      time.Time                      `json:"createdAt"`
-	Nonce          string                         `json:"nonce"`
-	PriorOutputs   map[string]string              `json:"priorOutputs,omitempty"`
-	BuildRequest   *BuildRequest                  `json:"buildRequest,omitempty"`
-	Resource       string                         `json:"resource,omitempty"`
-	ResourceInputs map[string]json.RawMessage     `json:"resourceInputs,omitempty"`
+	Operation        string                         `json:"operation"`
+	SubscriptionID   string                         `json:"subscriptionId"`
+	IdempotencyKey   string                         `json:"idempotencyKey"`
+	BlockID          string                         `json:"blockId"`
+	BlockVersion     string                         `json:"blockVersion"`
+	OrgID            string                         `json:"orgId"`
+	AppID            string                         `json:"appId"`
+	Params           map[string]string              `json:"params"`
+	Instances        map[string]InstanceConfig      `json:"instances,omitempty"`
+	Secrets          map[string]map[string]string   `json:"secrets,omitempty"`
+	OBO              string                         `json:"obo,omitempty"`
+	EventsCallback   *EventsCallback                `json:"eventsCallback,omitempty"`
+	SecretInputs     map[string]string              `json:"secretInputs,omitempty"`
+	AppSecrets       map[string]string              `json:"appSecrets,omitempty"`
+	Bindings         map[string]map[string]string   `json:"bindings,omitempty"`
+	BindingsAll      map[string][]map[string]string `json:"bindingsAll,omitempty"`
+	CloudIdentity    *CloudIdentity                 `json:"cloudIdentity,omitempty"`
+	CreatedAt        time.Time                      `json:"createdAt"`
+	Nonce            string                         `json:"nonce"`
+	PriorOutputs     map[string]string              `json:"priorOutputs,omitempty"`
+	BuildRequest     *BuildRequest                  `json:"buildRequest,omitempty"`
+	Resource         string                         `json:"resource,omitempty"`
+	ResourceInputs   map[string]json.RawMessage     `json:"resourceInputs,omitempty"`
+	ResourceIdentity map[string]string              `json:"resourceIdentity,omitempty"`
 }
 
 // Response is the typed form of a lifecycle webhook response, mirroring the
@@ -165,9 +167,10 @@ type Identity struct {
 // desired for and where its resource lives, and adds the params, secrets
 // and bindings that describe the target state. The instances reach a block
 // through the embedded Identity, so d.Instances inside Ensure resolves to
-// the same map Delete and Observe are handed. Resource and ResourceInputs
-// are the request's own: the declared resource it names and that
-// resource's inputs, both empty when the request names no resource.
+// the same map Delete and Observe are handed. Resource, ResourceInputs and
+// ResourceIdentity are the request's own: the declared resource it names,
+// that resource's inputs and the identity that resource's ensure stored,
+// all empty when the request names no resource.
 type Desired struct {
 	Identity
 
@@ -179,8 +182,9 @@ type Desired struct {
 	BindingsAll  map[string][]map[string]string
 	BuildRequest *BuildRequest
 
-	Resource       string
-	ResourceInputs map[string]json.RawMessage
+	Resource         string
+	ResourceInputs   map[string]json.RawMessage
+	ResourceIdentity map[string]string
 }
 
 // Observation is what an operator's validate/unsubscribe check found about
@@ -254,7 +258,8 @@ var validOperations = map[string]bool{
 // DecodeRequest decodes raw into a Request and validates it against
 // envelope.schema.json's required set and operation enum, including the
 // nested required sets cloudIdentity and buildRequest carry when present,
-// and refuses resource inputs that name no resource to bind them to. Every
+// and refuses resource inputs or a resource identity that name no resource
+// to bind them to. Every
 // error names the JSON field it concerns, so an operator author can act on
 // it without reading the schema.
 func DecodeRequest(raw []byte) (Request, error) {
@@ -286,6 +291,10 @@ func DecodeRequest(raw []byte) (Request, error) {
 	if len(req.ResourceInputs) > 0 && req.Resource == "" {
 		return Request{}, fmt.Errorf("contract: envelope field %q needs a non-empty %q naming the resource the inputs are for",
 			"resourceInputs", "resource")
+	}
+	if len(req.ResourceIdentity) > 0 && req.Resource == "" {
+		return Request{}, fmt.Errorf("contract: envelope field %q needs a non-empty %q naming the resource the identity is for",
+			"resourceIdentity", "resource")
 	}
 
 	return req, nil
@@ -340,21 +349,22 @@ func (r Request) Identity() Identity {
 }
 
 // Desired returns the subset of r describing what an operator should
-// converge its resource to, with the resource it names and that resource's
-// inputs. The instances arrive through the embedded Identity, which is why
+// converge its resource to, with the resource it names, that resource's
+// inputs and the identity its ensure stored. The instances arrive through the embedded Identity, which is why
 // no field here repeats them.
 func (r Request) Desired() Desired {
 	return Desired{
-		Identity:       r.Identity(),
-		Params:         r.Params,
-		SecretInputs:   r.SecretInputs,
-		AppSecrets:     r.AppSecrets,
-		Secrets:        r.Secrets,
-		Bindings:       r.Bindings,
-		BindingsAll:    r.BindingsAll,
-		BuildRequest:   r.BuildRequest,
-		Resource:       r.Resource,
-		ResourceInputs: r.ResourceInputs,
+		Identity:         r.Identity(),
+		Params:           r.Params,
+		SecretInputs:     r.SecretInputs,
+		AppSecrets:       r.AppSecrets,
+		Secrets:          r.Secrets,
+		Bindings:         r.Bindings,
+		BindingsAll:      r.BindingsAll,
+		BuildRequest:     r.BuildRequest,
+		Resource:         r.Resource,
+		ResourceInputs:   r.ResourceInputs,
+		ResourceIdentity: r.ResourceIdentity,
 	}
 }
 

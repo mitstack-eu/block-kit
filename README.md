@@ -381,18 +381,38 @@ stay the union of what each resource's observe found.
 
 A request may name one declared resource under `resource`, and carry that
 resource's inputs under `resourceInputs`. Each input is a scalar or a
-mapping, kept as raw JSON. The verb then runs on that resource alone.
-Subscribe and upgrade ensure it and settle it present, unsubscribe deletes
-it and settles it absent, and validate observes it once. Its ensure
-receives a `Desired` whose `Resource` and `ResourceInputs` are the
-request's. The answer's `resources` map holds that resource's entry alone,
+mapping, kept as raw JSON. It may also carry the identity that resource's
+ensure stored under `resourceIdentity`, an object of strings. The verb then
+runs on that resource alone. Subscribe and upgrade ensure it and settle it
+present, unsubscribe deletes it and settles it absent, and validate
+observes it once. Its ensure receives a `Desired` whose `Resource`,
+`ResourceInputs` and `ResourceIdentity` are the request's. The answer's `resources` map holds that resource's entry alone,
 and the top-level `outputs` are its own. A name the manifest does not
 declare answers 400 naming it, and no resource is reached. A block served
 over a single `Resource` answers any named request the same way. The
 idempotency cache keys on the name too, so one idempotency key naming
 different resources runs each of them, and a repeat of the same named
-request replays. `contract.DecodeRequest` refuses `resourceInputs` sent
-without a `resource`.
+request replays. `contract.DecodeRequest` refuses `resourceInputs` or
+`resourceIdentity` sent without a `resource`.
+
+A declared resource that can only find what it created through those
+recorded inputs and that stored identity implements
+`handler.RequestObserver`, `handler.RequestDeleter` or both:
+
+```go
+type RequestDeleter interface {
+	DeleteWithRequest(ctx context.Context, d contract.Desired) error
+}
+```
+
+The Handler calls `ObserveWithRequest` in place of `Observe` and
+`DeleteWithRequest` in place of `Delete`, never both, handing each the
+verb's own `Desired`. For a firewall whose ensure stored
+`{"groupId": "sg-0abc"}`, an unsubscribe naming `firewall` hands its
+`DeleteWithRequest` and every settle poll a `Desired` whose
+`ResourceIdentity["groupId"]` is `sg-0abc`. A request naming no resource
+hands them the same calls with those three fields empty. A declared
+resource that implements neither keeps receiving the `Identity` alone.
 
 A block proves its declared resources in its own tests with
 `kittest.AssertDeclaredResources`, which takes the manifest, the
@@ -406,7 +426,11 @@ last delete, since a block never deletes what the app supplies. With
 `Desired` naming it, and a name the manifest does not declare is one
 problem. A resource that implements `handler.ReportingResource` is ensured
 through `EnsureWithReport`, and a second ensure that reports a different
-identity from the first is a problem. Each problem names the resource it
+identity from the first is a problem. `ResourceInputs` and
+`ResourceIdentity`, when set, go on the `Desired` every call is made for, as
+the engine hands them on a later request. A resource that implements
+`handler.RequestObserver` or `handler.RequestDeleter` is observed or deleted
+through it with that `Desired`. Each problem names the resource it
 concerns. blockverify's resources suite requires a
 `TestDeclaredResources` test that calls `kittest.AssertDeclaredResources`,
 and runs it.
