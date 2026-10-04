@@ -381,18 +381,45 @@ stay the union of what each resource's observe found.
 
 A request may name one declared resource under `resource`, and carry that
 resource's inputs under `resourceInputs`. Each input is a scalar or a
-mapping, kept as raw JSON. The verb then runs on that resource alone.
-Subscribe and upgrade ensure it and settle it present, unsubscribe deletes
-it and settles it absent, and validate observes it once. Its ensure
-receives a `Desired` whose `Resource` and `ResourceInputs` are the
-request's. The answer's `resources` map holds that resource's entry alone,
-and the top-level `outputs` are its own. A name the manifest does not
-declare answers 400 naming it, and no resource is reached. A block served
-over a single `Resource` answers any named request the same way. The
-idempotency cache keys on the name too, so one idempotency key naming
-different resources runs each of them, and a repeat of the same named
-request replays. `contract.DecodeRequest` refuses `resourceInputs` sent
+mapping, kept as raw JSON. It may also carry the identity that resource's
+ensure stored under `resourceIdentity`, an object of strings. The verb then
+runs on that resource alone. Subscribe and upgrade ensure it and settle it
+present, unsubscribe deletes it and settles it absent, and validate
+observes it once. Its ensure receives a `Desired` whose `Resource`,
+`ResourceInputs` and `ResourceIdentity` are the request's. The answer's
+`resources` map holds that resource's entry alone, and the top-level
+`outputs` are its own. A name the manifest does not declare answers 400
+naming it, and no resource is reached. A block served over a single
+`Resource` answers any named request the same way. The idempotency cache
+keys on the name too, so one idempotency key naming different resources
+runs each of them, and a repeat of the same named request replays.
+`contract.DecodeRequest` refuses `resourceInputs` or `resourceIdentity` sent
 without a `resource`.
+
+Some declared resources can only find what they created through the inputs
+the engine recorded at subscribe and the identity their ensure stored. The
+engine sends both back on a later request naming the resource. Such a
+resource implements `handler.RequestObserver`, `handler.RequestDeleter` or
+both:
+
+```go
+type RequestDeleter interface {
+	DeleteWithRequest(ctx context.Context, d contract.Desired) error
+}
+```
+
+The Handler calls `ObserveWithRequest` instead of `Observe` and
+`DeleteWithRequest` instead of `Delete`, never the two for one call, and
+hands each the verb's own `Desired`. For a firewall whose ensure stored
+`{"groupId": "sg-0abc"}`, an unsubscribe naming `firewall` hands its
+`DeleteWithRequest` and every settle poll a `Desired` whose
+`ResourceIdentity["groupId"]` is `sg-0abc`. A request naming no resource
+makes the same calls, with `Resource`, `ResourceInputs` and
+`ResourceIdentity` empty. A declared resource that implements neither keeps
+receiving the `Identity` alone. `handler.HandoverResource` declares a
+`DeleteWithRequest` with a different signature, so assert
+`var _ handler.RequestDeleter = (*T)(nil)` to have a mismatch caught at
+compile time.
 
 A block proves its declared resources in its own tests with
 `kittest.AssertDeclaredResources`, which takes the manifest, the
@@ -406,10 +433,16 @@ last delete, since a block never deletes what the app supplies. With
 `Desired` naming it, and a name the manifest does not declare is one
 problem. A resource that implements `handler.ReportingResource` is ensured
 through `EnsureWithReport`, and a second ensure that reports a different
-identity from the first is a problem. Each problem names the resource it
-concerns. blockverify's resources suite requires a
-`TestDeclaredResources` test that calls `kittest.AssertDeclaredResources`,
-and runs it.
+identity from the first is a problem. `ResourceInputs` and
+`ResourceIdentity`, when set, go on the `Desired` every call is made for, as
+the engine hands them on a later request. Either one set with no `Resource`
+named, on the input or on its `Desired`, is one problem naming the fields
+set, and nothing is driven, since the engine never sends such a request. A
+resource that implements `handler.RequestObserver` or
+`handler.RequestDeleter` is observed or deleted through it with that
+`Desired`. Each problem about a resource names it. blockverify's resources
+suite requires a `TestDeclaredResources` test that calls
+`kittest.AssertDeclaredResources`, and runs it.
 
 ## Testing
 

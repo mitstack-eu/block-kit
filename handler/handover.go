@@ -37,18 +37,22 @@ type HandoverResource interface {
 	DeleteWithRequest(ctx context.Context, d contract.Desired) (outputs map[string]string, err error)
 }
 
-// RequestObserver is an optional extension of Resource. A block whose
-// resource sits behind a token, or otherwise needs the request's own
-// secrets to authenticate, implements it alongside Resource so its
-// observation is of the real resource rather than of nothing.
+// RequestObserver is an optional extension of Resource and of
+// DeclaredResource. A block whose resource sits behind a token, or
+// otherwise needs the request's own secrets to authenticate, implements it
+// alongside Resource so its observation is of the real resource rather
+// than of nothing. A declared resource reachable only through the inputs
+// recorded at subscribe and the identity its ensure stored implements it
+// to find what to observe.
 //
 // The Handler checks for it with a type assertion everywhere it calls
 // Observe: on validate, and on every settle poll a subscribe, upgrade or
-// unsubscribe drives. A Resource that also implements RequestObserver has
-// ObserveWithRequest called instead of Observe, with that verb's own
-// Desired (Secrets included, unlike the bare Identity Observe receives). A
-// Resource that does not implement it is unaffected and keeps calling
-// Observe(ctx, Identity) exactly as before.
+// unsubscribe drives. A Resource or DeclaredResource that also implements
+// RequestObserver has ObserveWithRequest called instead of Observe, with
+// that verb's own Desired (Secrets included, unlike the bare Identity
+// Observe receives, and for a declared resource the request's Resource,
+// ResourceInputs and ResourceIdentity). One that does not implement it is
+// unaffected and keeps calling Observe(ctx, Identity) exactly as before.
 type RequestObserver interface {
 	// ObserveWithRequest reports what the resource identified by d.Identity
 	// actually is right now, the same way Observe does, but sees the

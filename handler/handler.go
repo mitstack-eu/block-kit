@@ -75,9 +75,12 @@ type Resource interface {
 // in creation order and settles it present before the next, and deletes
 // each in reverse order and settles it absent before the next. A request
 // that names a declared resource runs the verb on that resource alone, and
-// its Ensure receives a Desired carrying the name and the request's
-// resource inputs. A DeclaredResource that also implements
-// ReportingResource is ensured through EnsureWithReport instead.
+// its Ensure receives a Desired carrying the name, the request's resource
+// inputs and the identity its ensure stored. A DeclaredResource that also
+// implements ReportingResource is ensured through EnsureWithReport instead,
+// one that implements RequestObserver is observed through
+// ObserveWithRequest, and one that implements RequestDeleter is deleted
+// through DeleteWithRequest, each handed that same Desired.
 type DeclaredResource interface {
 	// Ensure converges this resource for the subscription d.Identity names.
 	// It may be called more than once and must converge rather than
@@ -102,6 +105,25 @@ type ReportingResource interface {
 	// EnsureWithReport converges this resource the way Ensure does and
 	// reports the identity it stored and the outputs it published.
 	EnsureWithReport(ctx context.Context, d contract.Desired) (contract.Ensured, error)
+}
+
+// RequestDeleter is an optional interface a DeclaredResource implements to
+// tear itself down with the verb's own Desired rather than the bare
+// Identity, so a resource reachable only through the inputs recorded at
+// subscribe and the identity its ensure stored can find what to delete.
+// When a declared resource implements it, the Handler calls
+// DeleteWithRequest in place of Delete, never both, handing it the
+// unsubscribe's Desired: its Resource, ResourceInputs and ResourceIdentity
+// are the request's, all empty when the request names no resource.
+// HandoverResource declares a DeleteWithRequest with a different signature,
+// so a declared resource asserts var _ handler.RequestDeleter = (*T)(nil)
+// to have a mismatch caught at compile time rather than silently deleted
+// through Delete.
+type RequestDeleter interface {
+	// DeleteWithRequest tears this resource down the way Delete does.
+	// Absence is success: it must not error when the resource was never
+	// created.
+	DeleteWithRequest(ctx context.Context, d contract.Desired) error
 }
 
 // Hook is a declared extension point a block registers at one of the four

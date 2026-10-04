@@ -19,12 +19,17 @@ const classUndeclaredResource = "undeclared-resource"
 // present before the next, unsubscribe deletes each in reverse order and
 // settles it absent before the next, and validate observes each once. A
 // request naming one declared resource runs the verb on that resource
-// alone, its Ensure handed a Desired carrying the name and the request's
-// resource inputs, and its answer carries that resource's entry and outputs
-// alone. A name the manifest does not declare is refused with a 400 before
-// any resource is reached. A resource implementing ReportingResource is
-// ensured through EnsureWithReport, and its ensure entry carries the
-// identity and outputs it reported. Every answer, an error included,
+// alone, its calls handed a Desired carrying the name, the request's
+// resource inputs and the identity its ensure stored, and its answer
+// carries that resource's entry and outputs alone. A name the manifest does
+// not declare is refused with a 400 before any resource is reached. A
+// resource implementing ReportingResource is ensured through
+// EnsureWithReport, and its ensure entry carries the identity and outputs
+// it reported. A resource implementing RequestObserver is observed through
+// ObserveWithRequest and one implementing RequestDeleter is deleted through
+// DeleteWithRequest, each handed the verb's Desired whether or not the
+// request names a resource; any other is observed and deleted with the
+// Identity alone. Every answer, an error included,
 // carries the resources map: an entry for each resource the verb reached,
 // holding the calls that ran for it. A resource still converging, left
 // standing or failing stops the verb there, so no later resource is
@@ -159,7 +164,7 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: r.notReached(nr.name), Resources: r.outcomes}
 		}
 		var entry contract.ResourceOutcome
-		if err := nr.resource.Delete(ctx, r.d.Identity); err != nil {
+		if err := r.delete(ctx, nr); err != nil {
 			return r.fail(nr.name, &entry, &entry.Delete, err)
 		}
 		entry.Delete = &contract.CallOutcome{}
@@ -200,7 +205,7 @@ func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response)
 			return http.StatusOK, contract.Response{Pending: true, StatusDetail: r.notReached(nr.name), Resources: r.outcomes}
 		}
 		var entry contract.ResourceOutcome
-		obs, err := nr.resource.Observe(ctx, r.d.Identity)
+		obs, err := r.observe(ctx, nr)
 		if err != nil {
 			return r.fail(nr.name, &entry, &entry.Observe, err)
 		}
@@ -258,7 +263,7 @@ func (r *declaredRun) settle(ctx context.Context, nr namedResource, want contrac
 		if ctx.Err() != nil {
 			break
 		}
-		obs, err := nr.resource.Observe(ctx, r.d.Identity)
+		obs, err := r.observe(ctx, nr)
 		if err != nil {
 			return last, attempts, err
 		}
@@ -280,6 +285,26 @@ func (r *declaredRun) settle(ctx context.Context, nr namedResource, want contrac
 	}
 	entry.Observe = call
 	return last, attempts, nil
+}
+
+// observe runs one resource's observe: through ObserveWithRequest, handed
+// the verb's Desired, when the resource implements RequestObserver, and
+// through Observe, handed its Identity alone, otherwise.
+func (r *declaredRun) observe(ctx context.Context, nr namedResource) (contract.Observation, error) {
+	if ro, ok := nr.resource.(RequestObserver); ok {
+		return ro.ObserveWithRequest(ctx, r.d)
+	}
+	return nr.resource.Observe(ctx, r.d.Identity)
+}
+
+// delete runs one resource's delete: through DeleteWithRequest, handed the
+// verb's Desired, when the resource implements RequestDeleter, and through
+// Delete, handed its Identity alone, otherwise.
+func (r *declaredRun) delete(ctx context.Context, nr namedResource) error {
+	if rd, ok := nr.resource.(RequestDeleter); ok {
+		return rd.DeleteWithRequest(ctx, r.d)
+	}
+	return nr.resource.Delete(ctx, r.d.Identity)
 }
 
 // observed turns an observation into its observe outcome, with the
