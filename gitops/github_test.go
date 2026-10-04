@@ -159,10 +159,10 @@ func TestGitHubRepository_ARevisionTheRepositoryNeverHeldIsAnError(t *testing.T)
 		t.Fatalf("Commit: %v", err)
 	}
 
-	if _, ok, err := repo.ReadFile(ctx, "no-such-revision", "a.yaml"); err == nil {
+	if _, ok, err := repo.ReadFile(ctx, "a8db2ef26f6eba24af5a02f74ca37d18a198b309", "a.yaml"); err == nil {
 		t.Errorf("ReadFile at an unknown revision = (ok %v, nil error), want an error: Repository says a revision it never held is an error", ok)
 	}
-	if _, _, err := repo.Changed(ctx, "no-such-revision"); err == nil {
+	if _, _, err := repo.Changed(ctx, "a8db2ef26f6eba24af5a02f74ca37d18a198b309"); err == nil {
 		t.Error("Changed of an unknown revision = nil error")
 	}
 }

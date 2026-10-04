@@ -141,8 +141,8 @@ func TestReadFileAt_ReturnsTheDecodedContentAtTheRevision(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if got := r.URL.Query().Get("ref"); got != "rev-1" {
-			t.Errorf("ref = %q, want the revision %q", got, "rev-1")
+		if got := r.URL.Query().Get("ref"); got != shaRev1 {
+			t.Errorf("ref = %q, want the revision %q", got, shaRev1)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"type": "file", "encoding": "base64", "path": "apps/app-alpha/namespace.yaml", "content": wrappedBase64(content),
@@ -150,7 +150,7 @@ func TestReadFileAt_ReturnsTheDecodedContentAtTheRevision(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, ok, err := newTestClient(srv, revToken).ReadFileAt(context.Background(), revRepo, "rev-1", "apps/app-alpha/namespace.yaml")
+	got, ok, err := newTestClient(srv, revToken).ReadFileAt(context.Background(), revRepo, shaRev1, "apps/app-alpha/namespace.yaml")
 	if err != nil {
 		t.Fatalf("ReadFileAt: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestReadFileAt_A404IsAnAbsentPathAndNoError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, ok, err := newTestClient(srv, revToken).ReadFileAt(context.Background(), revRepo, "rev-1", "apps/app-alpha/gone.yaml")
+	got, ok, err := newTestClient(srv, revToken).ReadFileAt(context.Background(), revRepo, shaRev1, "apps/app-alpha/gone.yaml")
 	if err != nil {
 		t.Fatalf("ReadFileAt on a 404: %v, want no error", err)
 	}
@@ -185,7 +185,7 @@ func TestReadFileAt_AnyOtherStatusIsAnErrorThatNeverCarriesTheToken(t *testing.T
 	}))
 	defer srv.Close()
 
-	got, ok, err := newTestClient(srv, revToken).ReadFileAt(context.Background(), revRepo, "rev-1", "a.yaml")
+	got, ok, err := newTestClient(srv, revToken).ReadFileAt(context.Background(), revRepo, shaRev1, "a.yaml")
 	wantNoToken(t, err)
 	if ok || got != nil {
 		t.Errorf("ReadFileAt on a 403 = (%q, %v), want (nil, false) with the error", got, ok)
@@ -203,7 +203,7 @@ func TestReadFileAt_EscapesEachPathSegmentAndTheRevision(t *testing.T) {
 	defer srv.Close()
 
 	path := "apps/my app/a#b?c=d.yaml"
-	revision := "rev-1&ref=evil"
+	revision := shaRev1
 	if _, _, err := newTestClient(srv, revToken).ReadFileAt(context.Background(), revRepo, revision, path); err != nil {
 		t.Fatalf("ReadFileAt: %v", err)
 	}
@@ -339,11 +339,11 @@ func treeEntries(t *testing.T, body map[string]any) map[string]map[string]any {
 }
 
 func TestCommitChanges_LandsOneCommitOnTheParentWritingAndDeletingPaths(t *testing.T) {
-	g := newGitData(t, "parent-sha")
-	g.trees["parent-sha"] = "parent-tree"
+	g := newGitData(t, shaParent)
+	g.trees[shaParent] = "parent-tree"
 	c := g.serve(t)
 
-	rev, err := c.CommitChanges(context.Background(), revRepo, "parent-sha", "app-alpha: update", map[string]*string{
+	rev, err := c.CommitChanges(context.Background(), revRepo, shaParent, "app-alpha: update", map[string]*string{
 		"apps/app-alpha/deploy.yaml": strp("image: v2\n"),
 		"apps/app-alpha/old.yaml":    nil,
 	})
@@ -383,7 +383,7 @@ func TestCommitChanges_LandsOneCommitOnTheParentWritingAndDeletingPaths(t *testi
 		t.Fatalf("commit POSTs = %d, want 1", len(g.commitPosts))
 	}
 	commit := g.commitPosts[0]
-	if commit["tree"] != "new-tree-sha" || commit["message"] != "app-alpha: update" || !reflect.DeepEqual(commit["parents"], []any{"parent-sha"}) {
+	if commit["tree"] != "new-tree-sha" || commit["message"] != "app-alpha: update" || !reflect.DeepEqual(commit["parents"], []any{shaParent}) {
 		t.Errorf("commit POST = %v, want tree %q, the message and parents [parent-sha]", commit, "new-tree-sha")
 	}
 	if len(g.patches) != 1 {
@@ -435,17 +435,17 @@ func TestCommitChanges_AnEmptyParentCreatesMain(t *testing.T) {
 }
 
 func TestCommitChanges_AnUnchangedTreeMakesNoCommitAndReturnsTheParent(t *testing.T) {
-	g := newGitData(t, "parent-sha")
-	g.trees["parent-sha"] = "parent-tree"
+	g := newGitData(t, shaParent)
+	g.trees[shaParent] = "parent-tree"
 	g.treeSHA = "parent-tree"
 	c := g.serve(t)
 
-	rev, err := c.CommitChanges(context.Background(), revRepo, "parent-sha", "noop", map[string]*string{"a.yaml": strp("same\n")})
+	rev, err := c.CommitChanges(context.Background(), revRepo, shaParent, "noop", map[string]*string{"a.yaml": strp("same\n")})
 	if err != nil {
 		t.Fatalf("CommitChanges: %v", err)
 	}
-	if rev != "parent-sha" {
-		t.Errorf("CommitChanges = %q, want the parent %q", rev, "parent-sha")
+	if rev != shaParent {
+		t.Errorf("CommitChanges = %q, want the parent %q", rev, shaParent)
 	}
 	if len(g.commitPosts) != 0 || len(g.patches) != 0 || len(g.refPosts) != 0 {
 		t.Errorf("commit POSTs %d, ref PATCHes %d, ref POSTs %d, want none for an unchanged tree", len(g.commitPosts), len(g.patches), len(g.refPosts))
@@ -468,17 +468,17 @@ func TestCommitChanges_AParentThatIsNotTheTipWrapsErrNotFastForwardAndDoesNotRep
 		tip  string
 	}{
 		{"the tip already moved when read", "other-writer-sha"},
-		{"the tip moved between the read and the ref update", "parent-sha"},
+		{"the tip moved between the read and the ref update", shaParent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := newGitData(t, tc.tip)
-			g.trees["parent-sha"] = "parent-tree"
+			g.trees[shaParent] = "parent-tree"
 			g.trees["other-writer-sha"] = "other-tree"
 			g.patchStatus = http.StatusUnprocessableEntity
 			g.patchBody = `{"message":"Update is not a fast forward","documentation_url":"https://docs.github.com/rest/git/refs#update-a-reference"}`
 			c := g.serve(t)
 
-			rev, err := c.CommitChanges(context.Background(), revRepo, "parent-sha", "app-alpha: update", map[string]*string{"a.yaml": strp("a2\n")})
+			rev, err := c.CommitChanges(context.Background(), revRepo, shaParent, "app-alpha: update", map[string]*string{"a.yaml": strp("a2\n")})
 			if !errors.Is(err, ghapi.ErrNotFastForward) {
 				t.Fatalf("CommitChanges = (%q, %v), want an error wrapping ghapi.ErrNotFastForward", rev, err)
 			}
@@ -518,13 +518,13 @@ func TestCommitChanges_AnEmptyParentWhenMainExistsWrapsErrNotFastForward(t *test
 }
 
 func TestCommitChanges_AnotherRefusalIsAnErrorButNotErrNotFastForward(t *testing.T) {
-	g := newGitData(t, "parent-sha")
-	g.trees["parent-sha"] = "parent-tree"
+	g := newGitData(t, shaParent)
+	g.trees[shaParent] = "parent-tree"
 	g.patchStatus = http.StatusUnprocessableEntity
 	g.patchBody = `{"message":"Object does not exist"}`
 	c := g.serve(t)
 
-	_, err := c.CommitChanges(context.Background(), revRepo, "parent-sha", "m", map[string]*string{"a.yaml": strp("a\n")})
+	_, err := c.CommitChanges(context.Background(), revRepo, shaParent, "m", map[string]*string{"a.yaml": strp("a\n")})
 	if err == nil {
 		t.Fatal("CommitChanges = nil error, want the refusal")
 	}
@@ -538,7 +538,7 @@ func TestCommitChanges_AnUnknownParentIsAnErrorAndMovesNoRef(t *testing.T) {
 	g.trees["tip-sha"] = "tip-tree"
 	c := g.serve(t)
 
-	if _, err := c.CommitChanges(context.Background(), revRepo, "no-such-sha", "m", map[string]*string{"a.yaml": strp("a\n")}); err == nil {
+	if _, err := c.CommitChanges(context.Background(), revRepo, shaUnknown, "m", map[string]*string{"a.yaml": strp("a\n")}); err == nil {
 		t.Fatal("CommitChanges on an unknown parent = nil error")
 	}
 	if len(g.patches) != 0 || len(g.refPosts) != 0 {
@@ -556,13 +556,13 @@ func TestCommitChanges_ErrorsNeverCarryTheToken(t *testing.T) {
 		{"a server error echoing the token", http.StatusInternalServerError, `{"message":"boom {auth}"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := newGitData(t, "parent-sha")
-			g.trees["parent-sha"] = "parent-tree"
+			g := newGitData(t, shaParent)
+			g.trees[shaParent] = "parent-tree"
 			g.patchStatus = tc.status
 			g.patchBody = tc.body
 			c := g.serve(t)
 
-			_, err := c.CommitChanges(context.Background(), revRepo, "parent-sha", "m", map[string]*string{"a.yaml": strp("a\n")})
+			_, err := c.CommitChanges(context.Background(), revRepo, shaParent, "m", map[string]*string{"a.yaml": strp("a\n")})
 			wantNoToken(t, err)
 		})
 	}
@@ -572,9 +572,9 @@ func TestCommitChanges_ATreeRefusalEchoingTheTokenNeverCarriesIt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case isMainRefRead(r):
-			_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"sha": "parent-sha"}})
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/gitops/git/commits/parent-sha":
-			_ = json.NewEncoder(w).Encode(map[string]any{"sha": "parent-sha", "tree": map[string]string{"sha": "parent-tree"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"sha": shaParent}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/gitops/git/commits/"+shaParent:
+			_ = json.NewEncoder(w).Encode(map[string]any{"sha": shaParent, "tree": map[string]string{"sha": "parent-tree"}})
 		default:
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(echoTokenBody(r)))
@@ -582,7 +582,7 @@ func TestCommitChanges_ATreeRefusalEchoingTheTokenNeverCarriesIt(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestClient(srv, revToken).CommitChanges(context.Background(), revRepo, "parent-sha", "m", map[string]*string{"a.yaml": strp("a\n")})
+	_, err := newTestClient(srv, revToken).CommitChanges(context.Background(), revRepo, shaParent, "m", map[string]*string{"a.yaml": strp("a\n")})
 	wantNoToken(t, err)
 }
 
@@ -601,8 +601,8 @@ func commitsServer(t *testing.T, revision string, status int, body any) *httptes
 }
 
 func TestCommitParentAndPaths_ReturnsTheFirstParentAndTheSortedPaths(t *testing.T) {
-	srv := commitsServer(t, "rev-2", http.StatusOK, map[string]any{
-		"sha":     "rev-2",
+	srv := commitsServer(t, shaRev2, http.StatusOK, map[string]any{
+		"sha":     shaRev2,
 		"parents": []map[string]string{{"sha": "rev-1"}, {"sha": "merged-sha"}},
 		"files": []map[string]string{
 			{"filename": "b.yaml", "status": "modified"},
@@ -612,7 +612,7 @@ func TestCommitParentAndPaths_ReturnsTheFirstParentAndTheSortedPaths(t *testing.
 	})
 	defer srv.Close()
 
-	parent, paths, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, "rev-2")
+	parent, paths, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, shaRev2)
 	if err != nil {
 		t.Fatalf("CommitParentAndPaths: %v", err)
 	}
@@ -625,14 +625,14 @@ func TestCommitParentAndPaths_ReturnsTheFirstParentAndTheSortedPaths(t *testing.
 }
 
 func TestCommitParentAndPaths_TheParentOfARootCommitIsEmpty(t *testing.T) {
-	srv := commitsServer(t, "rev-1", http.StatusOK, map[string]any{
-		"sha":     "rev-1",
+	srv := commitsServer(t, shaRev1, http.StatusOK, map[string]any{
+		"sha":     shaRev1,
 		"parents": []map[string]string{},
 		"files":   []map[string]string{{"filename": "a.yaml", "status": "added"}},
 	})
 	defer srv.Close()
 
-	parent, paths, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, "rev-1")
+	parent, paths, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, shaRev1)
 	if err != nil {
 		t.Fatalf("CommitParentAndPaths: %v", err)
 	}
@@ -645,8 +645,8 @@ func TestCommitParentAndPaths_TheParentOfARootCommitIsEmpty(t *testing.T) {
 }
 
 func TestCommitParentAndPaths_ARenameListsBothItsPaths(t *testing.T) {
-	srv := commitsServer(t, "rev-2", http.StatusOK, map[string]any{
-		"sha":     "rev-2",
+	srv := commitsServer(t, shaRev2, http.StatusOK, map[string]any{
+		"sha":     shaRev2,
 		"parents": []map[string]string{{"sha": "rev-1"}},
 		"files": []map[string]string{
 			{"filename": "apps/app-alpha/new.yaml", "status": "renamed", "previous_filename": "apps/app-alpha/old.yaml"},
@@ -654,7 +654,7 @@ func TestCommitParentAndPaths_ARenameListsBothItsPaths(t *testing.T) {
 	})
 	defer srv.Close()
 
-	_, paths, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, "rev-2")
+	_, paths, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, shaRev2)
 	if err != nil {
 		t.Fatalf("CommitParentAndPaths: %v", err)
 	}
@@ -672,10 +672,10 @@ func TestCommitParentAndPaths_ARevisionTheRepositoryNeverHeldIsAnError(t *testin
 		{"404", http.StatusNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := commitsServer(t, "no-such-sha", tc.status, map[string]string{"message": "No commit found for SHA: no-such-sha"})
+			srv := commitsServer(t, shaUnknown, tc.status, map[string]string{"message": "No commit found for SHA: no-such-sha"})
 			defer srv.Close()
 
-			if _, _, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, "no-such-sha"); err == nil {
+			if _, _, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, shaUnknown); err == nil {
 				t.Error("CommitParentAndPaths of an unknown revision = nil error")
 			}
 		})
@@ -689,7 +689,7 @@ func TestCommitParentAndPaths_ErrorsNeverCarryTheToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, "rev-2")
+	_, _, err := newTestClient(srv, revToken).CommitParentAndPaths(context.Background(), revRepo, shaRev2)
 	wantNoToken(t, err)
 }
 
@@ -721,7 +721,7 @@ func TestRevisionCalls_RefuseAnInvalidRepositoryBeforeAnyRequest(t *testing.T) {
 			return err
 		},
 		"ReadFileAt": func(c *ghapi.Client, repo string) error {
-			_, _, err := c.ReadFileAt(context.Background(), repo, "rev-1", "a.yaml")
+			_, _, err := c.ReadFileAt(context.Background(), repo, shaRev1, "a.yaml")
 			return err
 		},
 		"CommitChanges": func(c *ghapi.Client, repo string) error {
@@ -729,7 +729,7 @@ func TestRevisionCalls_RefuseAnInvalidRepositoryBeforeAnyRequest(t *testing.T) {
 			return err
 		},
 		"CommitParentAndPaths": func(c *ghapi.Client, repo string) error {
-			_, _, err := c.CommitParentAndPaths(context.Background(), repo, "rev-1")
+			_, _, err := c.CommitParentAndPaths(context.Background(), repo, shaRev1)
 			return err
 		},
 	}
