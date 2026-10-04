@@ -24,7 +24,9 @@ import (
 // absent:false, reaches the caller and any waiter on its key but is never
 // replayed, so the engine's re-drive of the same key observes the resource
 // again. A subscribe or upgrade answer that carries absent:false is settled
-// and stored as usual. An empty idempotencyKey and a validate both skip the
+// and stored as usual. The cache key carries the resource the request
+// names, so one idempotency key naming different resources runs each of
+// them, and a repeat of the same named request replays. An empty idempotencyKey and a validate both skip the
 // cache entirely, so neither is ever stored, replayed or single-flighted:
 // validate is a read-only probe, and a replayed probe would report a state
 // the resource may have left. A panic in the Resource or a hook is recovered
@@ -60,7 +62,7 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	var status int
 	var raw []byte
 	if req.IdempotencyKey != "" && req.Operation != "validate" {
-		key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey}
+		key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey, resource: req.Resource}
 		status, raw = h.idempotency.do(h.now(), key, run)
 	} else {
 		status, raw, _ = run()
@@ -145,14 +147,20 @@ func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status in
 }
 
 // dispatchVerb calls the Resource and its declared hooks for req.Operation,
-// or each declared resource when the block declares its resources.
-// contract.DecodeRequest has already validated the operation enum, so the
-// four cases here are exhaustive.
+// or the declared resources when the block declares its resources. A block
+// served over a single Resource declares no resource a request could name,
+// so a request naming one is refused with a 400 before the Resource is
+// reached. contract.DecodeRequest has already validated the operation enum,
+// so the four cases here are exhaustive.
 func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secrets []string) (int, contract.Response) {
 	desired := req.Desired()
 
 	if h.declared != nil {
 		return h.dispatchDeclared(ctx, req.Operation, desired, secrets)
+	}
+	if req.Resource != "" {
+		return h.errorResponse(Refuse(classUndeclaredResource,
+			"resource %q is not declared: the block is served as one resource and declares none", req.Resource), secrets)
 	}
 
 	switch req.Operation {

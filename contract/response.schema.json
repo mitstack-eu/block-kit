@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/response.schema.json",
   "title": "mitstack lifecycle webhook response",
   "description": "Versioned wire-shape contract for the JSON body a block owner's registered webhook endpoint returns to mitstack's lifecycle engine for a subscribe/unsubscribe/upgrade/validate call (MIT-1136, the response half of the bidirectional contract envelope.schema.json pins on the request side). Mirrors api/internal/lifecycle.webhookResponse byte-for-byte for every property but resources, which reports the outcome of each declared resource's ensure, observe and delete calls by name. Additive-friendly: additionalProperties is true at every level so a new optional response field never breaks an existing operator or this contract test. Nothing is required: a verb with nothing to report legitimately answers {}.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "object",
   "additionalProperties": true,
   "properties": {
@@ -51,8 +51,9 @@
             "properties": {
               "error": { "description": "Why the call failed, scrubbed of request secrets.", "type": "string" },
               "state": { "description": "What an observe found: present, absent or unknown.", "type": "string" },
-              "outputs": { "description": "The outputs an observe found.", "type": "object", "additionalProperties": { "type": "string" } },
-              "statusDetail": { "description": "Human-readable detail the call left, scrubbed of request secrets.", "type": "string" }
+              "outputs": { "description": "The outputs the ensure published.", "type": "object", "additionalProperties": { "type": "string" } },
+              "statusDetail": { "description": "Human-readable detail the call left, scrubbed of request secrets.", "type": "string" },
+              "identity": { "description": "The identity the ensure stored for its resource, the values that address the resource where it lives.", "type": "object", "additionalProperties": { "type": "string" } }
             }
           },
           "observe": {
@@ -63,7 +64,8 @@
               "error": { "description": "Why the call failed, scrubbed of request secrets.", "type": "string" },
               "state": { "description": "What the observe found: present, absent or unknown.", "type": "string" },
               "outputs": { "description": "The outputs the observe found.", "type": "object", "additionalProperties": { "type": "string" } },
-              "statusDetail": { "description": "Human-readable detail the observe left, scrubbed of request secrets.", "type": "string" }
+              "statusDetail": { "description": "Human-readable detail the observe left, scrubbed of request secrets.", "type": "string" },
+              "identity": { "description": "An identity the call reported. Only an ensure reports one.", "type": "object", "additionalProperties": { "type": "string" } }
             }
           },
           "delete": {
@@ -74,7 +76,8 @@
               "error": { "description": "Why the call failed, scrubbed of request secrets.", "type": "string" },
               "state": { "description": "What an observe found: present, absent or unknown.", "type": "string" },
               "outputs": { "description": "The outputs an observe found.", "type": "object", "additionalProperties": { "type": "string" } },
-              "statusDetail": { "description": "Human-readable detail the call left, scrubbed of request secrets.", "type": "string" }
+              "statusDetail": { "description": "Human-readable detail the call left, scrubbed of request secrets.", "type": "string" },
+              "identity": { "description": "An identity the call reported. Only an ensure reports one.", "type": "object", "additionalProperties": { "type": "string" } }
             }
           }
         }

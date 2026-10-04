@@ -14,9 +14,13 @@ const idempotencyTTL = time.Hour
 // subscriptionID rather than keying on idempotencyKey alone, so two
 // different subscriptions that happen to reuse the same key never replay
 // each other's response — a multi-tenancy requirement, not an edge case.
+// It also carries the resource the request names, empty when it names
+// none, so one key naming different resources never replays one resource's
+// answer for another.
 type idempotencyKey struct {
 	subscriptionID string
 	idempotencyKey string
+	resource       string
 }
 
 // idempotencyEntry is one cached response, timestamped so it can be dropped
@@ -57,7 +61,7 @@ type inflightCall struct {
 }
 
 // idempotencyCache remembers the status and response bytes a verb produced
-// for a given (subscriptionID, idempotencyKey), so a repeat delivery of the
+// for a given (subscriptionID, idempotencyKey, resource), so a repeat delivery of the
 // same request replays them without calling the Resource again, and makes
 // that behaviour single-flight: an overlapping delivery of a key still in
 // flight waits for the first to finish and receives its exact response. It
