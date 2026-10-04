@@ -8,8 +8,10 @@ package gitops_test
 //     files, and reports only the new paths;
 //   - a delete after such an upgrade, given the upgrade's identity, leaves
 //     no file of either version at head, and observe is absent only then;
-//   - a recorded path outside the directories the render writes, such as
-//     another app's, is never removed.
+//   - a file moved to another directory is removed the same way, so a
+//     delete after the move leaves neither version's file;
+//   - a record of another app removes nothing, even a path in this app's
+//     own directory.
 
 import (
 	"context"
@@ -145,40 +147,111 @@ func TestResource_DeleteAfterAnUpgradeThatRenamedAFileLeavesNeitherVersionsFileA
 	}
 }
 
-func TestResource_AnEnsureNeverRemovesARecordedPathOutsideTheDirectoriesItsRenderWrites(t *testing.T) {
-	betaFiles := renderApp("app-beta", "k3s-fsn1").Files
-	betaPaths := joinedPaths(betaFiles)
+const alphaHandWrittenPath = "apps/app-alpha/hand-written.yaml"
 
-	for name, record := range map[string]func(alpha, beta contract.Ensured) map[string]string{
-		"app-alpha's record also naming app-beta's paths": func(alpha, _ contract.Ensured) map[string]string {
-			return map[string]string{"app": "app-alpha", "revision": alpha.Identity["revision"], "paths": alphaPaths + "," + betaPaths}
-		},
-		"app-beta's own record": func(_, beta contract.Ensured) map[string]string {
+func TestResource_AnEnsureHandedAnotherAppsRecordRemovesNothing(t *testing.T) {
+	betaFiles := renderApp("app-beta", "k3s-fsn1").Files
+	handWritten := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: hand-written\n  namespace: app-alpha\n")
+
+	for name, record := range map[string]func(beta contract.Ensured) map[string]string{
+		"app-beta's own record": func(beta contract.Ensured) map[string]string {
 			return beta.Identity
+		},
+		"app-beta's record naming a path in app-alpha's own directory": func(beta contract.Ensured) map[string]string {
+			return map[string]string{"app": "app-beta", "revision": beta.Identity["revision"], "paths": alphaHandWrittenPath}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := newNamespaceBlock()
-			alpha := ensure(t, b, desiredFor("app-alpha"))
+			ensure(t, b, desiredFor("app-alpha"))
 			beta := ensure(t, b, desiredFor("app-beta"))
+			if _, err := b.repo.Commit(context.Background(), b.head(t), map[string][]byte{alphaHandWrittenPath: handWritten}, "hand edit"); err != nil {
+				t.Fatalf("hand edit: %v", err)
+			}
+			before := len(b.repo.Commits())
 
 			d := desiredFor("app-alpha")
-			d.ResourceIdentity = record(alpha, beta)
+			d.ResourceIdentity = record(beta)
 			ensure(t, b, d)
 
-			for _, c := range b.repo.Commits()[2:] {
-				for path := range c.Changes {
-					if strings.HasPrefix(path, "apps/app-beta/") {
-						t.Errorf("app-alpha's ensure commit %q touches app-beta's %s", c.Message, path)
+			for _, c := range b.repo.Commits()[before:] {
+				for path, content := range c.Changes {
+					if content == nil {
+						t.Errorf("app-alpha's ensure commit %q removes %s, which a record of app-beta named", c.Message, path)
 					}
 				}
 			}
-			wantFilesAt(t, b.repo, b.head(t), betaFiles)
+			want := map[string][]byte{alphaHandWrittenPath: handWritten}
+			for path, content := range betaFiles {
+				want[path] = content
+			}
+			wantFilesAt(t, b.repo, b.head(t), want)
 			if obs := observe(t, b, desiredFor("app-beta")); obs.State != contract.Present {
 				t.Errorf("app-beta observed %+v after app-alpha's ensure, want present", obs)
 			}
 		})
 	}
+}
+
+// renderMoved renders the app's Namespace under the directory the recorded
+// dir input names, so a later version of the block can move the file to
+// another directory.
+func renderMoved(d contract.Desired) (gitops.Rendered, error) {
+	raw, ok := d.ResourceInputs["dir"]
+	if !ok {
+		return gitops.Rendered{}, errors.New("no dir input recorded")
+	}
+	var dir string
+	if err := json.Unmarshal(raw, &dir); err != nil {
+		return gitops.Rendered{}, fmt.Errorf("dir input: %w", err)
+	}
+	if d.AppID == "" {
+		return gitops.Rendered{}, errors.New("no app id")
+	}
+	return gitops.Rendered{
+		App: d.AppID,
+		Files: map[string][]byte{
+			"apps/" + d.AppID + "/" + dir + "/ns.yaml": []byte(fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n", d.AppID)),
+		},
+		Outputs: map[string]string{"namespace": d.AppID},
+	}, nil
+}
+
+// movedFor is desiredFor with the dir input naming dir.
+func movedFor(app, dir string) contract.Desired {
+	d := desiredFor(app)
+	d.ResourceInputs["dir"] = json.RawMessage(`"` + dir + `"`)
+	return d
+}
+
+func TestResource_AnUpgradeThatMovesAFileToAnotherDirectoryLeavesNeitherVersionsFileAfterDelete(t *testing.T) {
+	const v1Path, v2Path = "apps/app-alpha/v1/ns.yaml", "apps/app-alpha/v2/ns.yaml"
+	b := newBlock(renderMoved, "app-alpha")
+	v1 := ensure(t, b, movedFor("app-alpha", "v1"))
+
+	upgrade := movedFor("app-alpha", "v2")
+	upgrade.ResourceIdentity = v1.Identity
+	v2 := ensure(t, b, upgrade)
+
+	commits := b.repo.Commits()
+	if len(commits) != 2 {
+		t.Fatalf("Commits = %d, want 2: the upgrade lands one commit", len(commits))
+	}
+	rendered, err := renderMoved(upgrade)
+	if err != nil {
+		t.Fatalf("rendering: %v", err)
+	}
+	if want := map[string][]byte{v1Path: nil, v2Path: rendered.Files[v2Path]}; !reflect.DeepEqual(commits[1].Changes, want) {
+		t.Errorf("the upgrade commit changes %q, want it to remove %s and write %s in one commit",
+			describeChanges(commits[1].Changes), v1Path, v2Path)
+	}
+
+	gone := movedFor("app-alpha", "v2")
+	gone.ResourceIdentity = v2.Identity
+	if err := b.resource.DeleteWithRequest(context.Background(), gone); err != nil {
+		t.Fatalf("DeleteWithRequest: %v", err)
+	}
+	wantFilesAt(t, b.repo, b.head(t), map[string][]byte{v1Path: nil, v2Path: nil})
 }
 
 // describeChanges names each changed path as written or removed.
