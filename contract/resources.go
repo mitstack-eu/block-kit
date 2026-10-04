@@ -460,6 +460,14 @@ var resourceRegistry = []ResourceEntry{
 		Aliases: []string{},
 	},
 	{
+		Name:    "namespace",
+		Kind:    "Host & network",
+		Meaning: "The Kubernetes namespace the app's resources on a cluster are placed in.",
+		Shape:   "Kubernetes namespace name, lowercase letters, digits and hyphens",
+		Example: "app-shop",
+		Aliases: []string{},
+	},
+	{
 		Name:    "oidcProviderArn",
 		Kind:    "Access",
 		Meaning: "The GitHub OIDC provider that the deploy role trusts in the connected cloud account.",
@@ -625,6 +633,14 @@ var resourceRegistry = []ResourceEntry{
 		Meaning: "The id of the Hetzner Cloud server the cluster runs on.",
 		Shape:   "Hetzner Cloud server id, a positive integer",
 		Example: "62301001",
+		Aliases: []string{},
+	},
+	{
+		Name:    "serviceAccount",
+		Kind:    "Access",
+		Meaning: "The Kubernetes service account the app's workloads in its namespace run as.",
+		Shape:   "Kubernetes object name",
+		Example: "shop",
 		Aliases: []string{},
 	},
 	{

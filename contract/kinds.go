@@ -178,6 +178,7 @@ var kindCatalogue = []Kind{
 	{ID: "kubernetes-cluster",
 		Required: []KindOutput{plain("apiEndpoint"), plain("caCertificate"), secret("clusterCredential")},
 		Optional: []KindOutput{plain("cloud.region"), plain("issuerUrl"), plain("privateEndpoint")}},
+	{ID: "kubernetes-namespace", Required: []KindOutput{plain("namespace"), plain("serviceAccount")}, Optional: noOutputs},
 	{ID: "llm-endpoint", Required: []KindOutput{plain("llmEndpoint")}, Optional: []KindOutput{plain("model")}},
 	{ID: "network", Required: noOutputs, Optional: noOutputs},
 	{ID: "oidc-provider", Required: []KindOutput{secret("oidcProviderArn")}, Optional: noOutputs},

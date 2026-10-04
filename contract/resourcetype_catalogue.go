@@ -628,6 +628,22 @@ var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 		},
 	},
 	{
+		ID: "kubernetes.namespace", Kind: "kubernetes-namespace", ReliesOn: none,
+		Category: "compute", Languages: none, Lifecycle: "replaceable", Upgrade: "in-place", Scope: "per-app",
+		Inputs: []Input{
+			{Name: "cluster", Required: true, Accepts: "resource:kubernetes-cluster", Place: "capability:hetzner", Replacement: "replace"},
+		},
+		Outputs:     []string{"namespace", "serviceAccount"},
+		Observe:     "the Kubernetes API of the cluster returns the namespace in phase Active and the service account in it",
+		Absence:     "the Kubernetes API of the cluster answers 404 for the namespace",
+		TimeBudgets: timeBudgets(time.Minute, 30*time.Second, 10*time.Minute),
+		Failures: []Failure{
+			transient("the cluster's Kubernetes API is unreachable or answers a server error"),
+			transient("the namespace is still terminating from an earlier delete"),
+			permanent("the cluster credential lacks permission to create namespaces or service accounts"),
+		},
+	},
+	{
 		ID: "plain.api-token", Kind: "api-token", ReliesOn: none,
 		Category: "identity-and-access", Languages: none, Lifecycle: "replaceable", Upgrade: "in-place", Scope: "per-app",
 		Inputs: []Input{
