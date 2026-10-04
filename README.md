@@ -613,3 +613,40 @@ key has to lead a commit subject's key list (`MIT-123: fix the thing`) or
 sit on its own `Jira:` trailer line, and the same leading-list rule applies
 to the title — a key that only appears inside a merge commit's default
 branch name is not delivery intent, and the gate does not count it.
+
+## Judging the comments in a pull request
+
+`cmd/commentcheck` judges the Go and TypeScript comments a pull request adds,
+comparing the working tree with the pull request's base commit. This
+repository's `comment check` job runs it on every pull request. For a block,
+`publish-block.yml` runs it in the conformance job once the block pins a kit
+release that carries the command.
+
+The check fails when an added comment holds a ticket id, which is `MIT-` or
+`MS-` followed by digits, or a `file:line` reference. A comment says what the
+code does, and the ticket belongs in the commit subject.
+
+A directory's comment share is the fraction of its lines that are comment
+lines, meaning lines whose first non-blank character lies inside a comment,
+counted apart for production files and for test files, where a test file is a
+`_test.go` file, a `.test` or `.spec` TypeScript file, or anything under
+`__tests__`. The check also fails when that share rises above both its share
+at the base and its target, which is 12% for production files and 8% for test
+files. A directory already over its target may only fall, and one under it may
+grow up to the target.
+
+You can run the check before you push, against the commit your branch started
+from:
+
+```sh
+base="$(git merge-base origin/main HEAD)"
+go run ./cmd/commentcheck -base "$base" .
+go run ./cmd/commentcheck -base "$base" -same-code .
+go run ./cmd/commentcheck -report cmd/commentcheck
+```
+
+The second command proves a change only removes or rewrites comments, and it
+fails naming any file whose code differs from the base. The third prints the
+comment share of a file or directory and needs no base. The check reads the
+working tree as the head, so a file you moved without `git mv` is judged as a
+new file until you stage the move.

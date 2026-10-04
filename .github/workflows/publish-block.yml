@@ -182,6 +182,10 @@ jobs:
         working-directory: operator-kit
         run: go build -o ../blockverify ./blockverify
 
+      - name: Build commentcheck
+        working-directory: operator-kit
+        run: go build -o ../commentcheck ./cmd/commentcheck
+
       # blockverify judges `.` and the image builds from `.`, so the kit
       # checked out inside the block's tree must be gone before either reads
       # it, or the block is judged by the kit's own source.
@@ -206,6 +210,12 @@ jobs:
           else
             echo "the base commit $BASE_SHA has no manifest.yaml, so the block is new on this branch"
           fi
+
+      - name: Judge the comments this pull request adds
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: ./commentcheck -base "$BASE_SHA" .
 
       - name: blockverify (standalone contract check)
         env:
