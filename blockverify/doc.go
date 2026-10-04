@@ -24,9 +24,9 @@
 // from-scratch REIMPLEMENTATION of its standalone-mode behaviour in Go, not
 // a wrapper around the shell script (which this module cannot invoke — it
 // has no access to a checkout of this repo either). Anything that changes
-// the standalone contract must change both. The manifest and naming suites
-// are the two exceptions: they are blockverify's own and have no counterpart
-// in the script.
+// the standalone contract must change both. The resources, manifest and
+// naming suites are the three exceptions: they are blockverify's own and
+// have no counterpart in the script.
 //
 // blockverify supports ONLY standalone mode. It refuses (exit 2, naming
 // scripts/block-verify.sh) if --standalone is not supplied, or if
@@ -91,22 +91,28 @@
 //     presence of TestUnsubscribeDeletes* AND a real run of it (MIT-1124's
 //     teardown contract; a broken teardown test must fail this gate, not
 //     merely be absent).
-//  5. deliverable — the target's OWN Dockerfile must exist and must not
+//  5. resources — for a target whose manifest.yaml is mitstack/v1beta,
+//     presence of a TestDeclaredResources test that calls
+//     kittest.AssertDeclaredResources, AND a real run of it (see "The
+//     resources suite" below). Skipped when the manifest is not
+//     mitstack/v1beta, since only that version declares resources, or when
+//     there is no manifest.yaml.
+//  6. deliverable — the target's OWN Dockerfile must exist and must not
 //     COPY a monorepo-relative build context (examples/operator-kit) it
 //     does not have as a standalone repository.
-//  6. manifest — checks the names the target's manifest.yaml declares
+//  7. manifest — checks the names the target's manifest.yaml declares
 //     against the resource registry package contract owns, its metadata.id
 //     against the block id grammar (see "The manifest suite" below).
 //     Skipped when there is no manifest.yaml, which trust-plumbing already
 //     fails.
-//  7. naming — checks the app-name limit the target's manifest.yaml
+//  8. naming — checks the app-name limit the target's manifest.yaml
 //     declares at spec.naming.appName against the derived names behind it
 //     (see "The naming suite" below). Skipped when the manifest declares no
 //     spec.naming.appName, or when there is no manifest.yaml.
 //
 // Every suite RUNS what it checks rather than merely detecting its
-// presence, in the two places that matters (contract, secret-safety,
-// teardown) — a rotted conformance test that always passes reports coverage
+// presence, in the places where that matters (contract, secret-safety,
+// teardown, resources) — a rotted conformance test that always passes reports coverage
 // that does not exist, which is worse than no test at all. A PARTIAL pass
 // is a FAIL: there is no "passed with exceptions", because "skipped" is a
 // third, non-failing status reserved for a suite that is honestly not
@@ -179,12 +185,29 @@
 // reaches its limit, a maxLength with no derivedNames, and a declaration the
 // reader cannot read all fail.
 //
+// # The resources suite
+//
+// A block whose mitstack/v1beta manifest declares its resources proves them
+// in its own tests: some _test.go file under the target must define
+// TestDeclaredResources and call kittest.AssertDeclaredResources from it,
+// handing over the manifest, a handler.DeclaredResource for each declared
+// resource and any resource the app supplies. The suite checks both are
+// present, since `go test -run` matching nothing passes vacuously, then
+// runs `go test -run TestDeclaredResources ./...` in the target. The kit's
+// check ensures each declared resource twice in manifest order, observing
+// it present after each ensure with the same outputs both times, then
+// deletes each in reverse order and observes it absent, and observes every
+// supplied resource present before the first ensure and after the last
+// delete. A failure's detail is the first output line naming a resource,
+// as resource "<name>" or supplied resource "<name>". A manifest the parser
+// refuses fails with its reason.
+//
 // # Report contract
 //
 // With --json, Run emits exactly one JSON object on stdout:
 //
 //	{
-//	  "suiteVersion":   "1.2.0",
+//	  "suiteVersion":   "1.3.0",
 //	  "kitVersion":     "v0.1.0",
 //	  "mode":           "standalone",
 //	  "manifestDigest": "sha256:<hex of <target>/manifest.yaml's raw bytes>",
@@ -195,6 +218,7 @@
 //	    {"name": "contract",          "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "secret-safety",     "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "teardown",          "status": "pass"|"fail",          "detail": "..."},
+//	    {"name": "resources",         "status": "pass"|"fail"|"skipped", "detail": "..."},
 //	    {"name": "deliverable",       "status": "pass"|"fail",          "detail": "..."},
 //	    {"name": "manifest",          "status": "pass"|"fail"|"skipped", "detail": "..."},
 //	    {"name": "naming",            "status": "pass"|"fail"|"skipped", "detail": "..."}

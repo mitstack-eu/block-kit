@@ -290,6 +290,81 @@ ignored: it names an unset optional secret rather than an actual one, and an
 empty output value leaks nothing, so the two never combine into a false
 refusal.
 
+### Serving a block that declares its resources
+
+A block whose `mitstack/v1beta` manifest lists its resources under
+`spec.resources` implements `handler.DeclaredResource` once for each of them.
+The interface has the same `Ensure`, `Observe` and `Delete` as
+`handler.Resource`, scoped to one resource. You hand the implementations to
+`handler.New` in `Config.Resources`, keyed by the names the manifest gives,
+together with the manifest in `Config.Manifest`.
+
+`handler.New` refuses a `Config` that sets both `Resource` and `Resources`,
+and one that sets `Resources` with no manifest or with a manifest that is not
+`mitstack/v1beta`. It refuses `Hooks` set beside `Resources`. It also
+refuses a declared resource with no implementation and an implementation
+under a name the manifest does not declare, quoting the name in each case.
+
+The Handler runs each verb resource by resource, because the manifest's
+order is creation order and a later resource may depend on an earlier one.
+
+| Verb | What the Handler does |
+|---|---|
+| subscribe, upgrade | Ensures each resource in manifest order and polls its `Observe` until it reports `Present` before ensuring the next |
+| unsubscribe | Deletes each resource in reverse manifest order and polls its `Observe` until it reports `Absent` before deleting the next |
+| validate | Observes each resource once, in manifest order |
+
+When every resource is present, subscribe and upgrade answer with the union
+of the resources' `outputs` and `secretOutputs`, and a later resource wins a
+key both produce. A resource that is still converging when the verb budget
+runs out stops the verb there: subscribe and upgrade answer `pending:true`,
+and unsubscribe answers `absent:false`. An error from any call stops the
+verb the same way and is answered by its kind, as for a single `Resource`.
+Validate answers present when every resource is present, `absent:true` when
+every resource is absent, and `pending:true` for any other mix.
+
+Every answer, an error included, reports each resource the verb reached in
+the response's `resources` map. A key under a resource means that call ran
+for it, and a resource the verb never reached has no entry. This subscribe
+stopped at an instance whose ensure was refused:
+
+```json
+{
+  "outputs": null,
+  "error": "refused:quota: no capacity in eu-west-1",
+  "statusDetail": "refused:quota: no capacity in eu-west-1",
+  "resources": {
+    "network": {
+      "ensure": {},
+      "observe": {"state": "present", "outputs": {"vpcId": "vpc-0abc"}}
+    },
+    "instance": {
+      "ensure": {
+        "error": "refused:quota: no capacity in eu-west-1",
+        "statusDetail": "refused:quota: no capacity in eu-west-1"
+      }
+    }
+  }
+}
+```
+
+Each entry's `error` and `statusDetail` are scrubbed of the request's
+secrets, and each entry's `outputs` pass the output-secret gate above. A
+block served over a single `Resource` reports no `resources` map and
+answers exactly as it always has.
+
+A block proves its declared resources in its own tests with
+`kittest.AssertDeclaredResources`, which takes the manifest, the
+implementations, any resources the app supplies and the subscription to
+drive. It ensures each declared resource twice in manifest order, observing
+it present after each ensure with the same outputs both times. It then
+deletes each in reverse order and observes it absent. A resource the app
+supplies must be present before the first ensure and still present after the
+last delete, since a block never deletes what the app supplies. Each problem
+names the resource it concerns. blockverify's resources suite requires a
+`TestDeclaredResources` test that calls `kittest.AssertDeclaredResources`,
+and runs it.
+
 ## Testing
 
 ```

@@ -10,6 +10,12 @@
 // budget, the absent marker, the error classes — belongs to the Handler, not
 // to a knob a block can override. A hook the manifest declares but that
 // nothing registers is accepted by New and simply never called.
+//
+// A block whose mitstack/v1beta manifest declares its resources supplies a
+// DeclaredResource for each one instead, under Config.Resources. The
+// Handler then runs each verb resource by resource in the manifest's
+// creation order, tearing down in reverse, and reports each resource's
+// calls by name in the response's resources map.
 package handler
 
 import (
@@ -62,6 +68,25 @@ type Resource interface {
 	Delete(ctx context.Context, id contract.Identity) error
 }
 
+// DeclaredResource is what a block implements once for each resource its
+// mitstack/v1beta manifest declares under spec.resources. The calls mean
+// what Resource's do, scoped to the one resource: the Handler ensures each
+// in creation order and settles it present before the next, and deletes
+// each in reverse order and settles it absent before the next.
+type DeclaredResource interface {
+	// Ensure converges this resource for the subscription d.Identity names.
+	// It may be called more than once and must converge rather than
+	// duplicate.
+	Ensure(ctx context.Context, d contract.Desired) error
+
+	// Observe reports what this resource actually is right now.
+	Observe(ctx context.Context, id contract.Identity) (contract.Observation, error)
+
+	// Delete tears this resource down. Absence is success: Delete must not
+	// error when the resource was never created.
+	Delete(ctx context.Context, id contract.Identity) error
+}
+
 // Hook is a declared extension point a block registers at one of the four
 // HookXxx points. One signature serves all four: an ensure-side hook and a
 // delete-side hook both receive a Desired, the delete-side value carrying
@@ -88,17 +113,26 @@ const (
 	HookAfterDelete = "afterDelete"
 )
 
-// Config wires a Handler. Resource and JWKSURL are the only fields a block
-// author must always set; everything else defaults to a safe, hermetic
-// choice.
+// Config wires a Handler. JWKSURL and exactly one of Resource and Resources
+// are the only fields a block author must always set; everything else
+// defaults to a safe, hermetic choice.
 type Config struct {
 	// Resource is the block's own implementation of the three lifecycle
-	// calls. Required.
+	// calls, for a block served as one resource. Set it or Resources, never
+	// both.
 	Resource Resource
 
-	// Manifest is the block's manifest.yaml. Required when Hooks is
-	// non-empty, since a hook may only be registered if the manifest
-	// declares it under spec.lifecycle.hooks.
+	// Resources holds one DeclaredResource for each resource the block's
+	// mitstack/v1beta manifest declares, keyed by its name under
+	// spec.resources. Every declared resource needs one, and a key the
+	// manifest does not declare is refused. Set it or Resource, never both;
+	// Manifest is required with it, and Hooks is refused with it.
+	Resources map[string]DeclaredResource
+
+	// Manifest is the block's manifest.yaml. Required when Hooks or
+	// Resources is non-empty, since a hook may only be registered if the
+	// manifest declares it under spec.lifecycle.hooks, and a declared
+	// resource only if the manifest declares it under spec.resources.
 	Manifest []byte
 
 	// Hooks registers a block's extension points by HookXxx name. Optional;
@@ -145,6 +179,10 @@ type Handler struct {
 	resource Resource
 	hooks    map[string]Hook
 
+	// declared holds the block's declared resources in creation order. It
+	// is nil for a block served over a single Resource.
+	declared []namedResource
+
 	retainsOnUnsubscribe bool
 
 	jwksURL   string
@@ -167,9 +205,15 @@ type Handler struct {
 // resolver configured without a JWKSURL would build and then answer 401 to
 // everything), a non-empty Manifest contract.ParseManifest refuses, a hook
 // registered under an unknown name, a hook not declared in the manifest, or
-// Hooks set with no Manifest to check it against.
+// Hooks set with no Manifest to check it against. A Config with Resources
+// is also refused when it sets Resource or Hooks too, when its manifest is
+// empty or not mitstack/v1beta, or when its keys and the manifest's
+// spec.resources disagree; see declaredResources.
 func New(cfg Config) (*Handler, error) {
-	if cfg.Resource == nil {
+	if cfg.Resource != nil && len(cfg.Resources) > 0 {
+		return nil, errResourceAndResources
+	}
+	if cfg.Resource == nil && len(cfg.Resources) == 0 {
 		return nil, errNilResource
 	}
 	if cfg.JWKSURL == "" {
@@ -179,7 +223,13 @@ func New(cfg Config) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateHooks(cfg, declared.hooks); err != nil {
+	var resources []namedResource
+	if len(cfg.Resources) > 0 {
+		resources, err = declaredResources(cfg, declared)
+	} else {
+		err = validateHooks(cfg, declared.hooks)
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -191,6 +241,7 @@ func New(cfg Config) (*Handler, error) {
 	h := &Handler{
 		resource:             cfg.Resource,
 		hooks:                hooks,
+		declared:             resources,
 		retainsOnUnsubscribe: declared.retainsOnUnsubscribe,
 		jwksURL:              cfg.JWKSURL,
 		publicKey:            cfg.PublicKey,

@@ -9,10 +9,10 @@ import (
 )
 
 // FakeResource is a Resource whose behaviour a test dictates (MIT-3070). Its
-// method set matches handler.Resource structurally, so this package imports
-// no handler package: an operator, or the kit's own handler tests, can
-// drive a real lifecycle handler over it without kittest ever depending on
-// the type it is exercising.
+// method set matches handler.Resource and handler.DeclaredResource
+// structurally, so an operator, or the kit's own handler tests, can drive a
+// real lifecycle handler over it as a single resource or as one declared
+// resource of several.
 //
 // The zero value is a conforming resource: Ensure/Observe/Delete converge
 // Count normally. Every other field turns on one specific misbehaviour, so
