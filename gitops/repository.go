@@ -59,6 +59,14 @@ type Repository interface {
 // with an error wrapping ErrSecretInManifest that names the path. A commit
 // that finds the tip moved is re-read and retried a bounded number of times,
 // after which the error wraps ErrStaleBase.
+//
+// The secret guard is a backstop, not a scanner. It matches each value
+// verbatim, and as the standard base64 encoding of that value on its own,
+// with padding, and nothing else. A secret encoded inside a larger value is
+// missed, such as the token in a .dockerconfigjson auth field that encodes
+// user:token together, and so is a secret in raw, URL-safe or any other
+// encoding. A block must never render secret material at all: a secret
+// reaches a slice through External Secrets (ADR 0072).
 func CommitManifests(ctx context.Context, repo Repository, files map[string][]byte, message string, secrets []string) (string, bool, error) {
 	if err := refuseSecrets(files, secrets); err != nil {
 		return "", false, err
@@ -93,7 +101,9 @@ func Revert(ctx context.Context, repo Repository, revision, message string) (str
 
 // SecretValues returns every value d carries in SecretInputs, AppSecrets and
 // Secrets, in no particular order, for CommitManifests to refuse. It never
-// returns a param value.
+// returns a param value. The refusal only catches a value written verbatim
+// or base64-encoded on its own, as CommitManifests says, so a block must
+// still never render secret material.
 func SecretValues(d contract.Desired) []string {
 	var values []string
 	for _, v := range d.SecretInputs {

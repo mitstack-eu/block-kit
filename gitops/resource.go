@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	pathpkg "path"
 	"strings"
 
 	"github.com/mitstack-eu/operator-kit/contract"
@@ -65,8 +66,14 @@ func (r *Resource) Ensure(ctx context.Context, d contract.Desired) error {
 
 // EnsureWithReport renders d and commits the files through CommitManifests,
 // refusing every secret d carries. It reports the identity app, revision and
-// paths, the last being the sorted paths joined by commas, and the rendered
-// outputs.
+// paths, the last being the sorted rendered paths joined by commas, and the
+// rendered outputs.
+//
+// The same commit removes each path d.ResourceIdentity records that the
+// render no longer has, as when an upgrade drops or renames a file. It
+// removes such a path only when the render could own it, meaning a rendered
+// file stands in the same directory, so a recorded path under another app's
+// directory is never touched. A removed path is not reported.
 //
 // A rendered file carrying a secret is refused with class
 // secret-in-manifest, and a path holding a comma with class
@@ -89,7 +96,14 @@ func (r *Resource) EnsureWithReport(ctx context.Context, d contract.Desired) (co
 	if err != nil {
 		return contract.Ensured{}, err
 	}
-	rev, changed, err := CommitManifests(ctx, repo, out.Files, out.App+": update manifests", SecretValues(d))
+	changes := make(map[string][]byte, len(out.Files))
+	for path, content := range out.Files {
+		changes[path] = content
+	}
+	for _, path := range stalePaths(recordedPaths(d), out.Files) {
+		changes[path] = nil
+	}
+	rev, changed, err := CommitManifests(ctx, repo, changes, out.App+": update manifests", SecretValues(d))
 	if errors.Is(err, ErrSecretInManifest) {
 		return contract.Ensured{}, handler.Refuse(refusedSecretInManifest, "%v", err)
 	}
@@ -127,6 +141,15 @@ func (r *Resource) Observe(ctx context.Context, id contract.Identity) (contract.
 // the resource: succeeded is present with the outputs, or absent; pending is
 // unknown; failed is an error carrying the phase, the health and the
 // message. It never reads the revision d.ResourceIdentity records.
+//
+// A resource never ensured is therefore absent only in an empty repository.
+// In a repository that holds other apps' commits it answers unknown until
+// Argo CD reports on the app.
+//
+// Notifications are scoped by org and Argo CD app name, not by cluster: the
+// read names the app alone, and the token fixes the org. An app name must
+// therefore be unique across all of an org's clusters, or the newest
+// notification for it may come from another cluster.
 func (r *Resource) ObserveWithRequest(ctx context.Context, d contract.Desired) (contract.Observation, error) {
 	out, err := r.render(d)
 	if err != nil {
@@ -222,12 +245,7 @@ func (r *Resource) DeleteWithRequest(ctx context.Context, d contract.Desired) er
 // deletePaths returns the app and the paths a delete removes: those d's
 // recorded identity names, or the rendered ones when it names none.
 func (r *Resource) deletePaths(d contract.Desired) (string, []string, error) {
-	var paths []string
-	for _, path := range strings.Split(d.ResourceIdentity[identityPaths], ",") {
-		if path != "" {
-			paths = append(paths, path)
-		}
-	}
+	paths := recordedPaths(d)
 	if len(paths) > 0 {
 		return d.ResourceIdentity[identityApp], paths, nil
 	}
@@ -236,6 +254,33 @@ func (r *Resource) deletePaths(d contract.Desired) (string, []string, error) {
 		return "", nil, err
 	}
 	return out.App, sortedPaths(out.Files), nil
+}
+
+// recordedPaths returns the non-empty paths d.ResourceIdentity records.
+func recordedPaths(d contract.Desired) []string {
+	var paths []string
+	for _, path := range strings.Split(d.ResourceIdentity[identityPaths], ",") {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+// stalePaths returns the recorded paths files lacks whose directory holds
+// one of files, which are the only recorded paths the render could own.
+func stalePaths(recorded []string, files map[string][]byte) []string {
+	dirs := make(map[string]bool, len(files))
+	for path := range files {
+		dirs[pathpkg.Dir(path)] = true
+	}
+	var stale []string
+	for _, path := range recorded {
+		if _, rendered := files[path]; !rendered && dirs[pathpkg.Dir(path)] {
+			stale = append(stale, path)
+		}
+	}
+	return stale
 }
 
 // render calls Render and refuses a render naming no app or no file, or a

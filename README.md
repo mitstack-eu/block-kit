@@ -459,8 +459,9 @@ suite requires a `TestDeclaredResources` test that calls
 
 ### Deploying a declared resource through GitOps
 
-The `gitops` package serves a declared resource that deploys through Argo CD.
-It commits the block's rendered manifests to the GitOps repository and judges
+The `gitops` package serves a declared resource that deploys through Argo CD,
+the controller on the cluster that applies whatever the GitOps repository
+holds. It commits the block's rendered manifests to that repository and judges
 the deploy from Argo CD's notification, which the platform relays. A
 `gitops.Resource` implements `handler.DeclaredResource` along with the
 reporting, request-observer and request-deleter interfaces. The Handler
@@ -469,7 +470,9 @@ therefore drives it per call, with that call's own `Desired`.
 You give a `gitops.Resource` three functions: one returns the
 `gitops.Repository` the resource lives in, one returns its notification source
 and one renders its files. `gitops.NotificationsFromContext` builds that
-source from the events callback on the request.
+source from the events callback on the request. The events callback is the URL
+and token the platform puts in every lifecycle request, and the package reuses
+them to read the notifications the platform relayed.
 
 ```go
 resource := &gitops.Resource{
@@ -484,17 +487,33 @@ resource := &gitops.Resource{
 ```
 
 Its ensure commits the rendered files and reports the app, the revision and
-the paths as the resource's identity. A rendered file that carries any of the
-request's secrets, verbatim or base64-encoded, is refused as
-`secret-in-manifest` before anything is written, so the package never writes a
-secret. Its observe reads the app's newest notification and judges it by the
-files at that notification's revision. It does so because Argo CD may sync a
-later revision than the one committed, so the notification for a change can
-name a later commit. A live sync on a scratch cluster with two commits inside
-one poll interval would show whether that happens, and it has not been
-observed yet. A revision whose sync reports phase
+the paths as the resource's identity. When the recorded identity names a path
+the render no longer has, as after an upgrade renames a file, the same commit
+removes that path. The ensure removes only a path in a directory the render
+writes to, so it never touches another app's files.
+
+A rendered file that carries any of the request's secrets, verbatim or
+base64-encoded on its own, is refused as `secret-in-manifest` before anything
+is written. That check is a backstop. A secret encoded inside a larger value,
+such as the token in a `.dockerconfigjson` auth field, passes it. A block
+therefore never renders secret material, and a secret reaches a slice through
+External Secrets instead (platform ADR 0072).
+
+Its observe reads the app's newest notification, whatever revision it names,
+and judges it only when the files at that revision match the render. Say the
+ensure committed revision `a1b2` and the newest notification names a later
+commit `c3d4`: observe reads the files at `c3d4`, finds the rendered files
+there, and lets the sync of `c3d4` decide the deploy. It works this way
+because Argo CD may sync a later revision than the one committed, so the
+notification for a change can name a later commit. A live sync on a scratch
+cluster with two commits inside one poll interval would show whether that
+happens, and it has not been observed yet. A revision whose sync reports phase
 `Succeeded` and health `Healthy` is deployed, while the sync status and the
-images are never read. A notification looks like this:
+images are never read.
+
+The platform keeps notifications by org and Argo CD app name, without the
+cluster, so an app name must be unique across all of an org's clusters. A
+notification looks like this:
 
 ```json
 {"app":"app-alpha","project":"app-alpha","sync":"Synced","revision":"9ee9b7e28c000b16a89b7b717e5f3b9fa6fcf611","health":"Healthy","phase":"Succeeded","message":"successfully synced (all tasks run)","images":null,"reconciledAt":"2026-09-28T10:47:23Z"}

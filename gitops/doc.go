@@ -12,14 +12,18 @@
 // those notifications from the platform, and NotificationsFromContext builds
 // it from the events callback the handler stashes on a request.
 //
-// The package never writes a secret. CommitManifests refuses, before
-// anything is written, a file carrying any secret value verbatim or as its
-// standard base64 encoding, and SecretValues collects every secret a
-// request carries for it to refuse.
+// CommitManifests refuses, before anything is written, a file carrying any
+// secret value verbatim or as the standard base64 encoding of that value on
+// its own, and SecretValues collects every secret a request carries for it
+// to refuse. The refusal is a backstop that misses a secret encoded inside a
+// larger value or in another encoding, so a block must never render secret
+// material at all.
 //
 // Resource serves one declared resource through the kit's per-resource
 // hooks, so the Handler drives each declared resource per call with that
-// call's own Desired. Its ensure commits the rendered files, its observe
+// call's own Desired. Its ensure commits the rendered files and, in the same
+// commit, removes a path the recorded identity names that the render no
+// longer has in a directory it writes to. Its observe
 // judges the app's newest notification by the files at that notification's
 // revision, and its delete commits their removal.
 //
