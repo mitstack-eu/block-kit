@@ -46,11 +46,15 @@ type DeclaredResources struct {
 	Resource string
 	// ResourceInputs are the inputs recorded for the driven resource at
 	// subscribe, set on Desired's ResourceInputs, the way the engine hands
-	// them on a request naming it. Optional; nil leaves Desired's own.
+	// them on a request naming it. Optional; nil leaves Desired's own. Set
+	// with no Resource named, here or on Desired, it is one problem and
+	// nothing is driven.
 	ResourceInputs map[string]json.RawMessage
 	// ResourceIdentity is the identity the driven resource's ensure stored,
 	// set on Desired's ResourceIdentity, the way the engine hands it on a
-	// later request naming it. Optional; nil leaves Desired's own.
+	// later request naming it. Optional; nil leaves Desired's own. Set with
+	// no Resource named, here or on Desired, it is one problem and nothing
+	// is driven.
 	ResourceIdentity map[string]string
 }
 
@@ -73,15 +77,17 @@ type DeclaredResources struct {
 // does for a request naming a resource; a name the manifest does not
 // declare is one problem, and nothing is driven. DeclaredResources'
 // ResourceInputs and ResourceIdentity, when set, go on the Desired every
-// call is made for. A resource implementing
-// handler.ReportingResource is ensured through EnsureWithReport, never
-// Ensure, and a second ensure reporting a different identity from the first
-// is a problem, since it means the ensure created another resource rather
-// than converging the one it stored. A resource implementing
-// handler.RequestObserver is observed through ObserveWithRequest, and one
-// implementing handler.RequestDeleter is deleted through DeleteWithRequest,
-// each handed that Desired; any other is observed and deleted with its
-// Identity alone.
+// call is made for. A Desired that carries either with no Resource named
+// is one problem naming the fields set, and nothing is driven, supplied
+// resources included, since the engine never sends such a request. A
+// resource implementing handler.ReportingResource is ensured through
+// EnsureWithReport, never Ensure, and a second ensure reporting a different
+// identity from the first is a problem, since it means the ensure created
+// another resource rather than converging the one it stored. A resource
+// implementing handler.RequestObserver is observed through
+// ObserveWithRequest, and one implementing handler.RequestDeleter is
+// deleted through DeleteWithRequest, each handed that Desired; any other is
+// observed and deleted with its Identity alone.
 //
 // A resource that fails stops the creation pass there, and a resource not
 // proved absent stops the teardown there, so a resource created earlier is
@@ -110,6 +116,9 @@ func CheckDeclaredResources(in DeclaredResources) []string {
 		}
 		order = []string{in.Resource}
 		desired.Resource = in.Resource
+	}
+	if p := unboundResourceFields(desired); p != "" {
+		return []string{p}
 	}
 
 	c := &declaredCheck{in: in, desired: desired, ctx: context.Background()}
@@ -140,6 +149,31 @@ func AssertDeclaredResources(tb testing.TB, in DeclaredResources) {
 	tb.Helper()
 	for _, p := range CheckDeclaredResources(in) {
 		tb.Error(p)
+	}
+}
+
+// unboundResourceFields returns the problem for a Desired that carries
+// resource inputs or a resource identity but names no resource, naming only
+// the fields set, and "" when there is none. contract.DecodeRequest refuses
+// such a request, so the engine never sends one.
+func unboundResourceFields(d contract.Desired) string {
+	if d.Resource != "" {
+		return ""
+	}
+	var fields []string
+	if len(d.ResourceInputs) > 0 {
+		fields = append(fields, "ResourceInputs")
+	}
+	if len(d.ResourceIdentity) > 0 {
+		fields = append(fields, "ResourceIdentity")
+	}
+	switch len(fields) {
+	case 0:
+		return ""
+	case 1:
+		return fields[0] + " needs a non-empty Resource naming the resource it is for: the engine never sends it with no resource named, so nothing is driven"
+	default:
+		return strings.Join(fields, " and ") + " need a non-empty Resource naming the resource they are for: the engine never sends them with no resource named, so nothing is driven"
 	}
 }
 

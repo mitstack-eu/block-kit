@@ -259,9 +259,8 @@ var validOperations = map[string]bool{
 // envelope.schema.json's required set and operation enum, including the
 // nested required sets cloudIdentity and buildRequest carry when present,
 // and refuses resource inputs or a resource identity that name no resource
-// to bind them to. Every
-// error names the JSON field it concerns, so an operator author can act on
-// it without reading the schema.
+// to bind them to. Every error names the JSON field it concerns, so an
+// operator author can act on it without reading the schema.
 func DecodeRequest(raw []byte) (Request, error) {
 	var probe envelopeCreatedAt
 	if err := json.Unmarshal(raw, &probe); err != nil {
@@ -350,8 +349,8 @@ func (r Request) Identity() Identity {
 
 // Desired returns the subset of r describing what an operator should
 // converge its resource to, with the resource it names, that resource's
-// inputs and the identity its ensure stored. The instances arrive through the embedded Identity, which is why
-// no field here repeats them.
+// inputs and the identity its ensure stored. The instances arrive through
+// the embedded Identity, which is why no field here repeats them.
 func (r Request) Desired() Desired {
 	return Desired{
 		Identity:         r.Identity(),

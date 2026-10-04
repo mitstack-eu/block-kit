@@ -115,6 +115,10 @@ type ReportingResource interface {
 // DeleteWithRequest in place of Delete, never both, handing it the
 // unsubscribe's Desired: its Resource, ResourceInputs and ResourceIdentity
 // are the request's, all empty when the request names no resource.
+// HandoverResource declares a DeleteWithRequest with a different signature,
+// so a declared resource asserts var _ handler.RequestDeleter = (*T)(nil)
+// to have a mismatch caught at compile time rather than silently deleted
+// through Delete.
 type RequestDeleter interface {
 	// DeleteWithRequest tears this resource down the way Delete does.
 	// Absence is success: it must not error when the resource was never
