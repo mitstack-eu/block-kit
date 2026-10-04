@@ -10,6 +10,9 @@ package gitops_test
 //   - served through handler.New, one per-resource subscribe sent twice
 //     under one idempotency key commits once and answers identically, and a
 //     second key with the same inputs converges with no second commit;
+//   - a replay under one key after another app's commit moved head answers
+//     the first bytes, first revision included, while a fresh key reports
+//     the new head;
 //   - a Desired rebuilt from the record the first ensure left (its reported
 //     identity and the recorded inputs) replays ensure, observe and delete
 //     to the same answers with no extra commit, and no seeded secret
@@ -167,6 +170,35 @@ func TestNamespaceBlock_ASubscribeSentTwiceUnderOneKeyCommitsOnceAndAnswersIdent
 	want := map[string]string{"app": "app-alpha", "revision": commits[0].Revision, "paths": alphaPaths}
 	if !reflect.DeepEqual(entry.Identity, want) {
 		t.Errorf("ensure identity = %v, want %v", entry.Identity, want)
+	}
+}
+
+func TestNamespaceBlock_AReplayUnderOneKeyAfterHeadMovedAnswersTheFirstBytesAndAFreshKeyReportsTheNewHead(t *testing.T) {
+	b := newNamespaceBlock()
+	h, s := serveNamespace(t, b, nil)
+
+	firstStatus, first := post(t, h, s, subscribeUnder("key-1"))
+	firstEntry := ensuredEntry(t, firstStatus, first)
+	ensure(t, b, desiredFor("app-beta")) // another app's commit lands on top
+	moved := b.head(t)
+	if moved == firstEntry.Identity["revision"] {
+		t.Fatalf("head %s did not move past the first subscribe's revision", moved)
+	}
+
+	replayStatus, replay := post(t, h, s, subscribeUnder("key-1"))
+	if replayStatus != firstStatus || string(replay) != string(first) {
+		t.Errorf("the replay under key-1 answered %d %s, want the first's %d %s byte for byte", replayStatus, replay, firstStatus, first)
+	}
+	if got := ensuredEntry(t, replayStatus, replay).Identity["revision"]; got != firstEntry.Identity["revision"] {
+		t.Errorf("the replay under key-1 reports revision %s, want the first's %s, not head %s", got, firstEntry.Identity["revision"], moved)
+	}
+
+	freshStatus, fresh := post(t, h, s, subscribeUnder("key-2"))
+	if got := ensuredEntry(t, freshStatus, fresh).Identity["revision"]; got != moved {
+		t.Errorf("a fresh key reports revision %s, want the new head %s", got, moved)
+	}
+	if got := len(b.repo.Commits()); got != 2 {
+		t.Errorf("Commits = %d, want 2: app-alpha's one commit and app-beta's", got)
 	}
 }
 
