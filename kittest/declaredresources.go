@@ -1,0 +1,261 @@
+package kittest
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/mitstack-eu/operator-kit/contract"
+	"github.com/mitstack-eu/operator-kit/handler"
+)
+
+// SuppliedResource is a resource the app supplies to a block rather than
+// one the block creates, such as a repository the block's role trusts. The
+// check only observes it: it must stand before the block creates anything
+// and still stand after the block has deleted everything it created.
+type SuppliedResource interface {
+	Observe(ctx context.Context, id contract.Identity) (contract.Observation, error)
+}
+
+// DeclaredResources is what a block whose mitstack/v1beta manifest declares
+// its resources supplies to have each resource checked.
+type DeclaredResources struct {
+	// Manifest is the block's manifest.yaml, read through
+	// contract.ParseManifest for the resources spec.resources declares, in
+	// creation order.
+	Manifest []byte
+	// Resources holds one handler for each declared resource, keyed by its
+	// name, exactly as handler.Config.Resources does.
+	Resources map[string]handler.DeclaredResource
+	// Supplied holds the resources the app supplies to the block, keyed by
+	// a name the problems quote. Optional.
+	Supplied map[string]SuppliedResource
+	// Desired is the subscription every call is made for. Ensure receives
+	// it whole; Observe and Delete receive its Identity.
+	Desired contract.Desired
+}
+
+// CheckDeclaredResources drives each declared resource through its
+// lifecycle and returns one problem per violation, empty when the block
+// conforms. In order, it:
+//
+//   - observes each supplied resource once, which must be present;
+//   - for each declared resource in manifest order, calls Ensure, Observe
+//     (present), Ensure again and Observe again (present, with the same
+//     outputs and secret outputs as the first), so a repeated ensure that
+//     changes what Observe reports is caught;
+//   - for each resource it ensured, in reverse manifest order, calls Delete
+//     then Observe, which must report absent: the absence proof;
+//   - observes each supplied resource again, which must still be present,
+//     since a block never deletes what the app supplies.
+//
+// A resource that fails stops the creation pass there, and a resource not
+// proved absent stops the teardown there, so a resource created earlier is
+// never deleted while a later one still stands. A missing handler, a
+// handler for an undeclared resource, a manifest that is not
+// mitstack/v1beta, one declaring no resources and one the parser refuses
+// are each a problem, and nothing is driven. Each problem about a resource
+// begins `resource "<name>": ` and each about a supplied resource begins
+// `supplied resource "<name>": `.
+func CheckDeclaredResources(in DeclaredResources) []string {
+	order, problems := pairDeclaredResources(in)
+	if len(problems) > 0 {
+		return problems
+	}
+
+	c := &declaredCheck{in: in, ctx: context.Background()}
+	supplied := sortedKeys(in.Supplied)
+	if !c.suppliedStand(supplied, "before the first ensure") {
+		return c.problems
+	}
+
+	ensured := 0
+	for _, name := range order {
+		ensured++
+		if !c.ensureTwice(name) {
+			break
+		}
+	}
+	for i := ensured - 1; i >= 0; i-- {
+		if !c.deleteAndProveAbsent(order[i]) {
+			break
+		}
+	}
+	c.suppliedStand(supplied, "after the last delete")
+	return c.problems
+}
+
+// AssertDeclaredResources runs CheckDeclaredResources and fails tb with one
+// error per problem, in the order the check found them.
+func AssertDeclaredResources(tb testing.TB, in DeclaredResources) {
+	tb.Helper()
+	for _, p := range CheckDeclaredResources(in) {
+		tb.Error(p)
+	}
+}
+
+// pairDeclaredResources reads the manifest's spec.resources and returns the
+// declared names in creation order, or the problems that leave the check
+// nothing it may drive.
+func pairDeclaredResources(in DeclaredResources) ([]string, []string) {
+	m, err := contract.ParseManifest(in.Manifest)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("the manifest is not one the kit's parser accepts, so its resources are unknown: %v", err)}
+	}
+	if m.Block == nil {
+		return nil, []string{fmt.Sprintf("the manifest is %s, but only a %s manifest declares resources under spec.resources, so there are none to drive",
+			m.APIVersion, contract.ManifestAPIVersion)}
+	}
+	if len(m.Block.Spec.Resources) == 0 {
+		return nil, []string{"the manifest declares no resources under spec.resources, so the check has nothing to prove"}
+	}
+
+	var problems []string
+	order := make([]string, 0, len(m.Block.Spec.Resources))
+	declared := make(map[string]bool, len(m.Block.Spec.Resources))
+	for _, r := range m.Block.Spec.Resources {
+		order = append(order, r.Name)
+		declared[r.Name] = true
+		if in.Resources[r.Name] == nil {
+			problems = append(problems, fmt.Sprintf("resource %q: the manifest declares it, but Resources has no handler for it", r.Name))
+		}
+	}
+	for _, name := range sortedKeys(in.Resources) {
+		if !declared[name] {
+			problems = append(problems, fmt.Sprintf("resource %q: Resources has a handler for it, but the manifest's spec.resources does not declare it", name))
+		}
+	}
+	return order, problems
+}
+
+// declaredCheck is one run of CheckDeclaredResources, collecting problems.
+type declaredCheck struct {
+	in       DeclaredResources
+	ctx      context.Context
+	problems []string
+}
+
+func (c *declaredCheck) resourceProblem(name, format string, args ...any) {
+	c.problems = append(c.problems, fmt.Sprintf("resource %q: ", name)+fmt.Sprintf(format, args...))
+}
+
+// suppliedStand observes each supplied resource once and reports whether
+// every one is present, recording a problem for each that is not. when
+// says at which point of the check it was observed.
+func (c *declaredCheck) suppliedStand(names []string, when string) bool {
+	ok := true
+	for _, name := range names {
+		obs, err := c.in.Supplied[name].Observe(c.ctx, c.in.Desired.Identity)
+		switch {
+		case err != nil:
+			c.problems = append(c.problems, fmt.Sprintf("supplied resource %q: Observe %s failed: %v", name, when, err))
+			ok = false
+		case obs.State != contract.Present:
+			c.problems = append(c.problems, fmt.Sprintf(
+				"supplied resource %q: observed %s %s, want present: the app supplies it, so the block must find it standing and never delete it",
+				name, obs.State, when))
+			ok = false
+		}
+	}
+	return ok
+}
+
+// ensureTwice ensures one resource, observes it present, ensures it again
+// and observes it present with the same outputs and secret outputs. It
+// reports whether the resource ended present, so the creation pass may move
+// on to the next.
+func (c *declaredCheck) ensureTwice(name string) bool {
+	r := c.in.Resources[name]
+
+	first, ok := c.ensureAndObserve(name, r, "the first")
+	if !ok {
+		return false
+	}
+	second, ok := c.ensureAndObserve(name, r, "the second")
+	if !ok {
+		return false
+	}
+
+	if !reflect.DeepEqual(first.Outputs, second.Outputs) {
+		c.resourceProblem(name, "the second Ensure changed its outputs from %v to %v; Ensure must converge, not change what it created",
+			first.Outputs, second.Outputs)
+	}
+	if changed := changedKeys(first.SecretOutputs, second.SecretOutputs); len(changed) > 0 {
+		c.resourceProblem(name, "the second Ensure changed its secret outputs %s; Ensure must converge, not change what it created",
+			strings.Join(changed, ", "))
+	}
+	return true
+}
+
+// ensureAndObserve calls Ensure then Observe once, recording a problem when
+// either fails or the resource is not present. which names the ensure in
+// the problem.
+func (c *declaredCheck) ensureAndObserve(name string, r handler.DeclaredResource, which string) (contract.Observation, bool) {
+	if err := r.Ensure(c.ctx, c.in.Desired); err != nil {
+		c.resourceProblem(name, "%s Ensure failed: %v", which, err)
+		return contract.Observation{}, false
+	}
+	obs, err := r.Observe(c.ctx, c.in.Desired.Identity)
+	if err != nil {
+		c.resourceProblem(name, "Observe after %s Ensure failed: %v", which, err)
+		return contract.Observation{}, false
+	}
+	if obs.State != contract.Present {
+		c.resourceProblem(name, "observed %s after %s Ensure, want present", obs.State, which)
+		return contract.Observation{}, false
+	}
+	return obs, true
+}
+
+// deleteAndProveAbsent deletes one resource and observes it once, which
+// must report absent. It reports whether the absence was proved, so the
+// teardown may move on to the resource created before it.
+func (c *declaredCheck) deleteAndProveAbsent(name string) bool {
+	r := c.in.Resources[name]
+	if err := r.Delete(c.ctx, c.in.Desired.Identity); err != nil {
+		c.resourceProblem(name, "Delete failed: %v", err)
+		return false
+	}
+	obs, err := r.Observe(c.ctx, c.in.Desired.Identity)
+	if err != nil {
+		c.resourceProblem(name, "Observe after Delete failed, so its absence is unproved: %v", err)
+		return false
+	}
+	if obs.State != contract.Absent {
+		c.resourceProblem(name, "observed %s after Delete, want absent: Delete must leave nothing standing", obs.State)
+		return false
+	}
+	return true
+}
+
+// changedKeys returns, sorted and quoted, each key whose value differs
+// between a and b or that only one of them holds. It names keys only, so a
+// secret value never reaches a problem.
+func changedKeys(a, b map[string]string) []string {
+	var out []string
+	for k, v := range a {
+		if w, ok := b[k]; !ok || w != v {
+			out = append(out, fmt.Sprintf("%q", k))
+		}
+	}
+	for k := range b {
+		if _, ok := a[k]; !ok {
+			out = append(out, fmt.Sprintf("%q", k))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedKeys returns m's keys in sorted order.
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

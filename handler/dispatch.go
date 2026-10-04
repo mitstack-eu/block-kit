@@ -144,11 +144,16 @@ func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status in
 	_ = events.EmitFailed(ctx, detail)
 }
 
-// dispatchVerb calls the Resource and its declared hooks for req.Operation.
+// dispatchVerb calls the Resource and its declared hooks for req.Operation,
+// or each declared resource when the block declares its resources.
 // contract.DecodeRequest has already validated the operation enum, so the
 // four cases here are exhaustive.
 func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secrets []string) (int, contract.Response) {
 	desired := req.Desired()
+
+	if h.declared != nil {
+		return h.dispatchDeclared(ctx, req.Operation, desired, secrets)
+	}
 
 	switch req.Operation {
 	case "subscribe", "upgrade":
@@ -364,9 +369,9 @@ func (h *Handler) settleAbsent(ctx context.Context, d contract.Desired, secrets 
 }
 
 // mergeOutputs unions base (Observe's outputs) with overlay (a
-// HandoverResource's returned outputs), overlay winning on a key both
-// carry. An empty overlay returns base unchanged, so the ordinary
-// non-handover path allocates nothing new.
+// HandoverResource's returned outputs, or a later declared resource's
+// outputs), overlay winning on a key both carry. An empty overlay returns
+// base unchanged, so the ordinary non-handover path allocates nothing new.
 func mergeOutputs(base, overlay map[string]string) map[string]string {
 	if len(overlay) == 0 {
 		return base

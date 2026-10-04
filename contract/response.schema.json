@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mitstack.dev/schemas/lifecycle/response.schema.json",
   "title": "mitstack lifecycle webhook response",
-  "description": "Versioned wire-shape contract for the JSON body a block owner's registered webhook endpoint returns to mitstack's lifecycle engine for a subscribe/unsubscribe/upgrade/validate call (MIT-1136, the response half of the bidirectional contract envelope.schema.json pins on the request side). Mirrors api/internal/lifecycle.webhookResponse byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional response field never breaks an existing operator or this contract test. Nothing is required: a verb with nothing to report legitimately answers {}.",
-  "version": "1.0.0",
+  "description": "Versioned wire-shape contract for the JSON body a block owner's registered webhook endpoint returns to mitstack's lifecycle engine for a subscribe/unsubscribe/upgrade/validate call (MIT-1136, the response half of the bidirectional contract envelope.schema.json pins on the request side). Mirrors api/internal/lifecycle.webhookResponse byte-for-byte for every property but resources, which reports the outcome of each declared resource's ensure, observe and delete calls by name. Additive-friendly: additionalProperties is true at every level so a new optional response field never breaks an existing operator or this contract test. Nothing is required: a verb with nothing to report legitimately answers {}.",
+  "version": "1.1.0",
   "type": "object",
   "additionalProperties": true,
   "properties": {
@@ -36,6 +36,49 @@
     "absent": {
       "description": "The explicit teardown-verify marker (MIT-1125, AbsenceProber). A POINTER-shaped field: true/false means the operator explicitly reported whether the resource is gone; the field's absence (never present in the JSON at all) means the operator does not implement the marker and the engine fails open. Because JSON has no way to distinguish \"absent from the object\" from \"explicitly null\" once decoded into a nullable Go pointer, null is accepted here too and carries the same fail-open meaning as omitting the field.",
       "type": ["boolean", "null"]
+    },
+    "resources": {
+      "description": "The outcome of each call a verb ran for a resource the block's manifest declares, keyed by the resource's name. A resource the verb never reached has no entry, and within an entry a call that did not run has no key. A block served over a single resource reports none.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "ensure": {
+            "description": "The ensure call's outcome. An empty object is an ensure that ran and succeeded.",
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "error": { "description": "Why the call failed, scrubbed of request secrets.", "type": "string" },
+              "state": { "description": "What an observe found: present, absent or unknown.", "type": "string" },
+              "outputs": { "description": "The outputs an observe found.", "type": "object", "additionalProperties": { "type": "string" } },
+              "statusDetail": { "description": "Human-readable detail the call left, scrubbed of request secrets.", "type": "string" }
+            }
+          },
+          "observe": {
+            "description": "The last observe call's outcome.",
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "error": { "description": "Why the call failed, scrubbed of request secrets.", "type": "string" },
+              "state": { "description": "What the observe found: present, absent or unknown.", "type": "string" },
+              "outputs": { "description": "The outputs the observe found.", "type": "object", "additionalProperties": { "type": "string" } },
+              "statusDetail": { "description": "Human-readable detail the observe left, scrubbed of request secrets.", "type": "string" }
+            }
+          },
+          "delete": {
+            "description": "The delete call's outcome. An empty object is a delete that ran and succeeded.",
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "error": { "description": "Why the call failed, scrubbed of request secrets.", "type": "string" },
+              "state": { "description": "What an observe found: present, absent or unknown.", "type": "string" },
+              "outputs": { "description": "The outputs an observe found.", "type": "object", "additionalProperties": { "type": "string" } },
+              "statusDetail": { "description": "Human-readable detail the call left, scrubbed of request secrets.", "type": "string" }
+            }
+          }
+        }
+      }
     }
   }
 }

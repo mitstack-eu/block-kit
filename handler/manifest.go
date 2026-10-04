@@ -3,13 +3,21 @@ package handler
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// errNilResource is returned by New when Config.Resource is nil.
-var errNilResource = errors.New("handler: Config.Resource is required")
+// errNilResource is returned by New when neither Config.Resource nor
+// Config.Resources is set.
+var errNilResource = errors.New("handler: Config.Resource is required, or Config.Resources for a block whose manifest declares its resources")
+
+// errResourceAndResources is returned by New when Config.Resource and
+// Config.Resources are both set, since a block is served one way or the
+// other.
+var errResourceAndResources = errors.New("handler: Config.Resource and Config.Resources are both set; a block sets Resource, or Resources when its manifest declares its resources, never both")
 
 // errEmptyJWKSURL is returned by New when Config.JWKSURL is empty.
 // webhook.AuthenticateHook rejects every request on an empty JWKSURL before
@@ -22,14 +30,17 @@ var errEmptyJWKSURL = errors.New("handler: Config.JWKSURL is required")
 // platform's manifest validation share one set.
 var knownHooks = contract.LifecycleHookPoints()
 
-// manifestDeclarations is what New reads of a block's manifest: the hook
-// points spec.lifecycle.hooks declares, and
-// spec.lifecycle.retainsOnUnsubscribe. A mitstack/v1beta lifecycle has
-// neither, so a v1beta manifest declares no hook and does not retain its
-// resource.
+// manifestDeclarations is what New reads of a block's manifest: its
+// apiVersion, the hook points spec.lifecycle.hooks declares,
+// spec.lifecycle.retainsOnUnsubscribe, and the names spec.resources
+// declares. A mitstack/v1beta lifecycle has neither hooks nor
+// retainsOnUnsubscribe, so a v1beta manifest declares no hook and does not
+// retain its resource; only a v1beta manifest declares resources.
 type manifestDeclarations struct {
+	apiVersion           string
 	hooks                []string
 	retainsOnUnsubscribe bool
+	resources            []string
 }
 
 // readManifestDeclarations reads Config.Manifest through
@@ -44,11 +55,68 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 	if err != nil {
 		return manifestDeclarations{}, fmt.Errorf("handler: Config.Manifest is not a manifest the kit's parser accepts: %w", err)
 	}
+	if m.Block != nil {
+		names := make([]string, 0, len(m.Block.Spec.Resources))
+		for _, r := range m.Block.Spec.Resources {
+			names = append(names, r.Name)
+		}
+		return manifestDeclarations{apiVersion: m.APIVersion, resources: names}, nil
+	}
 	if m.V1Alpha == nil || m.V1Alpha.Spec.Lifecycle == nil {
-		return manifestDeclarations{}, nil
+		return manifestDeclarations{apiVersion: m.APIVersion}, nil
 	}
 	l := m.V1Alpha.Spec.Lifecycle
-	return manifestDeclarations{hooks: l.Hooks, retainsOnUnsubscribe: l.RetainsOnUnsubscribe}, nil
+	return manifestDeclarations{apiVersion: m.APIVersion, hooks: l.Hooks, retainsOnUnsubscribe: l.RetainsOnUnsubscribe}, nil
+}
+
+// namedResource is one declared resource and the name the manifest gives
+// it.
+type namedResource struct {
+	name     string
+	resource DeclaredResource
+}
+
+// declaredResources pairs each resource the manifest's spec.resources
+// declares with its handler in Config.Resources, in creation order. It
+// refuses Hooks set alongside Resources, a Resources with no manifest or
+// with a manifest that is not contract.ManifestAPIVersion, a declared
+// resource with no handler, and a handler under a name the manifest does
+// not declare, quoting the name.
+func declaredResources(cfg Config, declared manifestDeclarations) ([]namedResource, error) {
+	if len(cfg.Hooks) > 0 {
+		return nil, errors.New("handler: Config.Hooks is set together with Config.Resources; a block that declares its resources registers no hooks")
+	}
+	if declared.apiVersion == "" {
+		return nil, errors.New("handler: Config.Resources is set but Config.Manifest is empty; a resource can only be handled if the manifest declares it under spec.resources")
+	}
+	if declared.apiVersion != contract.ManifestAPIVersion {
+		return nil, fmt.Errorf("handler: Config.Resources is set but the manifest is %s; only a %s manifest declares resources under spec.resources",
+			declared.apiVersion, contract.ManifestAPIVersion)
+	}
+
+	declaredSet := make(map[string]bool, len(declared.resources))
+	out := make([]namedResource, 0, len(declared.resources))
+	for _, name := range declared.resources {
+		declaredSet[name] = true
+		r := cfg.Resources[name]
+		if r == nil {
+			return nil, fmt.Errorf("handler: the manifest declares resource %q, but Config.Resources has no handler for it", name)
+		}
+		out = append(out, namedResource{name: name, resource: r})
+	}
+
+	var undeclared []string
+	for name := range cfg.Resources {
+		if !declaredSet[name] {
+			undeclared = append(undeclared, strconv.Quote(name))
+		}
+	}
+	if len(undeclared) > 0 {
+		sort.Strings(undeclared)
+		return nil, fmt.Errorf("handler: Config.Resources has a handler for %s, which the manifest's spec.resources does not declare",
+			strings.Join(undeclared, ", "))
+	}
+	return out, nil
 }
 
 // validateHooks refuses a Config that would let a block override an

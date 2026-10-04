@@ -86,7 +86,8 @@ type Request struct {
 // Response is the typed form of a lifecycle webhook response, mirroring the
 // wire shape response.schema.json pins. Outputs has no omitempty: a Go nil
 // map must still encode as JSON null, the shape the engine tolerates from a
-// verb with nothing to return.
+// verb with nothing to return. Resources is omitted when nil, so a response
+// that reports no resource encodes with no resources key.
 type Response struct {
 	Outputs       map[string]string `json:"outputs"`
 	SecretOutputs map[string]string `json:"secretOutputs,omitempty"`
@@ -95,6 +96,30 @@ type Response struct {
 	StatusDetail  string            `json:"statusDetail,omitempty"`
 	LastError     string            `json:"lastError,omitempty"`
 	Absent        *bool             `json:"absent,omitempty"`
+	// Resources reports, under each manifest resource name, the calls the
+	// verb ran for that resource. A resource the verb never reached has no
+	// entry.
+	Resources map[string]ResourceOutcome `json:"resources,omitempty"`
+}
+
+// ResourceOutcome is what a verb's calls did to one declared resource. A
+// non-nil call means that call ran during the verb; a nil one means it did
+// not.
+type ResourceOutcome struct {
+	Ensure  *CallOutcome `json:"ensure,omitempty"`
+	Observe *CallOutcome `json:"observe,omitempty"`
+	Delete  *CallOutcome `json:"delete,omitempty"`
+}
+
+// CallOutcome is the result of one ensure, observe or delete call on a
+// resource. Error is set when the call failed. State and Outputs are what
+// an observe found; StatusDetail is the human-readable detail the call left.
+// The zero value is a call that ran and succeeded with nothing to report.
+type CallOutcome struct {
+	Error        string            `json:"error,omitempty"`
+	State        State             `json:"state,omitempty"`
+	Outputs      map[string]string `json:"outputs,omitempty"`
+	StatusDetail string            `json:"statusDetail,omitempty"`
 }
 
 // Identity is the subset of a Request that names which subscription an
