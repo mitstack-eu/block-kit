@@ -10,11 +10,11 @@ import (
 // checkBindings judges every resources.<name> and requires.<name> binding in
 // each resource's inputs, nested mappings included, walking resources in
 // manifest order and inputs in name order. A binding must name a resource or
-// requirement of the block, a requirement being named by its name when set
-// and by its kind otherwise, and through .outputs.<output> an output the
-// resource's type publishes or the requirement's kind names. A top-level
-// input the resource's type declares as accepting a resource or an output of
-// one kind must be bound to that kind. A type or kind the catalogue does not
+// requirement of the block, a requirement being named by its Reference, and
+// through .outputs.<output> an output the resource's type publishes or the
+// requirement's kind names. A top-level input the resource's type declares
+// as accepting a resource or an output of one kind must be bound to that
+// kind. A type or kind the catalogue does not
 // hold leaves what depends on it unjudged. The error names the resource and
 // the input.
 func checkBindings(spec ManifestSpec) error {
@@ -26,11 +26,7 @@ func checkBindings(spec ManifestSpec) error {
 		b.resources[r.Name] = r
 	}
 	for _, q := range spec.Requires {
-		name := q.Name
-		if name == "" {
-			name = q.Kind
-		}
-		b.requires[name] = q
+		b.requires[q.Reference()] = q
 	}
 	for i, r := range spec.Resources {
 		// A type outside the catalogue declares no input, so none is judged

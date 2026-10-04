@@ -18,6 +18,11 @@ package contract_test
 // input the type does not declare, a param, a platform value, a literal and
 // every mitstack/v1alpha manifest stay unjudged.
 //
+// A requirement's reference, its name when set and its kind otherwise,
+// appears once in spec.requires, whether or not any input binds it. The
+// refusal names both entries' indexes and the shared reference.
+// Requirements of one kind with distinct references parse.
+//
 // Each refused manifest is one of ADR 0083's worked manifests with one
 // edit, so the edit is the only defect.
 
@@ -192,6 +197,106 @@ func TestParseManifest_V1BetaAcceptsBindingsItDoesNotJudgeOrThatResolve(t *testi
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
 			parseBeta(t, tc.raw(t))
+		})
+	}
+}
+
+// The plain golden's requirement on a postgres-database, and the prefix
+// every one of tracker's database bindings carries.
+const (
+	plainPostgresRequirement = "    - kind: postgres-database\n"
+	plainPostgresBinding     = "requires.postgres-database.outputs."
+)
+
+// plainWithRequires returns the plain golden with its postgres-database
+// requirement replaced by requirements, and every binding to it rebound to
+// requires.<rebind> when rebind is set.
+func plainWithRequires(t *testing.T, requirements, rebind string) []byte {
+	t.Helper()
+	raw := string(editGolden(t, plainGolden, plainPostgresRequirement, requirements))
+	if rebind != "" {
+		raw = strings.ReplaceAll(raw, plainPostgresBinding, "requires."+rebind+".outputs.")
+	}
+	return []byte(raw)
+}
+
+// The plain golden requires a host at spec.requires[0] and a
+// postgres-database at spec.requires[1], so an entry added after them sits
+// at spec.requires[2].
+func TestParseManifest_V1BetaRefusesTwoRequirementsSharingAReference(t *testing.T) {
+	cases := []struct {
+		label, ref, first, second string
+		raw                       func(t *testing.T) []byte
+	}{
+		{"two unnamed requirements of one kind", "postgres-database", "spec.requires[1]", "spec.requires[2]",
+			func(t *testing.T) []byte {
+				return plainWithRequires(t, plainPostgresRequirement+plainPostgresRequirement, "")
+			}},
+		{"a requirement named for the kind of an unnamed one", "host", "spec.requires[0]", "spec.requires[1]",
+			func(t *testing.T) []byte {
+				return editGolden(t, plainGolden,
+					"    - kind: host\n",
+					"    - kind: host\n    - kind: postgres-database\n      name: host\n")
+			}},
+		{"two requirements of one name", "tracker-db", "spec.requires[1]", "spec.requires[2]",
+			func(t *testing.T) []byte {
+				named := "    - kind: postgres-database\n      name: tracker-db\n"
+				return plainWithRequires(t, named+named, "tracker-db")
+			}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			requireRefusedNaming(t, tc.raw(t), tc.first, tc.second, `"`+tc.ref+`"`, "appears once")
+		})
+	}
+}
+
+// aws-app-infra binds no input to requires.postgres-database, so the
+// refusal does not hang on a binding. Its git-repository requirement sits at
+// spec.requires[0].
+func TestParseManifest_V1BetaRefusesASharedRequirementReferenceNoInputBinds(t *testing.T) {
+	raw := editGolden(t, awsAppInfraGolden,
+		"    - kind: git-repository\n      in: github\n",
+		"    - kind: git-repository\n      in: github\n"+plainPostgresRequirement+plainPostgresRequirement)
+	if strings.Contains(string(raw), plainPostgresBinding) {
+		t.Fatalf("the manifest binds %s, so the refusal could hang on that binding:\n%s", plainPostgresBinding, raw)
+	}
+	requireRefusedNaming(t, raw, "spec.requires[1]", "spec.requires[2]", `"postgres-database"`, "appears once")
+}
+
+// Requirements of one kind parse while their references differ, each one
+// bound through its own reference.
+func TestParseManifest_V1BetaAcceptsRequirementsOfOneKindWithDistinctReferences(t *testing.T) {
+	const auditDBHost = "          AUDIT_DB_HOST: requires.audit-db.outputs.host\n"
+	addAuditBinding := func(t *testing.T, raw []byte) []byte {
+		t.Helper()
+		const env = "        env:\n"
+		if !strings.Contains(string(raw), env) {
+			t.Fatalf("fixture edit: %q is not in %s", env, plainGolden)
+		}
+		return []byte(strings.Replace(string(raw), env, env+auditDBHost, 1))
+	}
+	cases := []struct {
+		label string
+		raw   func(t *testing.T) []byte
+	}{
+		{"two named requirements", func(t *testing.T) []byte {
+			return addAuditBinding(t, plainWithRequires(t,
+				"    - kind: postgres-database\n      name: tracker-db\n"+
+					"    - kind: postgres-database\n      name: audit-db\n",
+				"tracker-db"))
+		}},
+		{"a named and an unnamed requirement", func(t *testing.T) []byte {
+			return addAuditBinding(t, plainWithRequires(t,
+				plainPostgresRequirement+"    - kind: postgres-database\n      name: audit-db\n", ""))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			b := parseBeta(t, tc.raw(t))
+			if len(b.Spec.Requires) != 3 {
+				t.Fatalf("spec.requires = %+v, want the host and both postgres-database requirements", b.Spec.Requires)
+			}
 		})
 	}
 }

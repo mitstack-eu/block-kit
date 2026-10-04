@@ -226,11 +226,20 @@ type ManifestRequirement struct {
 	// In lists the capabilities the resource must live in. The manifest
 	// takes one capability or a list; one gives a one-item slice.
 	In []string `json:"in,omitempty"`
-	// Name names the requirement, set only when the block needs two
-	// resources of one kind.
+	// Name is the requirement's reference, which is unique in the block. It
+	// is set when the block needs two resources of one kind.
 	Name string `json:"name,omitempty"`
 	// Many collects every offer of the kind and accepts none.
 	Many bool `json:"many,omitempty"`
+}
+
+// Reference returns the name a binding uses for the requirement: its Name
+// when set and its Kind otherwise.
+func (q ManifestRequirement) Reference() string {
+	if q.Name != "" {
+		return q.Name
+	}
+	return q.Kind
 }
 
 // ManifestResource is one resource a block creates.
