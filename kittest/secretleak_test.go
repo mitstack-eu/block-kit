@@ -310,6 +310,27 @@ func TestCheckNoSecretLeak_ReportsEachLeakAndVacuousFixture(t *testing.T) {
 			match: func(p string) bool { return containsAllFold(p, "/logs", "lines") },
 			desc:  "a problem saying /logs served no lines",
 		},
+		{
+			name:   "a Fails request whose body is not an envelope",
+			adjust: func(fx *kittest.SecretLeak) { fx.Requests[1].Body["operation"] = "subscrib" },
+			match: func(p string) bool {
+				return containsAllFold(p, "subscribe-refused", "not an envelope", "no verb ran")
+			},
+			desc: "a problem naming subscribe-refused, saying it is not an envelope and no verb ran",
+		},
+		{
+			name: "a Serve that replaces the standard logger",
+			adjust: func(fx *kittest.SecretLeak) {
+				serve := fx.Serve
+				fx.Serve = func(logs *webhook.LogBuffer) (http.Handler, *kittest.Signer) {
+					h, s := serve(logs)
+					log.SetOutput(io.Discard)
+					return h, s
+				}
+			},
+			match: func(p string) bool { return containsAllFold(p, "replaced the standard logger") },
+			desc:  "a problem saying Serve replaced the standard logger",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
