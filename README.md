@@ -403,7 +403,8 @@ runs each of them, and a repeat of the same named request replays.
 without a `resource`.
 
 The Handler scrubs each secret input of the named resource from the answer,
-every event and every log line, as it scrubs `secretInputs`. An input is
+the event it emits for the verb and every log line it writes, as it scrubs
+`secretInputs`. An input is
 secret when the manifest binds it to a param marked `secret: true`, at the
 top level or inside a mapping. It is also secret when the resource's
 catalogued type marks it secret, and then every string inside it is secret.
