@@ -1,25 +1,3 @@
-// verified_custom_domain_test.go — MIT-1688.
-//
-// TrustedAppURL's allowlist has exactly one implicit entry (PlatformAppsDomain)
-// plus whatever `extraSuffixes` a caller supplies — and MIT-1686 left that
-// second half genuinely unreachable: nothing in the tree ever calls
-// TrustedAppURL with an extra suffix, so a consumer's own custom domain
-// (MIT-1805, MIT-1299) clears nothing and its reachability probe fails closed
-// even though the app is really serving there.
-//
-// Widening the allowlist with the raw customDomain param would reopen the
-// SSRF MIT-1686 closed, because that param is exactly the attacker-
-// controllable string the barrier exists to keep out. VerifiedCustomDomain is
-// the proof instead: the operator provisioned the app's own address, so it can
-// resolve the claimed domain and check the answer against that address. A
-// domain that answers with infrastructure this subscription created is
-// controlled by whoever we provisioned it for — a genuine proof, not a
-// restatement of the claim.
-//
-// The resolver is INJECTABLE (the Resolver interface below) so nothing here
-// ever touches a real network, and per MIT-1677's measured CodeQL behaviour a
-// resolver-based check is what actually clears go/request-forgery — a suffix
-// or regexp check on the claim alone does not.
 package reach_test
 
 import (
@@ -32,8 +10,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/reach"
 )
 
-// fakeResolver answers reach.Resolver's single LookupHost method from a fixed
-// table (or a fixed error), so a test never reaches a real resolver.
 type fakeResolver struct {
 	addrs map[string][]string
 	err   error
@@ -50,19 +26,13 @@ func (f fakeResolver) LookupHost(_ context.Context, host string) ([]string, erro
 	return addrs, nil
 }
 
-// poisonResolver fails the test the instant it is consulted. Used to prove a
-// malformed domain is refused before any lookup is even attempted — mirrors
-// trusted_url_test.go's failIfCalledTransport for the same reason: the
-// refusal must happen at the validation boundary, not merely produce the
-// right answer after doing unnecessary (and, in production, real) work.
+// poisonResolver fails the test if consulted, proving a malformed domain is refused before any lookup.
 type poisonResolver struct{ t *testing.T }
 
 func (p poisonResolver) LookupHost(_ context.Context, host string) ([]string, error) {
 	p.t.Fatalf("resolver must not be consulted for a malformed domain, got a lookup for %q", host)
 	return nil, nil
 }
-
-// --- VerifiedCustomDomain: acceptance ---------------------------------------
 
 func TestVerifiedCustomDomain_MatchingAddressVerifies(t *testing.T) {
 	resolver := fakeResolver{addrs: map[string][]string{"myapp.example.org": {"203.0.113.10"}}}
@@ -76,11 +46,7 @@ func TestVerifiedCustomDomain_MatchingAddressVerifies(t *testing.T) {
 	}
 }
 
-// An app behind more than one A record is a legitimate, ordinary shape (a
-// round-robin or multi-AZ setup) — it must not be penalised for having more
-// than one address just because this subscription's own EIP is only one of
-// them. Verification only needs to find ONE resolved address matching the
-// expected set, not require every resolved address to match.
+// Round-robin records are ordinary, so one matching address among several must verify.
 func TestVerifiedCustomDomain_OneOfMultipleResolvedAddressesMatchingVerifies(t *testing.T) {
 	resolver := fakeResolver{addrs: map[string][]string{
 		"myapp.example.org": {"198.51.100.1", "203.0.113.10", "198.51.100.2"},
@@ -94,8 +60,6 @@ func TestVerifiedCustomDomain_OneOfMultipleResolvedAddressesMatchingVerifies(t *
 		t.Fatalf("VerifiedCustomDomain() = %q, want the verified domain returned", got)
 	}
 }
-
-// --- VerifiedCustomDomain: rejection ----------------------------------------
 
 func TestVerifiedCustomDomain_DifferentAddressIsRefused(t *testing.T) {
 	resolver := fakeResolver{addrs: map[string][]string{"myapp.example.org": {"198.51.100.99"}}}
@@ -154,13 +118,6 @@ func TestVerifiedCustomDomain_RefusesDomainWithPath(t *testing.T) {
 	}
 }
 
-// --- The verified domain, composed with TrustedAppURL ----------------------
-//
-// VerifiedCustomDomain's return value is documented as "suitable for passing
-// as an extra suffix" — these tests pin that composition directly, using
-// plain.mitstack.dev (the tracker's own custom-domain app, MIT-1299/MIT-1805)
-// as the worked example.
-
 func TestVerifiedCustomDomain_ReturnedDomainAllowsItselfAndSubdomainsViaTrustedAppURL(t *testing.T) {
 	resolver := fakeResolver{addrs: map[string][]string{"plain.mitstack.dev": {"203.0.113.10"}}}
 	verified, err := reach.VerifiedCustomDomain(context.Background(), resolver, "plain.mitstack.dev", []string{"203.0.113.10"})
@@ -176,15 +133,7 @@ func TestVerifiedCustomDomain_ReturnedDomainAllowsItselfAndSubdomainsViaTrustedA
 	}
 }
 
-// Suffix trickery must still be rejected with the verified domain in place —
-// the extra suffix widens the allowlist by exactly one domain (and its real
-// subdomains), never by anything a lookalike host can borrow from it.
-//
-// Each sub-test states whether TrustedAppURL's existing regexp already
-// handles the shape (it does, for all four below — the host-only rebuild
-// already strips path/userinfo, and the anchored suffix match already
-// enforces a dot boundary) so these pin existing behaviour under the new
-// suffix rather than exercising a new code path.
+// The extra suffix widens the allowlist by one domain and its real subdomains, never to lookalike hosts.
 
 func TestVerifiedCustomDomain_SuffixTrickery_TrailingAttackerLabelStillRejected(t *testing.T) {
 	resolver := fakeResolver{addrs: map[string][]string{"plain.mitstack.dev": {"203.0.113.10"}}}
@@ -234,13 +183,7 @@ func TestVerifiedCustomDomain_SuffixTrickery_UserinfoTrickStillRejected(t *testi
 	}
 }
 
-// --- No global mutable allowlist --------------------------------------------
-
-// Verification is per-subscription: the extras must be threaded through each
-// call, never accumulated into package state. If VerifiedCustomDomain (or
-// TrustedAppURL) ever cached a verified domain globally, a SECOND, unrelated
-// call — for a different app, carrying no extra suffix of its own — would
-// wrongly inherit trust for a domain that has nothing to do with it.
+// Verification is per call: a cached domain would let an unrelated app inherit its trust.
 func TestVerifiedCustomDomain_DoesNotBecomeGloballyTrusted(t *testing.T) {
 	resolver := fakeResolver{addrs: map[string][]string{"plain.mitstack.dev": {"203.0.113.10"}}}
 	verified, err := reach.VerifiedCustomDomain(context.Background(), resolver, "plain.mitstack.dev", []string{"203.0.113.10"})
@@ -251,9 +194,6 @@ func TestVerifiedCustomDomain_DoesNotBecomeGloballyTrusted(t *testing.T) {
 		t.Fatalf("the verified domain must be trusted when explicitly passed as an extra suffix: %v", err)
 	}
 
-	// A later, unrelated call for the SAME host but with no extra suffix — the
-	// shape every other subscription's probe uses — must be refused exactly
-	// as before verification ever happened.
 	if _, err := reach.TrustedAppURL("https://plain.mitstack.dev/"); err == nil {
 		t.Fatal("a verified domain must not remain trusted once its extra suffix is omitted from the call — there is no global allowlist")
 	}

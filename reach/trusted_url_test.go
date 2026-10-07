@@ -1,15 +1,3 @@
-// trusted_url_test.go pins the fix for CodeQL alert #78 (go/request-forgery,
-// critical) at reach.go's ProbeURL: appUrl arrives in the signed webhook
-// payload from a block subscription's outputs, which an upstream provider —
-// not mitstack itself — controls, so ProbeURL must never dial a host that
-// isn't the platform's own apps domain (MIT-1686).
-//
-// TrustedAppURL is the barrier: it validates a raw URL against an
-// allowed-domain-suffix set (the constant apps.mitstack.dev, plus any
-// operator-supplied extra suffixes) and returns a URL REBUILT from the
-// validated components — never the raw input string — so a lookalike host
-// can never ride through untouched. ProbeURL must apply this barrier before
-// any request leaves the process.
 package reach_test
 
 import (
@@ -21,8 +9,6 @@ import (
 
 	"github.com/mitstack-eu/operator-kit/reach"
 )
-
-// --- TrustedAppURL: acceptance ----------------------------------------------
 
 func TestTrustedAppURL_AcceptsThePlatformAppsDomain(t *testing.T) {
 	got, err := reach.TrustedAppURL("https://myapp.apps.mitstack.dev/healthz")
@@ -47,8 +33,6 @@ func TestTrustedAppURL_AcceptsAnOperatorSuppliedExtraSuffix(t *testing.T) {
 	}
 }
 
-// --- TrustedAppURL: rejection -------------------------------------------------
-
 func TestTrustedAppURL_RejectsAForeignHost(t *testing.T) {
 	if _, err := reach.TrustedAppURL("https://attacker.example.com/"); err == nil {
 		t.Fatal("a host outside every allowed suffix must be refused")
@@ -62,18 +46,13 @@ func TestTrustedAppURL_RejectsPlainHTTP(t *testing.T) {
 }
 
 func TestTrustedAppURL_RejectsASuffixTrickHostWithTrailingAttackerLabel(t *testing.T) {
-	// "evil-apps.mitstack.dev.attacker.com" ends in ".attacker.com", not in
-	// ".apps.mitstack.dev" — a naive strings.Contains/HasSuffix-on-the-wrong-
-	// operand check would be fooled by this exact shape.
 	if _, err := reach.TrustedAppURL("https://evil-apps.mitstack.dev.attacker.com/"); err == nil {
 		t.Fatal("a host that merely CONTAINS the allowed domain must be refused")
 	}
 }
 
 func TestTrustedAppURL_RejectsAHostThatIsAPrefixNotASubdomain(t *testing.T) {
-	// "xapps.mitstack.dev" neither equals "apps.mitstack.dev" nor ends with
-	// ".apps.mitstack.dev" — a bare strings.HasSuffix(host, "apps.mitstack.dev")
-	// (missing the leading dot) would wrongly accept this.
+	// A suffix check missing the leading dot would wrongly accept this.
 	if _, err := reach.TrustedAppURL("https://xapps.mitstack.dev/"); err == nil {
 		t.Fatal("a host that is merely string-suffixed (no dot boundary) must be refused")
 	}
@@ -91,8 +70,6 @@ func TestTrustedAppURL_RejectsUnparsableGarbage(t *testing.T) {
 	}
 }
 
-// --- TrustedAppURL: the rebuild guarantee ------------------------------------
-
 func TestTrustedAppURL_RejectionErrorNamesTheOffendingHost(t *testing.T) {
 	_, err := reach.TrustedAppURL("https://attacker.example.com/")
 	if err == nil {
@@ -104,11 +81,6 @@ func TestTrustedAppURL_RejectionErrorNamesTheOffendingHost(t *testing.T) {
 }
 
 func TestTrustedAppURL_AcceptedReturnValueIsExactlyTheRebuiltForm(t *testing.T) {
-	// The accepted return value must be the URL rebuilt from validated
-	// components, not the raw input string echoed back — even when the raw
-	// input carries no attacker payload, a query string smuggled onto an
-	// otherwise-legitimate host must not survive into the dialed URL
-	// unexamined.
 	raw := "https://myapp.apps.mitstack.dev/healthz?x=" + "attacker-controlled-marker"
 	got, err := reach.TrustedAppURL(raw)
 	if err != nil {
@@ -120,24 +92,7 @@ func TestTrustedAppURL_AcceptedReturnValueIsExactlyTheRebuiltForm(t *testing.T) 
 	}
 }
 
-// --- ProbeURL: vouch AND domain barrier, composed — not either/or ----------
-//
-// MIT-1683 added a caller-vouch escape hatch (allowedURLs) alongside
-// TrustedAppURL's domain barrier. The escape hatch exists for values
-// TrustedAppURL was never going to accept — the operator dialing its own
-// loopback fixture — not as a second, unrestricted way onto the network. A
-// vouch that is honoured on its OWN, without also being domain/loopback
-// checked, makes the vouch vacuous: every real caller (Checker.probe)
-// self-vouches by construction (`ProbeURL(ctx, client, url, url)`), so an OR
-// between "vouched" and "on an allowed domain" degrades to "any https URL",
-// which is the SSRF this whole fix exists to close. These tests pin the
-// corrected AND: dial only when a URL is BOTH vouched AND clears the domain
-// barrier (apps.mitstack.dev, an operator suffix, or a literal loopback host).
-
-// failIfCalledTransport fails the test the moment RoundTrip is invoked. Used
-// to prove ProbeURL refuses a URL WITHOUT ever attempting the HTTP request —
-// the whole point of fixing this at the dial boundary rather than after the
-// fact.
+// failIfCalledTransport fails the test if any request is attempted.
 type failIfCalledTransport struct{ t *testing.T }
 
 func (f failIfCalledTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -145,13 +100,7 @@ func (f failIfCalledTransport) RoundTrip(req *http.Request) (*http.Response, err
 	return nil, nil
 }
 
-// This is the test whose absence let the rubber stamp through: appURL is
-// passed as its OWN allowedURLs entry — exactly the shape every real caller
-// uses to vouch for a URL it computed itself — yet the host is neither the
-// platform's apps domain nor loopback. A caller's self-vouch must never be
-// sufficient on its own; the domain barrier still has to clear independently,
-// or any https URL a caller is willing to name becomes dialable, including
-// the cloud metadata endpoint.
+// A self-vouch alone must never suffice, or any https URL, including the cloud metadata endpoint, becomes dialable.
 func TestProbeURL_HostileSelfVouchedURLIsRefusedWithoutDialing(t *testing.T) {
 	hostile := "https://169.254.169.254/latest/meta-data/"
 	client := &http.Client{Transport: failIfCalledTransport{t: t}}
@@ -166,11 +115,6 @@ func TestProbeURL_HostileSelfVouchedURLIsRefusedWithoutDialing(t *testing.T) {
 	}
 }
 
-// The loopback carve-out is real, not just documented: a vouched loopback URL
-// (the operator dialing a test/dev fixture on its own box) must still be
-// dialed and classified normally. This is what keeps
-// TestEvaluate_DefaultProbeVouchesForTheURLItComputedAndReachesIt and every
-// httptest-based operator suite passing after the AND is enforced.
 func TestProbeURL_VouchedLoopbackURLIsDialedNormally(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -184,13 +128,7 @@ func TestProbeURL_VouchedLoopbackURLIsDialedNormally(t *testing.T) {
 	}
 }
 
-// The other half of the AND: an apps-domain URL that clears the domain
-// barrier on its own but comes with an EMPTY allowedURLs must still be
-// refused. MIT-1683's own empty-allowlist test
-// (TestProbeURL_EmptyAllowlistNeverDialsAndIsNotReachable) pins this for a
-// loopback URL; this pins the same default-deny for the platform's own apps
-// domain, so "it's on apps.mitstack.dev" can never substitute for "the caller
-// vouched for it".
+// An apps-domain URL with an empty allowedURLs must still be refused, so being on the apps domain never substitutes for a vouch.
 func TestProbeURL_AppsDomainURLWithoutAVouchIsRefusedWithoutDialing(t *testing.T) {
 	client := &http.Client{Transport: failIfCalledTransport{t: t}}
 
@@ -204,8 +142,6 @@ func TestProbeURL_AppsDomainURLWithoutAVouchIsRefusedWithoutDialing(t *testing.T
 	}
 }
 
-// Regression guard: an allowlisted apps.mitstack.dev URL that IS vouched for
-// still probes normally through the barrier.
 func TestProbeURL_StillProbesAnAllowlistedURL(t *testing.T) {
 	called := false
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -231,7 +167,6 @@ func TestProbeURL_StillProbesAnAllowlistedURL(t *testing.T) {
 	}
 }
 
-// roundTripFunc adapts a function to http.RoundTripper.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }

@@ -1,19 +1,5 @@
 package reach_test
 
-// reach_test.go — the contract every aws-topology provider now shares
-// (MIT-1595).
-//
-// The tests below are deliberately weighted toward two things that a bool
-// readiness probe cannot express and that the CloudFormation/Crossplane twins
-// therefore did not have:
-//
-//  1. the OUTPUT KEYS. Apply must write the same names every time, because a
-//     stack switch compares emitted keys, not declared schemas — that mismatch
-//     is the defect this package exists to close.
-//  2. the DNS/IP fallback. It is the difference between a subscription that
-//     recovers when the apps zone is not delegated and one that hangs forever
-//     (MIT-1291).
-
 import (
 	"context"
 	"crypto/tls"
@@ -47,8 +33,6 @@ func TestKeys_AreTheAdvertisedContract(t *testing.T) {
 	}
 }
 
-// Apply is the substitutability contract: every provider that calls it emits
-// the same key set, which is exactly what a switch verdict compares.
 func TestApply_AlwaysWritesReachableAndCertTrusted(t *testing.T) {
 	out := reach.Apply(map[string]string{"appUrl": "https://app.example/"},
 		reach.Result{Reachable: true, CertTrusted: true, ServingURL: "https://app.example/"})
@@ -64,10 +48,7 @@ func TestApply_AlwaysWritesReachableAndCertTrusted(t *testing.T) {
 	}
 }
 
-// A not-serving verdict must still emit both keys. Omitting them on failure
-// would make "absent" ambiguous between "not probed" and "not serving" — and a
-// console reading `reachable != "true"` would then treat an unprobed app the
-// same as a dead one.
+// A not-serving verdict must still emit both keys, or "absent" is ambiguous between unprobed and dead.
 func TestApply_WritesFalseRatherThanOmitting(t *testing.T) {
 	out := reach.Apply(map[string]string{"appUrl": "https://app.example/"}, reach.Result{})
 	if out["reachable"] != "false" || out["certTrusted"] != "false" {
@@ -97,8 +78,6 @@ func TestApply_DoesNotMutateCallersMap(t *testing.T) {
 	}
 }
 
-// A block with no URL has no serving promise to keep. Refusing those would
-// strand every non-web block behind a web-only gate.
 func TestEvaluate_NoAppURLIsReachable(t *testing.T) {
 	var c reach.Checker
 	got := c.Evaluate(context.Background(), map[string]string{})
@@ -138,9 +117,6 @@ func TestEvaluate_DNSFailureFallsBackToPublicIP(t *testing.T) {
 	}
 }
 
-// The fallback must not turn a genuinely dead app green. If neither the
-// hostname nor the box answers, the verdict stays not-reachable and keeps the
-// DNS reason, which is the more actionable of the two.
 func TestEvaluate_FallbackThatAlsoFailsStaysUnreachable(t *testing.T) {
 	c := reach.Checker{
 		Probe: func(_ context.Context, _ string) reach.Result {
@@ -159,9 +135,6 @@ func TestEvaluate_FallbackThatAlsoFailsStaysUnreachable(t *testing.T) {
 	}
 }
 
-// A provider that omits publicIp loses the recovery path entirely. That is the
-// cost of not emitting the key, and it is worth asserting so the omission is a
-// tested consequence rather than a surprise.
 func TestEvaluate_NoPublicIPMeansNoFallback(t *testing.T) {
 	calls := 0
 	c := reach.Checker{
@@ -194,12 +167,7 @@ func TestEvaluate_DiagnosisIsAppendedWithoutChangingTheVerdict(t *testing.T) {
 	}
 }
 
-// The Checker's default (nil Probe) path calls the real ProbeURL, which now
-// (MIT-1683, the CodeQL go/request-forgery fix) dials only a vouched
-// allowlist entry rather than the raw appURL. Evaluate must still work
-// end-to-end: it is the Checker's OWN job to vouch for the URL it computed
-// from outputs it controls, not to lose all reachability by forwarding an
-// unvouched URL into ProbeURL's default-deny gate.
+// The default (nil Probe) path must vouch for the URL the Checker computed, or ProbeURL's default-deny gate refuses it.
 func TestEvaluate_DefaultProbeVouchesForTheURLItComputedAndReachesIt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -225,14 +193,6 @@ func TestEvaluate_NilDiagnoserIsFine(t *testing.T) {
 	}
 }
 
-// --- ProbeURL classification ------------------------------------------------
-//
-// Every case below now passes appURL as its own sole allowlist entry — the
-// caller VOUCHES for the exact URL it wants probed (MIT-1683). That is what
-// closed the CodeQL go/request-forgery finding: ProbeURL never dials appURL
-// itself, only an allowlist element that string-equals it. The default-deny
-// cases (nothing vouched) are below this block.
-
 func TestProbeURL_2xxIsServingAndTrusted(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -245,8 +205,6 @@ func TestProbeURL_2xxIsServingAndTrusted(t *testing.T) {
 	}
 }
 
-// A 4xx IS serving — the consumer's own app simply has no route at "/", which
-// is not the platform's business.
 func TestProbeURL_4xxIsServing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -258,8 +216,6 @@ func TestProbeURL_4xxIsServing(t *testing.T) {
 	}
 }
 
-// A 502 is the edge up with the app container down. Treating it as serving is
-// the exact false-green MIT-1160 exists to stop.
 func TestProbeURL_5xxIsNotServing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -271,16 +227,12 @@ func TestProbeURL_5xxIsNotServing(t *testing.T) {
 	}
 }
 
-// The self-signed edge case, and the reason the probe never sets
-// InsecureSkipVerify: an untrusted certificate proves a TLS peer completed a
-// handshake, which is the fact being established.
 func TestProbeURL_UntrustedCertIsServingButNotTrusted(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	// A default client does NOT trust httptest's ad-hoc CA.
 	got := reach.ProbeURL(context.Background(), &http.Client{}, srv.URL, srv.URL)
 	if !got.Reachable {
 		t.Fatalf("an untrusted cert still proves something is serving, got %+v", got)
@@ -297,9 +249,7 @@ func TestProbeURL_EmptyURL(t *testing.T) {
 }
 
 func TestProbeURL_ConnectionRefusedIsNotADNSFailure(t *testing.T) {
-	// A closed port on loopback: resolvable, not answering. Misclassifying this
-	// as DNSFailure would send Evaluate down the IP-fallback path for an app
-	// that is simply down.
+	// Resolvable but not answering: misclassifying it as DNSFailure would trigger the IP fallback for an app that is merely down.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("cannot bind loopback: %v", err)
@@ -317,10 +267,7 @@ func TestProbeURL_ConnectionRefusedIsNotADNSFailure(t *testing.T) {
 	}
 }
 
-// --- ProbeURL allowlist default-deny (CodeQL go/request-forgery fix, MIT-1683) --
-
-// The whole point of the fix: an appURL that is not vouched for by any
-// allowlist entry must never be dialed, and must never be reported reachable.
+// An appURL that no allowlist entry vouches for must never be dialed or reported reachable.
 func TestProbeURL_EmptyAllowlistNeverDialsAndIsNotReachable(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -341,9 +288,6 @@ func TestProbeURL_EmptyAllowlistNeverDialsAndIsNotReachable(t *testing.T) {
 	}
 }
 
-// A non-empty allowlist that simply does not contain appURL is equally
-// default-deny — this is the case a naive host-only or prefix match would get
-// wrong.
 func TestProbeURL_NotInAllowlistNeverDialsAndIsNotReachable(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -361,9 +305,6 @@ func TestProbeURL_NotInAllowlistNeverDialsAndIsNotReachable(t *testing.T) {
 	}
 }
 
-// Guard the classification the probe leans on, driven through ProbeURL itself
-// rather than through a copy of the matching logic — a test that reimplements
-// what it is checking proves only that the copy agrees with itself.
 func TestProbeURL_ClassifiesTransportErrors(t *testing.T) {
 	cases := map[string]struct {
 		err              error
@@ -390,7 +331,6 @@ func TestProbeURL_ClassifiesTransportErrors(t *testing.T) {
 			if got.DNSFailure != tc.wantDNSFailure {
 				t.Fatalf("DNSFailure = %v, want %v (%+v)", got.DNSFailure, tc.wantDNSFailure, got)
 			}
-			// A certificate error means serving-but-untrusted, never trusted.
 			if tc.wantCertAccepted && got.CertTrusted {
 				t.Fatalf("a certificate error must never yield CertTrusted: %+v", got)
 			}
@@ -398,28 +338,12 @@ func TestProbeURL_ClassifiesTransportErrors(t *testing.T) {
 	}
 }
 
-// errTransport fails every request with a fixed error, so the classification
-// branches are reachable without a network.
 type errTransport struct{ err error }
 
 func (t errTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, t.err }
 
-/* ─── the fallback's own address must be dialable (MIT-1703) ── */
-
-// Every test above that exercises the fallback injects `Probe`, so the
-// fallback URL never reaches the real barrier. That is why a barrier which
-// refuses every bare IP shipped without a failing test: the fallback works
-// perfectly against a fake probe and is refused by the real one.
-//
-// The fallback's ONLY purpose is to probe the box's own public address when
-// the hostname does not resolve. If the barrier cannot dial a public IP, the
-// fallback is unreachable code and an app whose hostname does not resolve can
-// never settle.
-
 func TestProbeURL_VouchedPublicIPIsDialledRatherThanRefused(t *testing.T) {
-	// 203.0.113.0/24 is TEST-NET-3: routable as far as address classification
-	// is concerned, and guaranteed never to answer. So a dial attempt fails —
-	// but it must fail as a DIAL, not as a refusal before one.
+	// TEST-NET-3 never answers, so the attempt must fail as a dial, not as a refusal before one.
 	const ip = "https://203.0.113.9/"
 	got := reach.ProbeURL(context.Background(), &http.Client{Timeout: 300 * time.Millisecond}, ip, ip)
 
@@ -468,26 +392,18 @@ func TestProbeURL_UnvouchedPublicIPIsStillRefused(t *testing.T) {
 	}
 }
 
-// recordingTransport reports which URLs actually reached the network. The
-// barrier refuses BEFORE the transport is invoked, so "was it dialled" is the
-// only observable that distinguishes a refusal from a failed connection —
-// asserting on the returned Reason cannot, because Evaluate deliberately keeps
-// the more actionable DNS reason when the fallback also fails.
+// recordingTransport records dialled URLs, the only observable that tells a refusal from a failed connection.
 type recordingTransport struct{ dialled []string }
 
 func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rt.dialled = append(rt.dialled, req.URL.String())
-	// The hostname must fail the way a real unresolvable name does, or Evaluate
-	// returns before the fallback and the test proves nothing.
 	if host := req.URL.Hostname(); net.ParseIP(host) == nil {
 		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
 	}
 	return nil, errors.New("no listener in this test")
 }
 
-// The end-to-end shape: no injected Probe, so Evaluate runs the real barrier
-// on both the hostname and the fallback. The verdict is not the point — that
-// the fallback was ATTEMPTED is.
+// With no injected Probe, Evaluate runs the real barrier; what matters is that the fallback was attempted.
 func TestEvaluate_FallbackIsActuallyDialledThroughTheRealProbe(t *testing.T) {
 	rt := &recordingTransport{}
 	c := reach.Checker{Client: &http.Client{Transport: rt, Timeout: 300 * time.Millisecond}}
@@ -508,23 +424,7 @@ func TestEvaluate_FallbackIsActuallyDialledThroughTheRealProbe(t *testing.T) {
 	}
 }
 
-/* ─── the hostname must be promoted back once it resolves (MIT-2618) ── */
-//
-// Apply's own comment claims "the next apply promotes it back automatically
-// once the name resolves". Nothing did: Evaluate returns at its first `if`
-// the instant the box address it was handed answers, and appHostname is never
-// even read. faswq's app kept https://52.57.246.147/ advertised forever after
-// one DNS window, and every consumer inherited it — a delivery check building
-// a URL no certificate can match, the console's "Open app" link leading to an
-// interstitial. These pin the fix as the shared contract every provider of
-// this capability gets from the one implementation (MIT-1595): there is
-// nothing left in this tree to wire a fix into per-operator, so this suite
-// IS the parity check for all three.
-
-// The incident's exact shape: appUrl already rewritten to the box address,
-// appHostname carrying the intended name, and the name now resolves and
-// serves. It must be advertised again — not kept as a bare address for the
-// app's lifetime.
+// With appUrl rewritten to the box address and the name now serving, the name must be advertised again.
 func TestEvaluate_PromotesBackToHostnameOnceItServes(t *testing.T) {
 	var probed []string
 	c := reach.Checker{
@@ -568,9 +468,6 @@ func TestEvaluate_PromotesBackToHostnameOnceItServes(t *testing.T) {
 	}
 }
 
-// The hostname resolving is not enough — it has to actually serve. A 5xx or a
-// refused connection at the name must leave the box address advertised,
-// exactly as before promotion existed.
 func TestEvaluate_HostnameRespondsButNotServing_StaysOnBoxAddress(t *testing.T) {
 	c := reach.Checker{
 		Probe: func(_ context.Context, url string) reach.Result {
@@ -578,8 +475,6 @@ func TestEvaluate_HostnameRespondsButNotServing_StaysOnBoxAddress(t *testing.T) 
 			case "https://52.57.246.147/":
 				return reach.Result{Reachable: true, EdgeUp: true}
 			case "https://app.example/":
-				// The edge answers — DNS is fine now — but with a 5xx: the app
-				// itself is not serving there yet.
 				return reach.Result{Reachable: false, EdgeUp: true}
 			}
 			t.Fatalf("unexpected probe of %q", url)
@@ -601,18 +496,11 @@ func TestEvaluate_HostnameRespondsButNotServing_StaysOnBoxAddress(t *testing.T) 
 	}
 }
 
-// The hostname still not resolving at all must leave the box address
-// advertised AND keep explaining why, so a consumer reading only the verdict
-// still learns the platform is on a fallback rather than reading a bare,
-// unexplained success.
 func TestEvaluate_HostnameStillUnresolved_StaysOnBoxAddressAndKeepsReason(t *testing.T) {
 	c := reach.Checker{
 		Probe: func(_ context.Context, url string) reach.Result {
 			switch url {
 			case "https://52.57.246.147/":
-				// A real dial to a serving box carries no Reason of its own —
-				// any explanation for why the platform is STILL on this
-				// address has to come from the promotion check itself.
 				return reach.Result{Reachable: true, EdgeUp: true}
 			case "https://app.example/":
 				return reach.Result{DNSFailure: true, Reason: "no such host"}
@@ -639,10 +527,7 @@ func TestEvaluate_HostnameStillUnresolved_StaysOnBoxAddressAndKeepsReason(t *tes
 	}
 }
 
-// appHostname absent is the common, healthy-app path — today's behaviour must
-// not change at all, and in particular must not gain a second outbound call
-// per Evaluate: a promotion check that runs when there is nothing to promote
-// would double every health poll's outbound calls.
+// Nothing to promote must not add a second outbound call, which would double every health poll.
 func TestEvaluate_NoAppHostname_HealthyPathProbesExactlyOnce(t *testing.T) {
 	calls := 0
 	c := reach.Checker{
@@ -661,9 +546,6 @@ func TestEvaluate_NoAppHostname_HealthyPathProbesExactlyOnce(t *testing.T) {
 	}
 }
 
-// appHostname equal to appUrl is the no-op shape (nothing was ever rewritten,
-// or a caller set both to the same value) — it must not be treated as
-// something to promote, and must not add a dial or rewrite the outputs.
 func TestEvaluate_AppHostnameEqualsAppURL_NoPromotionNoChurn(t *testing.T) {
 	calls := 0
 	c := reach.Checker{
@@ -685,12 +567,7 @@ func TestEvaluate_AppHostnameEqualsAppURL_NoPromotionNoChurn(t *testing.T) {
 	}
 }
 
-// The trust flag must be RECOMPUTED from the hostname's own probe, not
-// carried over from the fallback's false. A hostname that resolves and serves
-// but still carries a self-signed certificate must still promote — promotion
-// is about reachability — while correctly reporting the cert as untrusted,
-// proving the false here comes from the hostname's own probe and not merely
-// a hardcoded carry-over from the box fallback.
+// A serving hostname with an untrusted certificate still promotes, and its trust comes from its own probe.
 func TestEvaluate_PromotionRecomputesCertTrusted_UntrustedHostnameCert(t *testing.T) {
 	c := reach.Checker{
 		Probe: func(_ context.Context, url string) reach.Result {
@@ -718,10 +595,7 @@ func TestEvaluate_PromotionRecomputesCertTrusted_UntrustedHostnameCert(t *testin
 	}
 }
 
-// Multi-tenancy: Checker is a value type reused across every Evaluate call in
-// the settle loop, so the promotion probe it adds must read only from the
-// outputs map it was handed. One app's hostname must never be probed for
-// another's outputs.
+// A reused Checker must probe only the hostname in the outputs it was handed, never another app's.
 func TestEvaluate_PromotionNeverProbesAnotherAppsHostname(t *testing.T) {
 	var probedForA, probedForB []string
 
@@ -769,13 +643,7 @@ func TestEvaluate_PromotionNeverProbesAnotherAppsHostname(t *testing.T) {
 	}
 }
 
-// End to end: once Evaluate reports a promotion, Apply must advertise the
-// hostname again — and must not leave a stale duplicate behind. Decision
-// pinned here: appHostname existed only to preserve the intended name while
-// appUrl pointed at the box: once appUrl IS that name again, the field is
-// removed rather than left duplicating appUrl or — worse, under the
-// unfixed rewrite rule that treats any ServingURL change as a fresh
-// fallback — overwritten with the box address it just left.
+// After a promotion appHostname must be removed, not left duplicating appUrl or overwritten with the box address.
 func TestApply_PromotionAdvertisesHostnameAndLeavesNoStaleDuplicate(t *testing.T) {
 	outputs := map[string]string{
 		"appUrl":      "https://52.57.246.147/",
