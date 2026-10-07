@@ -12,8 +12,7 @@ import (
 )
 
 func TestEmit_NoOpsWithoutACallback(t *testing.T) {
-	// ADR 0042: the channel is advisory. An older engine sends no callback, and
-	// that must be silence — not an error the operator has to swallow.
+	// An older engine sends no callback, and that must be silence rather than an error.
 	ctx := events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1"})
 
 	if err := events.EmitProgress(ctx, "half way"); err != nil {
