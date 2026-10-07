@@ -9,10 +9,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// The fakes are only worth having if they behave like the thing they stand in
-// for on the paths that matter, and REFUSE the paths they do not model. A
-// permissive fake makes every test pass — MIT-1484 is three green tests over a
-// dispatch route that was never implemented, because the fake accepted any POST.
+// A permissive fake makes every test pass, so the fakes must refuse the paths they do not model.
 
 func TestFakeSTS_ReturnsUsableCredentials(t *testing.T) {
 	f := kittest.NewFakeSTS(t)
@@ -104,8 +101,7 @@ func TestFakeGitHub_RequiresAuthorization(t *testing.T) {
 }
 
 func TestFakeGitHub_SecondRepoCreateIs422LikeTheRealAPI(t *testing.T) {
-	// The idempotency path an operator MUST handle (T-501). A fake that
-	// returned 201 twice would hide a broken retry.
+	// A fake that returned 201 twice would hide a broken retry.
 	f := kittest.NewFakeGitHub(t)
 
 	create := func() int {

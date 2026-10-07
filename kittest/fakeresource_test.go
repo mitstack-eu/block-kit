@@ -76,11 +76,7 @@ func TestFakeResource_ObserveStateOverridesCount(t *testing.T) {
 	}
 }
 
-// TestFakeResource_DeadReportedPendingReportsUnknownEvenWithObserveErrSet
-// pins the fifth misconfigured-fake knob: with DeadReportedPending set,
-// Observe answers Unknown with no error, even where ObserveErr is also
-// set — modelling an operator that never expresses deadness and lets a
-// subscription wait forever (MIT-1291).
+// With DeadReportedPending set, Observe answers Unknown with no error even where ObserveErr is also set.
 func TestFakeResource_DeadReportedPendingReportsUnknownEvenWithObserveErrSet(t *testing.T) {
 	f := &kittest.FakeResource{
 		DeadReportedPending: true,

@@ -1,11 +1,4 @@
-// Package kittest provides the test scaffolding every operator needs to
-// exercise the mitstack trust boundary: a deterministic signing identity, a
-// fake JWKS endpoint serving its public key, and correctly-signed webhook and
-// /logs requests.
-//
-// Before the kit, each operator hand-rolled these — which is why the same
-// ~60-line signer fixture appears thirteen times with small divergences. A
-// shared harness means a test that passes here means the same thing everywhere.
+// Package kittest provides the test scaffolding every operator needs to exercise the mitstack trust boundary, from a deterministic signing identity to the conformance checks.
 package kittest
 
 import (
@@ -81,9 +74,7 @@ func (s *Signer) hookRequest(path string, body []byte) *http.Request {
 	return r
 }
 
-// LogsRequest builds a correctly-signed read-only GET (T-578): the signature is
-// over the canonical "GET\n<path-with-query>\n<timestamp>" string, with the
-// anti-replay timestamp in X-Mitstack-Timestamp.
+// LogsRequest builds a signed read-only GET whose signature covers "GET\n<path-with-query>\n<timestamp>".
 func (s *Signer) LogsRequest(t *testing.T, path string, at time.Time) *http.Request {
 	t.Helper()
 	return s.logsRequest(path, at)
@@ -111,9 +102,6 @@ func Envelope(nonce string, at time.Time, extra map[string]any) []byte {
 }
 
 // AssertNoSecret fails the test if any of secrets appears anywhere in haystack.
-// It is the shared core of every operator's mandatory TestNoSecretLeak and its
-// /logs variant: the assertion is that the secret is ABSENT, in whatever form
-// the payload took.
 func AssertNoSecret(t *testing.T, what string, haystack string, secrets ...string) {
 	t.Helper()
 	for _, s := range secrets {

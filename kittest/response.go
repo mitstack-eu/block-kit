@@ -10,16 +10,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// respGoldenEntries lists the embedded response golden files, failing the
-// test rather than skipping: a harness that silently finds nothing proves
-// nothing.
-//
-// The response goldens (MIT-1136) live in the contract package (MIT-3068,
-// ADR 0068 decision 5: this repository owns them), which the engine's own
-// contract tests also import. Embedding there rather than resolving a path
-// relative to the caller's working directory is what keeps this usable
-// from an operator living in a genuinely external repository, exactly as
-// it does for the request-side goldens above.
+// respGoldenEntries fails the test rather than skipping, and reads the goldens embedded in the contract package so an external operator needs no working-directory path.
 func respGoldenEntries(t *testing.T) []fs.DirEntry {
 	t.Helper()
 	entries, err := fs.ReadDir(contract.ResponseGoldens, contract.ResponseGoldensDir)
@@ -42,9 +33,7 @@ func readRespGolden(t *testing.T, name string) []byte {
 	return raw
 }
 
-// ValidResponseGoldens returns the response goldens representing well-formed
-// operator responses the engine's decoder must read intact. Names starting
-// with "invalid-" are excluded.
+// ValidResponseGoldens returns the well-formed response goldens, excluding names starting with "invalid-".
 func ValidResponseGoldens(t *testing.T) map[string][]byte {
 	t.Helper()
 	out := map[string][]byte{}
@@ -61,9 +50,7 @@ func ValidResponseGoldens(t *testing.T) map[string][]byte {
 	return out
 }
 
-// InvalidResponseGoldens returns the response goldens the engine's decoder
-// cannot read the way an operator author would expect — the malformed set
-// CheckResponse must reject.
+// InvalidResponseGoldens returns the malformed response goldens CheckResponse must reject.
 func InvalidResponseGoldens(t *testing.T) map[string][]byte {
 	t.Helper()
 	out := map[string][]byte{}
@@ -80,20 +67,7 @@ func InvalidResponseGoldens(t *testing.T) map[string][]byte {
 	return out
 }
 
-// CheckResponse is a hand-written structural check over the decoded JSON
-// body an operator's webhook handler wrote, mirroring
-// api/internal/lifecycle/contract/response.schema.json without depending on
-// a JSON-Schema library (the kit module has no third-party dependencies).
-// It returns one human-readable problem per offending top-level property,
-// and per offending part of the resources a response reports — an empty
-// slice means the response conforms — and every problem string names the
-// property, or the dotted path within resources, so an operator author can
-// act on it without reading anything else.
-//
-// An unknown top-level property is accepted, never flagged: the contract is
-// additive-friendly (mirrors additionalProperties:true in the schema), so a
-// new field either side adds ahead of the other can never fail a shipping
-// operator's test.
+// CheckResponse is hand-written because the kit module has no third-party dependencies, and it accepts an unknown top-level property so a new field never fails a shipping operator's test.
 func CheckResponse(raw []byte) []string {
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -158,15 +132,9 @@ func CheckResponse(raw []byte) []string {
 	return problems
 }
 
-// resourceCalls are the calls a resources entry may report, each an object.
 var resourceCalls = []string{"ensure", "observe", "delete"}
 
-// checkResources checks the resources property when present: an object of
-// entries, each an object whose ensure, observe and delete calls are
-// objects with string error, state and statusDetail and with outputs and
-// identity that are objects of string values. A key the contract does not
-// name is accepted at every level. Each problem names the dotted, quoted
-// path it concerns, such as "resources"."network"."ensure"."identity".
+// checkResources accepts a key the contract does not name at every level.
 func checkResources(doc map[string]any) []string {
 	v, present := doc["resources"]
 	if !present {
@@ -202,7 +170,6 @@ func checkResources(doc map[string]any) []string {
 	return problems
 }
 
-// checkCallOutcome checks one call's fields, path naming the call.
 func checkCallOutcome(path string, fields map[string]any) []string {
 	var problems []string
 	for _, field := range []string{"error", "state", "statusDetail"} {
@@ -234,7 +201,6 @@ func checkCallOutcome(path string, fields map[string]any) []string {
 	return problems
 }
 
-// jsonKind names the JSON type of a value json.Unmarshal decoded into any.
 func jsonKind(v any) string {
 	switch v.(type) {
 	case nil:
@@ -254,18 +220,7 @@ func jsonKind(v any) string {
 	}
 }
 
-// AssertEmitsConformingResponses proves every response body an operator's
-// webhook handler actually wrote conforms to the response contract, judged
-// by CheckResponse. bodies is keyed by a caller-chosen label (typically the
-// verb, or a scenario name for an error/pending path) purely for the
-// sub-test name and failure message; the value is the exact bytes the
-// handler wrote, never a struct re-encoded by the test — CheckResponse must
-// see precisely what would go on the wire.
-//
-// An empty bodies map fails loudly rather than reporting green: a
-// per-operator assertion that received nothing proves nothing about that
-// operator's response shape, which is exactly the vacuous pass every other
-// harness in this file exists to prevent.
+// AssertEmitsConformingResponses judges the exact bytes the handler wrote, never a re-encoded struct, and fails on an empty bodies map rather than passing vacuously.
 func AssertEmitsConformingResponses(t *testing.T, bodies map[string][]byte) {
 	t.Helper()
 	if len(bodies) == 0 {

@@ -12,24 +12,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// Conformance harness for the engine→operator webhook contract (MIT-1135).
-//
-// The contract is the set of committed golden envelopes the contract
-// package embeds (MIT-3068, ADR 0068 decision 5: this repository owns the
-// goldens, and kittest re-exports them rather than keeping its own copy).
-// The engine is tested to EMIT conforming payloads; the other half — that
-// every operator ACCEPTS them, and rejects the malformed ones — is what
-// this file enforces.
-//
-// This is the operator-side half, as a helper an operator calls with its
-// own decoder. It deliberately does NOT define the request type: an
-// operator's struct is its own, and the contract is that it can DECODE the
-// golden and see the fields it needs — not that it declares identical Go
-// types.
-
-// goldenEntries lists the embedded golden files, failing the test rather
-// than skipping: a conformance harness that silently finds nothing is the
-// vacuous pass this package exists to prevent.
+// goldenEntries fails the test rather than skipping, because a harness that finds nothing passes vacuously.
 func goldenEntries(t *testing.T) []fs.DirEntry {
 	t.Helper()
 	entries, err := fs.ReadDir(contract.Goldens, contract.GoldensDir)
@@ -43,8 +26,6 @@ func goldenEntries(t *testing.T) []fs.DirEntry {
 	return entries
 }
 
-// readGolden reads one embedded golden file by its full name (with the
-// .json suffix).
 func readGolden(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := contract.Goldens.ReadFile(contract.GoldensDir + "/" + name)
@@ -54,12 +35,7 @@ func readGolden(t *testing.T, name string) []byte {
 	return raw
 }
 
-// GoldensDir materializes the embedded contract goldens into a real
-// directory (t.TempDir()) and returns its path. This is a shim kept for any
-// caller reading the directory directly (os.ReadDir / os.ReadFile) rather
-// than through Golden/ValidGoldens — it keeps working from any working
-// directory, since the fixtures live embedded in the contract package
-// rather than on disk relative to the caller.
+// GoldensDir materializes the embedded contract goldens into a t.TempDir() for callers that read the directory directly.
 func GoldensDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -81,8 +57,7 @@ func Golden(t *testing.T, name string) []byte {
 	return readGolden(t, name+".json")
 }
 
-// ValidGoldens returns the goldens representing well-formed envelopes an
-// operator MUST accept. Names starting with "invalid-" are excluded.
+// ValidGoldens returns the well-formed envelopes an operator must accept, excluding names starting with "invalid-".
 func ValidGoldens(t *testing.T) map[string][]byte {
 	t.Helper()
 	out := map[string][]byte{}
@@ -99,15 +74,7 @@ func ValidGoldens(t *testing.T) map[string][]byte {
 	return out
 }
 
-// AssertDecodesEveryValidGolden proves the operator can decode every well-formed
-// envelope the engine emits, and that the fields it depends on survive the
-// round trip.
-//
-// decode is the operator's own decoder (typically json.Unmarshal into its
-// request type). require names the fields the operator must be able to see,
-// checked against the golden's own JSON so a struct that silently drops one is
-// caught — a field that decodes to the zero value looks identical to a field
-// that was absent, which is how a contract drifts without anything failing.
+// AssertDecodesEveryValidGolden checks require against the golden's own JSON, because a dropped field decodes to the zero value and looks like an absent one.
 func AssertDecodesEveryValidGolden(t *testing.T, decode func([]byte) error, require ...string) {
 	t.Helper()
 
@@ -132,9 +99,7 @@ func AssertDecodesEveryValidGolden(t *testing.T, decode func([]byte) error, requ
 	}
 }
 
-// AssertRejectsMalformed proves the operator refuses the envelopes the contract
-// marks invalid. Accepting one is worse than failing to decode a valid one: it
-// means the operator acts on a request the engine considers malformed.
+// AssertRejectsMalformed fails when the operator accepts an envelope the contract marks invalid.
 func AssertRejectsMalformed(t *testing.T, accepts func([]byte) bool) {
 	t.Helper()
 
@@ -159,8 +124,7 @@ func AssertRejectsMalformed(t *testing.T, accepts func([]byte) bool) {
 	}
 }
 
-// Describe renders a short summary of the goldens found, for a test that wants
-// to log what it actually exercised rather than assert it silently.
+// Describe renders a short summary of the valid goldens found.
 func Describe(t *testing.T) string {
 	t.Helper()
 	valid := ValidGoldens(t)

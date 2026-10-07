@@ -75,7 +75,6 @@ func TestHarness_CatchesADestructiveUpgrade(t *testing.T) {
 }
 
 func TestHarness_CatchesConvergingReportedAsAnError(t *testing.T) {
-	// The exact defect both twins shipped with (MIT-1480/MIT-1481).
 	s := conforming()
 	s.ValidateWhileConverging = func() (bool, bool) { return false, true }
 	if !broken(s) {

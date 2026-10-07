@@ -15,19 +15,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// MIT-1657: a fixture-driven FakeSaaS — the Tier-1 hermetic-fakes pattern
-// (MIT-1138, see fakes_test.go) generalised so a new SaaS-backed operator
-// doesn't need a hand-rolled httptest.Handler per provider. A fixture is one
-// recorded provider exchange (request shape -> response); loading zero
-// fixtures for a provider is refused, because that is exactly the condition
-// the upstream lint gate treats as "this operator has no fake coverage."
-//
-// The other half of the contract, just as important as matching: a request
-// that matches NOTHING gets a loud 418 naming what was tried, and — since a
-// non-matching request is exactly the shape a probing/hostile caller sends —
-// the 418 path must never echo back a header VALUE it received. Leaking a
-// bearer token into a "no fixture matched" diagnostic would be a worse bug
-// than the one the diagnostic exists to prevent.
+// The 418 for an unmatched request must never echo a header value it received, since that could leak a bearer token.
 
 // fakeTB is a minimal testing.TB double that lets a test assert LoadSaaSFixtures
 // fails loudly (t.Fatalf) without taking the whole test binary down. It embeds
