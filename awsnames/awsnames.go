@@ -5,9 +5,9 @@ import "strings"
 
 func Prefix(appName string) string { return "mitstack-app-" + strings.TrimSpace(appName) }
 
+// ECRRepository is rebuilt rather than carried on a switch, since deleting it destroys every image pushed to it.
 func ECRRepository(appName string) string { return Prefix(appName) }
 
-// InstanceRole is the role the app's EC2 instance assumes.
 func InstanceRole(appName string) string { return Prefix(appName) + "-instance" }
 
 // InstanceProfile shares the instance role's name, since an instance profile is a separate account-unique resource.

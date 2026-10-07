@@ -41,9 +41,12 @@ type BreakReason string
 
 const (
 	// BreakTypeRemoved includes a renamed type.
-	BreakTypeRemoved         BreakReason = "type-removed"
-	BreakKindChanged         BreakReason = "kind-changed"
-	BreakOutputRemoved       BreakReason = "output-removed"
+	BreakTypeRemoved BreakReason = "type-removed"
+	// BreakKindChanged is a type whose kind differs from before.
+	BreakKindChanged BreakReason = "kind-changed"
+	// BreakOutputRemoved is an output present before and absent now.
+	BreakOutputRemoved BreakReason = "output-removed"
+	// BreakOutputSecretChanged is an output whose secret mark differs from before.
 	BreakOutputSecretChanged BreakReason = "output-secret-changed"
 	// BreakRequiredInputAdded is an input required now but absent or optional before.
 	BreakRequiredInputAdded BreakReason = "required-input-added"
