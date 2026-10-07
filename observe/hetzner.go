@@ -72,6 +72,24 @@ func (o HetznerPrimaryIP) ObserveResource(ctx context.Context, r contract.Resour
 	return present(map[string]string{"publicIp": desc.IP}), nil
 }
 
+type HetznerNetworkAPI interface {
+	NetworkExists(ctx context.Context, d contract.Desired, networkID string) (bool, error)
+}
+
+// HetznerNetwork observes a hetzner.network by its networkId.
+type HetznerNetwork struct {
+	API HetznerNetworkAPI
+}
+
+func (o HetznerNetwork) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	ids, obs, ok := identityKeys(r, "networkId")
+	if !ok {
+		return obs, nil
+	}
+	exists, err := o.API.NetworkExists(ctx, r.Desired, ids[0])
+	return existence(exists, err, nil)
+}
+
 type HetznerFirewallAPI interface {
 	FirewallExists(ctx context.Context, d contract.Desired, firewallID string) (bool, error)
 }

@@ -426,17 +426,32 @@ over a small API interface the operator implements. They include
 `EC2Instance`, `EgressProxy`, `S3Bucket`, `VPC`, `SecurityGroup`, `EBSVolume`,
 `ECRRepository`, `IAMRole`, `Route53Record`, `SSMAssociation`, `EC2Container`,
 `EC2PostgresDatabase`, `HetznerServer`, `HetznerPrimaryIP`, `HetznerFirewall`,
-`GitHubRepository`, `GitHubCommit`, and `NodeReported`. A host probe never
-reads a failed probe as absence: `HostCommander` returns a nonzero exit as
-an error, and empty output is unknown. `EC2PostgresDatabase` and
-`NodeReported` report presence and identity only, so a block that provides
-such a resource reports the type's required outputs from its own observer.
+`HetznerNetwork`, `GitHubRepository`, `GitHubCommit`, and `NodeReported`. A
+host probe never reads a failed probe as absence: `HostCommander` returns a
+nonzero exit as an error, and empty output is unknown.
+
+`EC2PostgresDatabase` probes the Postgres container postgres-db runs for
+each subscription, named by the identity's `instanceId` and `container`, the
+way postgres-db does. Its probe prints `PRESENT=1`, `PRESENT=0` when Docker
+answers without the container, or `PRESENT=unknown` when Docker does not
+answer, and then for a present container `READY=` and `pg_isready`'s exit
+status. The container is present once `READY=0`, absent on `PRESENT=0`, and
+otherwise unknown. It reports `dbName` only when the identity carries
+`database`. `EC2PostgresDatabase` and `NodeReported` report presence and
+identity only, so a block that provides such a resource reports the type's
+other required outputs from its own observer.
 
 `NodeReported` serves a resource the platform has no route to, such as a
 `kubernetes.namespace`, from node reports. A node report is the report a
 node of the Hetzner cluster sends the platform, read at
-`GET /v1/subscriptions/{id}/node-reports`. Its body lists the
-subscription's objects under `subscriptionResources`, and may carry
+`GET /v1/subscriptions/{id}/node-reports`. Reports are stored under the
+cluster's own subscription, so the identity names it as
+`clusterSubscription`, beside the object's `kind`, `name` and optional
+`namespace`; without it, `NodeReported` reads the observing subscription's
+own reports. An object matches only when it also carries the observing
+subscription's id, since an object is labelled by the subscription that
+created it. A report's body lists those objects under
+`subscriptionResources`, and may carry
 `madeAt` and `subscriptionResourcesComplete`. A report counts when its
 `madeAt`, or its receipt time when it has none, is after `VerbAt`, and the
 newest counting report decides. An object it lists is present. An object it

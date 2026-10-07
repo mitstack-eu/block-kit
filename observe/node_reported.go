@@ -22,7 +22,10 @@ type NodeReportsAPI interface {
 
 // NodeReported observes a resource the platform has no route to, such as a
 // kubernetes.namespace, by the kind, name and optional namespace its
-// identity names, reporting presence and identity only. A report counts
+// identity names, reporting presence and identity only. It reads the
+// reports of the cluster subscription the identity's clusterSubscription
+// names, else its own, and matches an object labelled with the observing
+// subscription's id. A report counts
 // when its madeAt, else its receivedAt, is after the verb, and the newest
 // counting report decides: a listed object is present, and an unlisted one
 // is absent only when that report has a madeAt after the verb and marks its
@@ -49,7 +52,11 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 	if !ok {
 		return obs, nil
 	}
-	reports, err := o.API.NodeReports(ctx, r.Desired, r.Desired.SubscriptionID)
+	cluster := r.Identity["clusterSubscription"]
+	if cluster == "" {
+		cluster = r.Desired.SubscriptionID
+	}
+	reports, err := o.API.NodeReports(ctx, r.Desired, cluster)
 	if err != nil {
 		return contract.Observation{}, err
 	}

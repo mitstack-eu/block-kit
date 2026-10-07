@@ -109,6 +109,7 @@ var hetznerTypes = map[string]string{
 	"firewall":   "hetzner.firewall",
 	"volume":     "hetzner.volume",
 	"ssh_key":    "hetzner.ssh-key",
+	"network":    "hetzner.network",
 }
 
 // ListTagged implements TaggedLister.
