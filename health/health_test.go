@@ -13,8 +13,6 @@ func check(s health.Status) health.Check {
 }
 
 func TestStatus_ZeroValueIsConverging(t *testing.T) {
-	// An unset status must neither claim health nor trigger a destructive
-	// remediation. Both of the other two do one of those.
 	var s health.Status
 	if s != health.Converging {
 		t.Errorf("the zero Status = %v, want Converging", s)
@@ -35,8 +33,6 @@ func TestRun_HealthyIsNotRemediated(t *testing.T) {
 }
 
 func TestRun_ConvergingIsNotRemediated(t *testing.T) {
-	// The important one. Replacing a resource that was about to come up is how a
-	// self-heal turns a slow boot into a destructive loop.
 	var remediated bool
 	h := &health.Healer{Check: check(health.Converging), Remediate: func(context.Context) error {
 		remediated = true
@@ -72,8 +68,6 @@ func TestRun_DeadIsRemediated(t *testing.T) {
 }
 
 func TestRun_RemediationIsBounded(t *testing.T) {
-	// An unbounded self-heal loop recreates a resource forever on the consumer's
-	// bill — a worse outcome than the unhealthy resource it was fixing.
 	var calls int
 	h := &health.Healer{Check: check(health.Dead), MaxAttempts: 2, Remediate: func(context.Context) error {
 		calls++
@@ -93,7 +87,6 @@ func TestRun_RemediationIsBounded(t *testing.T) {
 }
 
 func TestRun_ZeroMaxAttemptsMeansOneNotUnlimited(t *testing.T) {
-	// The fail-open reading of a missing bound is what bills a consumer forever.
 	var calls int
 	h := &health.Healer{Check: check(health.Dead), Remediate: func(context.Context) error {
 		calls++
@@ -109,8 +102,7 @@ func TestRun_ZeroMaxAttemptsMeansOneNotUnlimited(t *testing.T) {
 }
 
 func TestRun_AProbeFailureIsConvergingNotDead(t *testing.T) {
-	// If we could not determine health, we must not conclude death — that
-	// conclusion triggers a destructive action.
+	// Not determining health must not be concluded as death, which triggers a destructive action.
 	h := &health.Healer{
 		Check:     func(context.Context) (health.Status, error) { return health.Dead, errors.New("api timeout") },
 		Remediate: func(context.Context) error { t.Fatal("must not remediate on an unreadable probe"); return nil },
@@ -125,11 +117,7 @@ func TestRun_AProbeFailureIsConvergingNotDead(t *testing.T) {
 	}
 }
 
-// --- The two destructive-failure-mode rules ---------------------------------
-
 func TestPromote_APlaceholderNeverReplacesServingContent(t *testing.T) {
-	// MIT-946: a self-heal cycle once overwrote a consumer's live app with the
-	// scaffold placeholder.
 	current := health.Content{Ref: "sha-real", Serving: true}
 	candidate := health.Content{Ref: "placeholder", IsPlaceholder: true}
 
@@ -140,8 +128,6 @@ func TestPromote_APlaceholderNeverReplacesServingContent(t *testing.T) {
 }
 
 func TestPromote_ARecreatedResourceComesBackAtLastGood(t *testing.T) {
-	// MIT-948: returning the placeholder here hands the consumer an empty box in
-	// place of their working one.
 	current := health.Content{} // freshly recreated, serving nothing
 	lastGood := health.Content{Ref: "sha-lastgood"}
 	candidate := health.Content{Ref: "placeholder", IsPlaceholder: true}
@@ -156,8 +142,6 @@ func TestPromote_ARecreatedResourceComesBackAtLastGood(t *testing.T) {
 }
 
 func TestPromote_ThePlaceholderIsFineOnAGenuinelyNewResource(t *testing.T) {
-	// First provision: nothing serving, no last-good. The placeholder is exactly
-	// right, and refusing it would block the normal path.
 	got, err := health.Promote(health.Content{}, health.Content{}, health.Content{Ref: "placeholder", IsPlaceholder: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -181,7 +165,6 @@ func TestPromote_RealContentAlwaysWins(t *testing.T) {
 }
 
 func TestPromote_APlaceholderMayReplaceAPlaceholder(t *testing.T) {
-	// The guard is about SERVING REAL content, not about placeholders as such.
 	current := health.Content{Ref: "placeholder", IsPlaceholder: true, Serving: true}
 	got, err := health.Promote(current, health.Content{}, health.Content{Ref: "placeholder-v2", IsPlaceholder: true})
 	if err != nil {
