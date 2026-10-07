@@ -1,11 +1,5 @@
 package stackitid_test
 
-// The operator rule is that a secret an operator receives may go to the cloud
-// it drives, but must never appear in what it hands back. stackitid handles
-// the two most sensitive values on this path — the platform-signed OIDC
-// assertion it presents, and the STACKIT access token it gets back — so the
-// rule is asserted here, once, across every failure path.
-
 import (
 	"bytes"
 	"context"

@@ -12,25 +12,15 @@ import (
 	"github.com/mitstack-eu/operator-kit/stackitid"
 )
 
-// stackitid presents the platform's external OIDC assertion to STACKIT's
-// token endpoint under RFC 8693 token exchange, and holds the short-lived
-// access token that comes back. These tests pin the exchange request shape,
-// the response mapping, the named rejection an operator can map to
-// statusDetail, and the fail-closed Refresher wiring.
-
 const (
 	leakAssertion = "STACKIT-ASSERTION-JWT-THAT-MUST-NEVER-SURFACE"
 	testAudience  = "urn:stackit:iam:project:11111111-1111-1111-1111-111111111111"
 )
 
-// roundTripFunc lets a test fake the transport below net/http, so a transport
-// failure can be forced without touching a real socket.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// fixtureServer starts a TLS test server serving handler, and returns it
-// closed automatically at test end.
 func fixtureServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(handler)
@@ -38,8 +28,6 @@ func fixtureServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	return srv
 }
 
-// validIdentity returns an Identity pointed at srv, wired through the
-// injectable client seam so the TLS test server's certificate is trusted.
 func validIdentity(srv *httptest.Server) stackitid.Identity {
 	return stackitid.Identity{
 		TokenURL:  srv.URL + "/token",
@@ -57,8 +45,6 @@ func jsonHandler(t *testing.T, status int, body string) http.HandlerFunc {
 		_, _ = w.Write([]byte(body))
 	}
 }
-
-// --- Resolve: the exchange request ------------------------------------------
 
 func TestResolve_PostsFormEncodedTokenExchangeRequest(t *testing.T) {
 	var gotMethod, gotContentType string
@@ -139,8 +125,6 @@ func TestResolve_OmitsScopeParameterWhenUnset(t *testing.T) {
 	}
 }
 
-// --- Resolve: the response ---------------------------------------------------
-
 func TestResolve_ReturnsCredentialFromTokenResponse(t *testing.T) {
 	srv := fixtureServer(t, jsonHandler(t, http.StatusOK, `{"access_token":"the-access-token","token_type":"Bearer","expires_in":3600}`))
 
@@ -220,8 +204,6 @@ func TestResolve_ServerErrorReturnsError(t *testing.T) {
 	}
 }
 
-// --- Resolve: the named rejection --------------------------------------------
-
 func TestResolve_InvalidGrantErrorNamesTheRejection(t *testing.T) {
 	const description = "assertion signature verification failed"
 	srv := fixtureServer(t, jsonHandler(t, http.StatusBadRequest,
@@ -241,8 +223,6 @@ func TestResolve_InvalidGrantErrorNamesTheRejection(t *testing.T) {
 		t.Errorf("error = %v, want errors.Is(err, stackitid.ErrInvalidGrant) so an operator can map it to statusDetail", err)
 	}
 }
-
-// --- Resolve: validation -----------------------------------------------------
 
 func TestResolve_RequiresTokenURL(t *testing.T) {
 	id := stackitid.Identity{Audience: testAudience, Assertion: leakAssertion}
@@ -266,11 +246,7 @@ func TestResolve_RequiresAssertion(t *testing.T) {
 }
 
 func TestResolve_RejectsNonHTTPSTokenURL(t *testing.T) {
-	// Presenting a bearer assertion over plaintext is itself the leak, so this
-	// must be refused before any request is attempted. The unreachable
-	// TEST-NET-2 address (RFC 5737) would hang until a dial timeout if the
-	// package tried to connect, so a fast, correctly-worded error proves the
-	// rejection happens before any network attempt.
+	// The unreachable TEST-NET-2 address would hang if the package tried to connect, so a fast error proves rejection precedes any network attempt.
 	id := stackitid.Identity{
 		TokenURL:  "http://198.51.100.1:1/token",
 		Audience:  testAudience,
@@ -299,8 +275,6 @@ func TestResolve_RejectsUnparseableTokenURL(t *testing.T) {
 	}
 }
 
-// --- Resolve: context ---------------------------------------------------------
-
 func TestResolve_HonoursContextCancellation(t *testing.T) {
 	srv := fixtureServer(t, jsonHandler(t, http.StatusOK, `{"access_token":"tok","token_type":"Bearer","expires_in":3600}`))
 
@@ -316,8 +290,6 @@ func TestResolve_HonoursContextCancellation(t *testing.T) {
 	}
 }
 
-// --- Resolve: transport --------------------------------------------------------
-
 func TestResolve_TransportFailureReturnsError(t *testing.T) {
 	id := stackitid.Identity{
 		TokenURL:  "https://sts.stackit.cloud/token",
@@ -331,8 +303,6 @@ func TestResolve_TransportFailureReturnsError(t *testing.T) {
 		t.Error("expected an error when the transport fails")
 	}
 }
-
-// --- Refresher (fail-closed, thin adapter over credrefresh) -------------------
 
 func TestRefresher_ReusesCredentialUntilNearExpiry(t *testing.T) {
 	var calls int
