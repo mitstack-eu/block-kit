@@ -16,13 +16,8 @@ import (
 	"github.com/mitstack-eu/operator-kit/provenance"
 )
 
-// emptyOCIConfig is the standard empty config blob an artifact-only OCI
-// manifest points its config descriptor at, on the model of
-// application/vnd.oci.empty.v1+json.
 var emptyOCIConfig = []byte("{}")
 
-// runPush implements `blockprov push`: writes a built record into a
-// registry beside its image over the plain OCI distribution API.
 func runPush(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("push", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -80,9 +75,7 @@ func runPush(args []string, stdout io.Writer) int {
 		return 1
 	}
 
-	// No "subject" descriptor: a referrer would not survive the platform's
-	// untagged-image lifecycle policy, so this manifest is a plain TAGGED
-	// artifact instead — see package provenance's doc comment.
+	// No subject descriptor: a referrer would not survive the platform's untagged-image lifecycle policy, so the manifest is a tagged artifact.
 	manifest := map[string]interface{}{
 		"schemaVersion": 2,
 		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
@@ -116,9 +109,7 @@ func runPush(args []string, stdout io.Writer) int {
 	return 0
 }
 
-// normalizeRegistry turns a bare host into an https URL, and leaves a
-// scheme+host as given — the shape that lets a test point --registry at a
-// plain-http httptest.NewServer.
+// normalizeRegistry leaves a scheme+host as given so a test can point --registry at a plain-http httptest server.
 func normalizeRegistry(registry string) string {
 	if strings.HasPrefix(registry, "http://") || strings.HasPrefix(registry, "https://") {
 		return registry
@@ -126,8 +117,6 @@ func normalizeRegistry(registry string) string {
 	return "https://" + registry
 }
 
-// ociClient speaks just enough of the OCI distribution API for `push`: the
-// two-step blob upload and a manifest PUT, all over HTTP Basic auth.
 type ociClient struct {
 	base     string
 	repo     string
@@ -136,9 +125,7 @@ type ociClient struct {
 	http     *http.Client
 }
 
-// drainAndClose reads body to completion before closing it, so the
-// transport can reuse the underlying connection for the next request
-// instead of tearing it down.
+// drainAndClose reads body to completion so the transport can reuse the connection.
 func drainAndClose(body io.ReadCloser) {
 	_, _ = io.Copy(io.Discard, body)
 	body.Close()
@@ -160,10 +147,6 @@ func (c *ociClient) do(method, rawURL string, body []byte, contentType string) (
 	return c.http.Do(req)
 }
 
-// uploadBlob pushes data through the two-step OCI blob upload: POST
-// .../blobs/uploads/ to start (a 202 with a Location header naming the
-// upload session), then PUT that location with ?digest=<sha256> to
-// complete it. It returns the blob's own digest.
 func (c *ociClient) uploadBlob(data []byte) (digest string, err error) {
 	sum := sha256.Sum256(data)
 	digest = "sha256:" + hex.EncodeToString(sum[:])
@@ -202,7 +185,6 @@ func (c *ociClient) uploadBlob(data []byte) (digest string, err error) {
 	return digest, nil
 }
 
-// putManifest PUTs manifest under tag.
 func (c *ociClient) putManifest(tag string, manifest []byte) error {
 	manifestURL := c.base + "/v2/" + c.repo + "/manifests/" + tag
 	resp, err := c.do(http.MethodPut, manifestURL, manifest, "application/vnd.oci.image.manifest.v1+json")
@@ -216,8 +198,7 @@ func (c *ociClient) putManifest(tag string, manifest []byte) error {
 	return nil
 }
 
-// resolveAgainst resolves ref (absolute or registry-relative, per the OCI
-// distribution spec's own allowance for either) against base.
+// resolveAgainst accepts an absolute or registry-relative ref, as the OCI distribution spec allows either.
 func resolveAgainst(base, ref string) (string, error) {
 	b, err := url.Parse(base)
 	if err != nil {
@@ -230,8 +211,6 @@ func resolveAgainst(base, ref string) (string, error) {
 	return b.ResolveReference(r).String(), nil
 }
 
-// withQueryParam adds key=value to rawURL's query string, preserving
-// whatever is already there.
 func withQueryParam(rawURL, key, value string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {

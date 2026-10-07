@@ -1,16 +1,6 @@
 package main
 
-// workflow_test.go is a structural guard over
-// ../.github/workflows/publish-block.yml (MIT-3097): a Go test, not a shell
-// script, because the kit's shell guards under scripts/ are run by nothing
-// (not go test ./..., not the kit's own ci.yml). It parses by indentation
-// with plain string handling, the way scripts/check-release-workflow_test.sh
-// extracts blocks from ci.yml — no YAML library, since the kit is
-// stdlib-only.
-//
-// The workflow file itself does not exist yet, so every test below fails on
-// "reading ../.github/workflows/publish-block.yml" until code-author adds
-// it. That is the intended RED signal.
+// This guard is a Go test because nothing runs the kit's shell guards, and it parses by indentation because the kit is stdlib-only.
 
 import (
 	"io"
@@ -24,17 +14,11 @@ import (
 
 const workflowPath = "../.github/workflows/publish-block.yml"
 
-// indentOf returns the number of leading spaces on line.
 func indentOf(line string) int {
 	return len(line) - len(strings.TrimLeft(line, " "))
 }
 
-// block returns the lines nested under "<key>:" inside text, regardless of
-// text's own indentation: every subsequent line more indented than the key
-// line, up to (but excluding) the first later non-blank line at or above
-// the key's own indent. Composes: feeding one call's result into another
-// reaches a nested key, the way block(block(text, "jobs"), "conformance")
-// does below. Mirrors check-release-workflow_test.sh's awk block().
+// block composes, so block(block(text, "jobs"), "conformance") reaches a nested key.
 func block(text, key string) string {
 	lines := strings.Split(text, "\n")
 	var out []string
@@ -57,8 +41,6 @@ func block(text, key string) string {
 	return strings.Join(out, "\n")
 }
 
-// jobNames returns the top-level job keys directly under a jobs: block
-// (indent 2 inside it, i.e. "  <name>:" lines).
 func jobNames(jobsBlock string) []string {
 	var names []string
 	namePattern := regexp.MustCompile(`^\s\s(\S[^:]*):`)
@@ -249,19 +231,9 @@ func TestBlockHelper_ExtractsNestedKeysByIndentation(t *testing.T) {
 	}
 }
 
-// --- the tag-exists guard step (publish job, id: existing) ---
-//
-// A republish of an already-tagged version must push nothing and write no
-// provenance record. The tests below pin two things: the guard step's own
-// run: script (executed for real, against a stub `aws`, since its exit
-// code and $GITHUB_OUTPUT are the whole contract), and the `if:` on every
-// step downstream of it that must skip once the tag is already published.
+// A republish of an already-tagged version must push nothing and write no record, so the guard step's script runs for real against a stub aws and every downstream step's if: is pinned.
 
-// stepBlocks splits a jobs-level YAML block into one text chunk per "- "
-// list item (each step), by indentation: only lines whose "- " marker sits
-// at the minimum indent used by any item start a new chunk, so a step's own
-// nested lines (its "with:", "run: |" body, and so on) stay inside the
-// chunk that contains them.
+// stepBlocks starts a new chunk only at the minimum indent used by any "- " item, so a step's nested lines stay inside it.
 func stepBlocks(jobBlock string) []string {
 	lines := strings.Split(jobBlock, "\n")
 	itemPattern := regexp.MustCompile(`^(\s*)-\s`)
@@ -293,8 +265,6 @@ func stepBlocks(jobBlock string) []string {
 	return blocks
 }
 
-// indexOfStepByID returns the index into blocks of the step carrying
-// "id: <id>", or -1.
 func indexOfStepByID(blocks []string, id string) int {
 	idPattern := regexp.MustCompile(`(?m)^\s*id:\s*` + regexp.QuoteMeta(id) + `\s*$`)
 	for i, b := range blocks {
@@ -305,8 +275,6 @@ func indexOfStepByID(blocks []string, id string) int {
 	return -1
 }
 
-// indexOfStepByName returns the index into blocks of the step whose
-// "- name:" line matches name exactly, or -1.
 func indexOfStepByName(blocks []string, name string) int {
 	namePattern := regexp.MustCompile(`(?m)^\s*-?\s*name:\s*"?` + regexp.QuoteMeta(name) + `"?\s*$`)
 	for i, b := range blocks {
@@ -317,8 +285,6 @@ func indexOfStepByName(blocks []string, name string) int {
 	return -1
 }
 
-// ifOf returns the trimmed expression after a step's `if:` key, with an
-// optional `${{ ... }}` wrapper stripped, or "" if the step has none.
 func ifOf(stepBlock string) string {
 	m := regexp.MustCompile(`(?m)^\s*if:\s*(.+)\s*$`).FindStringSubmatch(stepBlock)
 	if m == nil {
@@ -330,10 +296,6 @@ func ifOf(stepBlock string) string {
 	return strings.TrimSpace(expr)
 }
 
-// runScript returns the dedented body of a step's `run: |` literal block,
-// reusing block() to pull out everything nested under the step's own
-// `run:` key and then stripping the common leading indent so the result is
-// a plain, directly executable shell script.
 func runScript(stepBlock string) string {
 	body := block(stepBlock, "run")
 	lines := strings.Split(body, "\n")
@@ -365,8 +327,6 @@ func runScript(stepBlock string) string {
 	return strings.Join(lines, "\n")
 }
 
-// publishStepBlocks reads the workflow and returns the publish job's steps,
-// split one chunk per step.
 func publishStepBlocks(t *testing.T) []string {
 	t.Helper()
 	text := readWorkflow(t)
@@ -377,10 +337,6 @@ func publishStepBlocks(t *testing.T) []string {
 	return stepBlocks(publish)
 }
 
-// existingStepRunScript locates the publish job's `id: existing` step and
-// returns its dedented run: script. It fails the test (not the helper's
-// caller) when the step or its script is missing, which is the RED signal
-// before code-author adds the step.
 func existingStepRunScript(t *testing.T) string {
 	t.Helper()
 	blocks := publishStepBlocks(t)
@@ -395,11 +351,8 @@ func existingStepRunScript(t *testing.T) string {
 	return script
 }
 
-// testDigest is a syntactically valid 64-hex-character sha256 digest, used
-// as the stub registry's canned "tag exists" answer.
 var testDigest = "sha256:" + strings.Repeat("ab", 32)
 
-// writeExecutable writes an executable file at path.
 func writeExecutable(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
@@ -407,8 +360,6 @@ func writeExecutable(t *testing.T, path, content string) {
 	}
 }
 
-// guardResult carries everything a test needs to assert on a run of the
-// guard step's script.
 type guardResult struct {
 	stdout, stderr, combined string
 	exitCode                 int
@@ -417,32 +368,20 @@ type guardResult struct {
 	awsArgv                  string
 }
 
-// runGuardScript runs the probe with the version tag answering awsMode and
-// the provenance record tag absent.
 func runGuardScript(t *testing.T, version, awsMode string) guardResult {
 	t.Helper()
 	return runProbe(t, version, awsMode, "absent")
 }
 
-// runProbe extracts the publish job's `id: existing` run: script, replaces
-// the `${{ inputs.ecr-repository }}` expression with a literal repository
-// name (and exports ECR_REPOSITORY too, so the test accepts either an
-// inline expression or an env-var-based implementation), and executes it
-// with bash against a stub `aws` that argv-records itself and answers per
-// requested tag: imageMode for a `v<version>` tag, recordMode for the
-// `sha256-<hex>.prov` record tag. Each mode is "exists", "absent" or
-// "fail".
+// runProbe runs the probe against a stub aws that answers per requested tag, with imageMode for the version tag and recordMode for the record tag, each "exists", "absent" or "fail".
 func runProbe(t *testing.T, version, imageMode, recordMode string) guardResult {
 	t.Helper()
 	return runProbeWithSha(t, version, imageMode, recordMode, "match")
 }
 
-// testSha is the commit the probe runs at, exported as GITHUB_SHA.
 var testSha = strings.Repeat("e", 40)
 
-// runProbeWithSha is runProbe with shaMode answering the probe for the
-// run's own commit-sha tag: "match" answers the image's digest, "other" a
-// different digest, and "absent" and "fail" as for the other tags.
+// runProbeWithSha adds shaMode for the commit-sha tag, where "match" answers the image's digest and "other" a different one.
 func runProbeWithSha(t *testing.T, version, imageMode, recordMode, shaMode string) guardResult {
 	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -546,16 +485,12 @@ func runProbeWithSha(t *testing.T, version, imageMode, recordMode, shaMode strin
 	}
 }
 
-// testRecordDigest is the stub registry's answer for the record tag, a
-// different digest from the image's so a test can tell the two apart.
+// testRecordDigest differs from the image's digest so a test can tell the two apart.
 var testRecordDigest = "sha256:" + strings.Repeat("cd", 32)
 
-// testRecordTag is the tag `blockprov push` writes the record under for
-// testDigest.
 var testRecordTag = "sha256-" + strings.Repeat("ab", 32) + ".prov"
 
-// keyValues parses a $GITHUB_OUTPUT or $GITHUB_ENV file of key=value lines;
-// a later line for the same key wins, as it does on the runner.
+// keyValues lets a later line for the same key win, as it does on the runner.
 func keyValues(text string) map[string]string {
 	out := map[string]string{}
 	for _, line := range strings.Split(text, "\n") {
@@ -702,8 +637,6 @@ func TestWorkflow_NoStepGatesOnAnInequalityAgainstTheProbe(t *testing.T) {
 	}
 }
 
-// jobIf returns the job-level `if:` of a job block (a key at the job's own
-// indent, not one inside a step), with any `${{ }}` wrapper stripped.
 func jobIf(jobBlock string) string {
 	minIndent := -1
 	for _, line := range strings.Split(jobBlock, "\n") {
@@ -750,9 +683,7 @@ func TestWorkflow_HeaderStatesThePublishEventAndWhatARerunCompletes(t *testing.T
 	}
 }
 
-// stepRuns evaluates a step's `if:` against the probe's outputs. It knows
-// the forms this workflow uses and fails the test on any other, so a new
-// gate cannot pass unexamined.
+// stepRuns fails the test on any if: form it does not know, so a new gate cannot pass unexamined.
 func stepRuns(t *testing.T, stepBlock string, outputs map[string]string) bool {
 	t.Helper()
 	expr := ifOf(stepBlock)
@@ -778,9 +709,6 @@ func stepRunsByName(t *testing.T, blocks []string, name string, outputs map[stri
 	return stepRuns(t, blocks[idx], outputs)
 }
 
-// runStepBody executes a publish step's run body under the runner's shell
-// with `${{ }}` expressions replaced by literals and a stub ./blockprov
-// that records its argv, one invocation per line. It returns that argv.
 func runStepBody(t *testing.T, name string, env map[string]string) string {
 	t.Helper()
 	blocks := publishStepBlocks(t)
@@ -976,9 +904,7 @@ func TestWorkflow_CleanUpKitTokenStepStillRunsAlways(t *testing.T) {
 	}
 }
 
-// A record signs this run's commit, so it is completed only for an image
-// this commit built: the build step tags the image with the commit sha, and
-// the probe checks that tag resolves to the published digest.
+// A record signs this run's commit, so it is completed only for an image this commit built.
 func TestWorkflow_ExistingStepChecksThePublishedImageWasBuiltFromThisCommit(t *testing.T) {
 	res := runProbeWithSha(t, "1.2.0", "exists", "absent", "match")
 	if res.exitCode != 0 {
@@ -1016,10 +942,7 @@ func TestWorkflow_ARecordPresentNeedsNoCommitCheck(t *testing.T) {
 	}
 }
 
-// The kit is checked out at operator-kit/ inside the block's own tree to
-// build its tools. blockverify judges `.` and the image builds from `.`, so
-// the checkout must be gone before either reads the tree, or the block is
-// judged by the kit's own source.
+// The kit checkout must be gone before blockverify or the image build reads the tree, or the block is judged by the kit's own source.
 func TestWorkflow_TheKitCheckoutLeavesTheBlockTreeBeforeItIsJudged(t *testing.T) {
 	jobs := block(readWorkflow(t), "jobs")
 	for _, tc := range []struct{ job, build, firstReader string }{

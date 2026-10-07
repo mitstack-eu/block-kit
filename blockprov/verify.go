@@ -9,8 +9,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/provenance"
 )
 
-// runVerify implements `blockprov verify` — the same provenance.Verify code
-// path the platform calls, exposed so a record can be checked by hand.
 func runVerify(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -31,10 +29,7 @@ func runVerify(args []string, stdout io.Writer) int {
 		fmt.Fprintf(stdout, "blockprov verify: reading record: %v\n", err)
 		return 1
 	}
-	// Decode, not json.Unmarshal: a plain Unmarshal silently drops any field
-	// Record and Payload do not declare, so a record carrying an
-	// attacker-added field alongside its original, still-valid token would
-	// verify clean. Decode refuses that field instead.
+	// Decode, not json.Unmarshal, which drops an undeclared field and would verify a record carrying an attacker-added one.
 	rec, err := provenance.Decode(recordRaw)
 	if err != nil {
 		fmt.Fprintf(stdout, "blockprov verify: record is not valid: %v\n", err)

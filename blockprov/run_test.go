@@ -1,22 +1,5 @@
 package main
 
-// run_test.go pins the CONTRACT for the `blockprov` command (MIT-3097): the
-// CLI a block's publish workflow calls to build and push its provenance
-// record. Modelled on blockverify/run_test.go: the seam under test is
-// Run(args []string, stdout io.Writer) int, so the whole command is
-// testable without touching a real process, a real registry, or GitHub's
-// real OIDC token endpoint.
-//
-// Every subcommand (build, verify, push) does not exist yet, so this
-// package does not compile until code-author adds run.go and main.go. That
-// is the intended RED signal.
-//
-// build's --block-id and --block-version flags are this file's own
-// addition: the CONTRACT's CLI usage line omits them, but Payload.BlockID
-// and Payload.BlockVersion are required fields Build refuses to leave
-// empty, and nothing else in the CLI's flag set could supply them. See the
-// test-author report for this correction.
-
 import (
 	"bytes"
 	"crypto"
@@ -38,8 +21,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/provenance"
 )
 
-// --- helpers -----------------------------------------------------------
-
 func runBlockprov(t *testing.T, args ...string) (stdout string, exitCode int) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -56,9 +37,7 @@ func writeFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-// signTestToken mints an RS256 JWT, mirroring provenance_test.go's helper of
-// the same shape — duplicated rather than shared because kittest is off
-// limits and a test in package main cannot import provenance_test.
+// signTestToken duplicates provenance_test.go's helper because a test in package main cannot import provenance_test.
 func signTestToken(t *testing.T, priv *rsa.PrivateKey, kid string, claims map[string]interface{}) string {
 	t.Helper()
 	header := map[string]interface{}{"alg": "RS256", "kid": kid, "typ": "JWT"}
@@ -79,10 +58,6 @@ func signTestToken(t *testing.T, priv *rsa.PrivateKey, kid string, claims map[st
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
-// mintServer fakes GitHub's ACTIONS_ID_TOKEN_REQUEST_URL endpoint: it reads
-// the requested audience off the query string and mints a token whose
-// repository/sha claims are fixed to what the test hands it, exactly as the
-// ambient job's own identity would be in real CI.
 func mintServer(t *testing.T, repository, sha string) (url string, resolve provenance.KeyResolver) {
 	t.Helper()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -144,8 +119,6 @@ func buildArgs(t *testing.T, dir, tokenURL, outPath string) []string {
 	}
 }
 
-// --- build --------------------------------------------------------------
-
 func TestRun_Build_FailedReportExitsNonZeroAndWritesNoFile(t *testing.T) {
 	dir := t.TempDir()
 	reportPath := writeFile(t, dir, "report.json", `{"suiteVersion":"1.0.0","kitVersion":"v0.1.0","mode":"standalone","manifestDigest":"sha256:aa","verdict":"fail","resultsDigest":"sha256:bb","suites":[]}`)
@@ -204,8 +177,6 @@ func TestRun_Build_PassingReportWritesARecordProvenanceVerifyAccepts(t *testing.
 	}
 }
 
-// --- verify ---------------------------------------------------------------
-
 func TestRun_Verify_GoldenExitsZero(t *testing.T) {
 	stdout, exit := runBlockprov(t, "verify",
 		"--record", "../provenance/goldens/record.golden.json",
@@ -231,13 +202,7 @@ func TestRun_Verify_OtherIdentityExitsNonZeroAndNamesTheMismatch(t *testing.T) {
 	}
 }
 
-// TestRun_Verify_UnknownFieldExitsNonZero pins the actual failure a live
-// probe against HEAD found: `blockprov verify` decoded a record with
-// json.Unmarshal, which silently drops any key Payload does not declare, so
-// a record carrying an attacker-added field alongside its original,
-// still-valid token printed "record accepted" and exited 0. Verify must go
-// through provenance.Decode (which enforces no unknown fields), not
-// json.Unmarshal, so this exact record is rejected instead.
+// verify must go through provenance.Decode, because json.Unmarshal drops an attacker-added field and the record would be accepted.
 func TestRun_Verify_UnknownFieldExitsNonZero(t *testing.T) {
 	stdout, exit := runBlockprov(t, "verify",
 		"--record", "../provenance/goldens/invalid-unknown-field.json",
@@ -249,11 +214,6 @@ func TestRun_Verify_UnknownFieldExitsNonZero(t *testing.T) {
 	}
 }
 
-// --- push -----------------------------------------------------------------
-
-// ociServer fakes just enough of the OCI distribution API for `push`: a
-// two-step blob upload (POST to start, PUT with ?digest= to complete) and a
-// manifest PUT, recording what it received so the test can judge it.
 type ociServer struct {
 	*httptest.Server
 
@@ -376,8 +336,6 @@ func TestRun_Push_FailsLoudlyOnNon2xxFromRegistry(t *testing.T) {
 		t.Fatalf("want non-zero exit when the registry returns a non-2xx status, got 0\nstdout:\n%s", stdout)
 	}
 }
-
-// --- usage errors -----------------------------------------------------------
 
 func TestRun_UsageError_NoSubcommand(t *testing.T) {
 	stdout, exit := runBlockprov(t)
