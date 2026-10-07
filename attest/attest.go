@@ -31,15 +31,12 @@ type Attestation struct {
 
 var (
 	// ErrPartialPass is returned by Sign when asked to attest anything short of a full pass.
-	ErrPartialPass = errors.New("attest: refusing to sign — a partial pass is not a pass, and a caveated signature is one nobody reads")
-	// ErrUnknownKid is returned when the JWKS has no key for the attestation's kid.
-	ErrUnknownKid = errors.New("attest: unknown signing key id")
-	// ErrBadSignature is returned when the signature does not verify.
+	ErrPartialPass  = errors.New("attest: refusing to sign — a partial pass is not a pass, and a caveated signature is one nobody reads")
+	ErrUnknownKid   = errors.New("attest: unknown signing key id")
 	ErrBadSignature = errors.New("attest: signature does not verify")
 	// ErrManifestChanged is returned when the manifest digest no longer matches.
 	ErrManifestChanged = errors.New("attest: manifest digest does not match — this attestation describes a different block")
-	// ErrIncomplete is returned when required claims are missing.
-	ErrIncomplete = errors.New("attest: incomplete claims")
+	ErrIncomplete      = errors.New("attest: incomplete claims")
 )
 
 func canonical(c Claims) ([]byte, error) {

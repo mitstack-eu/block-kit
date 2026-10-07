@@ -3,10 +3,8 @@ package awsnames
 
 import "strings"
 
-// Prefix is the common stem: mitstack-app-<appName>.
 func Prefix(appName string) string { return "mitstack-app-" + strings.TrimSpace(appName) }
 
-// ECRRepository is the app's container registry.
 func ECRRepository(appName string) string { return Prefix(appName) }
 
 // InstanceRole is the role the app's EC2 instance assumes.

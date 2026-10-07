@@ -13,7 +13,6 @@ type Status int
 const (
 	// Converging is the zero value so an unset status neither claims health nor triggers a destructive remediation.
 	Converging Status = iota
-	// Healthy means serving.
 	Healthy
 	// Dead means it will not recover by waiting, so remediation is warranted.
 	Dead
@@ -33,7 +32,6 @@ func (s Status) String() string {
 // Check reports a resource's status, and must not call a converging resource Dead.
 type Check func(ctx context.Context) (Status, error)
 
-// Remediate attempts to fix a Dead resource.
 type Remediate func(ctx context.Context) error
 
 // Content describes what a resource is currently serving, for the placeholder and last-good rules.
@@ -43,7 +41,6 @@ type Content struct {
 	Serving       bool
 }
 
-// ErrRemediationExhausted is returned when the attempt cap is reached.
 var ErrRemediationExhausted = errors.New("health: remediation attempts exhausted")
 
 // ErrWouldReplaceServingContent is returned when a promotion would put a placeholder over serving content.
@@ -87,7 +84,6 @@ func (h *Healer) Run(ctx context.Context) (Status, bool, error) {
 	return st, true, nil
 }
 
-// Attempts reports how many remediations have been made.
 func (h *Healer) Attempts() int { return h.attempts }
 
 // Promote decides what a recreated resource comes back with: never a placeholder over serving content, and last-good in preference to a placeholder.
