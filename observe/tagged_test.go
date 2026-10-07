@@ -2,7 +2,7 @@ package observe_test
 
 // tagged_test.go pins the tag listers blockverify's tagging guard reads:
 // each lists everything carrying the subscription's id, as AWS tags it
-// (mitstack:subscription-id) or Hetzner labels it
+// (mitstack:subscription, the key aws-app-infra writes) or Hetzner labels it
 // (mitstack.dev/subscription), as the type it is. An object the lister
 // cannot type is still listed, with no type, so the guard reports it rather
 // than missing it.
@@ -21,15 +21,6 @@ var (
 	_ observe.TaggedLister = observe.AWSTagged{}
 	_ observe.TaggedLister = observe.HetznerLabelled{}
 )
-
-func TestSubscriptionTagKeys(t *testing.T) {
-	if observe.AWSSubscriptionTag != "mitstack:subscription-id" {
-		t.Errorf("AWSSubscriptionTag = %q, want mitstack:subscription-id", observe.AWSSubscriptionTag)
-	}
-	if observe.HetznerSubscriptionLabel != "mitstack.dev/subscription" {
-		t.Errorf("HetznerSubscriptionLabel = %q, want mitstack.dev/subscription", observe.HetznerSubscriptionLabel)
-	}
-}
 
 type fakeTagging struct {
 	arns          []string
@@ -73,8 +64,8 @@ func TestAWSTagged_ListsEachTaggedARNAsItsType(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ListTagged =\n%+v\nwant\n%+v", got, want)
 	}
-	if api.key != observe.AWSSubscriptionTag || api.value != "sub-1" {
-		t.Errorf("asked for tag %q = %q, want %q = sub-1", api.key, api.value, observe.AWSSubscriptionTag)
+	if api.key != "mitstack:subscription" || api.value != "sub-1" {
+		t.Errorf("asked for tag %q = %q, want mitstack:subscription = sub-1, the key aws-app-infra tags with", api.key, api.value)
 	}
 }
 
@@ -120,7 +111,7 @@ func TestHetznerLabelled_ListsEachLabelledObjectAsItsType(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ListTagged =\n%+v\nwant\n%+v", got, want)
 	}
-	if want := observe.HetznerSubscriptionLabel + "=sub-1"; api.selector != want {
+	if want := "mitstack.dev/subscription=sub-1"; api.selector != want {
 		t.Errorf("label selector = %q, want %q", api.selector, want)
 	}
 }

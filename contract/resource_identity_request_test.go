@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/operator-kit/contract"
 )
@@ -306,5 +307,68 @@ func TestEnvelopeSchema_DeclaresTheBlockLevelFieldsAndRaisesItsMinorVersion(t *t
 	}
 	if values := schemaObject(t, types, "properties.requirementTypes", "additionalProperties"); !hasType(values, "string") {
 		t.Errorf("properties.requirementTypes values = %v, want strings", values)
+	}
+}
+
+// --- which verb an observation settles -----------------------------------------
+//
+// A validate settles the subscription's last state-changing verb, not
+// itself, so the engine sends that verb's time under "settlesAt", and
+// Desired.VerbAt is that time. A request without it settles itself, at its
+// createdAt.
+
+func TestDecodeRequest_VerbAtIsSettlesAtWhenTheRequestCarriesIt(t *testing.T) {
+	const settles = "2026-07-15T20:00:00Z"
+	raw := mutateSubscribeGolden(t, func(m map[string]any) {
+		m["operation"] = "validate"
+		m["settlesAt"] = settles
+	})
+	req, err := contract.DecodeRequest(raw)
+	if err != nil {
+		t.Fatalf("DecodeRequest: %v", err)
+	}
+	want, _ := time.Parse(time.RFC3339, settles)
+	if d := req.Desired(); !d.VerbAt.Equal(want) {
+		t.Errorf("Desired().VerbAt = %v, want settlesAt %v rather than createdAt %v", d.VerbAt, want, req.CreatedAt)
+	}
+}
+
+func TestDecodeRequest_VerbAtIsCreatedAtWithoutSettlesAt(t *testing.T) {
+	req := decodeGolden(t, "validate")
+	if d := req.Desired(); d.VerbAt.IsZero() || !d.VerbAt.Equal(req.CreatedAt) {
+		t.Errorf("Desired().VerbAt = %v, want createdAt %v", d.VerbAt, req.CreatedAt)
+	}
+}
+
+func TestDecodeRequest_RefusesASettlesAtThatIsNotRFC3339NamingIt(t *testing.T) {
+	for label, value := range map[string]any{"not a time": "yesterday", "a number": 1752613200} {
+		t.Run(label, func(t *testing.T) {
+			_, err := contract.DecodeRequest(mutateSubscribeGolden(t, func(m map[string]any) { m["settlesAt"] = value }))
+			if err == nil {
+				t.Fatalf("DecodeRequest accepted settlesAt %v", value)
+			}
+			if !strings.Contains(err.Error(), `"settlesAt"`) {
+				t.Errorf("DecodeRequest error = %q, want it to name %q", err, "settlesAt")
+			}
+		})
+	}
+}
+
+func TestEnvelopeSchema_DeclaresSettlesAtAsAnOptionalTime(t *testing.T) {
+	var doc map[string]any
+	if err := json.Unmarshal(contract.EnvelopeSchema, &doc); err != nil {
+		t.Fatalf("contract.EnvelopeSchema is not valid JSON: %v", err)
+	}
+	if req, ok := doc["required"].([]any); ok {
+		for _, r := range req {
+			if r == "settlesAt" {
+				t.Error(`envelope.schema.json requires "settlesAt", but a request settling itself carries none`)
+			}
+		}
+	}
+	props := schemaObject(t, doc, "", "properties")
+	settles, ok := props["settlesAt"].(map[string]any)
+	if !ok || !hasType(settles, "string") || settles["format"] != "date-time" {
+		t.Errorf("properties.settlesAt = %v, want a string of format date-time", props["settlesAt"])
 	}
 }

@@ -13,7 +13,10 @@ package handler_test
 //   - validate observes each declared resource once and names the resources
 //     an upgrade would replace;
 //   - a request naming one declared resource is served for validate alone,
-//     handed the request's identity and type;
+//     handed the request's identity and type, even a type its entry no
+//     longer lists;
+//   - each observe is handed, as VerbAt, the time of the verb it settles:
+//     the clock once Ensure or Delete returned, or a validate's settlesAt;
 //   - New refuses a declared resource with no observer, naming it.
 
 import (
@@ -25,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/operator-kit/contract"
 	"github.com/mitstack-eu/operator-kit/handler"
@@ -216,10 +220,14 @@ func blockLevelConfig(t *testing.T, s *kittest.Signer, r handler.Resource, obs m
 
 // serveBlockLevel serves one verb over r and returns the status and the
 // decoded response.
-func serveBlockLevel(t *testing.T, r handler.Resource, obs map[string]*fakeObserver, operation string, extra map[string]any) (int, contract.Response) {
+func serveBlockLevel(t *testing.T, r handler.Resource, obs map[string]*fakeObserver, operation string, extra map[string]any, mutate ...func(*handler.Config)) (int, contract.Response) {
 	t.Helper()
 	s := kittest.NewSigner(t, "kid-block-level", 17)
-	h, err := handler.New(blockLevelConfig(t, s, r, asObservers(obs)))
+	cfg := blockLevelConfig(t, s, r, asObservers(obs))
+	for _, m := range mutate {
+		m(&cfg)
+	}
+	h, err := handler.New(cfg)
 	if err != nil {
 		t.Fatalf("handler.New: %v", err)
 	}
@@ -519,18 +527,139 @@ func TestBlockLevel_ValidateNamingOneResourceObservesItAloneWithTheRequestsIdent
 	}
 }
 
-func TestBlockLevel_ValidateNamingOneResourceRefusesATypeItsEntryDoesNotList(t *testing.T) {
+// The engine observes a resource by the type it recorded, which an older
+// manifest's entry may list and the current one not, so the requested type
+// reaches the observer rather than a refusal.
+func TestBlockLevel_ValidateNamingOneResourceHandsTheObserverARequestedTypeItsEntryDoesNotList(t *testing.T) {
 	cloud := newFakeCloud()
+	cloud.createAll()
 	obs := blockObservers(cloud)
 	status, resp := serveBlockLevel(t, &blockResource{cloud: cloud}, obs, "validate", map[string]any{
 		"resource":     "b",
 		"resourceType": "aws.vpc",
 	})
-	if status != http.StatusBadRequest || !strings.Contains(resp.Error, "aws.vpc") {
-		t.Errorf("status, error = %d, %q; want 400 naming aws.vpc", status, resp.Error)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: an observe by recorded type is served; response %+v", status, resp)
 	}
-	if len(obs["b"].calls()) != 0 {
-		t.Error("b was observed under a type its entry does not list")
+	refs := obs["b"].calls()
+	if len(refs) != 1 || refs[0].Type != "aws.vpc" {
+		t.Errorf("b observer handed %+v, want one observe as aws.vpc", refs)
+	}
+	if o := resp.Resources["b"].Observe; o == nil || o.Type != "aws.vpc" {
+		t.Errorf("b observe entry = %+v, want type aws.vpc", o)
+	}
+}
+
+func TestBlockLevel_UnsubscribeHandsTheObserverARecordedTypeItsEntryDoesNotList(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.createAll()
+	obs := blockObservers(cloud)
+	recorded := recordedAll()
+	recorded["b"] = map[string]any{"type": "aws.vpc", "identity": map[string]any{"vpcId": "vpc-old"}}
+	status, resp := serveBlockLevel(t, &blockResource{cloud: cloud}, obs, "unsubscribe", map[string]any{"recordedResources": recorded})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; response %+v", status, resp)
+	}
+	refs := obs["b"].calls()
+	if len(refs) == 0 || refs[0].Type != "aws.vpc" {
+		t.Errorf("b observer handed %+v, want its recorded type aws.vpc", refs)
+	}
+}
+
+// --- which verb an observation settles ----------------------------------------------
+
+// tickingClock moves only when a test advances it, so the reading the
+// handler takes after the block-level call returns is known.
+type tickingClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *tickingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *tickingClock) advance() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(time.Second)
+	return c.now
+}
+
+// clockedBlock advances the clock as its Ensure and its Delete return,
+// recording the reading.
+type clockedBlock struct {
+	*blockResource
+	clock                *tickingClock
+	ensuredAt, deletedAt time.Time
+}
+
+func (b *clockedBlock) Ensure(ctx context.Context, d contract.Desired) error {
+	err := b.blockResource.Ensure(ctx, d)
+	b.ensuredAt = b.clock.advance()
+	return err
+}
+
+func (b *clockedBlock) Delete(ctx context.Context, id contract.Identity) error {
+	err := b.blockResource.Delete(ctx, id)
+	b.deletedAt = b.clock.advance()
+	return err
+}
+
+// An observe after subscribe or upgrade settles the ensure, and one after
+// unsubscribe proves absence made after the delete, so each is handed the
+// clock's reading once the block-level call returned.
+func TestBlockLevel_ObservesAreHandedTheTimeTheBlockLevelCallReturned(t *testing.T) {
+	for _, op := range []string{"subscribe", "upgrade", "unsubscribe"} {
+		t.Run(op, func(t *testing.T) {
+			cloud := newFakeCloud()
+			if op == "unsubscribe" {
+				cloud.createAll()
+			}
+			clock := &tickingClock{now: time.Now()}
+			block := &clockedBlock{blockResource: &blockResource{cloud: cloud}, clock: clock}
+			obs := blockObservers(cloud)
+			status, resp := serveBlockLevel(t, block, obs, op, map[string]any{"recordedResources": recordedAll()},
+				func(c *handler.Config) { c.Now = clock.Now })
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200; response %+v", status, resp)
+			}
+			want := block.ensuredAt
+			if op == "unsubscribe" {
+				want = block.deletedAt
+			}
+			if want.IsZero() {
+				t.Fatalf("the block-level call for %s never ran", op)
+			}
+			for name, o := range obs {
+				refs := o.calls()
+				if len(refs) == 0 || !refs[0].Desired.VerbAt.Equal(want) {
+					t.Errorf("resource %q observer handed %+v, want VerbAt %v, the clock once the block-level call returned", name, refs, want)
+				}
+			}
+		})
+	}
+}
+
+func TestBlockLevel_ValidateHandsTheObserverTheVerbItSettles(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.createAll()
+	obs := blockObservers(cloud)
+	settles := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	status, resp := serveBlockLevel(t, &blockResource{cloud: cloud}, obs, "validate", map[string]any{
+		"recordedResources": recordedAll(),
+		"settlesAt":         settles.Format(time.RFC3339),
+	})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; response %+v", status, resp)
+	}
+	for name, o := range obs {
+		refs := o.calls()
+		if len(refs) == 0 || !refs[0].Desired.VerbAt.Equal(settles) {
+			t.Errorf("resource %q observer handed %+v, want VerbAt %v from settlesAt", name, refs, settles)
+		}
 	}
 }
 

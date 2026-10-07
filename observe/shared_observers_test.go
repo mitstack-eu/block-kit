@@ -229,10 +229,13 @@ func TestRoute53Record_ReportsTheAppsHostnameAndURL(t *testing.T) {
 // --- observers reached through the instance they run on --------------------------
 
 // fakeHost answers a script run on an instance with the stdout the test
-// gives the object the script names, and records where it ran.
+// gives the object the script names, and records where it ran. A
+// HostCommander reports a nonzero exit as an error, so err stands for a
+// probe that failed on the host.
 type fakeHost struct {
 	instance string
 	stdout   map[string]string
+	err      error
 	ranOn    []string
 }
 
@@ -240,6 +243,9 @@ func (f *fakeHost) RunOnInstance(_ context.Context, _ contract.Desired, instance
 	f.ranOn = append(f.ranOn, instanceID)
 	if instanceID != f.instance {
 		return "", errors.New("no such instance " + instanceID)
+	}
+	if f.err != nil {
+		return "", f.err
 	}
 	for name, out := range f.stdout {
 		if strings.Contains(script, name) {
@@ -249,8 +255,10 @@ func (f *fakeHost) RunOnInstance(_ context.Context, _ contract.Desired, instance
 	return "", nil
 }
 
-// An aws.ec2-container's script prints the container's state, or nothing
-// when no such container exists, run on the instance its identity names.
+// An aws.ec2-container's script prints the container's state, or the word
+// absent when Docker answers that no such container exists, run on the
+// instance its identity names. Empty output proves nothing, so it is
+// unknown, never absent.
 func TestEC2Container_AsksTheInstanceItRunsOn(t *testing.T) {
 	cases := []struct {
 		label, stdout string
@@ -258,7 +266,8 @@ func TestEC2Container_AsksTheInstanceItRunsOn(t *testing.T) {
 		detail        string
 	}{
 		{"running", "running\n", contract.Present, ""},
-		{"gone", "", contract.Absent, ""},
+		{"no such container", "absent\n", contract.Absent, ""},
+		{"no output", "", contract.Unknown, ""},
 		{"exited", "exited\n", contract.Unknown, "exited"},
 		{"restarting", "restarting\n", contract.Unknown, "restarting"},
 	}
@@ -273,6 +282,14 @@ func TestEC2Container_AsksTheInstanceItRunsOn(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a probe that failed on the host", func(t *testing.T) {
+		boom := errors.New("ssm: command exited 125")
+		got, err := observe.EC2Container{API: &fakeHost{instance: "i-0abc", err: boom}}.ObserveResource(context.Background(),
+			refFor("aws.ec2-container", map[string]string{"instanceId": "i-0abc", "container": "plain-tracker"}))
+		if !errors.Is(err, boom) {
+			t.Errorf("observation %+v, error %v; want the host's error returned, never read as absence", got, err)
+		}
+	})
 	t.Run("no instance in the identity", func(t *testing.T) {
 		host := &fakeHost{instance: "i-0abc"}
 		got, err := observe.EC2Container{API: host}.ObserveResource(context.Background(),
@@ -285,7 +302,8 @@ func TestEC2Container_AsksTheInstanceItRunsOn(t *testing.T) {
 }
 
 // An aws.ec2-postgres-database's script prints 1 when the database exists
-// and nothing otherwise.
+// and the word absent when it does not. Empty output proves nothing, so it
+// is unknown, and a probe that failed on the host is an error.
 func TestEC2PostgresDatabase_AsksTheInstanceItRunsOn(t *testing.T) {
 	ref := refFor("aws.ec2-postgres-database", map[string]string{"instanceId": "i-0abc", "database": "tracker"})
 	host := &fakeHost{instance: "i-0abc", stdout: map[string]string{"tracker": "1\n"}}
@@ -295,8 +313,17 @@ func TestEC2PostgresDatabase_AsksTheInstanceItRunsOn(t *testing.T) {
 		t.Errorf("ran on %q, want i-0abc once", host.ranOn)
 	}
 
-	got, err = observe.EC2PostgresDatabase{API: &fakeHost{instance: "i-0abc"}}.ObserveResource(context.Background(), ref)
+	got, err = observe.EC2PostgresDatabase{API: &fakeHost{instance: "i-0abc", stdout: map[string]string{"tracker": "absent\n"}}}.ObserveResource(context.Background(), ref)
 	wantObservation(t, got, err, contract.Absent, nil, "")
+
+	got, err = observe.EC2PostgresDatabase{API: &fakeHost{instance: "i-0abc"}}.ObserveResource(context.Background(), ref)
+	wantObservation(t, got, err, contract.Unknown, nil, "")
+
+	boom := errors.New("ssm: psql exited 2")
+	got, err = observe.EC2PostgresDatabase{API: &fakeHost{instance: "i-0abc", err: boom}}.ObserveResource(context.Background(), ref)
+	if !errors.Is(err, boom) {
+		t.Errorf("observation %+v, error %v; want the host's error returned, never read as absence", got, err)
+	}
 }
 
 // --- Hetzner -----------------------------------------------------------------------------

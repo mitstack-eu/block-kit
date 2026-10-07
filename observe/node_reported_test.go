@@ -4,10 +4,15 @@ package observe_test
 // resource the platform has no route to, read from the node reports its own
 // side sends (GET /v1/subscriptions/{id}/node-reports serves
 // {"reports":[{"receivedAt","body"}]}, each body listing
-// subscriptionResources). Only the newest report counts, and only when it
-// was received after the verb: then the identity's object is present when
-// the report lists it for the subscription and absent when it does not.
-// A newest report no newer than the verb, or none, is unknown.
+// subscriptionResources).
+//
+// A report's time is its body's madeAt when present, else its receivedAt,
+// and a report counts only when that time is strictly after the verb. The
+// newest counting report decides. The object is present when that report
+// lists it for the subscription. It is absent only when the report proves
+// it: made after the verb (madeAt set) and marked
+// subscriptionResourcesComplete. Every other case is unknown, including a
+// subscriptionResources the node could not read, and no counting report.
 
 import (
 	"context"
@@ -36,23 +41,45 @@ func (f *fakeReports) NodeReports(_ context.Context, _ contract.Desired, subscri
 
 var verbAt = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 
-// report is a node report received at verbAt plus offset listing items.
-func report(t *testing.T, offset time.Duration, items ...map[string]string) observe.NodeReport {
+// nodeReport describes one report: when the platform received it, when the
+// node made it (unset leaves madeAt out), whether it says its list is
+// complete (nil leaves the key out), and the list itself.
+type nodeReport struct {
+	received time.Duration
+	made     *time.Duration
+	complete *bool
+	items    any
+}
+
+func at(d time.Duration) *time.Duration { return &d }
+func flag(b bool) *bool                 { return &b }
+
+func (r nodeReport) build(t *testing.T) observe.NodeReport {
 	t.Helper()
-	list := make([]map[string]string, 0, len(items))
-	list = append(list, items...)
-	body, err := json.Marshal(map[string]any{"subscriptionResources": list})
+	body := map[string]any{"subscriptionResources": r.items}
+	if r.made != nil {
+		body["madeAt"] = verbAt.Add(*r.made).Format(time.RFC3339Nano)
+	}
+	if r.complete != nil {
+		body["subscriptionResourcesComplete"] = *r.complete
+	}
+	raw, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return observe.NodeReport{ReceivedAt: verbAt.Add(offset), Body: body}
+	return observe.NodeReport{ReceivedAt: verbAt.Add(r.received), Body: raw}
 }
 
 var (
 	appNamespace = map[string]string{"namespace": "", "kind": "Namespace", "name": "app-alpha", "subscription": "sub-1"}
 	otherSubs    = map[string]string{"namespace": "", "kind": "Namespace", "name": "app-alpha", "subscription": "sub-2"}
 	otherObject  = map[string]string{"namespace": "app-alpha", "kind": "ServiceAccount", "name": "app-alpha-runtime", "subscription": "sub-1"}
+	readFailed   = map[string]any{"exitStatus": 1, "stderr": "error: You must be logged in to the server (Unauthorized)"}
 )
+
+func list(items ...map[string]string) []map[string]string {
+	return append([]map[string]string{}, items...)
+}
 
 func namespaceRef() contract.ResourceRef {
 	r := refFor("kubernetes.namespace", map[string]string{"kind": "Namespace", "name": "app-alpha"})
@@ -60,43 +87,54 @@ func namespaceRef() contract.ResourceRef {
 	return r
 }
 
-func TestNodeReported_CountsOnlyTheNewestReportReceivedAfterTheVerb(t *testing.T) {
+func TestNodeReported_ClaimsAbsenceOnlyFromACompleteReportMadeAfterTheVerb(t *testing.T) {
 	cases := []struct {
 		label   string
-		reports func(t *testing.T) []observe.NodeReport
+		reports []nodeReport
 		want    contract.State
+		detail  string
 	}{
-		{"a newer report listing it", func(t *testing.T) []observe.NodeReport {
-			return []observe.NodeReport{report(t, time.Minute, otherObject, appNamespace)}
-		}, contract.Present},
-		{"a newer report not listing it", func(t *testing.T) []observe.NodeReport {
-			return []observe.NodeReport{report(t, time.Minute, otherObject)}
-		}, contract.Absent},
-		{"a newer report listing it for another subscription", func(t *testing.T) []observe.NodeReport {
-			return []observe.NodeReport{report(t, time.Minute, otherSubs)}
-		}, contract.Absent},
-		{"an older report listing it", func(t *testing.T) []observe.NodeReport {
-			return []observe.NodeReport{report(t, -time.Minute, appNamespace)}
-		}, contract.Unknown},
-		{"an older report not listing it", func(t *testing.T) []observe.NodeReport {
-			return []observe.NodeReport{report(t, -time.Minute)}
-		}, contract.Unknown},
-		{"a report received at the verb", func(t *testing.T) []observe.NodeReport {
-			return []observe.NodeReport{report(t, 0)}
-		}, contract.Unknown},
-		{"no report", func(t *testing.T) []observe.NodeReport { return nil }, contract.Unknown},
-		{"the newest of several, listed last", func(t *testing.T) []observe.NodeReport {
-			return []observe.NodeReport{report(t, time.Minute, appNamespace), report(t, 2*time.Minute)}
-		}, contract.Absent},
-		{"the newest of several, listed first", func(t *testing.T) []observe.NodeReport {
-			return []observe.NodeReport{report(t, 2*time.Minute, appNamespace), report(t, time.Minute)}
-		}, contract.Present},
+		{"a report received after the verb listing it",
+			[]nodeReport{{received: time.Minute, items: list(otherObject, appNamespace)}}, contract.Present, ""},
+		{"a complete report made after the verb not listing it",
+			[]nodeReport{{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: list(otherObject)}}, contract.Absent, ""},
+		{"a complete report made after the verb listing it for another subscription",
+			[]nodeReport{{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: list(otherSubs)}}, contract.Absent, ""},
+		{"a report with no made-at time not listing it",
+			[]nodeReport{{received: time.Minute, complete: flag(true), items: list(otherObject)}}, contract.Unknown, "absence"},
+		{"a report made after the verb that may be truncated",
+			[]nodeReport{{received: time.Minute, made: at(30 * time.Second), items: list(otherObject)}}, contract.Unknown, "absence"},
+		{"a report made after the verb marked incomplete",
+			[]nodeReport{{received: time.Minute, made: at(30 * time.Second), complete: flag(false), items: list(otherObject)}}, contract.Unknown, "absence"},
+		{"a report the node could not read the cluster for",
+			[]nodeReport{{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: readFailed}}, contract.Unknown, ""},
+		{"a report made before the verb, received after it, listing it",
+			[]nodeReport{{received: time.Minute, made: at(-30 * time.Second), complete: flag(true), items: list(appNamespace)}}, contract.Unknown, ""},
+		{"a report received before the verb listing it",
+			[]nodeReport{{received: -time.Minute, items: list(appNamespace)}}, contract.Unknown, ""},
+		{"a report received at the verb",
+			[]nodeReport{{received: 0, items: list()}}, contract.Unknown, ""},
+		{"no report", nil, contract.Unknown, ""},
+		{"the newest of several proves it gone",
+			[]nodeReport{
+				{received: 2 * time.Minute, made: at(time.Minute), complete: flag(true), items: list(appNamespace)},
+				{received: 2 * time.Minute, made: at(90 * time.Second), complete: flag(true), items: list()},
+			}, contract.Absent, ""},
+		{"the newest of several lists it",
+			[]nodeReport{
+				{received: 3 * time.Minute, made: at(2 * time.Minute), complete: flag(true), items: list(appNamespace)},
+				{received: 3 * time.Minute, made: at(time.Minute), complete: flag(true), items: list()},
+			}, contract.Present, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			api := &fakeReports{reports: tc.reports(t)}
+			reports := make([]observe.NodeReport, 0, len(tc.reports))
+			for _, r := range tc.reports {
+				reports = append(reports, r.build(t))
+			}
+			api := &fakeReports{reports: reports}
 			got, err := observe.NodeReported{API: api}.ObserveResource(context.Background(), namespaceRef())
-			wantObservation(t, got, err, tc.want, nil, "")
+			wantObservation(t, got, err, tc.want, nil, tc.detail)
 			if len(api.asked) != 1 || api.asked[0] != "sub-1" {
 				t.Errorf("asked for the reports of %q, want sub-1 once", api.asked)
 			}

@@ -12,6 +12,11 @@ package kittest_test
 //   - an upgrade that changes a resource's identity is named by
 //     PlanReplacements, a stateful type's especially.
 //
+// No guard is skipped silently: a resource with no identity, or a stateful
+// type with no Upgrade to prove its replacement, is a problem. A provided
+// resource observed present must carry every output its type marks
+// required in the snapshot.
+//
 // A requirement listing types runs the whole check once per listed type,
 // and each problem names that type. Every problem names its resource as
 // resource "<name>".
@@ -20,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -67,7 +73,7 @@ spec:
 
 func typeSnapshot(t *testing.T) contract.TypeSnapshot {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/type-snapshot.json")
+	raw, err := os.ReadFile("../contract/testdata/type-snapshot.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,8 +246,12 @@ var (
 	_ handler.RequestDeleter     = (*fakeBlock)(nil)
 )
 
-// providerObserver asks the provider for the object the identity names.
-type providerObserver struct{ p *fakeProvider }
+// providerObserver asks the provider for the object the identity names,
+// and reports the outputs a host offers, less drop.
+type providerObserver struct {
+	p    *fakeProvider
+	drop string
+}
 
 func (o providerObserver) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	id := r.Identity["id"]
@@ -249,9 +259,44 @@ func (o providerObserver) ObserveResource(_ context.Context, r contract.Resource
 	case id == "":
 		return contract.Observation{State: contract.Unknown, StatusDetail: "no id"}, nil
 	case o.p.holds(id):
-		return contract.Observation{State: contract.Present}, nil
+		return contract.Observation{State: contract.Present, Outputs: o.outputs(r.Type, id)}, nil
 	}
 	return contract.Observation{State: contract.Absent}, nil
+}
+
+func (o providerObserver) outputs(typ, id string) map[string]string {
+	if typ != "aws.ec2-instance" {
+		return nil
+	}
+	out := map[string]string{"hostId": id, "execKind": "ssm", "execTarget": id, "publicIp": "203.0.113.7"}
+	delete(out, o.drop)
+	return out
+}
+
+// byTypeObserver finds a resource by its type among what the provider holds
+// for the subscription, so it needs no identity.
+type byTypeObserver struct{ p *fakeProvider }
+
+func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	tagged, _ := o.p.ListTagged(ctx, r.Desired.SubscriptionID)
+	for _, item := range tagged {
+		if item.Type == r.Type {
+			return contract.Observation{State: contract.Present, Outputs: providerObserver{}.outputs(item.Type, item.ID)}, nil
+		}
+	}
+	return contract.Observation{State: contract.Absent}, nil
+}
+
+// silentBlock is a fakeBlock that reports nothing it created: it is served
+// through Ensure alone.
+type silentBlock struct{ b *fakeBlock }
+
+func (s silentBlock) Ensure(ctx context.Context, d contract.Desired) error { return s.b.Ensure(ctx, d) }
+func (s silentBlock) Observe(ctx context.Context, id contract.Identity) (contract.Observation, error) {
+	return s.b.Observe(ctx, id)
+}
+func (s silentBlock) Delete(ctx context.Context, id contract.Identity) error {
+	return s.b.Delete(ctx, id)
 }
 
 // rememberingObserver answers from what the block remembers creating,
@@ -289,8 +334,8 @@ func hostBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 		Types:    typeSnapshot(t),
 		Handler:  b,
 		Observers: map[string]handler.Observer{
-			"aws.ec2-instance": providerObserver{p},
-			"aws.ebs-volume":   providerObserver{p},
+			"aws.ec2-instance": providerObserver{p: p},
+			"aws.ebs-volume":   providerObserver{p: p},
 		},
 		Provider: p,
 		Desired:  blockDesired("10"),
@@ -361,7 +406,7 @@ func containerBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 		Manifest:  []byte(containerBlockManifest),
 		Types:     typeSnapshot(t),
 		Handler:   b,
-		Observers: map[string]handler.Observer{"app-container": providerObserver{p}},
+		Observers: map[string]handler.Observer{"app-container": providerObserver{p: p}},
 		Provider:  p,
 		Desired:   blockDesired(""),
 		Requirements: map[string]map[string]map[string]string{
@@ -393,17 +438,68 @@ func TestCheckBlock_NamesTheListedTypeWhoseRunFails(t *testing.T) {
 	}
 }
 
-func TestAssertBlock_FailsTheTestOncePerProblem(t *testing.T) {
+// AssertBlock fails the test with every problem CheckBlock finds. It may
+// also log which guards ran, which blockverify reports.
+func TestAssertBlock_FailsTheTestWithEveryProblem(t *testing.T) {
 	b, in := hostBlock(t)
 	b.leaveOnDelete = "aws.ebs-volume"
-	want := len(kittest.CheckBlock(in))
-	if want == 0 {
+	problems := kittest.CheckBlock(in)
+	if len(problems) == 0 {
 		t.Fatal("CheckBlock found no problem, so AssertBlock has nothing to report")
 	}
 	b2, in2 := hostBlock(t)
 	b2.leaveOnDelete = "aws.ebs-volume"
 	tb := runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in2) })
-	if !tb.failed || len(tb.logs) != want {
-		t.Errorf("AssertBlock failed %v with %d errors %q, want one error per problem (%d)", tb.failed, len(tb.logs), tb.logs, want)
+	if !tb.failed {
+		t.Fatal("AssertBlock did not fail the test")
 	}
+	for _, p := range problems {
+		if !slices.Contains(tb.logs, p) {
+			t.Errorf("AssertBlock reported %q, want it to carry the problem %q", tb.logs, p)
+		}
+	}
+}
+
+// --- no guard is skipped silently ------------------------------------------------
+
+// A block that reports no identity leaves the lost-resource probe nothing
+// to lose, so the check says the block must report each one rather than
+// passing the guard untried.
+func TestCheckBlock_FailsADeclaredResourceWithNoIdentityAfterSubscribe(t *testing.T) {
+	b, in := hostBlock(t)
+	in.Handler = silentBlock{b: b}
+	in.Observers = map[string]handler.Observer{
+		"aws.ec2-instance": byTypeObserver{p: b.p},
+		"aws.ebs-volume":   byTypeObserver{p: b.p},
+	}
+	in.Upgrade = nil
+	problems := kittest.CheckBlock(in)
+	wantProblemNaming(t, problems, `resource "aws.ec2-instance"`, "identity")
+	wantProblemNaming(t, problems, `resource "aws.ebs-volume"`, "identity")
+}
+
+// aws.ebs-volume is stateful in the snapshot, so its replacement guard
+// must run, and it cannot without an upgrade to run.
+func TestCheckBlock_FailsAStatefulResourceWithNoUpgradeToProveItsReplacement(t *testing.T) {
+	_, in := hostBlock(t)
+	in.Upgrade = nil
+	wantProblemNaming(t, kittest.CheckBlock(in), `resource "aws.ebs-volume"`, "Upgrade")
+}
+
+// --- provided outputs ------------------------------------------------------------------
+
+// The platform refuses a provided resource missing an output its type marks
+// required, so the check does too, naming the resource and the output.
+func TestCheckBlock_FailsAProvidedResourceMissingARequiredOutput(t *testing.T) {
+	b, in := hostBlock(t)
+	in.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "hostId"}
+	wantProblemNaming(t, kittest.CheckBlock(in), `resource "aws.ec2-instance"`, "hostId")
+}
+
+// An optional output may be missing, and a resource the block keeps to
+// itself is held to no output.
+func TestCheckBlock_PassesAProvidedResourceMissingOnlyAnOptionalOutput(t *testing.T) {
+	b, in := hostBlock(t)
+	in.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "publicIp"}
+	wantNoProblems(t, kittest.CheckBlock(in))
 }

@@ -9,7 +9,10 @@ package main
 //   - a resource tagged with the subscription's id the manifest does not
 //     declare;
 //   - a declared resource left present after unsubscribe;
-//   - a validate that hides the replacement of a stateful resource.
+//   - a validate that hides the replacement of a stateful resource;
+//
+// and a provided resource missing an output its type requires. A pass
+// detail names the replacement guard only when it ran.
 //
 // A block whose requirement lists types runs once per listed type, passing
 // when every run passes and failing, naming the type, when one does not.
@@ -89,6 +92,7 @@ type misbehave struct {
 	hideReplacement bool
 	staleObserve    string
 	failOnHostType  string
+	dropOutput      string
 }
 
 type provider struct {
@@ -224,14 +228,22 @@ func (b *block) DeleteWithRequest(ctx context.Context, d contract.Desired) error
 	return nil
 }
 
-type providerObserver struct{ p *provider }
+type providerObserver struct {
+	p    *provider
+	drop string
+}
 
 func (o providerObserver) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	switch id := r.Identity["id"]; {
 	case id == "":
 		return contract.Observation{State: contract.Unknown}, nil
 	case o.p.holds(id):
-		return contract.Observation{State: contract.Present}, nil
+		var outputs map[string]string
+		if r.Type == "aws.ec2-instance" {
+			outputs = map[string]string{"hostId": id, "execKind": "ssm", "execTarget": id}
+			delete(outputs, o.drop)
+		}
+		return contract.Observation{State: contract.Present, Outputs: outputs}, nil
 	}
 	return contract.Observation{State: contract.Absent}, nil
 }
@@ -276,13 +288,13 @@ func assertBlock(t *testing.T, m misbehave, container bool) {
 		},
 	}
 	if container {
-		in.Observers = map[string]handler.Observer{"app-container": providerObserver{p}}
+		in.Observers = map[string]handler.Observer{"app-container": providerObserver{p: p}}
 		in.Requirements = map[string]map[string]map[string]string{"host": {
 			"aws.ec2-instance": {"hostId": "i-0host", "execKind": "ssm", "execTarget": "i-0host"},
 			"hetzner.server":   {"hostId": "4711", "execKind": "ssh", "execTarget": "198.51.100.9"},
 		}}
 	} else {
-		in.Observers = map[string]handler.Observer{"aws.ec2-instance": providerObserver{p}, "aws.ebs-volume": providerObserver{p}}
+		in.Observers = map[string]handler.Observer{"aws.ec2-instance": providerObserver{p: p, drop: m.dropOutput}, "aws.ebs-volume": providerObserver{p: p}}
 		if m.staleObserve != "" {
 			in.Observers[m.staleObserve] = rememberingObserver{b: b, name: m.staleObserve}
 		}
@@ -328,9 +340,15 @@ func blockFixture(t *testing.T, manifest, testGo string) string {
 	})
 }
 
+// The pass detail says which guards ran. This fixture upgrades, so the
+// replacement guard ran and the detail names it.
 func TestResourcesSuite_PassesABlockLevelBlockThatHoldsEveryGuard(t *testing.T) {
 	dir := blockFixture(t, blockFixtureManifest, blockFixtureTestGo("", "false"))
-	requireResourcesStatus(t, resourcesSuite(dir), "pass")
+	got := resourcesSuite(dir)
+	requireResourcesStatus(t, got, "pass")
+	if !strings.Contains(got.Detail, "replace") {
+		t.Errorf("resources detail = %q, want it to name the replacement guard, which ran", got.Detail)
+	}
 }
 
 func TestResourcesSuite_FailsTheFourGuardsNamingTheResource(t *testing.T) {
@@ -346,6 +364,8 @@ func TestResourcesSuite_FailsTheFourGuardsNamingTheResource(t *testing.T) {
 			`leaveOnDelete: "aws.ebs-volume"`, []string{`resource "aws.ebs-volume"`}},
 		{"a validate hiding the replacement of a stateful resource",
 			`hideReplacement: true`, []string{`resource "aws.ebs-volume"`, "stateful"}},
+		{"a provided resource missing an output its type requires",
+			`dropOutput: "hostId"`, []string{`resource "aws.ec2-instance"`, "hostId"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -360,9 +380,15 @@ func TestResourcesSuite_FailsTheFourGuardsNamingTheResource(t *testing.T) {
 	}
 }
 
+// The container block declares no stateful type and runs no upgrade, so the
+// replacement guard is skipped, and the pass detail must not claim it ran.
 func TestResourcesSuite_RunsTheBlockOncePerListedTypeAndPasses(t *testing.T) {
 	dir := blockFixture(t, listFixtureManifest, blockFixtureTestGo("", "true"))
-	requireResourcesStatus(t, resourcesSuite(dir), "pass")
+	got := resourcesSuite(dir)
+	requireResourcesStatus(t, got, "pass")
+	if strings.Contains(got.Detail, "replace") {
+		t.Errorf("resources detail = %q, want no claim of the replacement guard, which did not run", got.Detail)
+	}
 }
 
 func TestResourcesSuite_FailsNamingTheListedTypeWhoseRunFails(t *testing.T) {
