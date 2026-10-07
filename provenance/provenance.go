@@ -16,15 +16,13 @@ import (
 	"time"
 )
 
-// SchemaVersion is the version of the record shape this package reads and
-// writes.
+// SchemaVersion is the version of the record shape this package reads and writes.
 const SchemaVersion = "1.0.0"
 
 // Issuer is the only token issuer a record may carry.
 const Issuer = "https://token.actions.githubusercontent.com"
 
-// AudiencePrefix namespaces the content-bound audience requested from
-// GitHub's OIDC token endpoint.
+// AudiencePrefix namespaces the content-bound audience requested from GitHub's OIDC token endpoint.
 const AudiencePrefix = "mitstack-provenance:"
 
 // ArtifactType is the OCI artifactType a pushed record manifest carries.
@@ -35,61 +33,39 @@ const ArtifactType = "application/vnd.mitstack.block-provenance.v1+json"
 //go:embed record.schema.json
 var Schema []byte
 
-// GoldensDir is the directory inside Goldens holding the committed record
-// fixtures.
+// GoldensDir is the directory inside Goldens holding the committed record fixtures.
 const GoldensDir = "goldens"
 
-// Goldens embeds the committed record fixtures: the shared valid record and
-// its JWKS companion, and the records prefixed InvalidPrefix that Verify
-// must reject.
+// Goldens embeds the committed record fixtures, including the records prefixed InvalidPrefix that Verify must reject.
 //
 //go:embed goldens/*.json
 var Goldens embed.FS
 
-// InvalidPrefix marks a golden file name as belonging to the rejection half
-// of the fixture set.
+// InvalidPrefix marks a golden file name as belonging to the rejection half of the fixture set.
 const InvalidPrefix = "invalid-"
 
-// jwksSuffix marks a golden file name as a JWKS companion rather than a
-// record — a general rule so a second JWKS fixture is excluded the same way,
-// not a special case for one file name.
 const jwksSuffix = ".jwks.json"
 
-// Sentinel errors. Each is its own value so a caller can distinguish the
-// reason a record failed with errors.Is, and each is returned wrapped with
-// fmt.Errorf("%w: ...") so the message still carries the detail.
 var (
-	// ErrNotConformant is returned by Build when asked to sign anything but a
-	// full pass, and by Verify when a record's own conformance verdict is not
-	// "pass".
+	// ErrNotConformant is returned by Build for anything but a full pass, and by Verify for a record whose verdict is not "pass".
 	ErrNotConformant = errors.New("provenance: conformance verdict is not \"pass\"")
 	// ErrIncomplete is returned when a required payload field is empty.
 	ErrIncomplete = errors.New("provenance: a required payload field is empty")
-	// ErrMalformedToken is returned when the token is not three base64url
-	// segments, its header does not decode, its alg is not RS256, its kid is
-	// empty, or its iat claims a time more than five minutes in the future.
+	// ErrMalformedToken is returned for a token that is not three base64url segments, has an undecodable header, an alg other than RS256, an empty kid, or an iat more than five minutes ahead.
 	ErrMalformedToken = errors.New("provenance: token is malformed")
-	// ErrUnknownKid is returned when the resolver has no key for the token's
-	// kid.
+	// ErrUnknownKid is returned when the resolver has no key for the token's kid.
 	ErrUnknownKid = errors.New("provenance: unknown signing key id")
 	// ErrBadSignature is returned when the RS256 signature does not verify.
 	ErrBadSignature = errors.New("provenance: signature does not verify")
 	// ErrUntrustedIssuer is returned when the token's iss claim is not Issuer.
 	ErrUntrustedIssuer = errors.New("provenance: untrusted token issuer")
-	// ErrRecordTampered is returned when the token's aud claim does not equal
-	// Audience(payload) — the payload bytes changed after the token was
-	// minted for them.
+	// ErrRecordTampered is returned when the token's aud claim does not equal Audience(payload).
 	ErrRecordTampered = errors.New("provenance: audience does not match the payload — the record has been tampered with")
-	// ErrWrongIdentity is returned when the token's repository or sha claim
-	// does not match what the caller expected or what the payload itself
-	// asserts, or when the caller supplied no expected repository at all.
+	// ErrWrongIdentity is returned when the token's repository or sha claim differs from the expected or payload value, or no expected repository was supplied.
 	ErrWrongIdentity = errors.New("provenance: token identity does not match the expected repository")
-	// ErrManifestChanged is returned when manifestSha256 does not match the
-	// sha256 of the base64-decoded manifest bytes.
+	// ErrManifestChanged is returned when manifestSha256 does not match the sha256 of the decoded manifest bytes.
 	ErrManifestChanged = errors.New("provenance: manifest sha256 does not match the decoded manifest bytes")
-	// ErrUnknownField is returned by Decode when the raw JSON carries a field
-	// the record's shape does not declare, at the record's own top level,
-	// inside payload, or inside payload.conformance.
+	// ErrUnknownField is returned by Decode for a field the record's shape does not declare.
 	ErrUnknownField = errors.New("provenance: record contains a field its shape does not declare")
 )
 
@@ -101,9 +77,7 @@ type Conformance struct {
 	RunURL        string `json:"runUrl"`
 }
 
-// Payload is everything the record asserts. Every field is covered by the
-// signature: the audience is computed over this struct's canonical
-// encoding, so changing any byte invalidates the token.
+// Payload is everything the record asserts, and the audience is computed over its canonical encoding so changing any byte invalidates the token.
 type Payload struct {
 	SchemaVersion    string      `json:"schemaVersion"`
 	BlockID          string      `json:"blockId"`
@@ -125,21 +99,7 @@ type Record struct {
 	Token   string  `json:"token"`
 }
 
-// Decode reads a record from raw JSON and refuses any field its shape does
-// not declare, at the record's own top level, inside payload, or inside
-// payload.conformance. This is the strict counterpart to Canonical: a plain
-// json.Unmarshal into Record silently drops a key neither struct declares,
-// so Canonical(decoded) reproduces the original signed bytes and the
-// audience still matches — an attacker's field then rides inside what still
-// LOOKS like a signed payload to anything that reads the stored JSON
-// directly, or to any field the platform's reader learns before this
-// struct does. Every caller that turns record bytes into a Record must go
-// through Decode rather than json.Unmarshal.
-//
-// Decode does not require the stored bytes to equal Canonical(decoded)
-// exactly — reordered keys and reformatted whitespace are accepted, because
-// they change no value the audience covers, only its incidental
-// presentation on the wire. Only an undeclared field is refused.
+// Decode refuses any undeclared field, because a plain json.Unmarshal drops it and the audience still matches, so every caller must use Decode.
 func Decode(raw []byte) (Record, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -153,18 +113,12 @@ func Decode(raw []byte) (Record, error) {
 	return rec, nil
 }
 
-// Canonical encodes a payload deterministically. One encoder, used by both
-// the writer and the reader — Go's default struct field order is stable, and
-// relying on that explicitly (rather than re-sorting keys) is the same
-// choice package attest's own canonical() makes for its claims.
+// Canonical encodes a payload deterministically, relying on Go's stable struct field order for both writer and reader.
 func Canonical(p Payload) ([]byte, error) {
 	return json.Marshal(p)
 }
 
-// Audience returns the content-bound audience for a payload: the value the
-// publishing workflow requests from GitHub's OIDC token endpoint, and the
-// value Verify recomputes to check the token was minted for these exact
-// bytes.
+// Audience returns the content-bound audience the publishing workflow requests and Verify recomputes.
 func Audience(p Payload) (string, error) {
 	canon, err := Canonical(p)
 	if err != nil {
@@ -174,8 +128,6 @@ func Audience(p Payload) (string, error) {
 	return AudiencePrefix + "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-// requiredFieldsPresent reports ErrIncomplete for the first empty field a
-// record must carry to mean anything.
 func requiredFieldsPresent(p Payload) error {
 	switch {
 	case p.SchemaVersion == "":
@@ -202,8 +154,7 @@ func requiredFieldsPresent(p Payload) error {
 	return nil
 }
 
-// KeyResolver returns the RSA public key for a kid, typically backed by a
-// fetched GitHub JWKS document.
+// KeyResolver returns the RSA public key for a kid.
 type KeyResolver func(kid string) (*rsa.PublicKey, bool)
 
 // Expect is what the verifier requires of the record's identity.
@@ -211,10 +162,7 @@ type Expect struct {
 	Repository string // required; the repository the caller expects published this
 }
 
-// Build assembles a record. It refuses a conformance verdict other than
-// "pass" and an incomplete payload — a failed run writes no record, ever.
-// mintToken is handed the computed audience and returns the OIDC token GitHub
-// minted for it.
+// Build assembles a record and refuses a verdict other than "pass" or an incomplete payload, so a failed run writes no record.
 func Build(p Payload, mintToken func(audience string) (string, error)) (Record, error) {
 	if err := requiredFieldsPresent(p); err != nil {
 		return Record{}, err
@@ -233,11 +181,6 @@ func Build(p Payload, mintToken func(audience string) (string, error)) (Record, 
 	return Record{Payload: p, Token: token}, nil
 }
 
-// parseToken decodes a JWT's header and claims and checks the token is
-// well-formed: three segments, a decodable JSON header, alg "RS256", a
-// non-empty kid, and — if present — an iat no more than five minutes in the
-// future. It does not touch the signature or any claim the presenter
-// controls beyond that sanity check.
 func parseToken(token string) (header, claims map[string]interface{}, err error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -280,7 +223,6 @@ func parseToken(token string) (header, claims map[string]interface{}, err error)
 	return header, claims, nil
 }
 
-// verifySignature checks the RS256 signature over header.payload.
 func verifySignature(token string, pub *rsa.PublicKey) error {
 	parts := strings.Split(token, ".")
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
@@ -294,12 +236,7 @@ func verifySignature(token string, pub *rsa.PublicKey) error {
 	return nil
 }
 
-// Verify checks a record and fails closed on every uncertainty. The order
-// below is part of the contract: everything a forged token's PRESENTER
-// controls (its claimed repository and commit) is judged only after the
-// signature is confirmed valid, so a forged token never leaks whether its
-// claims were otherwise well-formed — the same ordering package attest
-// documents for its own Verify.
+// Verify fails closed, and judges the presenter-controlled repository and commit claims only after the signature is valid so a forged token leaks nothing about them.
 func Verify(r Record, resolve KeyResolver, exp Expect) error {
 	header, claims, err := parseToken(r.Token)
 	if err != nil {
@@ -361,8 +298,6 @@ func Verify(r Record, resolve KeyResolver, exp Expect) error {
 	return nil
 }
 
-// jwksDocument is the shape of a GitHub OIDC JWKS document — the fields this
-// package needs to reconstruct an RSA public key, nothing else.
 type jwksDocument struct {
 	Keys []jwksKey `json:"keys"`
 }
@@ -407,12 +342,7 @@ func ParseJWKS(raw []byte) (KeyResolver, error) {
 	}, nil
 }
 
-// splitGoldens reads every record fixture under GoldensDir and splits it
-// into a valid half (names without InvalidPrefix) and an invalid half (names
-// with it), each keyed by file name without the ".json" suffix. A file
-// ending jwksSuffix is a JWKS companion, not a record, and is skipped —
-// stated as a general rule over the suffix rather than a special case for
-// one file name, so a second JWKS fixture is excluded the same way.
+// splitGoldens skips every file ending jwksSuffix by rule, so a second JWKS fixture is excluded the same way.
 func splitGoldens() (valid, invalid map[string][]byte, err error) {
 	entries, err := Goldens.ReadDir(GoldensDir)
 	if err != nil {
@@ -443,10 +373,7 @@ func splitGoldens() (valid, invalid map[string][]byte, err error) {
 	return valid, invalid, nil
 }
 
-// ValidGoldens returns the record goldens Verify must accept, keyed by file
-// name without the ".json" suffix. It errors rather than returning an empty
-// map if the valid half is empty, since a vacuous acceptance set proves
-// nothing.
+// ValidGoldens returns the goldens Verify must accept and errors on an empty set, since a vacuous acceptance set proves nothing.
 func ValidGoldens() (map[string][]byte, error) {
 	valid, _, err := splitGoldens()
 	if err != nil {
@@ -458,10 +385,7 @@ func ValidGoldens() (map[string][]byte, error) {
 	return valid, nil
 }
 
-// InvalidGoldens returns the record goldens Verify must reject, keyed by
-// file name without the ".json" suffix. It errors rather than returning an
-// empty map if the invalid half is empty, since a vacuous rejection set
-// proves nothing.
+// InvalidGoldens returns the goldens Verify must reject and errors on an empty set, since a vacuous rejection set proves nothing.
 func InvalidGoldens() (map[string][]byte, error) {
 	_, invalid, err := splitGoldens()
 	if err != nil {
