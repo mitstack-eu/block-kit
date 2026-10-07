@@ -1,10 +1,4 @@
-// Package boardkeys_test pins the delivered-key contract: a verbatim port of
-// platform's scripts/tracker-delivered-keys.sh and the board's own
-// tracker/ghsync_parse.go. A commit delivers a key only when the key sits in
-// a LEADING key list in the commit subject, terminated by a literal ':', or
-// in a whole-line `Jira:` trailer in the body. Everything else — a key
-// elsewhere in the subject, any other body line — is prose and delivers
-// nothing.
+// Package boardkeys_test pins the delivered-key contract.
 package boardkeys_test
 
 import (
@@ -32,8 +26,6 @@ func assertKeys(t *testing.T, label string, got, want []string) {
 		t.Errorf("%s = %v, want %v", label, got, want)
 	}
 }
-
-// --- Subject: the leading key-list rule -------------------------------
 
 func TestSubject_SingleLeadingKeyDelivers(t *testing.T) {
 	got := boardkeys.Subject("MIT-3118: text")
@@ -118,13 +110,10 @@ func TestSubject_SortsNumericallyRegardlessOfAppearanceOrder(t *testing.T) {
 }
 
 func TestSubject_SortsNumericallyNotLexically(t *testing.T) {
-	// A lexical sort would put "MIT-10" before "MIT-9"; the contract sorts
-	// by the number after the hyphen.
+	// A lexical sort would put the tenth key before the ninth.
 	got := boardkeys.Subject("MIT-10 MIT-9: text")
 	assertKeys(t, `Subject("MIT-10 MIT-9: text")`, got, []string{"MIT-9", "MIT-10"})
 }
-
-// --- Message: subject leading list + Jira: trailer --------------------
 
 func TestMessage_JiraTrailerDeliversAllListedKeys(t *testing.T) {
 	got := boardkeys.Message("", "Jira: MIT-1301 MIT-1302 MIT-1303")
