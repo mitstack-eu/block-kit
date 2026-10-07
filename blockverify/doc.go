@@ -189,18 +189,17 @@
 //
 // A block whose mitstack/v1beta manifest declares its resources proves them
 // in its own tests: the target's _test.go files must define
-// TestDeclaredResources and call kittest.AssertDeclaredResources,
-// handing over the manifest, a handler.DeclaredResource for each declared
-// resource and any resource the app supplies. The suite checks that both
-// names appear in those files, since `go test -run` matching nothing passes
-// vacuously, then runs `go test -run TestDeclaredResources ./...` in the
-// target. The kit's check ensures each declared resource twice in manifest
-// order, observing it present after each ensure with the same outputs both
-// times, then deletes each in reverse order and observes it absent, and
-// observes every supplied resource present before the first ensure and
-// after the last delete. A failure's detail is the first output line
-// naming a resource, as resource "<name>" or supplied resource "<name>". A
-// manifest the parser refuses fails with its reason.
+// TestDeclaredResources and call kittest.AssertBlock, or the deprecated
+// kittest.AssertDeclaredResources. The suite checks both appear, since
+// `go test -run` matching nothing passes vacuously, then runs
+// `go test -run TestDeclaredResources ./...` in the target, with -v for
+// AssertBlock, whose pass detail lists the guards it logged as run: what
+// carries the subscription's id matches the declared resources, an observe
+// asks the provider, validate names a replaced resource, every declared
+// resource observes absent after unsubscribe, and a provided resource
+// carries its required outputs. A failure's detail is the first output line naming a resource, as
+// resource "<name>" or supplied resource "<name>". A manifest the parser
+// refuses fails with its reason.
 //
 // # Report contract
 //

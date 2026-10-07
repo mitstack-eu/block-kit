@@ -76,7 +76,7 @@ func v1betaUnknownFields(t *testing.T) map[string][]byte {
 		"metadata.bogus":          editBeta(t, "  name: Fixture Block\n", "  name: Fixture Block\n  bogus: 1\n"),
 		"spec.bogus":              editBeta(t, "  version: 1.0.0\n", "  version: 1.0.0\n  bogus: 1\n"),
 		"spec.params[0].bogus":    editBeta(t, "      label: Container image\n", "      label: Container image\n      bogus: 1\n"),
-		"spec.requires[0].bogus":  editBeta(t, "    - kind: host\n", "    - kind: host\n      bogus: 1\n"),
+		"spec.requires[0].bogus":  editBeta(t, "    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      bogus: 1\n"),
 		"spec.resources[1].bogus": editBeta(t, "      type: aws.security-group\n", "      type: aws.security-group\n      bogus: 1\n"),
 		"spec.lifecycle.bogus":    editBeta(t, "    contract: kit/v1\n", "    contract: kit/v1\n    bogus: 1\n"),
 		"spec.lifecycle.hooks":    editBeta(t, "    contract: kit/v1\n", "    contract: kit/v1\n    hooks: [beforeEnsure]\n"),

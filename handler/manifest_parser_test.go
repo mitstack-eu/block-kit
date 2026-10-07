@@ -88,10 +88,13 @@ func plainV1Beta(t *testing.T) []byte {
 	return raw
 }
 
+// The worked plain manifest declares one resource, aws.ec2-container, which
+// a block served over Config.Resource observes through Config.Observers.
 func TestNew_AcceptsAV1BetaManifestAndReadsItAsDeclaringNoHook(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	cfg := baseConfig(t, &kittest.FakeResource{}, s)
 	cfg.Manifest = plainV1Beta(t)
+	cfg.Observers = map[string]handler.Observer{"aws.ec2-container": &fakeObserver{name: "aws.ec2-container", cloud: newFakeCloud()}}
 	if _, err := handler.New(cfg); err != nil {
 		t.Fatalf("handler.New refused the worked v1beta manifest with no hook registered: %v", err)
 	}

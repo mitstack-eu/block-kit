@@ -68,9 +68,6 @@ type manifestField struct {
 	index int
 	// required is a field whose tag has no omitempty.
 	required bool
-	// oneOrList is a list field that also takes a single value, as a
-	// requirement's in takes one capability or a list of them.
-	oneOrList bool
 	// fold is a second key the field's value may be written under.
 	fold string
 	// dropped is a field named _, whose value is read and not kept.
@@ -85,12 +82,11 @@ func manifestFields(t reflect.Type, tag string) []manifestField {
 		f := t.Field(i)
 		name, opts, _ := strings.Cut(f.Tag.Get(tag), ",")
 		fields = append(fields, manifestField{
-			name:      name,
-			index:     i,
-			required:  opts != "omitempty",
-			oneOrList: t == reflect.TypeOf(ManifestRequirement{}) && f.Name == "In",
-			fold:      f.Tag.Get("fold"),
-			dropped:   f.Name == "_",
+			name:     name,
+			index:    i,
+			required: opts != "omitempty",
+			fold:     f.Tag.Get("fold"),
+			dropped:  f.Name == "_",
 		})
 	}
 	return fields
@@ -147,9 +143,14 @@ func (d manifestDecoder) decode(n *yamlNode, v reflect.Value, path string) error
 		}
 		return noValue(path)
 	}
-	if v.Type() == inputValueType {
-		in, err := d.input(n, path)
-		v.Set(reflect.ValueOf(in))
+	switch v.Type() {
+	case requirementType:
+		q, err := d.requirement(n, path)
+		v.Set(reflect.ValueOf(q))
+		return err
+	case resourceType:
+		r, err := d.resource(n, path)
+		v.Set(reflect.ValueOf(r))
 		return err
 	}
 	switch v.Kind() {
@@ -183,7 +184,7 @@ func (d manifestDecoder) decode(n *yamlNode, v reflect.Value, path string) error
 		}
 		v.Set(p)
 	case reflect.Slice:
-		return d.list(n, v, path, false)
+		return d.list(n, v, path)
 	case reflect.Map:
 		return d.mapping(n, v, path)
 	case reflect.Struct:
@@ -235,16 +236,9 @@ func plainInteger(n *yamlNode) (int64, bool) {
 	return int64(f), true
 }
 
-// list reads the list n into the slice v. oneOrList also takes a single
-// value as a one-item list.
-func (d manifestDecoder) list(n *yamlNode, v reflect.Value, path string, oneOrList bool) error {
-	if oneOrList && n.kind == yamlScalar {
-		n = &yamlNode{kind: yamlSeq, items: []*yamlNode{n}}
-	}
+// list reads the list n into the slice v.
+func (d manifestDecoder) list(n *yamlNode, v reflect.Value, path string) error {
 	if n.kind != yamlSeq {
-		if oneOrList {
-			return fmt.Errorf("%s must be one value or a list", path)
-		}
 		return fmt.Errorf("%s must be a list", path)
 	}
 	list := reflect.MakeSlice(v.Type(), 0, len(n.items))
@@ -298,20 +292,6 @@ func (d manifestDecoder) mapping(n *yamlNode, v reflect.Value, path string) erro
 	return nil
 }
 
-// input reads one resource input: a scalar, which may be a number or a
-// boolean, or a mapping of named inputs.
-func (d manifestDecoder) input(n *yamlNode, path string) (InputValue, error) {
-	switch n.kind {
-	case yamlScalar:
-		return InputValue{Scalar: n.value}, nil
-	case yamlMap:
-		m := map[string]InputValue{}
-		err := d.mapping(n, reflect.ValueOf(&m).Elem(), path)
-		return InputValue{Map: m}, err
-	}
-	return InputValue{}, fmt.Errorf("%s must be one value or a mapping of inputs, not a list", path)
-}
-
 // foldedValue is a value written under a field's fold key.
 type foldedValue struct {
 	field manifestField
@@ -349,10 +329,8 @@ func (d manifestDecoder) structure(n *yamlNode, v reflect.Value, path string) er
 		}
 		var err error
 		switch {
-		case isNull(val) && (f.required || f.oneOrList):
+		case isNull(val) && f.required:
 			err = noValue(keyPath)
-		case f.oneOrList:
-			err = d.list(val, target, keyPath, true)
 		default:
 			err = d.decode(val, target, keyPath)
 		}

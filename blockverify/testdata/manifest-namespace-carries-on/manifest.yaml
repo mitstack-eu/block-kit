@@ -8,14 +8,10 @@ spec:
   description: >
     Places the app's resources in a namespace of their own on a Kubernetes
     cluster, with the service account the app's workloads run as.
-  requires:
-    - kind: host
+  requires: [hetzner.k3s-cluster]
   resources:
-    - name: app-namespace
-      type: kubernetes.namespace
-      on: requires.host
-      inputs: { cluster: requires.host }
-  provides: [app-namespace]
+    - { type: kubernetes.namespace, on: requires.hetzner.k3s-cluster }
+  provides: [kubernetes.namespace]
   lifecycle:
     endpoint: https://api.mitstack.dev/operators/app-namespace/hook
     operations: [subscribe, unsubscribe, upgrade, validate]

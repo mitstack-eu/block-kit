@@ -11,11 +11,17 @@
 // to a knob a block can override. A hook the manifest declares but that
 // nothing registers is accepted by New and simply never called.
 //
-// A block whose mitstack/v1beta manifest declares its resources supplies a
-// DeclaredResource for each one instead, under Config.Resources. The
+// A block whose mitstack/v1beta manifest declares its resources is served
+// through its block-level Resource, with an Observer for each declared
+// resource under Config.Observers. One Ensure or Delete creates or removes
+// the whole block, and the Handler then observes each declared resource
+// through its own Observer and reports each by name in the response's
+// resources map.
+//
+// Such a block may instead supply a DeclaredResource for each resource,
+// under Config.Resources, which the next major release removes. The
 // Handler then runs each verb resource by resource in the manifest's
-// creation order, tearing down in reverse, and reports each resource's
-// calls by name in the response's resources map. A request that names one
+// creation order, tearing down in reverse. A request that names one
 // declared resource runs the verb on that resource alone.
 package handler
 
@@ -69,6 +75,36 @@ type Resource interface {
 	Delete(ctx context.Context, id contract.Identity) error
 }
 
+// Observer reports what one declared resource of a block served over its
+// block-level Resource actually is right now, from the provider, never from
+// what an ensure remembered. It is handed the resource's name, the type it
+// was created as, the identity that addresses it, when known, and the
+// verb's Desired. The observe package holds the kit's shared observers.
+type Observer interface {
+	ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error)
+}
+
+// ResourceReporter is an optional interface a block-level Resource
+// implements to report the resources its ensure created. When the Resource
+// implements it, the Handler calls EnsureResources in place of Ensure,
+// never both, and hands each declared resource's Observer the type and
+// identity reported for it. The observe package's shared observers find a
+// resource only by that identity, so a block that uses them implements
+// ResourceReporter. A reported resource the manifest does not declare, or
+// of a type its entry does not list, is refused with a 400.
+type ResourceReporter interface {
+	EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error)
+}
+
+// ReplacementPlanner is an optional interface a block-level Resource
+// implements to name, on a validate, the declared resources an upgrade to
+// d would replace rather than change in place. The Handler answers them
+// under the response's replaces; a name the manifest does not declare is
+// refused with a 400.
+type ReplacementPlanner interface {
+	PlanReplacements(ctx context.Context, d contract.Desired) ([]string, error)
+}
+
 // DeclaredResource is what a block implements once for each resource its
 // mitstack/v1beta manifest declares under spec.resources. The calls mean
 // what Resource's do, scoped to the one resource: the Handler ensures each
@@ -81,6 +117,10 @@ type Resource interface {
 // one that implements RequestObserver is observed through
 // ObserveWithRequest, and one that implements RequestDeleter is deleted
 // through DeleteWithRequest, each handed that same Desired.
+//
+// Deprecated: a block serves its declared resources through its block-level
+// Resource and an Observer for each, under Config.Observers; the next major
+// release removes DeclaredResource and Config.Resources.
 type DeclaredResource interface {
 	// Ensure converges this resource for the subscription d.Identity names.
 	// It may be called more than once and must converge rather than
@@ -101,6 +141,10 @@ type DeclaredResource interface {
 // never both, and puts the returned Identity and Outputs on that resource's
 // ensure entry in the response's resources map. An identity or output value
 // exactly equal to a request secret is refused as secret-in-output.
+//
+// Deprecated: it serves a DeclaredResource alone; a block-level Resource
+// reports what it created through ResourceReporter. The next major release
+// removes it.
 type ReportingResource interface {
 	// EnsureWithReport converges this resource the way Ensure does and
 	// reports the identity it stored and the outputs it published.
@@ -157,9 +201,19 @@ const (
 // defaults to a safe, hermetic choice.
 type Config struct {
 	// Resource is the block's own implementation of the three lifecycle
-	// calls, for a block served as one resource. Set it or Resources, never
-	// both.
+	// calls, for a block served as one resource, or the block-level handler
+	// of a block whose mitstack/v1beta manifest declares its resources. Set
+	// it or Resources, never both.
 	Resource Resource
+
+	// Observers holds one Observer for each resource the block's
+	// mitstack/v1beta manifest declares, keyed by its name under
+	// spec.resources, for a block served over Resource. Every declared
+	// resource needs one, and a key the manifest does not declare is
+	// refused, as is Observers with Resources or without a mitstack/v1beta
+	// manifest. A request naming one of these resources is served for
+	// validate alone, observing that resource.
+	Observers map[string]Observer
 
 	// Resources holds one DeclaredResource for each resource the block's
 	// mitstack/v1beta manifest declares, keyed by its name under
@@ -168,7 +222,13 @@ type Config struct {
 	// Manifest is required with it, and Hooks is refused with it. A request
 	// naming one of these resources runs the verb on it alone; a request
 	// naming a resource the manifest does not declare, or any resource when
-	// the block is served over Resource, is refused with a 400.
+	// the block is served over Resource with no manifest declaring
+	// resources, is refused with a 400.
+	//
+	// Deprecated: serve the block over Resource with an Observer for each
+	// declared resource under Observers; the next major release removes
+	// Resources, and with it a request running ensure or delete on one
+	// named resource.
 	Resources map[string]DeclaredResource
 
 	// Manifest is the block's manifest.yaml. Required when Hooks or
@@ -224,6 +284,12 @@ type Handler struct {
 	// declared holds the block's declared resources in creation order. It
 	// is nil for a block served over a single Resource.
 	declared []namedResource
+	// blockLevel is set for a block whose declared resources are served
+	// through resource and an observer each.
+	blockLevel bool
+	// provided names the declared resources spec.provides offers, whose
+	// outputs a block-level answer carries.
+	provided map[string]bool
 	// secretParams names the params the manifest marks secret, so a
 	// resource input bound to one is scrubbed like any request secret.
 	secretParams map[string]bool
@@ -253,7 +319,12 @@ type Handler struct {
 // Hooks set with no Manifest to check it against. A Config with Resources
 // is also refused when it sets Resource or Hooks too, when its manifest is
 // empty or not mitstack/v1beta, or when its keys and the manifest's
-// spec.resources disagree; see declaredResources.
+// spec.resources disagree; see declaredResources. A Config whose
+// mitstack/v1beta manifest declares resources and that sets Resource is
+// served through that block-level Resource, and is refused when Observers
+// and the manifest's spec.resources disagree; see observedResources.
+// Observers is refused with Resources, and without a mitstack/v1beta
+// manifest.
 func New(cfg Config) (*Handler, error) {
 	if cfg.Resource != nil && len(cfg.Resources) > 0 {
 		return nil, errResourceAndResources
@@ -269,9 +340,18 @@ func New(cfg Config) (*Handler, error) {
 		return nil, err
 	}
 	var resources []namedResource
-	if len(cfg.Resources) > 0 {
+	blockLevel := false
+	switch {
+	case len(cfg.Resources) > 0 && len(cfg.Observers) > 0:
+		err = errObserversAndResources
+	case len(cfg.Resources) > 0:
 		resources, err = declaredResources(cfg, declared)
-	} else {
+	case declared.apiVersion == contract.ManifestAPIVersion:
+		blockLevel = true
+		resources, err = observedResources(cfg, declared)
+	case len(cfg.Observers) > 0:
+		err = errObserversWithoutManifest
+	default:
 		err = validateHooks(cfg, declared.hooks)
 	}
 	if err != nil {
@@ -287,6 +367,8 @@ func New(cfg Config) (*Handler, error) {
 		resource:             cfg.Resource,
 		hooks:                hooks,
 		declared:             resources,
+		blockLevel:           blockLevel,
+		provided:             declared.provided,
 		secretParams:         declared.secretParams,
 		retainsOnUnsubscribe: declared.retainsOnUnsubscribe,
 		jwksURL:              cfg.JWKSURL,

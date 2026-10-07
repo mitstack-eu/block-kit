@@ -1,37 +1,34 @@
 package contract_test
 
-// manifest_bindings_test.go pins how ParseManifest judges what a resource's
-// inputs bind to under mitstack/v1beta. Each refusal names the resource, the
-// input and the reason:
+// manifest_bindings_test.go pins how a mitstack/v1beta manifest's
+// requirements and resources are judged against the platform's type
+// snapshot, and how a binding a block's code reads through them is judged:
 //
-//   - a binding to resources.<name> or requires.<name> where the block has no
-//     resource or requirement of that name, a requirement being referenced
-//     by its name when set and by its kind otherwise;
-//   - a binding to resources.<name>.outputs.<output> whose resource's type
-//     has no such output, or to requires.<name>.outputs.<output> whose
-//     requirement's kind names no such output, everything after .outputs.
-//     being the output name;
-//   - an input the bound resource's type declares as accepting a resource
-//     of one kind, bound to a resource of another kind.
+//   - CheckManifestTypes refuses a requirement or resource listing a type
+//     the snapshot does not hold, naming the entry and the type;
+//   - CheckBinding judges requires.<reference>.outputs.<output> and
+//     resources.<name>.outputs.<output>, where a reference and an output may
+//     each hold dots. It refuses a reference or name the block does not
+//     have, and an output any listed type does not declare, naming that type
+//     and the output. The outputs it reads are the snapshot's, not the kit's
+//     own catalogue's.
 //
-// Bindings inside a nested input mapping, as env is, are judged too. An
-// input the type does not declare, a param, a platform value, a literal and
-// every mitstack/v1alpha manifest stay unjudged.
-//
-// A requirement's reference, its name when set and its kind otherwise,
-// appears once in spec.requires, whether or not any input binds it. The
-// refusal names both entries' indexes and the shared reference.
-// Requirements of one kind with distinct references parse.
-//
-// Each refused manifest is one of ADR 0083's worked manifests with one
-// edit, so the edit is the only defect.
+// A requirement's reference, its name when set and its type id otherwise,
+// appears once in spec.requires. The refusal names both entries' indexes
+// and the shared reference.
 
 import (
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/mitstack-eu/operator-kit/contract"
+)
+
+const (
+	awsAppInfraGolden = "aws-app-infra-v1beta.yaml"
+	plainGolden       = "plain-v1beta.yaml"
 )
 
 // editGolden returns the manifest golden called name with each old, new
@@ -49,17 +46,37 @@ func editGolden(t *testing.T, name string, pairs ...string) []byte {
 	return []byte(out)
 }
 
-const (
-	awsAppInfraGolden = "aws-app-infra-v1beta.yaml"
-	plainGolden       = "plain-v1beta.yaml"
-)
+// platformSnapshot reads the platform's type snapshot fixture.
+func platformSnapshot(t *testing.T) contract.TypeSnapshot {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/type-snapshot.json")
+	if err != nil {
+		t.Fatalf("reading the type snapshot fixture: %v", err)
+	}
+	snap, err := contract.ParseTypeSnapshot(raw)
+	if err != nil {
+		t.Fatalf("ParseTypeSnapshot(testdata/type-snapshot.json): %v", err)
+	}
+	return snap
+}
 
-// The binding aws-app-infra's app-hostname gives its target input, and the
-// one plain's tracker gives TRACKER_DB_HOST inside its env mapping.
-const (
-	appHostnameTarget = "inputs: { target: resources.app-instance.outputs.publicIp }"
-	trackerDBHost     = "TRACKER_DB_HOST: requires.postgres-database.outputs.host"
-)
+// specOf parses raw and returns its spec.
+func specOf(t *testing.T, raw []byte) contract.ManifestSpec {
+	t.Helper()
+	return parseBeta(t, raw).Spec
+}
+
+func requireErrorNaming(t *testing.T, what string, err error, wants ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s accepted, want an error naming %q", what, wants)
+	}
+	for _, want := range wants {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%s error = %q, want it to name %q", what, err, want)
+		}
+	}
+}
 
 func TestParseManifest_ParsesEveryManifestGolden(t *testing.T) {
 	entries, err := fs.ReadDir(contract.ManifestGoldens, contract.ManifestGoldensDir)
@@ -83,219 +100,205 @@ func TestParseManifest_ParsesEveryManifestGolden(t *testing.T) {
 	}
 }
 
-func TestParseManifest_V1BetaRefusesABindingToAResourceTheBlockDoesNotHave(t *testing.T) {
-	cases := []struct {
-		label, binding, missing string
-	}{
-		{"resources.missing", "resources.missing.outputs.publicIp", "missing"},
-		{"a misspelt resource name", "resources.app-instanse.outputs.publicIp", "app-instanse"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			raw := editGolden(t, awsAppInfraGolden, appHostnameTarget, "inputs: { target: "+tc.binding+" }")
-			requireRefusedNaming(t, raw, "app-hostname", "target", tc.missing)
+// --- CheckManifestTypes ------------------------------------------------------
+
+func TestCheckManifestTypes_AcceptsEveryTypeTheSnapshotHolds(t *testing.T) {
+	snap := platformSnapshot(t)
+	for label, raw := range map[string][]byte{
+		awsAppInfraGolden: readManifestGolden(t, awsAppInfraGolden),
+		plainGolden:       readManifestGolden(t, plainGolden),
+		"typed manifest":  []byte(typedManifest),
+	} {
+		t.Run(label, func(t *testing.T) {
+			if err := contract.CheckManifestTypes(specOf(t, raw), snap); err != nil {
+				t.Errorf("CheckManifestTypes: %v", err)
+			}
 		})
 	}
 }
 
-// The binding sits inside tracker's env mapping, so the refusal also pins
-// that a nested input mapping is walked.
-func TestParseManifest_V1BetaRefusesABindingToARequirementTheBlockDoesNotHave(t *testing.T) {
+func TestCheckManifestTypes_RefusesATypeTheSnapshotDoesNotHoldNamingTheEntryAndTheType(t *testing.T) {
 	cases := []struct {
-		label, binding, missing string
+		label, old, new string
+		wants           []string
 	}{
-		{"requires.missing", "requires.missing.outputs.host", "missing"},
-		{"a misspelt requirement kind", "requires.postgres-databse.outputs.host", "postgres-databse"},
+		{"a resource", "    - aws.vpc\n", "    - aws.vpcs\n",
+			[]string{"spec.resources[1]", "aws.vpcs"}},
+		{"a named resource", "    - { name: ecr-push-role, type: aws.iam-role }\n", "    - { name: ecr-push-role, type: aws.iam-roles }\n",
+			[]string{"spec.resources[6]", "aws.iam-roles"}},
+		{"a requirement", "  requires: [github.repository]\n", "  requires: [github.repositories]\n",
+			[]string{"spec.requires[0]", "github.repositories"}},
+		{"one type of a requirement's list", "  requires: [github.repository]\n",
+			"  requires: [github.repository, { name: host, type: [aws.ec2-instance, hetzner.cloud-server] }]\n",
+			[]string{"spec.requires[1]", "hetzner.cloud-server"}},
 	}
+	snap := platformSnapshot(t)
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			raw := editGolden(t, plainGolden, trackerDBHost, "TRACKER_DB_HOST: "+tc.binding)
-			requireRefusedNaming(t, raw, "tracker", "TRACKER_DB_HOST", tc.missing)
+			spec := specOf(t, editGolden(t, awsAppInfraGolden, tc.old, tc.new))
+			requireErrorNaming(t, "CheckManifestTypes", contract.CheckManifestTypes(spec, snap), tc.wants...)
 		})
 	}
 }
 
-// app-instance is an aws.ec2-instance, whose type publishes no dbName.
-func TestParseManifest_V1BetaRefusesAResourceOutputItsTypeDoesNotHave(t *testing.T) {
-	raw := editGolden(t, awsAppInfraGolden, appHostnameTarget, "inputs: { target: resources.app-instance.outputs.dbName }")
-	requireRefusedNaming(t, raw, "app-hostname", "target", "dbName")
-}
+// --- CheckBinding ----------------------------------------------------------------
 
-// The postgres-database kind names no repo output. The binding sits inside
-// tracker's env mapping.
-func TestParseManifest_V1BetaRefusesARequirementOutputItsKindDoesNotName(t *testing.T) {
-	raw := editGolden(t, plainGolden, trackerDBHost, "TRACKER_DB_HOST: requires.postgres-database.outputs.repo")
-	requireRefusedNaming(t, raw, "tracker", "TRACKER_DB_HOST", "repo")
-}
-
-// aws.ec2-instance declares securityGroup as accepting a resource of kind
-// firewall. Here it is bound to app-database, a host.postgres-database of
-// kind postgres-database, which lives on a required host and is created
-// before app-instance.
-func TestParseManifest_V1BetaRefusesAnInputBoundToAResourceOfAnotherKind(t *testing.T) {
-	raw := editGolden(t, awsAppInfraGolden,
-		"    - kind: git-repository\n      in: github\n",
-		"    - kind: git-repository\n      in: github\n    - kind: host\n",
-		"    - name: app-instance\n",
-		"    - name: app-database\n      type: host.postgres-database\n      on: requires.host\n    - name: app-instance\n",
-		"        securityGroup: resources.app-security-group\n",
-		"        securityGroup: resources.app-database\n")
-	requireRefusedNaming(t, raw, "app-instance", "securityGroup", "firewall", "postgres-database")
-}
-
-// aws.ecr-image declares repository as accepting the registryHost output of
-// a container-repository. Here it is bound to the repo output of the
-// git-repository requirement, an output that kind does name, and its other
-// required input, tag, takes a literal.
-func TestParseManifest_V1BetaRefusesAnInputBoundToAnOutputOfAnotherKind(t *testing.T) {
-	raw := editGolden(t, awsAppInfraGolden,
-		"    - name: ecr-push-role\n",
-		"    - name: app-image\n      type: aws.ecr-image\n"+
-			"      inputs: { repository: requires.git-repository.outputs.repo, tag: latest }\n"+
-			"    - name: ecr-push-role\n")
-	requireRefusedNaming(t, raw, "app-image", "container-repository", "registryHost", "git-repository")
-
-	// The input's name is part of both kind names, so it is looked for in
-	// the error with the kind names taken out.
-	_, err := contract.ParseManifest(raw)
-	if err == nil {
-		return
-	}
-	rest := strings.NewReplacer("container-repository", "", "git-repository", "").Replace(err.Error())
-	if !strings.Contains(rest, "repository") {
-		t.Errorf("ParseManifest error = %q, want it to name the input %q apart from the kind names", err, "repository")
-	}
-}
-
-// What the parser leaves unjudged, and the bindings that resolve, parse.
-func TestParseManifest_V1BetaAcceptsBindingsItDoesNotJudgeOrThatResolve(t *testing.T) {
-	cases := []struct {
-		label string
-		raw   func(t *testing.T) []byte
-	}{
-		{"an input the type does not declare", func(t *testing.T) []byte {
-			// aws.ebs-volume declares no attachTo input, so its binding is not judged.
-			return readManifestGolden(t, awsAppInfraGolden)
-		}},
-		{"a param, a platform value and a literal, at the top and nested", func(t *testing.T) []byte {
-			return editGolden(t, plainGolden,
-				"        port: 8080\n",
-				"        port: 8080\n        label: app.name\n",
-				"        env:\n",
-				"        env:\n          TRACKER_IMAGE: params.image\n          TRACKER_APP: app.name\n          TRACKER_PORT: 8080\n")
-		}},
-		{"an output name holding a dot", func(t *testing.T) []byte {
-			return editGolden(t, awsAppInfraGolden, appHostnameTarget,
-				"inputs: { target: resources.app-instance.outputs.publicIp, region: resources.app-instance.outputs.cloud.region }")
-		}},
-		{"a named requirement referenced by its name", func(t *testing.T) []byte {
-			return []byte(strings.ReplaceAll(
-				string(editGolden(t, plainGolden, "    - kind: postgres-database\n", "    - kind: postgres-database\n      name: tracker-db\n")),
-				"requires.postgres-database.outputs.", "requires.tracker-db.outputs."))
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			parseBeta(t, tc.raw(t))
-		})
-	}
-}
-
-// The plain golden's requirement on a postgres-database, and the prefix
-// every one of tracker's database bindings carries.
-const (
-	plainPostgresRequirement = "    - kind: postgres-database\n"
-	plainPostgresBinding     = "requires.postgres-database.outputs."
-)
-
-// plainWithRequires returns the plain golden with its postgres-database
-// requirement replaced by requirements, and every binding to it rebound to
-// requires.<rebind> when rebind is set.
-func plainWithRequires(t *testing.T, requirements, rebind string) []byte {
+// bindingSpec requires a repository by its type, a host listing both host
+// types and two roles of one type by name, and declares a container listing
+// both container types beside aws-app-infra's own resources.
+func bindingSpec(t *testing.T) contract.ManifestSpec {
 	t.Helper()
-	raw := string(editGolden(t, plainGolden, plainPostgresRequirement, requirements))
-	if rebind != "" {
-		raw = strings.ReplaceAll(raw, plainPostgresBinding, "requires."+rebind+".outputs.")
-	}
-	return []byte(raw)
+	return specOf(t, editGolden(t, awsAppInfraGolden,
+		"  requires: [github.repository]\n",
+		"  requires:\n    - github.repository\n    - aws.ec2-instance\n"+
+			"    - { name: host, type: [aws.ec2-instance, hetzner.server] }\n"+
+			"    - { name: primary, type: aws.iam-role }\n",
+		"    - aws.route53-record\n",
+		"    - aws.route53-record\n    - { name: app-container, type: [aws.ec2-container, hetzner.server-container] }\n"))
 }
 
-// The plain golden requires a host at spec.requires[0] and a
-// postgres-database at spec.requires[1], so an entry added after them sits
-// at spec.requires[2].
+func TestCheckBinding_AcceptsAnOutputEveryListedTypeDeclares(t *testing.T) {
+	spec, snap := bindingSpec(t), platformSnapshot(t)
+	for _, binding := range []string{
+		"requires.aws.ec2-instance.outputs.publicIp",
+		"requires.aws.ec2-instance.outputs.cloud.region",
+		"requires.github.repository.outputs.repo",
+		"requires.host.outputs.hostId",
+		"requires.host.outputs.cloud.region",
+		"requires.primary.outputs.roleArn",
+		"resources.deploy-role.outputs.roleArn",
+		"resources.aws.route53-record.outputs.appUrl",
+		"resources.aws.ec2-instance.outputs.publicIp",
+		"resources.app-container.outputs.url",
+	} {
+		t.Run(binding, func(t *testing.T) {
+			if err := contract.CheckBinding(spec, snap, binding); err != nil {
+				t.Errorf("CheckBinding(%s): %v", binding, err)
+			}
+		})
+	}
+}
+
+func TestCheckBinding_RefusesAnOutputAListedTypeDoesNotDeclareNamingTheTypeAndTheOutput(t *testing.T) {
+	cases := []struct {
+		binding string
+		wants   []string
+	}{
+		{"requires.aws.ec2-instance.outputs.dbName", []string{"aws.ec2-instance", "dbName"}},
+		{"requires.host.outputs.publicIp", []string{"hetzner.server", "publicIp"}},
+		{"requires.github.repository.outputs.registryHost", []string{"github.repository", "registryHost"}},
+		{"resources.deploy-role.outputs.publicIp", []string{"aws.iam-role", "publicIp"}},
+		{"resources.aws.vpc.outputs.vpcId", []string{"aws.vpc", "vpcId"}},
+	}
+	spec, snap := bindingSpec(t), platformSnapshot(t)
+	for _, tc := range cases {
+		t.Run(tc.binding, func(t *testing.T) {
+			requireErrorNaming(t, "CheckBinding("+tc.binding+")", contract.CheckBinding(spec, snap, tc.binding), tc.wants...)
+		})
+	}
+}
+
+func TestCheckBinding_RefusesAReferenceOrResourceTheBlockDoesNotHave(t *testing.T) {
+	cases := []struct {
+		binding, missing string
+	}{
+		{"requires.missing.outputs.repo", "missing"},
+		{"requires.github.repositry.outputs.repo", "github.repositry"},
+		{"requires.hetzner.server.outputs.hostId", "hetzner.server"},
+		{"resources.missing.outputs.publicIp", "missing"},
+		{"resources.aws.iam-role.outputs.roleArn", "aws.iam-role"},
+	}
+	spec, snap := bindingSpec(t), platformSnapshot(t)
+	for _, tc := range cases {
+		t.Run(tc.binding, func(t *testing.T) {
+			requireErrorNaming(t, "CheckBinding("+tc.binding+")", contract.CheckBinding(spec, snap, tc.binding), tc.missing)
+		})
+	}
+}
+
+// snapshotOf parses a snapshot holding the given types, failing the test
+// when it is refused.
+func snapshotOf(t *testing.T, types string) contract.TypeSnapshot {
+	t.Helper()
+	snap, err := contract.ParseTypeSnapshot([]byte(`{"version": 7, "types": [` + types + `]}`))
+	if err != nil {
+		t.Fatalf("ParseTypeSnapshot: %v", err)
+	}
+	return snap
+}
+
+// The kit's own catalogue gives aws.ec2-instance a publicIp output and holds
+// no aws.s3-bucket. A snapshot that says otherwise decides both bindings, so
+// the outputs CheckBinding reads are the snapshot's.
+func TestCheckBinding_ReadsOutputsFromTheSnapshotNotTheKitsCatalogue(t *testing.T) {
+	kitInstance, ok := contract.LookupResourceType("aws.ec2-instance")
+	if !ok || !strings.Contains(strings.Join(kitInstance.Outputs, ","), "publicIp") {
+		t.Fatalf("the kit's catalogue gives aws.ec2-instance outputs %q, so a refusal of publicIp would prove nothing", kitInstance.Outputs)
+	}
+	if _, ok := contract.LookupResourceType("aws.s3-bucket"); ok {
+		t.Fatal("the kit's catalogue holds aws.s3-bucket, so accepting its output would prove nothing")
+	}
+	snap := snapshotOf(t,
+		`{"id": "aws.ec2-instance", "capability": "aws", "kind": "host", "scope": "per-app", "pricing": {"priced": false},`+
+			` "outputs": [{"name": "hostId", "secret": false, "required": true}], "version": 1},`+
+			`{"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app", "stateful": true, "pricing": {"priced": false},`+
+			` "outputs": [{"name": "bucketName", "secret": false, "required": true}], "version": 1}`)
+	spec := specOf(t, []byte(strings.Replace(typedManifest, "    - github.repository\n", "    - aws.ec2-instance\n", 1)))
+
+	requireErrorNaming(t, "CheckBinding through a snapshot without publicIp",
+		contract.CheckBinding(spec, snap, "requires.aws.ec2-instance.outputs.publicIp"), "aws.ec2-instance", "publicIp")
+	if err := contract.CheckBinding(spec, snap, "resources.state.outputs.bucketName"); err != nil {
+		t.Errorf("CheckBinding(resources.state.outputs.bucketName) through a snapshot declaring it: %v", err)
+	}
+}
+
+// --- requirement references ---------------------------------------------------------
+
+// The plain golden's requires line, which requires a host at spec.requires[0]
+// and a database at spec.requires[1].
+const plainRequires = "  requires: [aws.ec2-instance, aws.ec2-postgres-database]\n"
+
 func TestParseManifest_V1BetaRefusesTwoRequirementsSharingAReference(t *testing.T) {
 	cases := []struct {
-		label, ref, first, second string
-		raw                       func(t *testing.T) []byte
+		label, ref, first, second, requires string
 	}{
-		{"two unnamed requirements of one kind", "postgres-database", "spec.requires[1]", "spec.requires[2]",
-			func(t *testing.T) []byte {
-				return plainWithRequires(t, plainPostgresRequirement+plainPostgresRequirement, "")
-			}},
-		{"a requirement named for the kind of an unnamed one", "host", "spec.requires[0]", "spec.requires[1]",
-			func(t *testing.T) []byte {
-				return editGolden(t, plainGolden,
-					"    - kind: host\n",
-					"    - kind: host\n    - kind: postgres-database\n      name: host\n")
-			}},
+		{"two unnamed requirements of one type", "aws.ec2-postgres-database", "spec.requires[1]", "spec.requires[2]",
+			"  requires: [aws.ec2-instance, aws.ec2-postgres-database, aws.ec2-postgres-database]\n"},
+		{"a requirement named for the type of an unnamed one", "aws.ec2-instance", "spec.requires[0]", "spec.requires[2]",
+			"  requires:\n    - aws.ec2-instance\n    - aws.ec2-postgres-database\n" +
+				"    - { name: aws.ec2-instance, type: aws.ec2-postgres-database }\n"},
 		{"two requirements of one name", "tracker-db", "spec.requires[1]", "spec.requires[2]",
-			func(t *testing.T) []byte {
-				named := "    - kind: postgres-database\n      name: tracker-db\n"
-				return plainWithRequires(t, named+named, "tracker-db")
-			}},
+			"  requires:\n    - aws.ec2-instance\n" +
+				"    - { name: tracker-db, type: aws.ec2-postgres-database }\n" +
+				"    - { name: tracker-db, type: aws.ec2-postgres-database }\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			requireRefusedNaming(t, tc.raw(t), tc.first, tc.second, `"`+tc.ref+`"`, "appears once")
+			raw := editGolden(t, plainGolden, plainRequires, tc.requires)
+			requireRefusedNaming(t, raw, tc.first, tc.second, `"`+tc.ref+`"`, "appears once")
 		})
 	}
 }
 
-// aws-app-infra binds no input to requires.postgres-database, so the
-// refusal does not hang on a binding. Its git-repository requirement sits at
-// spec.requires[0].
-func TestParseManifest_V1BetaRefusesASharedRequirementReferenceNoInputBinds(t *testing.T) {
-	raw := editGolden(t, awsAppInfraGolden,
-		"    - kind: git-repository\n      in: github\n",
-		"    - kind: git-repository\n      in: github\n"+plainPostgresRequirement+plainPostgresRequirement)
-	if strings.Contains(string(raw), plainPostgresBinding) {
-		t.Fatalf("the manifest binds %s, so the refusal could hang on that binding:\n%s", plainPostgresBinding, raw)
-	}
-	requireRefusedNaming(t, raw, "spec.requires[1]", "spec.requires[2]", `"postgres-database"`, "appears once")
-}
-
-// Requirements of one kind parse while their references differ, each one
+// Requirements of one type parse while their references differ, and each is
 // bound through its own reference.
-func TestParseManifest_V1BetaAcceptsRequirementsOfOneKindWithDistinctReferences(t *testing.T) {
-	const auditDBHost = "          AUDIT_DB_HOST: requires.audit-db.outputs.host\n"
-	addAuditBinding := func(t *testing.T, raw []byte) []byte {
-		t.Helper()
-		const env = "        env:\n"
-		if !strings.Contains(string(raw), env) {
-			t.Fatalf("fixture edit: %q is not in %s", env, plainGolden)
-		}
-		return []byte(strings.Replace(string(raw), env, env+auditDBHost, 1))
+func TestParseManifest_V1BetaAcceptsRequirementsOfOneTypeWithDistinctReferences(t *testing.T) {
+	cases := map[string]string{
+		"two named requirements": "  requires:\n    - aws.ec2-instance\n" +
+			"    - { name: tracker-db, type: aws.ec2-postgres-database }\n" +
+			"    - { name: audit-db, type: aws.ec2-postgres-database }\n",
+		"a named and an unnamed requirement": "  requires:\n    - aws.ec2-instance\n    - aws.ec2-postgres-database\n" +
+			"    - { name: audit-db, type: aws.ec2-postgres-database }\n",
 	}
-	cases := []struct {
-		label string
-		raw   func(t *testing.T) []byte
-	}{
-		{"two named requirements", func(t *testing.T) []byte {
-			return addAuditBinding(t, plainWithRequires(t,
-				"    - kind: postgres-database\n      name: tracker-db\n"+
-					"    - kind: postgres-database\n      name: audit-db\n",
-				"tracker-db"))
-		}},
-		{"a named and an unnamed requirement", func(t *testing.T) []byte {
-			return addAuditBinding(t, plainWithRequires(t,
-				plainPostgresRequirement+"    - kind: postgres-database\n      name: audit-db\n", ""))
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			b := parseBeta(t, tc.raw(t))
+	snap := platformSnapshot(t)
+	for label, requires := range cases {
+		t.Run(label, func(t *testing.T) {
+			b := parseBeta(t, editGolden(t, plainGolden, plainRequires, requires))
 			if len(b.Spec.Requires) != 3 {
-				t.Fatalf("spec.requires = %+v, want the host and both postgres-database requirements", b.Spec.Requires)
+				t.Fatalf("spec.requires = %+v, want the host and both database requirements", b.Spec.Requires)
+			}
+			if err := contract.CheckBinding(b.Spec, snap, "requires.audit-db.outputs.dbName"); err != nil {
+				t.Errorf("CheckBinding(requires.audit-db.outputs.dbName): %v", err)
 			}
 		})
 	}

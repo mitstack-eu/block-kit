@@ -19,15 +19,19 @@ var ManifestSchema []byte
 // manifestSchemaID is the $id of ManifestSchema.
 const manifestSchemaID = "https://mitstack.dev/schemas/block/manifest.schema.json"
 
-// inputValueRef points at the one definition of InputValue, which nests.
-const inputValueRef = "#/$defs/inputValue"
+// typeIDRef and typeIDsRef point at the definitions of one type id and of
+// an entry's type, which every requires and resources entry shares.
+const (
+	typeIDRef  = "#/$defs/typeId"
+	typeIDsRef = "#/$defs/typeIds"
+)
 
 // GenerateManifestSchema builds the JSON Schema for a block manifest under
 // ManifestAPIVersion by reflection over BlockManifest's types and json
 // tags. Every object is closed, a field whose tag has no omitempty is
 // required, and a required string or list must not be empty, as
-// ParseManifest holds a manifest. A requirement's in is one string or a
-// list of strings, and a resource input is a scalar or an object of inputs.
+// ParseManifest holds a manifest. A requires or resources entry is a type
+// id or a closed object whose type, one id or a list, is required.
 // The output ends in a line break and is the same on every call.
 func GenerateManifestSchema() ([]byte, error) {
 	doc, err := typeSchema(blockManifestType, false)
@@ -40,16 +44,22 @@ func GenerateManifestSchema() ([]byte, error) {
 	doc["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	doc["$id"] = manifestSchemaID
 	doc["title"] = "mitstack block manifest " + ManifestAPIVersion
-	doc["description"] = "A block manifest under " + ManifestAPIVersion + ": its params, its requirements by kind, " +
-		"the resources it creates in creation order, the resources it provides, its lifecycle and its observability. " +
-		"Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice " +
+	doc["description"] = "A block manifest under " + ManifestAPIVersion + ": its params, its requirements by exact type, " +
+		"the resources it creates by exact type, the resources it provides, its lifecycle and its observability. " +
+		"Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice, " +
+		"a requirement reference used twice, an entry listing several types without a name, " +
 		"and a provides entry that names no resource."
 	doc["$defs"] = map[string]any{
-		"inputValue": map[string]any{
-			"description": "A resource input: a binding or a literal, or an object of named inputs.",
-			"anyOf": []any{
-				map[string]any{"type": []any{"string", "number", "boolean"}},
-				map[string]any{"type": "object", "additionalProperties": map[string]any{"$ref": inputValueRef}},
+		"typeId": map[string]any{
+			"description": "A resource type id, <capability>.<name> in lowercase kebab case.",
+			"type":        "string",
+			"pattern":     typeIDPattern.String(),
+		},
+		"typeIds": map[string]any{
+			"description": "One type id, or a list of the type ids the entry may be met or created by.",
+			"oneOf": []any{
+				map[string]any{"$ref": typeIDRef},
+				map[string]any{"type": "array", "items": map[string]any{"$ref": typeIDRef}, "minItems": 1, "uniqueItems": true},
 			},
 		},
 	}
@@ -67,8 +77,11 @@ func GenerateManifestSchema() ([]byte, error) {
 // typeSchema returns the schema for a value of Go type t. required marks a
 // string or a list that must not be empty.
 func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
-	if t == inputValueType {
-		return map[string]any{"$ref": inputValueRef}, nil
+	switch t {
+	case requirementType:
+		return entrySchema("A requirement: a type id, or an object of its type, its name and many.", true), nil
+	case resourceType:
+		return entrySchema("A resource the block creates: a type id, or an object of its type and its name.", false), nil
 	}
 	switch t.Kind() {
 	case reflect.String:
@@ -108,14 +121,8 @@ func structSchema(t reflect.Type) (map[string]any, error) {
 	props := map[string]any{}
 	required := []any{}
 	for _, f := range manifestFields(t, v1betaDecoder.tag) {
-		var s map[string]any
-		var err error
-		if f.oneOrList {
-			s = map[string]any{"oneOf": []any{
-				map[string]any{"type": "string"},
-				map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			}}
-		} else if s, err = typeSchema(t.Field(f.index).Type, f.required); err != nil {
+		s, err := typeSchema(t.Field(f.index).Type, f.required)
+		if err != nil {
 			return nil, err
 		}
 		props[f.name] = s
@@ -128,4 +135,24 @@ func structSchema(t reflect.Type) (map[string]any, error) {
 		s["required"] = required
 	}
 	return s, nil
+}
+
+// entrySchema returns the schema of a requires or resources entry: a type
+// id, or a closed object whose type is required, with many for a
+// requirement.
+func entrySchema(description string, requirement bool) map[string]any {
+	props := map[string]any{
+		"type": map[string]any{"$ref": typeIDsRef},
+		"name": map[string]any{"type": "string", "minLength": 1},
+	}
+	if requirement {
+		props["many"] = map[string]any{"type": "boolean"}
+	}
+	return map[string]any{
+		"description": description,
+		"oneOf": []any{
+			map[string]any{"$ref": typeIDRef},
+			map[string]any{"type": "object", "additionalProperties": false, "properties": props, "required": []any{"type"}},
+		},
+	}
 }

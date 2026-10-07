@@ -108,30 +108,78 @@ func TestManifestSchema_DeclaresDraft2020_12AndAnID(t *testing.T) {
 	}
 }
 
-// A requirement and a resource are closed objects with exactly the keys
-// ADR 0083 gives them, and require exactly the keys the parser requires.
+// alternatives returns node's oneOf or anyOf alternatives, each with any
+// local $ref followed, or node itself when it has neither.
+func alternatives(t *testing.T, root, node map[string]any) []map[string]any {
+	t.Helper()
+	node = schemaAt(t, root, node)
+	list, ok := node["oneOf"].([]any)
+	if !ok {
+		list, ok = node["anyOf"].([]any)
+	}
+	if !ok {
+		return []map[string]any{node}
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		m, _ := item.(map[string]any)
+		out = append(out, schemaAt(t, root, m))
+	}
+	return out
+}
+
+// alternativeOfType returns the alternative of node whose type is typ.
+func alternativeOfType(t *testing.T, root, node map[string]any, typ string) (map[string]any, bool) {
+	t.Helper()
+	for _, alt := range alternatives(t, root, node) {
+		if alt["type"] == typ {
+			return alt, true
+		}
+	}
+	return nil, false
+}
+
+// An entry under requires or resources is a type id, or a closed object
+// with exactly the keys ADR 0085 gives it, whose type is one id or a list of
+// ids and is the one key required.
 func TestManifestSchema_RequirementAndResourceCarryExactlyTheirKeys(t *testing.T) {
 	doc := schemaDoc(t)
 	cases := []struct {
 		list       string
 		properties []string
-		required   []string
 	}{
-		{"requires", []string{"in", "kind", "many", "name"}, []string{"kind"}},
-		{"resources", []string{"inputs", "name", "on", "type"}, []string{"name", "type"}},
+		{"requires", []string{"many", "name", "type"}},
+		{"resources", []string{"name", "type"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.list, func(t *testing.T) {
-			item := schemaAt(t, doc, doc, "properties", "spec", "properties", tc.list, "items")
-			props, _ := item["properties"].(map[string]any)
+			items := schemaAt(t, doc, doc, "properties", "spec", "properties", tc.list, "items")
+			if _, ok := alternativeOfType(t, doc, items, "string"); !ok {
+				t.Errorf("spec.%s items take no type id alone, want a string form", tc.list)
+			}
+			entry, ok := alternativeOfType(t, doc, items, "object")
+			if !ok {
+				t.Fatalf("spec.%s items take no mapping form", tc.list)
+			}
+			props, _ := entry["properties"].(map[string]any)
 			if got := sortedKeys(props); !reflect.DeepEqual(got, tc.properties) {
-				t.Errorf("spec.%s items carry properties %q, want exactly %q", tc.list, got, tc.properties)
+				t.Errorf("spec.%s entries carry properties %q, want exactly %q", tc.list, got, tc.properties)
 			}
-			if got := sortedStrings(item["required"]); !reflect.DeepEqual(got, tc.required) {
-				t.Errorf("spec.%s items require %q, want %q", tc.list, got, tc.required)
+			if got := sortedStrings(entry["required"]); !reflect.DeepEqual(got, []string{"type"}) {
+				t.Errorf("spec.%s entries require %q, want [type]", tc.list, got)
 			}
-			if item["additionalProperties"] != false {
-				t.Errorf("spec.%s items additionalProperties = %v, want false", tc.list, item["additionalProperties"])
+			if entry["additionalProperties"] != false {
+				t.Errorf("spec.%s entries additionalProperties = %v, want false", tc.list, entry["additionalProperties"])
+			}
+			typeProp, _ := props["type"].(map[string]any)
+			if typeProp == nil {
+				t.Fatalf("spec.%s entries declare no type property", tc.list)
+			}
+			if _, ok := alternativeOfType(t, doc, typeProp, "string"); !ok {
+				t.Errorf("spec.%s entries' type takes no single type id", tc.list)
+			}
+			if _, ok := alternativeOfType(t, doc, typeProp, "array"); !ok {
+				t.Errorf("spec.%s entries' type takes no list of type ids", tc.list)
 			}
 		})
 	}

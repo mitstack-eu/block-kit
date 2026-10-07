@@ -84,6 +84,46 @@ test fails when the committed file differs from what the types generate.
 Regenerate it with
 `go run ./cmd/manifest-schema > contract/manifest.schema.json`.
 
+Under `mitstack/v1beta` a block names what it requires and what it creates by
+exact type, as ADR 0085 sets. Each `requires` or `resources` entry is a type
+id, or a mapping of `type`, `name` and, for a requirement, `many`. The `type`
+is one id or a list of ids:
+
+```yaml
+requires:
+  - github.repository
+  - { name: host, type: [aws.ec2-instance, hetzner.server] }
+resources:
+  - aws.vpc
+  - { name: deploy-role, type: aws.iam-role }
+  - { name: app-container, type: [aws.ec2-container, hetzner.server-container] }
+provides: [app-container, deploy-role]
+```
+
+`provides` lists the names of the resources the block offers to the rest of
+the app. It replaces the capability slugs that older manifests list.
+
+An unnamed resource is named by its type id, and an unnamed requirement is
+referenced by it. An entry that lists more than one type needs a name, and
+two entries that would share a name or a reference are refused. The parser
+refuses the retired `kind`, `in`, `on` and `inputs` keys, naming the key and
+the entry. It judges the type id grammar only, so it needs no type snapshot.
+
+Whether the platform holds a type is a question for the type snapshot the
+platform serves at `GET /v1/resource-types/snapshots/{version}`.
+`contract.ParseTypeSnapshot` reads one, and `contract.CheckManifestTypes`
+refuses an entry listing a type the snapshot does not hold.
+`contract.CheckBinding` judges a binding a block's code reads, such as
+`requires.host.outputs.hostId` or `resources.deploy-role.outputs.roleArn`. It
+refuses a reference the block lacks, and an output that any listed type does
+not declare in the snapshot. Neither reads the kit's own catalogue.
+
+`ManifestRequirement.Types` and `ManifestResource.Types` hold the listed ids,
+and `ManifestResource.Type` holds the one id of an entry that lists one.
+`ManifestRequirement.Kind` and `In`, `ManifestResource.Inputs` and `On`, and
+`contract.InputValue` are deprecated, stay empty after a parse, and go in the
+next major release.
+
 ## Importing it
 
 The module path is `github.com/mitstack-eu/operator-kit`. A block adds it the
@@ -299,7 +339,157 @@ refusal.
 ### Serving a block that declares its resources
 
 A block whose `mitstack/v1beta` manifest lists its resources under
-`spec.resources` implements `handler.DeclaredResource` once for each of them.
+`spec.resources` creates and orders them itself, through its block-level
+handler. That is the one `handler.Resource` the block's operator gives the
+kit in `Config.Resource` to create, update and delete all its resources. The
+operator also hands `handler.New` one `handler.Observer` per declared
+resource in `Config.Observers`, keyed by the names the manifest gives:
+
+```go
+type Observer interface {
+	ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error)
+}
+```
+
+An observer asks the provider what stands right now, and never answers from
+what an ensure remembered. Its `contract.ResourceRef` carries the resource's
+name, the type it was created as, the identity that addresses it when that
+is known, and the verb's `Desired`.
+
+| Verb | What the Handler does |
+|---|---|
+| subscribe, upgrade | Runs one `Ensure`, then observes each declared resource in manifest order until it reports `Present` |
+| unsubscribe | Runs one `Delete`, or `DeleteWithRequest` for a `handler.RequestDeleter`, then observes each declared resource in reverse order until it reports `Absent` |
+| validate | Observes each declared resource once, and names the resources an upgrade would replace |
+
+A block-level handler that implements `handler.ResourceReporter` reports
+what its ensure created, and the Handler calls `EnsureResources` in place of
+`Ensure`. The shared observers find a resource only by the identity reported
+here, so a block that uses them implements it:
+
+```go
+type ResourceReporter interface {
+	EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error)
+}
+
+type CreatedResource struct {
+	Name     string            // the manifest's name for the resource
+	Type     string            // the exact type it was created as
+	Identity map[string]string // the values that address it, such as {"instanceId": "i-0abc"}
+}
+```
+
+Each observer is handed the identity and type reported for its resource.
+When nothing was reported, it gets what the engine recorded under the
+request's `recordedResources`, and failing that, no identity and the one
+type its entry lists. A recorded type reaches the observer even when the
+entry no longer lists it, since the resource was created as that type. A
+reported resource the manifest does not declare, or of a type its entry does
+not list, answers 400 quoting it. A handler that implements
+`handler.ReplacementPlanner` names on validate the resources an upgrade would
+replace, and the answer carries them under `replaces`.
+
+Every observe is handed `Desired.VerbAt`, the time of the verb it settles,
+and reads only what was made after it. After `Ensure` or `Delete` that is
+the Handler's clock once the call returned. On a validate it is the request's
+`settlesAt`, the time of the state-changing verb the validate settles, and
+otherwise the request's `createdAt`. A validate request and its answer look
+like this:
+
+```json
+{"operation": "validate", "settlesAt": "2026-10-07T12:00:00Z",
+ "recordedResources": {"aws.ebs-volume": {"type": "aws.ebs-volume", "identity": {"volumeId": "vol-0abc"}}}}
+```
+
+```json
+{"outputs": null, "absent": false, "replaces": ["aws.ebs-volume"],
+ "resources": {"aws.ebs-volume": {"observe": {"state": "present", "type": "aws.ebs-volume", "identity": {"volumeId": "vol-0abc"}}}}}
+```
+
+The answer's `resources` map holds an `observe` entry per resource with its
+state, outputs, identity and `type`. The top-level `outputs` and
+`secretOutputs` are the union of the resources `spec.provides` names. A
+resource not present within the verb budget answers `pending:true` naming it,
+and unsubscribe answers `absent:true` only when every resource observes absent.
+A request naming one resource is served for validate alone, observing that
+resource with the request's `resourceIdentity` and `resourceType`. A named
+subscribe, upgrade or unsubscribe answers 400. The request's
+`requirementTypes` say which exact type met each requirement.
+
+`handler.New` refuses a declared resource with no observer, an observer the
+manifest does not declare, `Observers` beside `Resources`, and `Observers`
+without a `mitstack/v1beta` manifest. The trust boundary, idempotency,
+secret scrubbing, events and error classes work as for any other block.
+
+The `observe` package holds the kit's shared observers, one per type, each
+over a small API interface the operator implements. They include
+`EC2Instance`, `EgressProxy`, `S3Bucket`, `VPC`, `SecurityGroup`, `EBSVolume`,
+`ECRRepository`, `IAMRole`, `Route53Record`, `SSMAssociation`, `EC2Container`,
+`EC2PostgresDatabase`, `HetznerServer`, `HetznerPrimaryIP`, `HetznerFirewall`,
+`HetznerNetwork`, `GitHubRepository`, `GitHubCommit`, and `NodeReported`. A
+host probe never reads a failed probe as absence: `HostCommander` returns a
+nonzero exit as an error, and empty output is unknown.
+
+`EC2PostgresDatabase` probes the Postgres container postgres-db runs for
+each subscription, named by the identity's `instanceId` and `container`, the
+way postgres-db does. Its probe prints `PRESENT=1`, `PRESENT=0` when Docker
+answers without the container, or `PRESENT=unknown` when Docker does not
+answer, and then for a present container `READY=` and `pg_isready`'s exit
+status. The container is present once `READY=0`, absent on `PRESENT=0`, and
+otherwise unknown. It reports `dbName` only when the identity carries
+`database`. `EC2PostgresDatabase` and `NodeReported` report presence and
+identity only, so a block that provides such a resource reports the type's
+other required outputs from its own observer.
+
+`NodeReported` serves a resource the platform has no route to, such as a
+`kubernetes.namespace`, from node reports. A node report is the report a
+node of the Hetzner cluster sends the platform, read at
+`GET /v1/subscriptions/{id}/node-reports`. Reports are stored under the
+cluster's own subscription, so the identity names it as
+`clusterSubscription`, beside the object's `kind`, `name` and optional
+`namespace`; without it, `NodeReported` reads the observing subscription's
+own reports. An object matches only when it also carries the observing
+subscription's id, since an object is labelled by the subscription that
+created it. A report's body lists those objects under
+`subscriptionResources`, and may carry
+`madeAt` and `subscriptionResourcesComplete`. A report counts when its
+`madeAt`, or its receipt time when it has none, is after `VerbAt`, and the
+newest counting report decides. An object it lists is present. An object it
+does not list is absent only when the report carries a `madeAt` after
+`VerbAt` and `subscriptionResourcesComplete: true`. Otherwise it is unknown.
+
+`observe.AWSTagged` and `observe.HetznerLabelled` list everything carrying a
+subscription's id, under the AWS tag `mitstack:subscription`
+(`observe.AWSSubscriptionTag`) or the Hetzner label
+`mitstack.dev/subscription` (`observe.HetznerSubscriptionLabel`).
+
+A block proves its guards in its own tests with `kittest.AssertBlock`. It
+takes a `kittest.Block`: the manifest, the type snapshot, the block-level
+handler, the observers, a `kittest.Provider` and the subscription. It serves
+the block through `handler.New` and signed requests, so it holds the block
+to the Handler's own rules. After subscribe, every declared resource must
+observe present with an identity, and every provided one with the outputs
+its type marks required. Everything the provider lists under the
+subscription's id must match a declared resource by type and count. A
+resource the provider loses must then observe not present. With `Upgrade`
+set, a resource the upgrade replaces must be named in the `replaces` of the
+validate before it, and the problem says so when its type is stateful.
+`Upgrade` nil while a declared type is stateful is a problem. After
+unsubscribe every declared resource must observe absent. A requirement
+listing more than one type runs the check once per listed type, with
+`Requirements` giving each type's outputs, and each problem names the type.
+`AssertBlock` logs which guards ran. blockverify's resources suite requires
+a `TestDeclaredResources` test that calls `kittest.AssertBlock`, runs it, and
+names in its pass detail the guards that ran.
+
+### Serving a block one handler per resource
+
+This mode is deprecated: `Config.Resources`, `handler.DeclaredResource`,
+`handler.ReportingResource`, a request running ensure or delete on one named
+resource, and `resourceInputs` go in the next major release.
+
+A block whose `mitstack/v1beta` manifest lists its resources under
+`spec.resources` may implement `handler.DeclaredResource` once for each of them.
 The interface has the same `Ensure`, `Observe` and `Delete` as
 `handler.Resource`, scoped to one resource. You hand the implementations to
 `handler.New` in `Config.Resources`, keyed by the names the manifest gives,
@@ -404,10 +594,8 @@ without a `resource`.
 
 The Handler scrubs each secret input of the named resource from the answer,
 the event it emits for the verb and every log line it writes, as it scrubs
-`secretInputs`. An input is
-secret when the manifest binds it to a param marked `secret: true`, at the
-top level or inside a mapping. It is also secret when the resource's
-catalogued type marks it secret, and then every string inside it is secret.
+`secretInputs`. An input is secret when the resource's catalogued type marks
+it secret, and then every string inside it is secret.
 
 Some declared resources can only find what they created through the inputs
 the engine recorded at subscribe and the identity their ensure stored. The
@@ -454,8 +642,8 @@ set, and nothing is driven, since the engine never sends such a request. A
 resource that implements `handler.RequestObserver` or
 `handler.RequestDeleter` is observed or deleted through it with that
 `Desired`. Each problem about a resource names it. blockverify's resources
-suite requires a `TestDeclaredResources` test that calls
-`kittest.AssertDeclaredResources`, and runs it.
+suite also accepts a `TestDeclaredResources` test that calls
+`kittest.AssertDeclaredResources`.
 
 ### Deploying a declared resource through GitOps
 
@@ -531,6 +719,33 @@ notification for the exact revision you hand them. Use them when you need the
 outcome of one particular commit, since a notification for any other revision
 leaves them pending. `Wait` polls until the deploy succeeds or fails, and a
 failed deploy is an outcome rather than an error.
+
+A block-level handler ships its whole desired state with `gitops.Deploy`. It
+takes a `gitops.BlockDeploy` holding the app, every file, the commit message,
+the request's secret values and the poll interval. It commits every file once
+through `CommitManifests` and waits on that revision, or on head when nothing
+changed. The `gitops.Deployed` it returns carries the revision, whether it
+committed, and Argo CD's verdict, so a failed sync comes back in
+`Deployed.Outcome` for the block to refuse:
+
+```go
+func (b *block) Ensure(ctx context.Context, d contract.Desired) error {
+	out, err := gitops.Deploy(ctx, b.repo, b.notes, gitops.BlockDeploy{
+		App:     d.AppID,
+		Files:   render(d),
+		Message: "deploy " + d.AppID,
+		Secrets: gitops.SecretValues(d),
+		Poll:    5 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+	if out.Outcome.Verdict == gitops.VerdictFailed {
+		return handler.Refuse("deploy-failed", "Argo CD's sync of %s failed: %s", out.Revision, out.Outcome.Notification.Message)
+	}
+	return nil
+}
+```
 
 Its delete removes the paths the record names, without rendering, and falls
 back to the rendered paths when there is no record. Paths already gone commit

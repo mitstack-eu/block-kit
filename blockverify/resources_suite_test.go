@@ -32,7 +32,6 @@ spec:
       type: aws.vpc
     - name: instance
       type: aws.ec2-instance
-      inputs: { network: resources.network }
   provides: [instance]
   lifecycle:
     endpoint: https://api.mitstack.dev/operators/blockverify-resources-fixture/hook
@@ -40,7 +39,7 @@ spec:
     contract: kit/v1
 `
 
-// suppliedFixtureManifest requires a git-repository the app supplies and
+// suppliedFixtureManifest requires a repository the app supplies and
 // declares a role that trusts it.
 const suppliedFixtureManifest = `apiVersion: mitstack/v1beta
 type: block
@@ -51,13 +50,10 @@ metadata:
 spec:
   version: 1.0.0
   description: A fixture block that requires a supplied repository.
-  requires:
-    - kind: git-repository
-      in: github
+  requires: [github.repository]
   resources:
     - name: ecr-push-role
       type: aws.iam-role
-      inputs: { trustedRepository: requires.git-repository.outputs.repo }
   lifecycle:
     endpoint: https://api.mitstack.dev/operators/blockverify-supplied-fixture/hook
     operations: [subscribe, unsubscribe, upgrade, validate]

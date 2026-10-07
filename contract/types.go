@@ -61,34 +61,70 @@ type BuildRequest struct {
 // engine's own request struct field for field. Resource names the one
 // declared resource the verb runs on, ResourceInputs carries that
 // resource's inputs, each a scalar or a mapping kept as raw JSON, and
-// ResourceIdentity carries the identity that resource's ensure stored; a
-// request naming no resource leaves all three empty and runs the verb on
-// every declared resource.
+// ResourceIdentity carries the identity that resource's ensure stored and
+// ResourceType the type it was created as; a request naming no resource
+// leaves all four empty and runs the verb on every declared resource.
+// RecordedResources is what the engine recorded for each declared resource
+// by name, and RequirementTypes the exact type that met each requirement,
+// keyed by its reference.
 type Request struct {
-	Operation        string                         `json:"operation"`
-	SubscriptionID   string                         `json:"subscriptionId"`
-	IdempotencyKey   string                         `json:"idempotencyKey"`
-	BlockID          string                         `json:"blockId"`
-	BlockVersion     string                         `json:"blockVersion"`
-	OrgID            string                         `json:"orgId"`
-	AppID            string                         `json:"appId"`
-	Params           map[string]string              `json:"params"`
-	Instances        map[string]InstanceConfig      `json:"instances,omitempty"`
-	Secrets          map[string]map[string]string   `json:"secrets,omitempty"`
-	OBO              string                         `json:"obo,omitempty"`
-	EventsCallback   *EventsCallback                `json:"eventsCallback,omitempty"`
-	SecretInputs     map[string]string              `json:"secretInputs,omitempty"`
-	AppSecrets       map[string]string              `json:"appSecrets,omitempty"`
-	Bindings         map[string]map[string]string   `json:"bindings,omitempty"`
-	BindingsAll      map[string][]map[string]string `json:"bindingsAll,omitempty"`
-	CloudIdentity    *CloudIdentity                 `json:"cloudIdentity,omitempty"`
-	CreatedAt        time.Time                      `json:"createdAt"`
-	Nonce            string                         `json:"nonce"`
-	PriorOutputs     map[string]string              `json:"priorOutputs,omitempty"`
-	BuildRequest     *BuildRequest                  `json:"buildRequest,omitempty"`
-	Resource         string                         `json:"resource,omitempty"`
-	ResourceInputs   map[string]json.RawMessage     `json:"resourceInputs,omitempty"`
-	ResourceIdentity map[string]string              `json:"resourceIdentity,omitempty"`
+	Operation      string                         `json:"operation"`
+	SubscriptionID string                         `json:"subscriptionId"`
+	IdempotencyKey string                         `json:"idempotencyKey"`
+	BlockID        string                         `json:"blockId"`
+	BlockVersion   string                         `json:"blockVersion"`
+	OrgID          string                         `json:"orgId"`
+	AppID          string                         `json:"appId"`
+	Params         map[string]string              `json:"params"`
+	Instances      map[string]InstanceConfig      `json:"instances,omitempty"`
+	Secrets        map[string]map[string]string   `json:"secrets,omitempty"`
+	OBO            string                         `json:"obo,omitempty"`
+	EventsCallback *EventsCallback                `json:"eventsCallback,omitempty"`
+	SecretInputs   map[string]string              `json:"secretInputs,omitempty"`
+	AppSecrets     map[string]string              `json:"appSecrets,omitempty"`
+	Bindings       map[string]map[string]string   `json:"bindings,omitempty"`
+	BindingsAll    map[string][]map[string]string `json:"bindingsAll,omitempty"`
+	CloudIdentity  *CloudIdentity                 `json:"cloudIdentity,omitempty"`
+	CreatedAt      time.Time                      `json:"createdAt"`
+	Nonce          string                         `json:"nonce"`
+	PriorOutputs   map[string]string              `json:"priorOutputs,omitempty"`
+	BuildRequest   *BuildRequest                  `json:"buildRequest,omitempty"`
+	Resource       string                         `json:"resource,omitempty"`
+	// Deprecated: a mitstack/v1beta resource carries no inputs; the next
+	// major release removes ResourceInputs.
+	ResourceInputs   map[string]json.RawMessage `json:"resourceInputs,omitempty"`
+	ResourceIdentity map[string]string          `json:"resourceIdentity,omitempty"`
+
+	ResourceType      string                      `json:"resourceType,omitempty"`
+	RecordedResources map[string]RecordedResource `json:"recordedResources,omitempty"`
+	RequirementTypes  map[string]string           `json:"requirementTypes,omitempty"`
+	// SettlesAt is the time of the state-changing verb a validate settles.
+	SettlesAt *time.Time `json:"settlesAt,omitempty"`
+}
+
+// RecordedResource is what the engine recorded for one declared resource:
+// the type it was created as and the identity that addresses it.
+type RecordedResource struct {
+	Type     string            `json:"type"`
+	Identity map[string]string `json:"identity,omitempty"`
+}
+
+// ResourceRef is what an observe of one declared resource is handed: its
+// name, the type it was created as, the identity that addresses it, when
+// known, and the verb's Desired.
+type ResourceRef struct {
+	Name     string
+	Type     string
+	Identity map[string]string
+	Desired  Desired
+}
+
+// CreatedResource is what a block-level ensure reports for one declared
+// resource it created: its name, its type and its identity.
+type CreatedResource struct {
+	Name     string
+	Type     string
+	Identity map[string]string
 }
 
 // Response is the typed form of a lifecycle webhook response, mirroring the
@@ -108,6 +144,9 @@ type Response struct {
 	// verb ran for that resource. A resource the verb never reached has no
 	// entry.
 	Resources map[string]ResourceOutcome `json:"resources,omitempty"`
+	// Replaces names, on a validate, the declared resources the block's
+	// upgrade would replace rather than change in place.
+	Replaces []string `json:"replaces,omitempty"`
 }
 
 // ResourceOutcome is what a verb's calls did to one declared resource. A
@@ -122,15 +161,18 @@ type ResourceOutcome struct {
 // CallOutcome is the result of one ensure, observe or delete call on a
 // resource. Error is set when the call failed. State and Outputs are what
 // an observe found, and on an ensure Outputs are the outputs it published.
-// Identity is what an ensure stored as its resource's identity.
-// StatusDetail is the human-readable detail the call left. The zero value
-// is a call that ran and succeeded with nothing to report.
+// Identity is what an ensure stored as its resource's identity, or the
+// identity an observe addressed the resource by. Type is the type an
+// observe observed the resource as. StatusDetail is the human-readable
+// detail the call left. The zero value is a call that ran and succeeded
+// with nothing to report.
 type CallOutcome struct {
 	Error        string            `json:"error,omitempty"`
 	State        State             `json:"state,omitempty"`
 	Outputs      map[string]string `json:"outputs,omitempty"`
 	StatusDetail string            `json:"statusDetail,omitempty"`
 	Identity     map[string]string `json:"identity,omitempty"`
+	Type         string            `json:"type,omitempty"`
 }
 
 // Ensured is what an ensure reports about the resource it converged:
@@ -170,7 +212,9 @@ type Identity struct {
 // the same map Delete and Observe are handed. Resource, ResourceInputs and
 // ResourceIdentity are the request's own: the declared resource it names,
 // that resource's inputs and the identity that resource's ensure stored,
-// all empty when the request names no resource.
+// all empty when the request names no resource, as is ResourceType.
+// RecordedResources and RequirementTypes are the request's too, and VerbAt
+// is its settlesAt when set, else its createdAt.
 type Desired struct {
 	Identity
 
@@ -182,9 +226,16 @@ type Desired struct {
 	BindingsAll  map[string][]map[string]string
 	BuildRequest *BuildRequest
 
-	Resource         string
+	Resource string
+	// Deprecated: a mitstack/v1beta resource carries no inputs; the next
+	// major release removes ResourceInputs.
 	ResourceInputs   map[string]json.RawMessage
 	ResourceIdentity map[string]string
+	ResourceType     string
+
+	RecordedResources map[string]RecordedResource
+	RequirementTypes  map[string]string
+	VerbAt            time.Time
 }
 
 // Observation is what an operator's validate/unsubscribe check found about
@@ -238,13 +289,13 @@ func requiredRequestFields(r Request) []requiredField {
 	return fields
 }
 
-// envelopeCreatedAt probes the raw envelope for its createdAt value ahead of
-// the full Request unmarshal, so a non-string JSON value (number, bool,
-// object, array) is reported by name instead of surfacing as
-// time.Time.UnmarshalJSON's bare "input is not a JSON string" error, which
-// carries no field name.
-type envelopeCreatedAt struct {
+// envelopeTimes probes the raw envelope for its createdAt and settlesAt
+// values ahead of the full Request unmarshal, so a value that is not an RFC
+// 3339 string is reported by name instead of surfacing as
+// time.Time.UnmarshalJSON's error, which carries no field name.
+type envelopeTimes struct {
 	CreatedAt json.RawMessage `json:"createdAt"`
+	SettlesAt json.RawMessage `json:"settlesAt"`
 }
 
 // validOperations is the envelope.schema.json operation enum.
@@ -262,12 +313,18 @@ var validOperations = map[string]bool{
 // to bind them to. Every error names the JSON field it concerns, so an
 // operator author can act on it without reading the schema.
 func DecodeRequest(raw []byte) (Request, error) {
-	var probe envelopeCreatedAt
+	var probe envelopeTimes
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return Request{}, wrapDecodeError("envelope", err)
 	}
 	if len(probe.CreatedAt) > 0 && !bytes.Equal(probe.CreatedAt, []byte("null")) && probe.CreatedAt[0] != '"' {
 		return Request{}, fmt.Errorf("contract: envelope field %q must be an RFC 3339 string", "createdAt")
+	}
+	if len(probe.SettlesAt) > 0 && !bytes.Equal(probe.SettlesAt, []byte("null")) {
+		var t time.Time
+		if err := json.Unmarshal(probe.SettlesAt, &t); err != nil {
+			return Request{}, fmt.Errorf("contract: envelope field %q must be an RFC 3339 string: %w", "settlesAt", err)
+		}
 	}
 
 	var req Request
@@ -295,6 +352,10 @@ func DecodeRequest(raw []byte) (Request, error) {
 		return Request{}, fmt.Errorf("contract: envelope field %q needs a non-empty %q naming the resource the identity is for",
 			"resourceIdentity", "resource")
 	}
+	if req.ResourceType != "" && req.Resource == "" {
+		return Request{}, fmt.Errorf("contract: envelope field %q needs a non-empty %q naming the resource the type is for",
+			"resourceType", "resource")
+	}
 
 	return req, nil
 }
@@ -313,11 +374,9 @@ func DecodeResponse(raw []byte) (Response, error) {
 // wrapDecodeError turns a json.Unmarshal error into one naming the JSON
 // field it concerns. A *json.UnmarshalTypeError already carries the field
 // as a JSON path (e.g. "outputs" or "instances.config"), so its Field is
-// used directly. A *time.ParseError carries no field of its own; Request is
-// the only decode target with a time.Time field (CreatedAt), so a
-// *time.ParseError surfacing from an "envelope" decode can only concern
-// "createdAt" — a second time.Time field added to Request would need this
-// function changed too.
+// used directly. A *time.ParseError carries no field of its own; DecodeRequest
+// checks settlesAt before the full decode, so one surfacing from an
+// "envelope" decode can only concern "createdAt".
 func wrapDecodeError(kind string, err error) error {
 	var ute *json.UnmarshalTypeError
 	if errors.As(err, &ute) {
@@ -353,18 +412,29 @@ func (r Request) Identity() Identity {
 // the embedded Identity, which is why no field here repeats them.
 func (r Request) Desired() Desired {
 	return Desired{
-		Identity:         r.Identity(),
-		Params:           r.Params,
-		SecretInputs:     r.SecretInputs,
-		AppSecrets:       r.AppSecrets,
-		Secrets:          r.Secrets,
-		Bindings:         r.Bindings,
-		BindingsAll:      r.BindingsAll,
-		BuildRequest:     r.BuildRequest,
-		Resource:         r.Resource,
-		ResourceInputs:   r.ResourceInputs,
-		ResourceIdentity: r.ResourceIdentity,
+		Identity:          r.Identity(),
+		Params:            r.Params,
+		SecretInputs:      r.SecretInputs,
+		AppSecrets:        r.AppSecrets,
+		Secrets:           r.Secrets,
+		Bindings:          r.Bindings,
+		BindingsAll:       r.BindingsAll,
+		BuildRequest:      r.BuildRequest,
+		Resource:          r.Resource,
+		ResourceInputs:    r.ResourceInputs,
+		ResourceIdentity:  r.ResourceIdentity,
+		ResourceType:      r.ResourceType,
+		RecordedResources: r.RecordedResources,
+		RequirementTypes:  r.RequirementTypes,
+		VerbAt:            r.verbAt(),
 	}
+}
+
+func (r Request) verbAt() time.Time {
+	if r.SettlesAt != nil {
+		return *r.SettlesAt
+	}
+	return r.CreatedAt
 }
 
 // Response turns an Observation into the typed wire Response an operator's

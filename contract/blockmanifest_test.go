@@ -2,10 +2,17 @@ package contract_test
 
 // blockmanifest_test.go pins contract.ParseManifest, the one manifest parser
 // the kit ships. It switches on apiVersion: under mitstack/v1beta it reads
-// the whole manifest strictly into BlockManifest, and under mitstack/v1alpha
-// it reads the whole manifest strictly into V1AlphaManifest. The two worked
-// manifests of ADR 0083 are read from the embedded manifest goldens and
-// checked field by field.
+// the whole manifest strictly into BlockManifest, in the shape ADR 0085
+// sets, and under mitstack/v1alpha it reads the whole manifest strictly
+// into V1AlphaManifest. The worked manifests of ADR 0085 and the data-model
+// page are read from the embedded manifest goldens and checked field by
+// field.
+//
+// Under mitstack/v1beta a requires entry is a type id, or a mapping of
+// type (one id or a list), name and many; a resources entry is a type id,
+// or a mapping of type and name. An entry listing types carries a name, an
+// unnamed resource is named by its type id, and the keys ADR 0085 retires
+// (inputs, kind, in and on) are refused naming the field and the entry.
 
 import (
 	"reflect"
@@ -26,26 +33,20 @@ func readManifestGolden(t *testing.T, name string) []byte {
 	return raw
 }
 
-// scalar and inputs build the expected InputValue of a resource input.
-func scalar(s string) contract.InputValue { return contract.InputValue{Scalar: s} }
-
-func inputs(m map[string]contract.InputValue) contract.InputValue {
-	return contract.InputValue{Map: m}
+// wantRequirement is what one parsed spec.requires entry must hold.
+type wantRequirement struct {
+	name      string
+	types     []string
+	many      bool
+	reference string
 }
 
-// sameInputs reports whether got and want hold the same inputs, nested
-// mappings included. A nil and an empty mapping are the same.
-func sameInputs(got, want map[string]contract.InputValue) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for k, w := range want {
-		g, ok := got[k]
-		if !ok || g.Scalar != w.Scalar || !sameInputs(g.Map, w.Map) {
-			return false
-		}
-	}
-	return true
+// wantResource is what one parsed spec.resources entry must hold. typ is
+// the one listed type id, empty for an entry listing several.
+type wantResource struct {
+	name  string
+	typ   string
+	types []string
 }
 
 type wantWorkedManifest struct {
@@ -58,9 +59,12 @@ type wantWorkedManifest struct {
 	// and Spec.Description written without its trailing line break; those
 	// are compared on their own.
 	rest      contract.BlockManifest
-	requires  []contract.ManifestRequirement
-	resources []contract.ManifestResource
+	requires  []wantRequirement
+	resources []wantResource
 }
+
+// oneType is the Types of an entry listing the one type id.
+func oneType(id string) []string { return []string{id} }
 
 var workedManifests = []wantWorkedManifest{
 	{
@@ -68,7 +72,7 @@ var workedManifests = []wantWorkedManifest{
 		id:           "plain",
 		version:      "3.0.0",
 		releaseClass: "breaking",
-		releaseNote:  "Plain runs on any host and takes its database from whichever block offers one.",
+		releaseNote:  "Plain runs its container on the app's EC2 host, against the Postgres database offered there.",
 		rest: contract.BlockManifest{
 			APIVersion: "mitstack/v1beta",
 			Type:       "block",
@@ -76,12 +80,12 @@ var workedManifests = []wantWorkedManifest{
 			Spec: contract.ManifestSpec{
 				Version:      "3.0.0",
 				ReleaseClass: "breaking",
-				ReleaseNote:  "Plain runs on any host and takes its database from whichever block offers one.",
+				ReleaseNote:  "Plain runs its container on the app's EC2 host, against the Postgres database offered there.",
 				Description:  "Runs the Plain tracker container on the app's host, connected to the app's Postgres database.",
 				Params: []contract.ManifestParam{
 					{Name: "image", Label: "Plain tracker container image", Required: true},
 				},
-				Provides: []string{"tracker"},
+				Provides: []string{"aws.ec2-container"},
 				Lifecycle: contract.ManifestLifecycle{
 					Endpoint:   "https://api.mitstack.dev/operators/plain/hook",
 					Operations: []string{"subscribe", "unsubscribe", "upgrade", "validate"},
@@ -89,27 +93,12 @@ var workedManifests = []wantWorkedManifest{
 				},
 			},
 		},
-		requires: []contract.ManifestRequirement{
-			{Kind: "host"},
-			{Kind: "postgres-database"},
+		requires: []wantRequirement{
+			{types: oneType("aws.ec2-instance"), reference: "aws.ec2-instance"},
+			{types: oneType("aws.ec2-postgres-database"), reference: "aws.ec2-postgres-database"},
 		},
-		resources: []contract.ManifestResource{
-			{
-				Name: "tracker",
-				Type: "host.container",
-				On:   "requires.host",
-				Inputs: map[string]contract.InputValue{
-					"image": scalar("params.image"),
-					"port":  scalar("8080"),
-					"env": inputs(map[string]contract.InputValue{
-						"TRACKER_DB_HOST":     scalar("requires.postgres-database.outputs.host"),
-						"TRACKER_DB_PORT":     scalar("requires.postgres-database.outputs.port"),
-						"TRACKER_DB_NAME":     scalar("requires.postgres-database.outputs.dbName"),
-						"TRACKER_DB_USER":     scalar("requires.postgres-database.outputs.username"),
-						"TRACKER_DB_PASSWORD": scalar("requires.postgres-database.outputs.password"),
-					}),
-				},
-			},
+		resources: []wantResource{
+			{name: "aws.ec2-container", typ: "aws.ec2-container", types: oneType("aws.ec2-container")},
 		},
 	},
 	{
@@ -132,7 +121,7 @@ var workedManifests = []wantWorkedManifest{
 					{Name: "domain", Label: "Your own domain pointed at the app"},
 					{Name: "customDomain", Label: "Extra hostname served alongside the app's address"},
 				},
-				Provides: []string{"app-instance", "app-data", "image-repo", "deploy-role", "app-hostname"},
+				Provides: []string{"aws.ec2-instance", "aws.ebs-volume", "aws.ecr-repository", "deploy-role", "aws.route53-record"},
 				Lifecycle: contract.ManifestLifecycle{
 					Endpoint:   "https://api.mitstack.dev/operators/aws-app-infra/hook",
 					Operations: []string{"subscribe", "unsubscribe", "upgrade", "validate"},
@@ -140,43 +129,62 @@ var workedManifests = []wantWorkedManifest{
 				},
 			},
 		},
-		requires: []contract.ManifestRequirement{
-			{Kind: "git-repository", In: []string{"github"}},
+		requires: []wantRequirement{
+			{types: oneType("github.repository"), reference: "github.repository"},
 		},
-		resources: []contract.ManifestResource{
-			{Name: "fallback-network", Type: "aws.vpc"},
-			{Name: "app-security-group", Type: "aws.security-group", Inputs: map[string]contract.InputValue{
-				"network": scalar("resources.fallback-network"),
-			}},
-			{Name: "app-instance", Type: "aws.ec2-instance", Inputs: map[string]contract.InputValue{
-				"namePrefix":    scalar("app.name"),
-				"instanceType":  scalar("params.instanceType"),
-				"securityGroup": scalar("resources.app-security-group"),
-			}},
-			{Name: "app-data", Type: "aws.ebs-volume", Inputs: map[string]contract.InputValue{
-				"attachTo": scalar("resources.app-instance"),
-			}},
-			{Name: "image-repo", Type: "aws.ecr-repository", Inputs: map[string]contract.InputValue{
-				"namePrefix": scalar("app.name"),
-			}},
-			{Name: "ecr-push-role", Type: "aws.iam-role", Inputs: map[string]contract.InputValue{
-				"trustedRepository": scalar("requires.git-repository.outputs.repo"),
-			}},
-			{Name: "deploy-role", Type: "aws.iam-role"},
-			{Name: "egress-proxy", Type: "aws.egress-proxy", Inputs: map[string]contract.InputValue{
-				"network": scalar("resources.fallback-network"),
-			}},
-			{Name: "box-configuration", Type: "aws.ssm-association", Inputs: map[string]contract.InputValue{
-				"host":         scalar("resources.app-instance"),
-				"dataVolume":   scalar("resources.app-data"),
-				"domain":       scalar("params.domain"),
-				"customDomain": scalar("params.customDomain"),
-			}},
-			{Name: "app-hostname", Type: "aws.route53-record", Inputs: map[string]contract.InputValue{
-				"target": scalar("resources.app-instance.outputs.publicIp"),
-			}},
+		resources: []wantResource{
+			{name: "aws.s3-bucket", typ: "aws.s3-bucket", types: oneType("aws.s3-bucket")},
+			{name: "aws.vpc", typ: "aws.vpc", types: oneType("aws.vpc")},
+			{name: "aws.security-group", typ: "aws.security-group", types: oneType("aws.security-group")},
+			{name: "aws.ec2-instance", typ: "aws.ec2-instance", types: oneType("aws.ec2-instance")},
+			{name: "aws.ebs-volume", typ: "aws.ebs-volume", types: oneType("aws.ebs-volume")},
+			{name: "aws.ecr-repository", typ: "aws.ecr-repository", types: oneType("aws.ecr-repository")},
+			{name: "ecr-push-role", typ: "aws.iam-role", types: oneType("aws.iam-role")},
+			{name: "deploy-role", typ: "aws.iam-role", types: oneType("aws.iam-role")},
+			{name: "aws.egress-proxy", typ: "aws.egress-proxy", types: oneType("aws.egress-proxy")},
+			{name: "aws.ssm-association", typ: "aws.ssm-association", types: oneType("aws.ssm-association")},
+			{name: "aws.route53-record", typ: "aws.route53-record", types: oneType("aws.route53-record")},
 		},
 	},
+}
+
+// requireRequirements checks got against want entry by entry, and that the
+// fields ADR 0085 retires stay empty after a parse.
+func requireRequirements(t *testing.T, got []contract.ManifestRequirement, want []wantRequirement) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("spec.requires has %d entries %+v, want %d %+v", len(got), got, len(want), want)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Name != w.name || !slices.Equal(g.Types, w.types) || g.Many != w.many {
+			t.Errorf("spec.requires[%d] name, types, many = %q, %q, %v; want %q, %q, %v", i, g.Name, g.Types, g.Many, w.name, w.types, w.many)
+		}
+		if ref := g.Reference(); ref != w.reference {
+			t.Errorf("spec.requires[%d].Reference() = %q, want %q", i, ref, w.reference)
+		}
+		if g.Kind != "" || g.In != nil {
+			t.Errorf("spec.requires[%d] kind, in = %q, %q; want both empty, since ADR 0085 retires them", i, g.Kind, g.In)
+		}
+	}
+}
+
+// requireResources checks got against want entry by entry, and that the
+// fields ADR 0085 retires stay empty after a parse.
+func requireResources(t *testing.T, got []contract.ManifestResource, want []wantResource) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("spec.resources has %d entries %+v, want %d %+v", len(got), got, len(want), want)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Name != w.name || g.Type != w.typ || !slices.Equal(g.Types, w.types) {
+			t.Errorf("spec.resources[%d] name, type, types = %q, %q, %q; want %q, %q, %q", i, g.Name, g.Type, g.Types, w.name, w.typ, w.types)
+		}
+		if g.Inputs != nil || g.On != "" {
+			t.Errorf("spec.resources[%d] inputs, on = %+v, %q; want both empty, since ADR 0085 retires them", i, g.Inputs, g.On)
+		}
+	}
 }
 
 func TestManifestAPIVersions_AreV1AlphaAndV1Beta(t *testing.T) {
@@ -188,10 +196,11 @@ func TestManifestAPIVersions_AreV1AlphaAndV1Beta(t *testing.T) {
 	}
 }
 
-// TestParseManifest_ReadsTheWorkedV1BetaManifests reads ADR 0083's worked
-// plain and aws-app-infra manifests: every resource's name, type, inputs and
-// on, in manifest order, every requirement's kind, in, name and many, and
-// the params, provides and lifecycle beside them.
+// TestParseManifest_ReadsTheWorkedV1BetaManifests reads ADR 0085's worked
+// aws-app-infra manifest and the data-model page's plain manifest: every
+// requirement's types, name, many and reference, every resource's name and
+// types in manifest order, and the params, provides and lifecycle beside
+// them.
 func TestParseManifest_ReadsTheWorkedV1BetaManifests(t *testing.T) {
 	for _, w := range workedManifests {
 		t.Run(w.file, func(t *testing.T) {
@@ -220,30 +229,221 @@ func TestParseManifest_ReadsTheWorkedV1BetaManifests(t *testing.T) {
 			if !reflect.DeepEqual(got, w.rest) {
 				t.Errorf("manifest outside requires and resources =\n%+v\nwant\n%+v", got, w.rest)
 			}
+			requireRequirements(t, gotRequires, w.requires)
+			requireResources(t, gotResources, w.resources)
+		})
+	}
+}
 
-			if len(gotRequires) != len(w.requires) {
-				t.Fatalf("spec.requires has %d entries %+v, want %d %+v", len(gotRequires), gotRequires, len(w.requires), w.requires)
-			}
-			for i, want := range w.requires {
-				g := gotRequires[i]
-				if g.Kind != want.Kind || !slices.Equal(g.In, want.In) || g.Name != want.Name || g.Many != want.Many {
-					t.Errorf("spec.requires[%d] = %+v, want %+v", i, g, want)
-				}
-			}
+// typedManifest lists a requirement and a resource in every form ADR 0085
+// gives an entry: a type id alone, a list of types with a name, one type
+// with a name, and a block list of types.
+const typedManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: typed-block
+  name: Typed Block
+spec:
+  version: 1.0.0
+  requires:
+    - github.repository
+    - { name: host, type: [aws.ec2-instance, hetzner.server] }
+    - { name: primary, type: aws.iam-role }
+    - name: secondary
+      type: aws.iam-role
+      many: true
+  resources:
+    - aws.vpc
+    - { name: app-container, type: [aws.ec2-container, hetzner.server-container] }
+    - name: state
+      type: aws.s3-bucket
+    - name: worker
+      type:
+        - aws.ec2-container
+        - hetzner.server-container
+  provides: [app-container, aws.vpc]
+  lifecycle:
+    endpoint: https://typed-block.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
 
-			if len(gotResources) != len(w.resources) {
-				t.Fatalf("spec.resources has %d entries, want %d", len(gotResources), len(w.resources))
-			}
-			for i, want := range w.resources {
-				g := gotResources[i]
-				if g.Name != want.Name || g.Type != want.Type || g.On != want.On {
-					t.Errorf("spec.resources[%d] name, type, on = %q, %q, %q; want %q, %q, %q",
-						i, g.Name, g.Type, g.On, want.Name, want.Type, want.On)
-				}
-				if !sameInputs(g.Inputs, want.Inputs) {
-					t.Errorf("spec.resources[%d] (%s) inputs = %+v, want %+v", i, want.Name, g.Inputs, want.Inputs)
-				}
-			}
+func TestParseManifest_V1BetaReadsRequirementsAndResourcesByExactType(t *testing.T) {
+	b := parseBeta(t, []byte(typedManifest))
+	requireRequirements(t, b.Spec.Requires, []wantRequirement{
+		{types: oneType("github.repository"), reference: "github.repository"},
+		{name: "host", types: []string{"aws.ec2-instance", "hetzner.server"}, reference: "host"},
+		{name: "primary", types: oneType("aws.iam-role"), reference: "primary"},
+		{name: "secondary", types: oneType("aws.iam-role"), many: true, reference: "secondary"},
+	})
+	requireResources(t, b.Spec.Resources, []wantResource{
+		{name: "aws.vpc", typ: "aws.vpc", types: oneType("aws.vpc")},
+		{name: "app-container", types: []string{"aws.ec2-container", "hetzner.server-container"}},
+		{name: "state", typ: "aws.s3-bucket", types: oneType("aws.s3-bucket")},
+		{name: "worker", types: []string{"aws.ec2-container", "hetzner.server-container"}},
+	})
+	if want := []string{"app-container", "aws.vpc"}; !slices.Equal(b.Spec.Provides, want) {
+		t.Errorf("spec.provides = %q, want %q", b.Spec.Provides, want)
+	}
+}
+
+func TestParseManifest_V1BetaReadsTheShortRequiresListOfTypeIDs(t *testing.T) {
+	b := parseBeta(t, []byte(strings.Replace(typedManifest,
+		"  requires:\n    - github.repository\n    - { name: host, type: [aws.ec2-instance, hetzner.server] }\n"+
+			"    - { name: primary, type: aws.iam-role }\n    - name: secondary\n      type: aws.iam-role\n      many: true\n",
+		"  requires: [github.repository]\n", 1)))
+	requireRequirements(t, b.Spec.Requires, []wantRequirement{
+		{types: oneType("github.repository"), reference: "github.repository"},
+	})
+}
+
+// The parser judges the shape and the id grammar only: whether the
+// platform's catalogue holds a type is CheckManifestTypes' question.
+func TestParseManifest_V1BetaNeedsNoSnapshotToReadATypeTheCatalogueLacks(t *testing.T) {
+	raw := strings.Replace(typedManifest, "    - aws.vpc\n", "    - aws.not-in-any-catalogue\n", 1)
+	raw = strings.Replace(raw, "  provides: [app-container, aws.vpc]\n", "  provides: [app-container, aws.not-in-any-catalogue]\n", 1)
+	b := parseBeta(t, []byte(raw))
+	if got := b.Spec.Resources[0].Name; got != "aws.not-in-any-catalogue" {
+		t.Errorf("spec.resources[0] name = %q, want the type id it lists", got)
+	}
+}
+
+// retiredKeyManifest requires a named host at spec.requires[1] and declares
+// a named container at spec.resources[1], so a retired key added to either
+// is refused naming that index.
+const retiredKeyManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: retired-keys
+  name: Retired Keys
+spec:
+  version: 1.0.0
+  params:
+    - name: image
+      label: Container image
+  requires:
+    - github.repository
+    - name: host
+      type: aws.ec2-instance
+  resources:
+    - aws.vpc
+    - name: app-container
+      type: aws.ec2-container
+  provides: [app-container]
+  lifecycle:
+    endpoint: https://retired-keys.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
+func editRetired(t *testing.T, old, new string) []byte {
+	t.Helper()
+	if !strings.Contains(retiredKeyManifest, old) {
+		t.Fatalf("fixture edit: %q is not in the manifest", old)
+	}
+	return []byte(strings.Replace(retiredKeyManifest, old, new, 1))
+}
+
+func TestParseManifest_V1BetaRefusesARetiredKeyNamingTheFieldAndTheEntry(t *testing.T) {
+	parseBeta(t, []byte(retiredKeyManifest))
+	const hostType = "      type: aws.ec2-instance\n"
+	const containerType = "      type: aws.ec2-container\n"
+	cases := []struct {
+		label, old, new, field, entry string
+	}{
+		{"kind on a requirement", hostType, hostType + "      kind: host\n", "kind", "spec.requires[1]"},
+		{"in on a requirement", hostType, hostType + "      in: aws\n", "in", "spec.requires[1]"},
+		{"in as a list on a requirement", hostType, hostType + "      in: [aws, hetzner]\n", "in", "spec.requires[1]"},
+		{"on on a requirement", hostType, hostType + "      on: requires.github.repository\n", "on", "spec.requires[1]"},
+		{"inputs on a requirement", hostType, hostType + "      inputs: { region: params.image }\n", "inputs", "spec.requires[1]"},
+		{"a requirement by kind alone", "    - github.repository\n", "    - kind: git-repository\n", "kind", "spec.requires[0]"},
+		{"inputs on a resource", containerType, containerType + "      inputs: { image: params.image }\n", "inputs", "spec.resources[1]"},
+		{"nested inputs on a resource", containerType, containerType + "      inputs:\n        env:\n          DB_HOST: requires.host.outputs.hostId\n", "inputs", "spec.resources[1]"},
+		{"on on a resource", containerType, containerType + "      on: requires.host\n", "on", "spec.resources[1]"},
+		{"kind on a resource", containerType, containerType + "      kind: container\n", "kind", "spec.resources[1]"},
+		{"in on a resource", containerType, containerType + "      in: aws\n", "in", "spec.resources[1]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			requireRefusedNaming(t, editRetired(t, tc.old, tc.new), `"`+tc.field+`"`, tc.entry)
+		})
+	}
+}
+
+func TestParseManifest_V1BetaRefusesAnEntryItCannotTellApartOrName(t *testing.T) {
+	cases := []struct {
+		label, old, new string
+		wants           []string
+	}{
+		{"a requirement listing types without a name",
+			"    - name: host\n      type: aws.ec2-instance\n",
+			"    - type: [aws.ec2-instance, hetzner.server]\n",
+			[]string{"spec.requires[1]", "name"}},
+		{"a resource listing types without a name",
+			"    - name: app-container\n      type: aws.ec2-container\n",
+			"    - type: [aws.ec2-container, hetzner.server-container]\n",
+			[]string{"spec.resources[1]", "name"}},
+		{"a requirement list naming one type twice",
+			"      type: aws.ec2-instance\n",
+			"      type: [aws.ec2-instance, aws.ec2-instance]\n",
+			[]string{"spec.requires[1]", "aws.ec2-instance"}},
+		{"a resource list naming one type twice",
+			"      type: aws.ec2-container\n",
+			"      type: [aws.ec2-container, aws.ec2-container]\n",
+			[]string{"spec.resources[1]", "aws.ec2-container"}},
+		{"two unnamed resources of one type",
+			"    - aws.vpc\n",
+			"    - aws.vpc\n    - aws.vpc\n",
+			[]string{"spec.resources[1]", "aws.vpc"}},
+		{"two unnamed requirements of one type",
+			"    - github.repository\n",
+			"    - github.repository\n    - github.repository\n",
+			[]string{"spec.requires[1]", "github.repository"}},
+		{"two resources of one name",
+			"    - aws.vpc\n",
+			"    - { name: app-container, type: aws.vpc }\n",
+			[]string{"app-container"}},
+		{"a requirement mapping with no type",
+			"      type: aws.ec2-instance\n",
+			"",
+			[]string{"spec.requires[1].type"}},
+		{"a resource mapping with no type",
+			"      type: aws.ec2-container\n",
+			"",
+			[]string{"spec.resources[1].type"}},
+		{"an empty list of types",
+			"      type: aws.ec2-container\n",
+			"      type: []\n",
+			[]string{"spec.resources[1].type"}},
+		{"a provides entry naming no resource",
+			"  provides: [app-container]\n",
+			"  provides: [app-container, no-such-resource]\n",
+			[]string{"spec.provides", "no-such-resource"}},
+		{"a provides entry naming the type of a named resource",
+			"  provides: [app-container]\n",
+			"  provides: [aws.ec2-container]\n",
+			[]string{"spec.provides", "aws.ec2-container"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			requireRefusedNaming(t, editRetired(t, tc.old, tc.new), tc.wants...)
+		})
+	}
+}
+
+func TestParseManifest_V1BetaRefusesATypeIDOutsideTheGrammarNamingIt(t *testing.T) {
+	cases := []struct {
+		label, old, new, id, entry string
+	}{
+		{"a resource type id", "    - aws.vpc\n", "    - AWS.VPC\n", "AWS.VPC", "spec.resources[0]"},
+		{"a resource type id with no capability", "    - aws.vpc\n", "    - vpc\n", "vpc", "spec.resources[0]"},
+		{"a requirement type id", "    - github.repository\n", "    - github_repository\n", "github_repository", "spec.requires[0]"},
+		{"a type id inside a list", "      type: aws.ec2-container\n", "      type: [aws.ec2-container, hetzner.Server_Container]\n",
+			"hetzner.Server_Container", "spec.resources[1]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			requireRefusedNaming(t, editRetired(t, tc.old, tc.new), tc.id, tc.entry)
 		})
 	}
 }
@@ -260,13 +460,12 @@ spec:
     - name: image
       label: Container image
   requires:
-    - kind: host
+    - type: aws.ec2-instance
   resources:
     - name: fallback-network
       type: aws.vpc
     - name: app-security-group
       type: aws.security-group
-      inputs: { network: resources.fallback-network }
   provides: [app-security-group]
   lifecycle:
     endpoint: https://example.test/hook
@@ -337,8 +536,8 @@ func TestParseManifest_V1BetaRefusesAnUnknownKeyNamingItsPath(t *testing.T) {
 			"  provides: [app-security-group]\n  providedContracts:\n    - capability: app-host\n      format: config\n"}},
 		{"spec.dependsOn", []string{"  requires:\n", "  dependsOn:\n    - weather-app\n  requires:\n"}},
 		{"spec.params[0].type", []string{"      label: Container image\n", "      label: Container image\n      type: string\n"}},
-		{"spec.requires[0].capability", []string{"    - kind: host\n", "    - kind: host\n      capability: app-host\n"}},
-		{"spec.requires[0].reads", []string{"    - kind: host\n", "    - kind: host\n      reads: [region]\n"}},
+		{"spec.requires[0].capability", []string{"    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      capability: app-host\n"}},
+		{"spec.requires[0].reads", []string{"    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      reads: [region]\n"}},
 		{"spec.resources[1].ownership", []string{"      type: aws.security-group\n", "      type: aws.security-group\n      ownership: created\n"}},
 		{"spec.lifecycle.upgradeStrategy", []string{"    contract: kit/v1\n", "    contract: kit/v1\n    upgradeStrategy: rolling\n"}},
 		{"spec.observability.resources", []string{"  lifecycle:\n", "  observability:\n    resources:\n      - name: fallback-network\n  lifecycle:\n"}},
@@ -360,15 +559,23 @@ func TestParseManifest_V1BetaRefusesAMissingRequiredFieldNamingItsPath(t *testin
 		{"type not block", []string{"type", "block"}, []string{"type: block\n", "type: component\n"}},
 		{"metadata.id absent", []string{"metadata.id"}, []string{"  id: fixture-block\n", ""}},
 		{"spec.version absent", []string{"spec.version"}, []string{"  version: 1.0.0\n", ""}},
-		{"a requirement without a kind", []string{"spec.requires[0].kind"}, []string{"    - kind: host\n", "    - name: primary\n"}},
-		{"a resource without a name", []string{"spec.resources[0].name"}, []string{
-			"    - name: fallback-network\n      type: aws.vpc\n", "    - type: aws.vpc\n"}},
+		{"a requirement without a type", []string{"spec.requires[0].type"}, []string{"    - type: aws.ec2-instance\n", "    - name: primary\n"}},
 		{"a resource without a type", []string{"spec.resources[1].type"}, []string{"      type: aws.security-group\n", ""}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
 			requireRefusedNaming(t, editBeta(t, tc.edits...), tc.wants...)
 		})
+	}
+}
+
+// ADR 0085 names a resource only where its type cannot: an entry with no
+// name is named by the type it lists.
+func TestParseManifest_V1BetaNamesAResourceWithNoNameByItsType(t *testing.T) {
+	b := parseBeta(t, editBeta(t,
+		"    - name: fallback-network\n      type: aws.vpc\n", "    - type: aws.vpc\n"))
+	if got := b.Spec.Resources[0].Name; got != "aws.vpc" {
+		t.Errorf("spec.resources[0] name = %q, want the type it lists, %q", got, "aws.vpc")
 	}
 }
 
@@ -382,7 +589,7 @@ func TestParseManifest_V1BetaManyTakesTrueOrFalseOnly(t *testing.T) {
 		{"      many: false\n", false},
 	} {
 		t.Run("accepts "+strings.TrimSpace(tc.line), func(t *testing.T) {
-			b := parseBeta(t, editBeta(t, "    - kind: host\n", "    - kind: host\n"+tc.line))
+			b := parseBeta(t, editBeta(t, "    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n"+tc.line))
 			if got := b.Spec.Requires[0].Many; got != tc.want {
 				t.Errorf("spec.requires[0].many = %v, want %v", got, tc.want)
 			}
@@ -390,7 +597,7 @@ func TestParseManifest_V1BetaManyTakesTrueOrFalseOnly(t *testing.T) {
 	}
 	for _, value := range []string{"yes", "1", `"true"`, "sometimes"} {
 		t.Run("refuses "+value, func(t *testing.T) {
-			requireRefusedNaming(t, editBeta(t, "    - kind: host\n", "    - kind: host\n      many: "+value+"\n"),
+			requireRefusedNaming(t, editBeta(t, "    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      many: "+value+"\n"),
 				"spec.requires[0].many")
 		})
 	}
@@ -408,26 +615,6 @@ func TestParseManifest_V1BetaRefusesAProvidesEntryNamingNoResource(t *testing.T)
 	requireRefusedNaming(t, raw, "spec.provides", "no-such-resource")
 }
 
-func TestParseManifest_V1BetaReadsInAsOneCapabilityOrAList(t *testing.T) {
-	cases := []struct {
-		label, lines string
-		want         []string
-	}{
-		{"absent", "", nil},
-		{"one capability", "      in: github\n", []string{"github"}},
-		{"a flow list", "      in: [github, gitlab]\n", []string{"github", "gitlab"}},
-		{"a block list", "      in:\n        - github\n        - gitlab\n", []string{"github", "gitlab"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			b := parseBeta(t, editBeta(t, "    - kind: host\n", "    - kind: host\n"+tc.lines))
-			if got := b.Spec.Requires[0].In; !slices.Equal(got, tc.want) {
-				t.Errorf("spec.requires[0].in = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // An alias or a merge key brings in text from elsewhere in the document,
 // which the reader does not follow, so it refuses the manifest rather than
 // guessing what it declares, and says which it found and where.
@@ -438,17 +625,14 @@ func TestParseManifest_RefusesAnAliasOrAMergeKey(t *testing.T) {
 		raw   []byte
 		wants []string
 	}{
-		{"an alias as an input", editBeta(t,
-			"    - name: fallback-network\n", "    - name: &net fallback-network\n",
-			"inputs: { network: resources.fallback-network }", "inputs:\n        network: *net"),
-			[]string{"spec.resources[1].inputs.network", "alias"}},
+		{"an alias as a resource type", editBeta(t,
+			"      type: aws.vpc\n", "      type: &net aws.vpc\n",
+			"      type: aws.security-group\n", "      type: *net\n"),
+			[]string{"spec.resources[1].type", "alias"}},
 		{"a merge key in a resource", editBeta(t,
-			"      type: aws.vpc\n", "      type: aws.vpc\n      inputs: &shared\n        zone: a\n",
-			"      inputs: { network: resources.fallback-network }\n", "      inputs:\n        <<: *shared\n"),
-			[]string{"spec.resources[1].inputs", "merge key"}},
-		{"a merge key written as a flow mapping", editBeta(t,
-			"      inputs: { network: resources.fallback-network }\n", "      inputs:\n        <<: { zone: a }\n"),
-			[]string{"spec.resources[1].inputs", "merge key"}},
+			"    - name: app-security-group\n      type: aws.security-group\n",
+			"    - name: app-security-group\n      <<: { type: aws.security-group }\n"),
+			[]string{"spec.resources[1]", "merge key"}},
 		{"an alias as a list", editBeta(t,
 			"  provides: [app-security-group]\n", "  provides: &provided [app-security-group]\n",
 			"    operations: [subscribe, unsubscribe]\n", "    operations: *provided\n"),
@@ -470,8 +654,8 @@ func TestParseManifest_V1BetaRefusesWhatTheSchemaRefusesNamingItsPath(t *testing
 		label, path string
 		edits       []string
 	}{
-		{"a null input", "spec.resources[1].inputs.network", []string{
-			"inputs: { network: resources.fallback-network }", "inputs: { network: }"}},
+		{"a null resource type", "spec.resources[1].type", []string{
+			"      type: aws.security-group\n", "      type:\n"}},
 		{"a null optional field", "metadata.owner", []string{
 			"  name: Fixture Block\n", "  name: Fixture Block\n  owner:\n"}},
 		{"a plain number in a string field", "metadata.name", []string{
@@ -482,8 +666,7 @@ func TestParseManifest_V1BetaRefusesWhatTheSchemaRefusesNamingItsPath(t *testing
 			"      label: Container image\n", "      label: true\n"}},
 		{"no resources", "spec.resources", []string{
 			"  resources:\n    - name: fallback-network\n      type: aws.vpc\n    - name: app-security-group\n" +
-				"      type: aws.security-group\n      inputs: { network: resources.fallback-network }\n" +
-				"  provides: [app-security-group]\n",
+				"      type: aws.security-group\n  provides: [app-security-group]\n",
 			"  resources: []\n"}},
 		{"no lifecycle operations", "spec.lifecycle.operations", []string{
 			"    operations: [subscribe, unsubscribe]\n", "    operations: []\n"}},
@@ -495,25 +678,12 @@ func TestParseManifest_V1BetaRefusesWhatTheSchemaRefusesNamingItsPath(t *testing
 	}
 }
 
-// A quoted value is a string wherever it is written, and an input takes a
-// number or a boolean, since the schema allows one there.
-func TestParseManifest_V1BetaAcceptsAQuotedStringAndATypedInput(t *testing.T) {
-	t.Run("a quoted number as a param default", func(t *testing.T) {
-		b := parseBeta(t, editBeta(t, "      label: Container image\n", "      label: Container image\n      default: \"8080\"\n"))
-		if got := b.Spec.Params[0].Default; got != "8080" {
-			t.Errorf("spec.params[0].default = %q, want %q", got, "8080")
-		}
-	})
-	t.Run("a number and a boolean as inputs", func(t *testing.T) {
-		b := parseBeta(t, editBeta(t, "inputs: { network: resources.fallback-network }",
-			"inputs: { network: resources.fallback-network, port: 8080, public: true }"))
-		want := map[string]contract.InputValue{
-			"network": scalar("resources.fallback-network"), "port": scalar("8080"), "public": scalar("true"),
-		}
-		if got := b.Spec.Resources[1].Inputs; !sameInputs(got, want) {
-			t.Errorf("spec.resources[1].inputs = %+v, want %+v", got, want)
-		}
-	})
+// A quoted value is a string wherever it is written.
+func TestParseManifest_V1BetaAcceptsAQuotedString(t *testing.T) {
+	b := parseBeta(t, editBeta(t, "      label: Container image\n", "      label: Container image\n      default: \"8080\"\n"))
+	if got := b.Spec.Params[0].Default; got != "8080" {
+		t.Errorf("spec.params[0].default = %q, want %q", got, "8080")
+	}
 }
 
 // v1alphaManifest carries a padded quoted id and version, a folded release

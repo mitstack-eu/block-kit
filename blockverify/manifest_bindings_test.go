@@ -1,20 +1,19 @@
 package main
 
 // manifest_bindings_test.go pins that blockverify fails its manifest suite on
-// a mitstack/v1beta manifest whose input bindings the kit's parser refuses,
-// printing the parser's reason. Each fixture this file names holds one
-// manifest.yaml: ADR 0083's worked aws-app-infra manifest with one edit, so
-// the edit is the only defect.
+// a mitstack/v1beta manifest whose requirements or resources the kit's
+// parser refuses, printing the parser's reason. Each fixture this file names
+// holds one manifest.yaml: ADR 0085's worked aws-app-infra manifest with one
+// edit, so the edit is the only defect.
 //
-//   - manifest-binding-missing-name binds app-hostname's target to a
-//     resource the block does not have;
-//   - manifest-binding-missing-output binds it to an output app-instance's
-//     type does not have;
-//   - manifest-binding-wrong-kind binds app-instance's securityGroup, which
-//     accepts a firewall, to a resource of kind postgres-database;
-//   - manifest-binding-shared-requirement-reference adds a second unnamed
-//     git-repository requirement, so two requirements share the reference
-//     git-repository that requires.git-repository names.
+//   - manifest-requirement-carries-kind gives the repository requirement the
+//     kind ADR 0085 retires;
+//   - manifest-resource-carries-inputs gives the security group the inputs
+//     ADR 0085 retires;
+//   - manifest-alternatives-without-a-name lists two types for the egress
+//     proxy without the name such an entry must carry;
+//   - manifest-shared-requirement-reference requires github.repository
+//     twice, so two requirements share one reference.
 
 import (
 	"os"
@@ -34,40 +33,36 @@ var bindingFixtures = []struct {
 	wants []string
 }{
 	{
-		dir: "manifest-binding-missing-name",
+		dir: "manifest-requirement-carries-kind",
 		edits: []string{
-			"inputs: { target: resources.app-instance.outputs.publicIp }",
-			"inputs: { target: resources.missing.outputs.publicIp }",
+			"  requires: [github.repository]\n",
+			"  requires:\n    - { type: github.repository, kind: git-repository }\n",
 		},
-		wants: []string{"app-hostname", "target", "missing"},
+		wants: []string{"spec.requires[0]", `"kind"`},
 	},
 	{
-		dir: "manifest-binding-missing-output",
+		dir: "manifest-resource-carries-inputs",
 		edits: []string{
-			"inputs: { target: resources.app-instance.outputs.publicIp }",
-			"inputs: { target: resources.app-instance.outputs.dbName }",
+			"    - aws.security-group\n",
+			"    - { type: aws.security-group, inputs: { network: resources.aws.vpc } }\n",
 		},
-		wants: []string{"app-hostname", "target", "dbName"},
+		wants: []string{"spec.resources[2]", `"inputs"`},
 	},
 	{
-		dir: "manifest-binding-wrong-kind",
+		dir: "manifest-alternatives-without-a-name",
 		edits: []string{
-			"    - kind: git-repository\n      in: github\n",
-			"    - kind: git-repository\n      in: github\n    - kind: host\n",
-			"    - name: app-instance\n",
-			"    - name: app-database\n      type: host.postgres-database\n      on: requires.host\n    - name: app-instance\n",
-			"        securityGroup: resources.app-security-group\n",
-			"        securityGroup: resources.app-database\n",
+			"    - aws.egress-proxy\n",
+			"    - { type: [aws.egress-proxy, hetzner.firewall] }\n",
 		},
-		wants: []string{"app-instance", "securityGroup", "firewall", "postgres-database"},
+		wants: []string{"spec.resources[8]", "name"},
 	},
 	{
-		dir: "manifest-binding-shared-requirement-reference",
+		dir: "manifest-shared-requirement-reference",
 		edits: []string{
-			"    - kind: git-repository\n      in: github\n",
-			"    - kind: git-repository\n      in: github\n    - kind: git-repository\n",
+			"  requires: [github.repository]\n",
+			"  requires: [github.repository, github.repository]\n",
 		},
-		wants: []string{"spec.requires[0]", "spec.requires[1]", `"git-repository"`, "appears once"},
+		wants: []string{"spec.requires[1]", `"github.repository"`},
 	},
 }
 
@@ -90,7 +85,7 @@ func awsAppInfraWithEdits(t *testing.T, edits []string) string {
 	return out
 }
 
-func TestRun_FailsTheManifestSuiteOnABindingTheParserRefuses(t *testing.T) {
+func TestRun_FailsTheManifestSuiteOnAnEntryTheParserRefuses(t *testing.T) {
 	for _, fx := range bindingFixtures {
 		t.Run(fx.dir, func(t *testing.T) {
 			dir := filepath.Join("testdata", fx.dir)

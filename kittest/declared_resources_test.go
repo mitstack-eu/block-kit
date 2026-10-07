@@ -30,14 +30,12 @@ metadata:
   name: Checked Block
 spec:
   version: 1.0.0
-  requires:
-    - kind: git-repository
+  requires: [github.repository]
   resources:
     - name: network
       type: aws.vpc
     - name: instance
       type: aws.ec2-instance
-      inputs: { network: resources.network }
   lifecycle:
     endpoint: https://checked-block.example/hook
     operations: [subscribe, unsubscribe, upgrade, validate]
