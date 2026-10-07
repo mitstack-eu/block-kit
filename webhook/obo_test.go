@@ -59,7 +59,7 @@ func TestVerifyOBO_RejectsMalformedTokens(t *testing.T) {
 }
 
 func TestVerifyOBO_AudienceBindingRejectsAnotherOperatorsToken(t *testing.T) {
-	// T-358: a token minted for block-a must not be presentable to block-b.
+	// A token minted for block-a must not be presentable to block-b.
 	s := kittest.NewSigner(t, "kid-1", 3)
 	now := time.Now()
 	t.Setenv("MITSTACK_OBO_AUDIENCE", "block-b")

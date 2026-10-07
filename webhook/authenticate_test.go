@@ -182,8 +182,7 @@ func TestAuthenticateLogsGET_401WhenTimestampHeaderMissing(t *testing.T) {
 }
 
 func TestDeps_UsesTheOperatorsOwnErrorWriter(t *testing.T) {
-	// The extraction must not change any operator's 401 body shape: Deps carries
-	// the operator's own writeError precisely so the response bytes are theirs.
+	// Deps carries the operator's own writeError so its 401 body shape is unchanged.
 	s := kittest.NewSigner(t, "kid-1", 7)
 	d := depsFor(s, "")
 	d.WriteError = func(w http.ResponseWriter, status int, msg string) {

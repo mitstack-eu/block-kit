@@ -8,25 +8,17 @@ import (
 	"sync"
 )
 
-// MaxRecentLogLines caps the in-memory ring buffer of recent operator log lines
-// exposed via /logs. It is a debugging aid, not durable storage.
+// MaxRecentLogLines caps the in-memory ring buffer of recent log lines exposed via /logs.
 const MaxRecentLogLines = 500
 
-// LogBuffer is the bounded ring buffer /logs serves from.
-//
-// Because every log line the operator emits is already secret-scrubbed before
-// it is written, the buffer — and therefore /logs — never contains plaintext
-// secrets. Scrubbing is the WRITER's job and deliberately not done here: a
-// buffer that scrubbed on read would hide a leak that had already reached
-// stderr, which is the opposite of what the leak tests assert.
+// LogBuffer is the bounded ring buffer /logs serves from, and relies on writers scrubbing secrets because scrubbing on read would hide a leak that already reached stderr.
 type LogBuffer struct {
 	mu    sync.Mutex
 	max   int
 	lines []string
 }
 
-// NewLogBuffer returns a buffer holding at most max lines (<=0 means
-// MaxRecentLogLines).
+// NewLogBuffer returns a buffer holding at most max lines, or MaxRecentLogLines when max is not positive.
 func NewLogBuffer(max int) *LogBuffer {
 	if max <= 0 {
 		max = MaxRecentLogLines
@@ -47,15 +39,14 @@ func (b *LogBuffer) Append(line string) {
 	}
 }
 
-// Clear resets the ring buffer (used by tests).
+// Clear resets the ring buffer.
 func (b *LogBuffer) Clear() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.lines = nil
 }
 
-// Snapshot returns a copy of the recent lines, oldest first. The returned slice
-// is always non-nil.
+// Snapshot returns a non-nil copy of the recent lines, oldest first.
 func (b *LogBuffer) Snapshot() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -64,9 +55,7 @@ func (b *LogBuffer) Snapshot() []string {
 	return out
 }
 
-// Writer returns an io.Writer that tees the standard logger's output into the
-// buffer, one entry per newline-delimited line. Wire it in main via
-// log.SetOutput(io.MultiWriter(os.Stderr, buf.Writer())).
+// Writer returns an io.Writer that tees the standard logger's output into the buffer, one entry per line.
 func (b *LogBuffer) Writer() io.Writer { return logBufferWriter{b} }
 
 type logBufferWriter struct{ b *LogBuffer }
@@ -80,12 +69,7 @@ func (w logBufferWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// ServeLogs returns the operator's recent (already-scrubbed) log lines as
-// {"lines": []}. It is a read-only GET that carries no request body, so it is
-// authenticated by AuthenticateLogsGET (T-578) — mitstack's Ed25519 signature
-// over the canonical "GET\n<path-with-query>\n<timestamp>" string, with the
-// anti-replay timestamp in the X-Mitstack-Timestamp header. (The webhook POST
-// /hook keeps its body-based replay guard unchanged.)
+// ServeLogs returns the operator's recent log lines as {"lines": []}, authenticated by AuthenticateLogsGET.
 func ServeLogs(d Deps, b *LogBuffer, w http.ResponseWriter, r *http.Request) {
 	if _, ok := AuthenticateLogsGET(d, w, r); !ok {
 		return // AuthenticateLogsGET already wrote 401

@@ -1,12 +1,4 @@
-// Package webhook implements the mitstack lifecycle-webhook trust boundary as
-// an operator consumes it: the detached Ed25519 signature over the request body,
-// the replay/skew window, the OBO (on-behalf-of) identity token, the read-only
-// /logs signed GET, and the recent-log ring buffer those logs are served from.
-//
-// Zero-touch operator verification (m-8.5 / T-117): verify mitstack's detached
-// Ed25519 lifecycle signature against the block-owner org's PUBLIC key, fetched
-// from mitstack's JWKS endpoint by key id. No shared secret — a leaked verifier
-// (public) key cannot forge calls, so there is nothing to provision or rotate.
+// Package webhook implements the lifecycle-webhook trust boundary an operator consumes, verifying mitstack's detached Ed25519 signature against a public key fetched from its JWKS with no shared secret.
 package webhook
 
 import (
@@ -22,27 +14,13 @@ import (
 	"time"
 )
 
-// ReplaySkew bounds how far a signed request's createdAt may differ from this
-// verifier's clock. A request outside it — or one replaying a nonce already
-// seen within the window — is rejected, closing the replay hole on the detached
-// Ed25519 signature, which on its own would accept a captured request (T-357).
+// ReplaySkew bounds how far a signed request's createdAt may differ from this verifier's clock, closing the replay hole in a detached signature.
 const ReplaySkew = 5 * time.Minute
 
-// Replay rejects webhook bodies whose signed createdAt is outside ReplaySkew or
-// whose nonce was already seen inside it.
-//
-// It is a value with its own state rather than package globals because an
-// operator process may legitimately run more than one verifier (tests do), and
-// a shared mutable map across them is a coupling nobody asked for. Operators
-// that want the previous process-wide semantics simply keep one package-level
-// Replay, which is what the generated shim does.
+// Replay rejects webhook bodies whose signed createdAt is outside ReplaySkew or whose nonce was already seen inside it.
 type Replay struct {
 	mu sync.Mutex
-	// nonces points AT the caller's map variable rather than holding a map
-	// value, so a caller that resets its cache by reassigning the variable
-	// (`nonceCache = map[string]time.Time{}` — how every operator's tests
-	// isolate themselves) genuinely resets this guard. Holding the map by value
-	// would silently ignore such a reset and leak nonces between tests.
+	// Points at the caller's map variable, so reassigning that variable resets the guard and a map held by value would not.
 	nonces *map[string]time.Time
 }
 
@@ -55,10 +33,7 @@ func NewReplay() *Replay {
 // NewReplayOver returns a replay guard backed by the caller's map variable.
 func NewReplayOver(nonces *map[string]time.Time) *Replay { return &Replay{nonces: nonces} }
 
-// Verify rejects a webhook whose signed createdAt is outside the skew window or
-// whose nonce was already seen. It reads only those two fields from the body, so
-// a partial body is fine. Call it AFTER the Ed25519 signature has been verified
-// — it assumes the createdAt/nonce it reads are authentic.
+// Verify rejects a webhook whose createdAt is outside the skew window or whose nonce was already seen, and must run after the signature check because it trusts both fields.
 func (rp *Replay) Verify(body []byte, now time.Time) error {
 	var env struct {
 		CreatedAt time.Time `json:"createdAt"`
@@ -101,15 +76,7 @@ func (rp *Replay) Verify(body []byte, now time.Time) error {
 	return nil
 }
 
-// VerifyTimestampSkew bounds a read-only GET's signed X-Mitstack-Timestamp
-// against this verifier's clock using the SAME ReplaySkew window as
-// Replay.Verify (T-578). A GET (e.g. /logs) carries no body, so it cannot supply
-// the createdAt/nonce envelope Replay.Verify reads for lifecycle-mutating /hook
-// POSTs; instead the engine signs the timestamp into the canonical GET string
-// (see AuthenticateLogsGET) and this bounds its freshness. Accepts either an
-// RFC3339 timestamp or unix seconds. Call it AFTER the Ed25519 signature over
-// the canonical string has been verified — it assumes the ts it reads is
-// authentic.
+// VerifyTimestampSkew bounds a GET's signed timestamp, in RFC3339 or unix seconds, by ReplaySkew, and must run after the signature check.
 func VerifyTimestampSkew(ts string, now time.Time) error {
 	if ts == "" {
 		return errors.New("missing timestamp")
@@ -132,14 +99,10 @@ func VerifyTimestampSkew(ts string, now time.Time) error {
 	return nil
 }
 
-// KeyCache memoises Ed25519 public keys fetched from a JWKS endpoint by kid, so
-// the endpoint is hit at most once per unknown key. Safe for concurrent use:
-// subscribe/upgrade run their provisioning in a background goroutine (T-473), so
-// concurrent requests for the same app can reach PublicKey genuinely
-// concurrently, not merely interleaved on one goroutine.
+// KeyCache memoises Ed25519 public keys fetched from a JWKS endpoint by kid, and is safe for concurrent use.
 type KeyCache struct {
 	mu sync.Mutex
-	// keys points AT the caller's map variable — see Replay.nonces for why.
+	// Points at the caller's map variable for the same reason as Replay.nonces.
 	keys *map[string]ed25519.PublicKey
 }
 
@@ -149,14 +112,10 @@ func NewKeyCache() *KeyCache {
 	return &KeyCache{keys: &m}
 }
 
-// NewKeyCacheOver returns a key cache backed by the caller's map variable, so
-// resetting that variable resets the cache.
+// NewKeyCacheOver returns a key cache backed by the caller's map variable.
 func NewKeyCacheOver(keys *map[string]ed25519.PublicKey) *KeyCache { return &KeyCache{keys: keys} }
 
-// PublicKey returns the Ed25519 public key for kid, fetching it from jwksURL
-// once and memoising it. Used to verify both the webhook signature and the OBO
-// token (both signed by mitstack's platform key). A nil client gets a default
-// with a 5s timeout.
+// PublicKey returns the Ed25519 public key for kid, fetching it from jwksURL once, with a default 5s client when client is nil.
 func (kc *KeyCache) PublicKey(jwksURL string, client *http.Client, kid string) (ed25519.PublicKey, error) {
 	kc.mu.Lock()
 	if kc.keys == nil {
