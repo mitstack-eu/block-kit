@@ -12,9 +12,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// manifestDeclaring builds a minimal block manifest declaring exactly the
-// given hook names under spec.lifecycle.hooks, in the nested block-sequence
-// shape the CONTRACT pins ("Reading the manifest").
 func manifestDeclaring(hooks ...string) []byte {
 	var b strings.Builder
 	b.WriteString("apiVersion: mitstack/v1alpha\n")
@@ -42,8 +39,6 @@ spec:
 `
 
 func noopHook(context.Context, contract.Desired) error { return nil }
-
-// --- Start-up refusals from New ---------------------------------------------
 
 func TestNew_ErrorsWhenResourceIsNil(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
@@ -81,8 +76,6 @@ func TestNew_ErrorsOnHookNotDeclaredInManifest(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
 	cfg := baseConfig(t, f, s)
-	// The manifest declares afterDelete only; registering beforeEnsure must
-	// be refused.
 	cfg.Manifest = manifestDeclaring("afterDelete")
 	cfg.Hooks = map[string]handler.Hook{
 		handler.HookBeforeEnsure: noopHook,
@@ -114,9 +107,6 @@ func TestNew_ErrorsWhenHooksNonEmptyAndManifestEmpty(t *testing.T) {
 	}
 }
 
-// TestNew_AcceptsADeclaredAndRegisteredHookAndCallsItAtItsPoint proves the
-// positive: a hook declared in the manifest and registered under the same
-// name is accepted by New, and actually runs at its declared point.
 func TestNew_AcceptsADeclaredAndRegisteredHookAndCallsItAtItsPoint(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -144,15 +134,11 @@ func TestNew_AcceptsADeclaredAndRegisteredHookAndCallsItAtItsPoint(t *testing.T)
 	}
 }
 
-// TestNew_ManifestDeclaringAHookNobodyRegistersIsAccepted pins that a hook
-// the manifest declares but nothing registers is simply not called — it is
-// not a startup refusal, and the verb still completes normally.
 func TestNew_ManifestDeclaringAHookNobodyRegistersIsAccepted(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
 	h := newHandler(t, f, s, func(c *handler.Config) {
 		c.Manifest = manifestDeclaring("beforeEnsure", "afterEnsure")
-		// c.Hooks left nil: declared, but nobody registers.
 	})
 
 	status, raw := postHook(t, h, s, envelope(t, s, "nonce-hook-unused", nil))
@@ -164,9 +150,6 @@ func TestNew_ManifestDeclaringAHookNobodyRegistersIsAccepted(t *testing.T) {
 	}
 }
 
-// TestNew_EmptyManifestHooksListDeclaresNone pins that "hooks: []" declares
-// no hook, so registering any hook against it is refused exactly like a
-// manifest with no hooks: key at all.
 func TestNew_EmptyManifestHooksListDeclaresNone(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -181,8 +164,6 @@ func TestNew_EmptyManifestHooksListDeclaresNone(t *testing.T) {
 	}
 }
 
-// TestNew_ManifestWithNoHooksKeyDeclaresNone mirrors the above for a
-// manifest that omits spec.lifecycle.hooks entirely.
 func TestNew_ManifestWithNoHooksKeyDeclaresNone(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -196,14 +177,6 @@ func TestNew_ManifestWithNoHooksKeyDeclaresNone(t *testing.T) {
 		t.Fatal("expected an error: a manifest with no hooks: key declares no hook")
 	}
 }
-
-// --- New refuses an empty JWKSURL (MIT-3070 review) --------------------------
-//
-// webhook.AuthenticateHook rejects a request when JWKSURL is empty, before
-// it ever consults PublicKey (webhook/authenticate.go:63-66). A handler
-// configured with a key resolver and no JWKS URL would build today and then
-// answer 401 to everything it ever receives. New refuses that configuration
-// instead of letting it build silently broken.
 
 func TestNew_ErrorsWhenJWKSURLIsEmpty(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
@@ -220,10 +193,6 @@ func TestNew_ErrorsWhenJWKSURLIsEmpty(t *testing.T) {
 	}
 }
 
-// TestNew_ErrorsWhenJWKSURLIsEmptyEvenWithPublicKeyOverride pins the exact
-// failure mode the review found: Config.PublicKey is not an alternative to
-// JWKSURL, so supplying a key resolver does not excuse leaving JWKSURL
-// empty.
 func TestNew_ErrorsWhenJWKSURLIsEmptyEvenWithPublicKeyOverride(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -240,14 +209,6 @@ func TestNew_ErrorsWhenJWKSURLIsEmptyEvenWithPublicKeyOverride(t *testing.T) {
 	}
 }
 
-// --- Only spec.lifecycle.hooks declares a hook ----------------------------
-//
-// New reads the manifest through contract.ParseManifest, so a hooks: key
-// anywhere but spec.lifecycle is a key no manifest field names, and the
-// parser refuses it, naming its path.
-
-// manifestWithDecoyTopLevelHooks carries a top-level "hooks:" key ahead of
-// spec.lifecycle.hooks in the document.
 const manifestWithDecoyTopLevelHooks = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -271,9 +232,6 @@ func TestNew_ManifestAnchoring_DecoyHooksKeyAboveSpecLifecycleIsRefusedAsUnknown
 	requireNewRefusesWithTheParsersMessage(t, cfg, "hooks")
 }
 
-// manifestWithDecoyTooDeepHooks carries a second "hooks:" key nested one
-// level deeper than spec.lifecycle.hooks, under spec.lifecycle.extra, ahead
-// of the real one in the document.
 const manifestWithDecoyTooDeepHooks = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -298,12 +256,6 @@ func TestNew_ManifestAnchoring_DecoyHooksKeyOneLevelTooDeepIsRefusedAsUnknown(t 
 	requireNewRefusesWithTheParsersMessage(t, cfg, "spec.lifecycle.extra")
 }
 
-// --- An unreadable hooks declaration is refused, not read as none ----------
-//
-// The flow form "hooks: [beforeEnsure, afterDelete]" declares its hooks as
-// the block sequence does, and a hooks: value that is not a list is refused
-// rather than read as declaring nothing.
-
 func manifestWithLifecycleHooksLine(hooksLine string) []byte {
 	return []byte("apiVersion: mitstack/v1alpha\n" +
 		"kind: Block\n" +
@@ -312,8 +264,6 @@ func manifestWithLifecycleHooksLine(hooksLine string) []byte {
 		"    " + hooksLine + "\n")
 }
 
-// TestNew_ManifestFlowFormHooksListIsRead pins that "hooks: [beforeEnsure]"
-// — the flow-sequence form — is read exactly like the block-sequence form.
 func TestNew_ManifestFlowFormHooksListIsRead(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	var called bool
@@ -336,20 +286,7 @@ func TestNew_ManifestFlowFormHooksListIsRead(t *testing.T) {
 	}
 }
 
-// TestNew_ManifestUnreadableHooksValueIsRefused pins the negative: a
-// hooks: value under spec.lifecycle that fits none of the supported forms
-// (not "[]", not a "[a, b]" flow list, not an indented "- name" sequence)
-// must make New return an error naming the manifest, rather than silently
-// treating the declaration as empty.
-//
-// No hook is registered here on purpose. Registering one against an
-// undeclared-looking manifest already errors today for an unrelated reason
-// (the ordinary "hook not declared" refusal), which would mask the actual
-// defect the fix document names: a value nobody can read must not be
-// mistaken for a declaration of nothing. Leaving Config.Hooks empty isolates
-// that: with nothing registered, today's code has no reason to look at the
-// manifest at all and New succeeds silently, even though the manifest's own
-// hooks: stanza is nonsense.
+// No hook is registered on purpose: a registered one would fail with the ordinary "hook not declared" refusal and mask that a value nobody can read must not be mistaken for a declaration of nothing.
 func TestNew_ManifestUnreadableHooksValueIsRefused(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -367,12 +304,6 @@ func TestNew_ManifestUnreadableHooksValueIsRefused(t *testing.T) {
 	requireNewRefusesWithTheParsersMessage(t, cfg, contract.LifecycleHooksField)
 }
 
-// --- A comment inside the hooks: block sequence does not shorten it --------
-
-// manifestWithHooksBlockCommentBetweenItems declares beforeEnsure and
-// afterDelete under spec.lifecycle.hooks with a comment line sitting between
-// them. A comment is valid inside a YAML block sequence, so both hooks are
-// declared.
 const manifestWithHooksBlockCommentBetweenItems = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -387,9 +318,6 @@ spec:
       - afterDelete
 `
 
-// TestNew_ManifestCommentBetweenHookItemsDeclaresBoth pins that both hooks
-// either side of the comment are accepted — registering either one must not
-// be refused as undeclared.
 func TestNew_ManifestCommentBetweenHookItemsDeclaresBoth(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -405,10 +333,6 @@ func TestNew_ManifestCommentBetweenHookItemsDeclaresBoth(t *testing.T) {
 	}
 }
 
-// TestNew_ManifestCommentBetweenHookItemsErrorListsBothDeclaredHooks proves
-// the error for an actually-undeclared hook lists every hook the manifest
-// declares, including the one after the comment — the "declares:" list must
-// never omit a hook the manifest does declare.
 func TestNew_ManifestCommentBetweenHookItemsErrorListsBothDeclaredHooks(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -431,11 +355,6 @@ func TestNew_ManifestCommentBetweenHookItemsErrorListsBothDeclaredHooks(t *testi
 	}
 }
 
-// --- A tab-indented hooks: sequence fails on the reader's own error path ---
-
-// manifestWithTabIndentedHooksSequence indents the same two items with a tab
-// rather than spaces. A tab is not valid YAML indentation, so the reader
-// must refuse it rather than read it as an empty declaration.
 const manifestWithTabIndentedHooksSequence = "apiVersion: mitstack/v1alpha\n" +
 	"kind: Block\n" +
 	"metadata:\n  id: test-block\n  name: Test Block\n" +
@@ -444,22 +363,12 @@ const manifestWithTabIndentedHooksSequence = "apiVersion: mitstack/v1alpha\n" +
 	"\t- beforeEnsure\n" +
 	"\t- afterDelete\n"
 
-// TestNew_ManifestTabIndentedHooksSequenceFailsNamingManifest pins that a
-// tab-indented sequence fails New outright, naming the manifest, on its own
-// account — with no hook registered at all, so the only possible source of
-// an error is the manifest read itself, not a "hook not declared" refusal
-// riding on top of a wrongly-empty declaration.
 func TestNew_ManifestTabIndentedHooksSequenceFailsNamingManifest(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
 	cfg := baseConfig(t, f, s)
 	cfg.Manifest = []byte(manifestWithTabIndentedHooksSequence)
-	// cfg.Hooks is left nil on purpose: with nothing registered, New has no
-	// "hook not declared" refusal available to fall back on, so an error
-	// here can only come from the manifest read failing on its own account.
-	// Today it reads the tab-indented sequence as zero items and no error,
-	// so New builds successfully — silently treating an unreadable
-	// declaration as an empty one.
+	// cfg.Hooks stays nil so the only possible error is the manifest read itself.
 
 	_, err := handler.New(cfg)
 	if err == nil {
@@ -479,11 +388,6 @@ func TestNew_ManifestTabIndentedHooksSequenceFailsNamingManifest(t *testing.T) {
 	}
 }
 
-// --- A sibling stanza, a commented-out hooks: key, and CRLF endings --------
-
-// manifestWithSiblingSpecOtherHooksStanza declares beforeEnsure under
-// spec.lifecycle.hooks and afterDelete under the sibling spec.other.hooks,
-// a key no manifest field names.
 const manifestWithSiblingSpecOtherHooksStanza = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -508,9 +412,6 @@ func TestNew_ManifestSiblingSpecOtherHooksStanzaIsRefusedAsUnknown(t *testing.T)
 	requireNewRefusesWithTheParsersMessage(t, cfg, "spec.other")
 }
 
-// manifestWithCommentedOutHooksKey comments out the entire hooks: stanza
-// under spec.lifecycle. A commented-out key is not a declaration, so this
-// must read exactly like a manifest with no hooks: key at all.
 const manifestWithCommentedOutHooksKey = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:
@@ -537,9 +438,6 @@ func TestNew_ManifestCommentedOutHooksKeyDeclaresNone(t *testing.T) {
 	}
 }
 
-// TestNew_ManifestCRLFLineEndingsHooksSequenceIsRead pins that a hooks:
-// block sequence terminated with CRLF line endings is read the same as one
-// terminated with bare LF.
 func TestNew_ManifestCRLFLineEndingsHooksSequenceIsRead(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}

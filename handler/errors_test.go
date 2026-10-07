@@ -138,10 +138,7 @@ func TestRefusedClass_EmptyForNonRefusalDetail(t *testing.T) {
 	}
 }
 
-// TestServe_RefusedTeardownRawResponseBytes is MIT-2659's kit-level half:
-// a refused teardown answers 400 on the wire, and RefusedClass reads the
-// class back out of the DECODED statusDetail — asserted on the raw response
-// bytes the handler actually wrote, not a re-encoded struct.
+// The assertions run on the raw response bytes the handler wrote, not a re-encoded struct.
 func TestServe_RefusedTeardownRawResponseBytes(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{Count: 1, DeleteErr: handler.Refuse("dependents-remain", "two apps still bind this database")}

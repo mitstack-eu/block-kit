@@ -10,43 +10,21 @@ import (
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// errNilResource is returned by New when neither Config.Resource nor
-// Config.Resources is set.
 var errNilResource = errors.New("handler: Config.Resource is required, or Config.Resources for a block whose manifest declares its resources")
 
-// errResourceAndResources is returned by New when Config.Resource and
-// Config.Resources are both set, since a block is served one way or the
-// other.
 var errResourceAndResources = errors.New("handler: Config.Resource and Config.Resources are both set; a block sets Resource, or Resources when its manifest declares its resources, never both")
 
-// errObserversAndResources is returned by New when Config.Observers and
-// Config.Resources are both set, since a block observes its resources
-// through one or the other.
 var errObserversAndResources = errors.New("handler: Config.Observers and Config.Resources are both set; a block served over Config.Resource observes each declared resource through Config.Observers, and a DeclaredResource observes itself")
 
-// errObserversWithoutManifest is returned by New when Config.Observers is
-// set but the manifest declares no resources to observe.
 var errObserversWithoutManifest = fmt.Errorf("handler: Config.Observers is set but Config.Manifest is not a %s manifest; an observer can only serve a resource the manifest declares under spec.resources", contract.ManifestAPIVersion)
 
-// errEmptyJWKSURL is returned by New when Config.JWKSURL is empty.
-// webhook.AuthenticateHook rejects every request on an empty JWKSURL before
-// it ever consults Config.PublicKey, so PublicKey is never a substitute for
-// it.
+// errEmptyJWKSURL stands because webhook.AuthenticateHook rejects every request on an empty JWKSURL before consulting PublicKey.
 var errEmptyJWKSURL = errors.New("handler: Config.JWKSURL is required")
 
-// knownHooks is the closed set of hook points New will ever accept a
-// registration for. It comes from the contract so the handler and the
-// platform's manifest validation share one set.
+// knownHooks comes from the contract so the handler and the platform's manifest validation share one set.
 var knownHooks = contract.LifecycleHookPoints()
 
-// manifestDeclarations is what New reads of a block's manifest: its
-// apiVersion, the hook points spec.lifecycle.hooks declares,
-// spec.lifecycle.retainsOnUnsubscribe, the resources spec.resources
-// declares with their types, the resources spec.provides offers, and the
-// names of the params spec.params marks secret. A mitstack/v1beta lifecycle
-// has neither hooks nor retainsOnUnsubscribe, so a v1beta manifest declares
-// no hook and does not retain its resource; only a v1beta manifest declares
-// resources and params.
+// manifestDeclarations holds what New reads of a manifest; only a v1beta manifest declares resources and params, and it declares no hook and does not retain its resource.
 type manifestDeclarations struct {
 	apiVersion           string
 	hooks                []string
@@ -56,10 +34,7 @@ type manifestDeclarations struct {
 	secretParams         map[string]bool
 }
 
-// readManifestDeclarations reads Config.Manifest through
-// contract.ParseManifest. An empty manifest declares nothing. A manifest
-// the parser refuses is an error carrying the parser's message, since a
-// declaration nobody can read must not be mistaken for an absent one.
+// readManifestDeclarations errors on a manifest the parser refuses, since a declaration nobody can read must not be mistaken for an absent one.
 func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 	if len(manifest) == 0 {
 		return manifestDeclarations{}, nil
@@ -93,9 +68,7 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 	return manifestDeclarations{apiVersion: m.APIVersion, hooks: l.Hooks, retainsOnUnsubscribe: l.RetainsOnUnsubscribe}, nil
 }
 
-// namedResource is one declared resource, the name the manifest gives it,
-// and its manifest declaration, which holds its types. A block-level
-// block's resource has an observer and no DeclaredResource.
+// namedResource of a block-level block has an observer and no DeclaredResource.
 type namedResource struct {
 	name        string
 	resource    DeclaredResource
@@ -103,12 +76,7 @@ type namedResource struct {
 	declaration contract.ManifestResource
 }
 
-// observedResources pairs each resource the manifest's spec.resources
-// declares with its observer in Config.Observers, in creation order. It
-// refuses a hook, a declared resource with no observer, and an observer under
-// a name the manifest does not declare, quoting the name. A
-// mitstack/v1beta manifest declares no hook, so validateHooks refuses any
-// registered one.
+// observedResources refuses a declared resource with no observer and an observer under an undeclared name, and validateHooks refuses any hook since a v1beta manifest declares none.
 func observedResources(cfg Config, declared manifestDeclarations) ([]namedResource, error) {
 	if err := validateHooks(cfg, declared.hooks); err != nil {
 		return nil, err
@@ -129,8 +97,6 @@ func observedResources(cfg Config, declared manifestDeclarations) ([]namedResour
 	return out, nil
 }
 
-// undeclaredKeys quotes the keys of m that declared does not hold, sorted
-// and joined, or returns "" when there are none.
 func undeclaredKeys[V any](m map[string]V, declared map[string]bool) string {
 	var undeclared []string
 	for name := range m {
@@ -142,12 +108,6 @@ func undeclaredKeys[V any](m map[string]V, declared map[string]bool) string {
 	return strings.Join(undeclared, ", ")
 }
 
-// declaredResources pairs each resource the manifest's spec.resources
-// declares with its handler in Config.Resources, in creation order. It
-// refuses Hooks set alongside Resources, a Resources with no manifest or
-// with a manifest that is not contract.ManifestAPIVersion, a declared
-// resource with no handler, and a handler under a name the manifest does
-// not declare, quoting the name.
 func declaredResources(cfg Config, declared manifestDeclarations) ([]namedResource, error) {
 	if len(cfg.Hooks) > 0 {
 		return nil, errors.New("handler: Config.Hooks is set together with Config.Resources; a block that declares its resources registers no hooks")
@@ -177,14 +137,7 @@ func declaredResources(cfg Config, declared manifestDeclarations) ([]namedResour
 	return out, nil
 }
 
-// validateHooks refuses a Config that would let a block override an
-// invariant through Hooks: a registration under a name that is not one of
-// the four HookXxx constants, a registration for a hook declared does not
-// name, or a non-empty Hooks with no Manifest to check it against. declared
-// is the manifest's spec.lifecycle.hooks, which is refused when it names a
-// hook outside knownHooks or names one hook twice, even with no Hooks
-// registered at all, so that New refuses exactly the declarations the
-// platform's manifest validation refuses.
+// validateHooks refuses a declaration naming an unknown hook or one twice even with no Hooks registered, so New refuses exactly what the platform's manifest validation refuses.
 func validateHooks(cfg Config, declared []string) error {
 	if len(cfg.Hooks) > 0 && len(cfg.Manifest) == 0 {
 		return errors.New("handler: Config.Hooks is set but Config.Manifest is empty — a hook can only be registered if the manifest declares it")
@@ -219,14 +172,7 @@ func validateHooks(cfg Config, declared []string) error {
 	return nil
 }
 
-// ManifestAppNameNaming reads a block manifest's spec.naming.appName
-// declaration (contract.AppNameNamingField) through contract.ParseManifest,
-// which requires its maxLength and each derived name's template and limit.
-// A manifest that declares no spec.naming.appName returns nil and no error;
-// a mitstack/v1beta manifest has no spec.naming, so it declares none. A
-// manifest the parser refuses, an empty one included, is an error carrying
-// the parser's message, since a declaration nobody can read must not be
-// mistaken for an absent one.
+// ManifestAppNameNaming returns nil without error for a manifest declaring no spec.naming.appName, and errors on one the parser refuses, since a declaration nobody can read must not be mistaken for an absent one.
 func ManifestAppNameNaming(manifest []byte) (*contract.AppNameNaming, error) {
 	m, err := contract.ParseManifest(manifest)
 	if err != nil {

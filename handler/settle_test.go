@@ -47,10 +47,7 @@ func TestServe_SubscribePresentWithinBudgetAnswers200AbsentFalse(t *testing.T) {
 	}
 }
 
-// TestServe_SubscribeBudgetExhaustedAnswersPendingNeverError pins MIT-1293:
-// a resource that never reaches Present within VerbBudget attempts answers
-// 200 {"pending":true}, never an error status — a block merely waiting is
-// not failed.
+// A block merely waiting is not failed, so exhausting VerbBudget answers 200 {"pending":true}, never an error status.
 func TestServe_SubscribeBudgetExhaustedAnswersPendingNeverError(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	absent := contract.Absent
@@ -101,13 +98,7 @@ func TestServe_UpgradeBudgetExhaustedAnswersPendingNeverError(t *testing.T) {
 	}
 }
 
-// --- The settle loops stop when the caller has gone (MIT-3070 review) -------
-//
-// Neither poll loop checks ctx.Err(), and defaultSleep returns at once when
-// the context is done, so a cancelled request fires its whole remaining
-// budget back to back with no pacing, against a cloud API, for an answer
-// nobody will read. The fix makes both loops break as soon as ctx.Err() is
-// non-nil.
+// The settle loops must stop when the caller has gone, since defaultSleep returns at once on a done context and a cancelled request would fire its whole remaining budget unpaced.
 
 // cancelAfterNObserves cancels its own test's context from inside Observe,
 // once Observe has been called cancelAfter times, and always reports

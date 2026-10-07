@@ -1,19 +1,5 @@
 package handler_test
 
-// named_resource_test.go pins how the Handler serves a request that names
-// one of a block's declared resources under "resource":
-//
-//   - subscribe and upgrade ensure that resource alone and settle it
-//     present, unsubscribe deletes it alone and settles it absent, and
-//     validate observes it alone, once;
-//   - the response's resources map holds that resource's entry alone, and
-//     the top-level outputs are that resource's;
-//   - a name the manifest does not declare, or any name sent to a block
-//     served over a single Resource, answers 400 naming it and reaches no
-//     resource;
-//   - the idempotency cache keeps the answers for different named
-//     resources apart under one subscription and idempotency key.
-
 import (
 	"net/http"
 	"reflect"
@@ -136,8 +122,6 @@ func wantUntouched(t *testing.T, resources ...*recordedResource) {
 	}
 }
 
-// --- a request naming a declared resource -----------------------------------
-
 func TestNamedResource_SubscribeAndUpgradeEnsureAndSettleTheNamedResourceAlone(t *testing.T) {
 	for _, operation := range []string{"subscribe", "upgrade"} {
 		t.Run(operation, func(t *testing.T) {
@@ -225,8 +209,6 @@ func TestNamedResource_ValidateObservesTheNamedResourceAloneOnce(t *testing.T) {
 	}
 }
 
-// --- a name the block cannot serve -------------------------------------------
-
 func TestNamedResource_ANameTheManifestDoesNotDeclareAnswers400NamingItAndReachesNoResource(t *testing.T) {
 	for _, operation := range []string{"subscribe", "upgrade", "unsubscribe", "validate"} {
 		t.Run(operation, func(t *testing.T) {
@@ -273,8 +255,6 @@ func TestNamedResource_ABlockServedOverOneResourceAnswers400ForAnyNamedResource(
 		})
 	}
 }
-
-// --- idempotency ------------------------------------------------------------------
 
 func TestNamedResource_OneIdempotencyKeyNamingDifferentResourcesRunsEachResource(t *testing.T) {
 	b := newThreeBlock()

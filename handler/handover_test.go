@@ -1,15 +1,3 @@
-// handover_test.go pins the unsubscribe route a block reaches through
-// handler.HandoverResource: a block implementing it sees the unsubscribe
-// request's real Desired — Params included — before it destroys anything,
-// and any outputs it returns land in the unsubscribe response's Outputs
-// beside "absent".
-//
-// kittest.FakeResource structurally mirrors handler.Resource only, so it
-// does not implement HandoverResource. This file defines a small local fake
-// that does, rather than extending the shared kittest fake: whether
-// HandoverResource belongs on the shipped FakeResource too is a call for
-// whoever owns that shared support package, not one this test file should
-// make by editing it directly.
 package handler_test
 
 import (
@@ -23,12 +11,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// handoverFake is a Resource that also implements handler.HandoverResource.
-// Its DeleteWithRequest models a block's own snapshot-then-destroy order:
-// SnapshotErr, when set, aborts before DestroyCalls is ever incremented —
-// the same order the kit's handover package doc pins ("a teardown that runs
-// after a FAILED snapshot destroys data the platform has already promised
-// to carry forward").
+// handoverFake snapshots then destroys, and a SnapshotErr aborts before DestroyCalls is incremented, since a teardown after a failed snapshot destroys data the platform promised to carry forward; it is local because kittest.FakeResource is not extended.
 type handoverFake struct {
 	Count int
 
@@ -54,19 +37,13 @@ func (f *handoverFake) Observe(ctx context.Context, id contract.Identity) (contr
 	return contract.Observation{State: state}, nil
 }
 
-// Delete is the plain path handler.Resource still requires. It must never be
-// called for this fake once the Handler sees it also implements
-// HandoverResource — DeleteCalls proves that in
-// TestServe_UnsubscribeFailedSnapshotAbortsBeforeDestroy.
+// Delete must never be called once the Handler sees the fake implements HandoverResource.
 func (f *handoverFake) Delete(ctx context.Context, id contract.Identity) error {
 	f.DeleteCalls++
 	f.Count = 0
 	return nil
 }
 
-// DeleteWithRequest is handler.HandoverResource's method: it receives the
-// unsubscribe's real Desired, snapshots when dataHandover asks for one, and
-// only then destroys.
 func (f *handoverFake) DeleteWithRequest(ctx context.Context, d contract.Desired) (map[string]string, error) {
 	f.DeleteWithRequestCalls++
 	f.LastDesired = d
@@ -92,13 +69,6 @@ func (f *handoverFake) DeleteWithRequest(ctx context.Context, d contract.Desired
 var _ handler.Resource = (*handoverFake)(nil)
 var _ handler.HandoverResource = (*handoverFake)(nil)
 
-// TestServe_UnsubscribeDeleteWithRequestReceivesDataHandoverParam pins the
-// first acceptance criterion: a block on HandoverResource sees the
-// unsubscribe request's real Params, dataHandover included, before it
-// destroys anything. Today's kit builds the delete hooks' Desired from the
-// bare Identity (dispatch.go ~137) and calls only Delete(ctx, Identity), so
-// this is red until the kit both grows HandoverResource and threads
-// req.Desired() through to it.
 func TestServe_UnsubscribeDeleteWithRequestReceivesDataHandoverParam(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &handoverFake{Count: 1, SnapshotID: "snap-123"}
@@ -124,13 +94,6 @@ func TestServe_UnsubscribeDeleteWithRequestReceivesDataHandoverParam(t *testing.
 	}
 }
 
-// TestServe_UnsubscribeSnapshotIdLandsInOutputsBesideAbsentTrue pins the
-// second acceptance criterion: the snapshot id DeleteWithRequest returns
-// under "dataSnapshotId" (handover.OutputKey) reaches the unsubscribe
-// response's outputs, alongside absent:true once Observe confirms the
-// resource is gone. Today's absent response (dispatch.go ~210) carries only
-// what Observe produced, so this is red until the delete path's outputs are
-// merged in.
 func TestServe_UnsubscribeSnapshotIdLandsInOutputsBesideAbsentTrue(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &handoverFake{Count: 1, SnapshotID: "snap-456"}
@@ -154,12 +117,7 @@ func TestServe_UnsubscribeSnapshotIdLandsInOutputsBesideAbsentTrue(t *testing.T)
 	}
 }
 
-// TestServe_UnsubscribeFailedSnapshotAbortsBeforeDestroy pins the third
-// acceptance criterion: a snapshot step that fails answers an error and
-// never reaches the destroy step. DestroyCalls and DeleteCalls are tracked
-// separately from SnapshotCalls precisely so a handler that ran the plain
-// Delete fallback anyway, or that ignored DeleteWithRequest's error and
-// settled regardless, is still caught.
+// DestroyCalls and DeleteCalls are tracked apart from SnapshotCalls so a handler that ran the plain Delete fallback, or ignored DeleteWithRequest's error and settled, is still caught.
 func TestServe_UnsubscribeFailedSnapshotAbortsBeforeDestroy(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &handoverFake{Count: 1, SnapshotErr: errors.New("handover: snapshot did not complete")}
@@ -189,12 +147,6 @@ func TestServe_UnsubscribeFailedSnapshotAbortsBeforeDestroy(t *testing.T) {
 	}
 }
 
-// TestServe_UnsubscribeDeleteWithRequestReceivesTheUnsubscribeSecrets pins
-// that DeleteWithRequest sees the unsubscribe request's own secrets, the
-// same route by which it already sees Params (Request.Desired() at
-// contract/types.go:297 copies both onto the Desired it returns). No test
-// proved this arrives before now, so this closes that gap explicitly rather
-// than leaving it implied by the Params proof above.
 func TestServe_UnsubscribeDeleteWithRequestReceivesTheUnsubscribeSecrets(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "tok-unsubscribe-delete-request-3a7d"

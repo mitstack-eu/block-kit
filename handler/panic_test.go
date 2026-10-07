@@ -17,27 +17,12 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// A Resource that panics is a fault in the block, not a refusal, so the
-// Handler answers it the way it answers any other internal error: HTTP 500
-// with a non-empty "error" and no "refused:<class>" statusDetail. The engine
-// reads any status >= 500 as AttemptOperatorFailed and retries it under the
-// same idempotency key, and the idempotency cache never stores a 500, so the
-// retry reaches the Resource again. The Handler recovers the panic around
-// the verb, inside the single-flight call, so the calling delivery and every
-// waiter on the same key receive that one response.
+// A panic is a fault in the block, not a refusal, so it answers HTTP 500 with an "error" and no "refused:<class>" statusDetail.
 
-// panicSecret is the secret value every panic test puts on the request and
-// quotes in the panic value, so a test can prove it reaches neither the
-// response nor the log.
 const panicSecret = "top-secret-panic-db-password"
 
-// panicMessage is the non-secret part of the panic value, which the log
-// must carry so an operator can tell what the block was doing.
 const panicMessage = "backend exploded mid-converge"
 
-// panickingResource panics in every Resource method. When release is
-// non-nil, Ensure first signals entered and then blocks on release, so a
-// test can hold the call in flight while a second delivery joins it.
 type panickingResource struct {
 	mu          sync.Mutex
 	ensureCalls int
@@ -45,13 +30,9 @@ type panickingResource struct {
 	deleteCalls int
 	entered     chan struct{}
 	release     chan struct{}
-	// value, when non-nil, is what every method panics with instead of the
-	// default string quoting panicSecret.
-	value any
+	value       any
 }
 
-// panicValue is the value a method panics with: value when set, otherwise
-// a string that quotes panicSecret beside panicMessage.
 func (r *panickingResource) panicValue() any {
 	if r.value != nil {
 		return r.value
@@ -94,19 +75,14 @@ func (r *panickingResource) calls() int {
 
 var _ handler.Resource = (*panickingResource)(nil)
 
-// servedResult is what one delivery produced. escaped holds the panic value
-// when ServeHTTP panicked instead of answering, which is the defect these
-// tests pin: an answered request never sets it.
+// servedResult's escaped holds the panic value when ServeHTTP panicked instead of answering, which an answered request never sets.
 type servedResult struct {
 	status  int
 	body    []byte
 	escaped any
 }
 
-// serveRecovering sends a pre-built request through h and recovers any
-// panic that escapes ServeHTTP, so a handler that lets a Resource panic
-// through fails the test instead of crashing the test binary. It touches no
-// *testing.T, so it is safe to call from a goroutine.
+// serveRecovering touches no *testing.T, so it is safe to call from a goroutine.
 func serveRecovering(h http.Handler, req *http.Request) (res servedResult) {
 	w := httptest.NewRecorder()
 	defer func() {
@@ -118,7 +94,6 @@ func serveRecovering(h http.Handler, req *http.Request) (res servedResult) {
 	return servedResult{status: w.Code, body: w.Body.Bytes()}
 }
 
-// panicEnvelope builds a signed delivery whose secrets carry panicSecret.
 func panicEnvelope(t *testing.T, s *kittest.Signer, nonce string, extra map[string]any) *http.Request {
 	t.Helper()
 	fields := map[string]any{
@@ -132,9 +107,6 @@ func panicEnvelope(t *testing.T, s *kittest.Signer, nonce string, extra map[stri
 	return s.HookRequest(t, "/hook", envelope(t, s, nonce, fields))
 }
 
-// assertPanicAnswer pins the response a panicking Resource must produce: an
-// answered request (no escaped panic), status 500, a contract-conforming
-// body whose error says a panic happened, no refusal class, and no secret.
 func assertPanicAnswer(t *testing.T, who string, res servedResult) {
 	t.Helper()
 	if res.escaped != nil {
@@ -157,11 +129,6 @@ func assertPanicAnswer(t *testing.T, who string, res servedResult) {
 	kittest.AssertNoSecret(t, who+" response body", string(res.body), panicSecret)
 }
 
-// TestServe_PanickingResourceAnswers500WithABody pins that a panicking
-// Resource answers the calling delivery with status 500 and a body, for
-// every verb that reaches the Resource and whether or not the delivery
-// carries an idempotency key, since the two take different paths to the
-// Resource.
 func TestServe_PanickingResourceAnswers500WithABody(t *testing.T) {
 	for _, op := range []string{"subscribe", "upgrade", "validate", "unsubscribe"} {
 		for _, key := range []string{"", "idem-panic-" + op} {
@@ -185,9 +152,6 @@ func TestServe_PanickingResourceAnswers500WithABody(t *testing.T) {
 	}
 }
 
-// TestServe_PanickingResourceIsNotCachedRetryReachesTheResourceAgain pins
-// that the 500 a panic produces stays retryable: a later delivery of the
-// same key calls the Resource again rather than replaying the failure.
 func TestServe_PanickingResourceIsNotCachedRetryReachesTheResourceAgain(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &panickingResource{}
@@ -204,14 +168,7 @@ func TestServe_PanickingResourceIsNotCachedRetryReachesTheResourceAgain(t *testi
 	}
 }
 
-// waitForSingleFlightWaiters polls every goroutine's stack until want
-// goroutines sit inside the idempotency cache's single-flight call without
-// being inside the Resource itself. The first delivery holds the in-flight
-// entry for as long as the Resource blocks, so a delivery found inside the
-// cache at that point can only join it as a waiter. A goroutine counts only
-// once its stack is also parked in sync.(*WaitGroup).Wait, so one that has
-// entered the cache but not yet joined the call is never mistaken for a
-// waiter.
+// waitForSingleFlightWaiters counts a goroutine only once its stack is parked in sync.(*WaitGroup).Wait, so one that has entered the cache but not yet joined the call is never mistaken for a waiter.
 func waitForSingleFlightWaiters(t *testing.T, want int, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -236,10 +193,7 @@ func waitForSingleFlightWaiters(t *testing.T, want int, timeout time.Duration) {
 	}
 }
 
-// overlappingPanic starts one delivery that holds inside Ensure, joins a
-// second delivery of the same key as a waiter, then lets Ensure panic. It
-// returns both results, failing the test through its own timeout rather
-// than hanging if either delivery never returns.
+// overlappingPanic fails through its own timeout rather than hanging if either delivery never returns.
 func overlappingPanic(t *testing.T, key string) (first, waiter servedResult, r *panickingResource) {
 	t.Helper()
 	s := kittest.NewSigner(t, "kid-1", 7)
@@ -280,11 +234,6 @@ func overlappingPanic(t *testing.T, key string) (first, waiter servedResult, r *
 	return first, waiter, r
 }
 
-// TestServe_PanickingResourceWaiterOnTheSameKeyGetsTheSameResponse pins
-// that a delivery waiting on a key whose in-flight call panics receives the
-// panic's 500 response, byte for byte what the calling delivery received,
-// rather than the zero status the in-flight call held before its run
-// function set one.
 func TestServe_PanickingResourceWaiterOnTheSameKeyGetsTheSameResponse(t *testing.T) {
 	first, waiter, _ := overlappingPanic(t, "idem-panic-waiter")
 
@@ -301,19 +250,10 @@ func TestServe_PanickingResourceWaiterOnTheSameKeyGetsTheSameResponse(t *testing
 	}
 }
 
-// TestServe_PanickingResourceReleasesEveryWaiter pins the liveness
-// guarantee on its own: when the in-flight call panics, every delivery
-// waiting on its key returns, whatever it answers. It fails through
-// overlappingPanic's timeout if a waiter is left blocked.
 func TestServe_PanickingResourceReleasesEveryWaiter(t *testing.T) {
 	overlappingPanic(t, "idem-panic-liveness")
 }
 
-// TestServe_PanickingResourceIsLoggedWithTheBlockAndNoSecret pins that a
-// panic is logged with what an operator needs to find the block that raised
-// it (the block id, the subscription id, the verb and the panic value) and
-// that the log carries no secret from the request, including one the panic
-// value itself quotes.
 func TestServe_PanickingResourceIsLoggedWithTheBlockAndNoSecret(t *testing.T) {
 	logBuf := captureLog(t)
 
@@ -333,15 +273,11 @@ func TestServe_PanickingResourceIsLoggedWithTheBlockAndNoSecret(t *testing.T) {
 	kittest.AssertNoSecret(t, "log output", logged, panicSecret)
 }
 
-// secretHolder is a panic value that holds panicSecret in a non-string
-// form. Formatting it renders the secret as decimal bytes, which a literal
-// substring scrub cannot find.
+// secretHolder renders the secret as decimal bytes when formatted, which a literal substring scrub cannot find.
 type secretHolder struct {
 	Pw []byte
 }
 
-// decimalBytes renders the first n bytes of v the way fmt prints a []byte,
-// space-separated decimals, so a test can look for that rendering.
 func decimalBytes(v string, n int) string {
 	parts := make([]string, 0, n)
 	for _, b := range []byte(v)[:n] {
@@ -350,9 +286,6 @@ func decimalBytes(v string, n int) string {
 	return strings.Join(parts, " ")
 }
 
-// panicAnswerFor serves one subscribe delivery against a Resource that
-// panics with value and returns the answer, already checked by
-// assertPanicAnswer.
 func panicAnswerFor(t *testing.T, nonce string, value any) (servedResult, contract.Response) {
 	t.Helper()
 	s := kittest.NewSigner(t, "kid-1", 7)
@@ -363,11 +296,7 @@ func panicAnswerFor(t *testing.T, nonce string, value any) (servedResult, contra
 	return res, decodeResponse(t, res.body)
 }
 
-// TestServe_PanicAnswerCarriesNothingFromANonStringPanicValue pins that a
-// panic value holding a secret as []byte inside a struct reaches the
-// response in no form, neither as the string nor as its decimal byte
-// rendering, while the error still names the panic and the verb. The
-// platform stores the response body, so the answer must be a fixed message.
+// The platform stores the response body, so the answer must be a fixed message.
 func TestServe_PanicAnswerCarriesNothingFromANonStringPanicValue(t *testing.T) {
 	res, resp := panicAnswerFor(t, "nonce-panic-holder", secretHolder{Pw: []byte(panicSecret)})
 
@@ -381,9 +310,6 @@ func TestServe_PanicAnswerCarriesNothingFromANonStringPanicValue(t *testing.T) {
 	}
 }
 
-// TestServe_PanicAnswerIsTheSameForDifferentPanicValues pins that the
-// response error for a panic in one verb does not depend on the panic
-// value, which proves it carries nothing from that value.
 func TestServe_PanicAnswerIsTheSameForDifferentPanicValues(t *testing.T) {
 	_, fromString := panicAnswerFor(t, "nonce-panic-value-a", "an unrelated failure")
 	_, fromHolder := panicAnswerFor(t, "nonce-panic-value-b", secretHolder{Pw: []byte(panicSecret)})
@@ -393,11 +319,6 @@ func TestServe_PanicAnswerIsTheSameForDifferentPanicValues(t *testing.T) {
 	}
 }
 
-// TestServe_PanicLogKeepsOnlyTheTypeOfANonStringPanicValue pins that a
-// panic value that is neither a string nor an error reaches the log only as
-// its type: the log carries neither the secret it holds nor that secret's
-// decimal byte rendering, yet still names the block, the subscription, the
-// verb and the value's type.
 func TestServe_PanicLogKeepsOnlyTheTypeOfANonStringPanicValue(t *testing.T) {
 	logBuf := captureLog(t)
 

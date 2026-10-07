@@ -1,12 +1,5 @@
 package handler_test
 
-// manifest_type_block_golden_test.go pins that the kit handler reads a
-// manifest written with type, format and store exactly as it reads one
-// written with kind:
-// handed the type: block twin of the lifecycle hooks golden, New accepts and
-// refuses the same hook registrations, a subscribe reaches the same declared
-// hook, and an unsubscribe gets the same retainsOnUnsubscribe answer.
-
 import (
 	"context"
 	"net/http"

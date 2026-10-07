@@ -7,19 +7,9 @@ import (
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// paramBindingPrefix starts a manifest input bound to one of the block's
-// params, as in params.image.
 const paramBindingPrefix = "params."
 
-// secretResourceInputs returns every secret value in inputs, the
-// resourceInputs of a request naming the declared resource decl. A
-// top-level input decl's catalogued type marks secret is secret whole, so
-// every string at any depth of its value is returned. Any other input is
-// secret where the manifest binds it to a param in secretParams, at the top
-// level or inside a mapping input, and the value at that same key path of
-// the input is returned. A value is returned as its decoded string; a value
-// that is not a JSON string, or an input that does not decode, adds
-// nothing.
+// secretResourceInputs treats an input its catalogued type marks secret as secret whole, at any depth, and any other input as secret only where the manifest binds it to a secret param; a value that does not decode as a string adds nothing.
 func secretResourceInputs(decl contract.ManifestResource, secretParams map[string]bool, inputs map[string]json.RawMessage) []string {
 	typeSecret := map[string]bool{}
 	if t, ok := contract.LookupResourceType(decl.Type); ok {
@@ -46,9 +36,6 @@ func secretResourceInputs(decl contract.ManifestResource, secretParams map[strin
 	return out
 }
 
-// appendBoundSecrets appends raw's decoded string to out when bound is a
-// scalar binding to a param in secretParams. When bound is a mapping, it
-// descends into raw's JSON object key by key alongside it.
 func appendBoundSecrets(out []string, bound contract.InputValue, secretParams map[string]bool, raw json.RawMessage) []string {
 	if bound.Map == nil {
 		param, ok := strings.CutPrefix(bound.Scalar, paramBindingPrefix)
@@ -73,8 +60,6 @@ func appendBoundSecrets(out []string, bound contract.InputValue, secretParams ma
 	return out
 }
 
-// appendStrings appends every string at any depth of v, a decoded JSON
-// value, to out.
 func appendStrings(out []string, v any) []string {
 	switch v := v.(type) {
 	case string:

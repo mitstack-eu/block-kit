@@ -1,12 +1,3 @@
-// manifest_naming_test.go pins handler.ManifestAppNameNaming, the reader for
-// a block manifest's spec.naming.appName declaration: the names a block
-// derives from the app name, each a template carrying {appName} with the
-// provider's length limit for that resource, and the maxLength the block
-// claims for the app name.
-//
-// The reader reads the manifest through contract.ParseManifest. A manifest
-// with no spec.naming.appName declares nothing, and a manifest the parser
-// refuses is an error carrying the parser's message, never an absence.
 package handler_test
 
 import (

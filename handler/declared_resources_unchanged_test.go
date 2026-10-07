@@ -1,13 +1,5 @@
 package handler_test
 
-// declared_resources_unchanged_test.go pins what handing a named resource's
-// observe and delete its recorded inputs and stored identity must leave
-// alone: a block written against DeclaredResource's three calls alone,
-// served a request naming it with recorded inputs and a stored identity,
-// still has its Observe and Delete handed the request's Identity and
-// nothing else. The no-name answer bytes are pinned in
-// declared_no_name_answer_test.go.
-
 import (
 	"context"
 	"fmt"

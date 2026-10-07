@@ -13,12 +13,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// TestServe_IdempotencyReplaysTheFirstResponseForTheSameKey pins that a
-// repeated request carrying the same idempotencyKey replays the first
-// status and response bytes without calling the Resource again. The two
-// deliveries use different nonces, exactly as a genuine retry from the
-// engine would (a repeated nonce is rejected by the replay guard
-// regardless of idempotencyKey).
+// The two deliveries use different nonces, as a genuine retry would, since a repeated nonce is rejected by the replay guard regardless of idempotencyKey.
 func TestServe_IdempotencyReplaysTheFirstResponseForTheSameKey(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -45,9 +40,6 @@ func TestServe_IdempotencyReplaysTheFirstResponseForTheSameKey(t *testing.T) {
 	}
 }
 
-// TestServe_IdempotencyDifferentKeyCallsTheResourceAgain pins the other
-// half: a different idempotencyKey for the same subscription is a distinct
-// request and must reach the Resource again.
 func TestServe_IdempotencyDifferentKeyCallsTheResourceAgain(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -64,9 +56,6 @@ func TestServe_IdempotencyDifferentKeyCallsTheResourceAgain(t *testing.T) {
 	}
 }
 
-// TestServe_IdempotencyEmptyKeyIsNeverCached pins "An empty key is never
-// cached": two requests with no idempotencyKey at all must each reach the
-// Resource, even though every other field is identical.
 func TestServe_IdempotencyEmptyKeyIsNeverCached(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -80,11 +69,6 @@ func TestServe_IdempotencyEmptyKeyIsNeverCached(t *testing.T) {
 	}
 }
 
-// TestServe_IdempotencyKeyedPerSubscription_NoCrossSubscriptionCollision is
-// the multi-tenancy proof the CONTRACT asks for: two different
-// subscriptions using the SAME idempotencyKey must not replay each other's
-// response, so the cache must be keyed on (idempotencyKey, subscriptionId)
-// together, not on idempotencyKey alone.
 func TestServe_IdempotencyKeyedPerSubscription_NoCrossSubscriptionCollision(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{}
@@ -113,9 +97,7 @@ func TestServe_IdempotencyKeyedPerSubscription_NoCrossSubscriptionCollision(t *t
 			"idempotencyKey must still call the Resource; the cache must be keyed on (idempotencyKey, subscriptionId)", f.EnsureCalls)
 	}
 
-	// A third delivery replaying subscription A's own key+subscription must
-	// still replay correctly — proving the fix above did not simply widen
-	// the cache key into never matching at all.
+	// Replaying subscription A's own key must still replay, so the cache key was not widened into never matching.
 	statusA2, rawA2 := postHook(t, h, s, envelope(t, s, "nonce-tenant-A2", map[string]any{
 		"idempotencyKey": sharedKey, "subscriptionId": "sub-A", "orgId": "org-A",
 	}))
@@ -128,18 +110,7 @@ func TestServe_IdempotencyKeyedPerSubscription_NoCrossSubscriptionCollision(t *t
 	}
 }
 
-// --- A failed response is never cached (MIT-3070 review) --------------------
-//
-// The engine keeps one IdempotencyKey across every retry of a call
-// (webhook.go:304,364) and a 5xx stays retryable (webhook.go:455). Caching a
-// 500 under that key would make every later retry replay the cached failure
-// without ever calling the Resource again, turning one transient error into
-// a permanent one. The cache therefore stores a response only for a
-// deterministic outcome — a 2xx or the 400 a *Refused produces — and a 500
-// leaves no entry behind.
-
-// flakyResource fails its first Ensure call and succeeds every call after,
-// modelling the transient backend error the engine's retry exists for.
+// flakyResource fails its first Ensure call and succeeds after, since a cached 500 would turn one transient error into a permanent one.
 type flakyResource struct {
 	mu          sync.Mutex
 	ensureCalls int
@@ -167,11 +138,6 @@ func (f *flakyResource) calls() int {
 	return f.ensureCalls
 }
 
-// TestServe_Idempotency500IsNeverCachedRetryRunsTheResourceAgain pins that a
-// 500 outcome leaves no cache entry: a repeat of the same key calls Ensure
-// again, and — since the engine's client keeps retrying under the same key
-// until it gets a deterministic answer — the second attempt's success is
-// what the retry actually receives, not a replayed failure.
 func TestServe_Idempotency500IsNeverCachedRetryRunsTheResourceAgain(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &flakyResource{}
@@ -200,31 +166,7 @@ func TestServe_Idempotency500IsNeverCachedRetryRunsTheResourceAgain(t *testing.T
 	}
 }
 
-// The other half of "a 2xx and a 400 refusal are still replayed without
-// calling it" needs no new test here: the pre-existing
-// TestServe_IdempotencyReplaysTheFirstResponseForTheSameKey above already
-// pins the 2xx case, and the current cache implementation already caches
-// every status unconditionally (including a *Refused's 400), so a new test
-// asserting that a 400 refusal is replayed would pass unchanged today — it
-// would not be pinning a correction, only restating existing, unchanged
-// behaviour. See NOTES in the handback for the caveat this leaves for
-// code-author: the fix must keep caching a 400 refusal while it stops
-// caching a 500, not simply narrow the cache to 2xx only.
-
-// --- One key runs the verb once, even concurrently (MIT-3070 review) --------
-//
-// The cache is written only after the verb returns, so two deliveries of one
-// key that overlap in flight both currently reach the Resource — exactly
-// what happens when the engine's client times out while the handler is
-// still inside Ensure and retries with the same key. The fix makes the
-// cache single-flight: a delivery whose key is already in flight waits for
-// the first to finish and answers with its response.
-
-// blockingResource lets a test hold Ensure open until it chooses to release
-// it, so two concurrent deliveries of the same key can be driven to overlap
-// deterministically. entered is signalled on every Ensure call (buffered so
-// a wrongly-duplicated call never blocks the Resource itself), which is what
-// lets the test detect a second call arriving before the first is released.
+// blockingResource holds Ensure open until released; entered is buffered so a wrongly duplicated call never blocks the Resource itself.
 type blockingResource struct {
 	mu          sync.Mutex
 	ensureCalls int
@@ -257,14 +199,7 @@ func (r *blockingResource) calls() int {
 	return r.ensureCalls
 }
 
-// TestServe_IdempotencySingleFlightSameKeyCallsEnsureOnce fires two
-// deliveries of one idempotency key concurrently, releases the Resource only
-// once both are in flight, and asserts Ensure ran exactly once and both
-// deliveries received the identical response. It is meaningful under -race:
-// every field blockingResource shares across goroutines is either a channel
-// or guarded by its own mutex, so a data race here can only come from a
-// handler that reads/writes the idempotency cache without the synchronization
-// the fix requires.
+// Meaningful under -race: every field blockingResource shares across goroutines is a channel or mutex-guarded, so a race can only come from the cache.
 func TestServe_IdempotencySingleFlightSameKeyCallsEnsureOnce(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := newBlockingResource()
@@ -294,10 +229,7 @@ func TestServe_IdempotencySingleFlightSameKeyCallsEnsureOnce(t *testing.T) {
 		results <- result{status, raw}
 	}()
 
-	// Give the second, concurrent delivery a window to reach Ensure a second
-	// time while the first call is still blocked — the exact defect: the
-	// cache is written only after Ensure returns, so nothing yet stops a
-	// second in-flight delivery of the same key from calling the Resource.
+	// Give the second delivery a window to reach Ensure a second time while the first is still blocked.
 	select {
 	case <-r.entered:
 		t.Error("a second concurrent delivery of the same key reached Ensure before the first one returned — the cache must be single-flight")

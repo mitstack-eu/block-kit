@@ -1,24 +1,4 @@
-// outputsecrets_test.go pins the wire-safety half of the same change:
-// before the handler writes any response, an Outputs value that is exactly
-// one of the request's secrets.github.* values is refused — never scrubbed
-// silently — naming the output key and never the value, through the same
-// *handler.Refused / RefusedClass machinery errors.go already gives a
-// block's own refusals. The class this refusal carries is
-// "secret-in-output" (CONTRACT for code-author: use exactly this string, so
-// RefusedClass(resp.StatusDetail) reads it back).
-//
-// The matching rule the ticket asks for is deliberately exact-value, not
-// substring: an output value equal to a secret value is refused, but an
-// output value that merely CONTAINS a secret value (the way weather-app's
-// "repo" output embeds the login secrets.github.owner names) is left alone.
-// scrubResponse (dispatch.go:305..309) already does substring redaction for
-// the two free-text fields it owns (Error, StatusDetail); this is a
-// different, additional gate over Outputs, and it must not reuse that
-// substring behaviour or the owner case below would wrongly refuse.
-//
-// SecretOutputs is explicitly out of scope: it is where a Resource is
-// supposed to put a secret it legitimately wants to return, so the gate
-// must never inspect it.
+// An Outputs value exactly equal to a request secret is refused with class "secret-in-output", naming the key and never the value; a value that merely contains a secret is left alone, and SecretOutputs is never inspected.
 package handler_test
 
 import (
@@ -34,15 +14,8 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// wantRefusedClass is the class name this file's tests pin for the new
-// output-secret gate. See the file doc for why this exact string is the
-// CONTRACT, not an implementation detail either side can pick freely.
 const wantRefusedClass = "secret-in-output"
 
-// leakyHandoverFake is a minimal HandoverResource whose DeleteWithRequest
-// returns a single configurable output, isolated from handoverFake's own
-// snapshot/destroy semantics in handover_test.go so this file does not
-// entangle with those tests.
 type leakyHandoverFake struct {
 	OutputKey   string
 	OutputValue string
@@ -63,9 +36,6 @@ func (f *leakyHandoverFake) DeleteWithRequest(ctx context.Context, d contract.De
 var _ handler.Resource = (*leakyHandoverFake)(nil)
 var _ handler.HandoverResource = (*leakyHandoverFake)(nil)
 
-// captureLog redirects the standard logger into a buffer for the duration of
-// the test, mirroring TestServe_NeverLeaksSecretsInResponseOrLogs in
-// secrets_test.go.
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
@@ -75,11 +45,6 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// TestServe_ValidateOutputExactlyMatchingASecretValueIsRefused pins the
-// first half of the fourth acceptance criterion: a Resource whose Observe
-// returns secrets.github.token verbatim as an output value gets an error
-// response naming the output key, and the token appears nowhere in the
-// response body or the captured log.
 func TestServe_ValidateOutputExactlyMatchingASecretValueIsRefused(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "ghp_leaked1234567890abcdef"
@@ -108,10 +73,6 @@ func TestServe_ValidateOutputExactlyMatchingASecretValueIsRefused(t *testing.T) 
 	kittest.AssertNoSecret(t, "log output", logBuf.String(), tokenValue)
 }
 
-// TestServe_UnsubscribeDeleteWithRequestOutputExactlyMatchingASecretValueIsRefused
-// pins the second half of the fourth acceptance criterion: the same refusal
-// fires when the leaking output comes from DeleteWithRequest rather than
-// Observe.
 func TestServe_UnsubscribeDeleteWithRequestOutputExactlyMatchingASecretValueIsRefused(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "ghp_leakedondelete1234567890"
@@ -140,11 +101,6 @@ func TestServe_UnsubscribeDeleteWithRequestOutputExactlyMatchingASecretValueIsRe
 	kittest.AssertNoSecret(t, "log output", logBuf.String(), tokenValue)
 }
 
-// TestServe_ObserveOutputContainingASecretSubstringLikeOwnerLoginIsAllowed
-// pins the fifth acceptance criterion: an output whose value merely CONTAINS
-// a secrets-map value (the way weather-app's "repo" output embeds the login
-// secrets.github.owner) is not the exact-value match the gate refuses on,
-// so the response is 2xx with that output intact.
 func TestServe_ObserveOutputContainingASecretSubstringLikeOwnerLoginIsAllowed(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const ownerValue = "acme-co"
@@ -168,15 +124,7 @@ func TestServe_ObserveOutputContainingASecretSubstringLikeOwnerLoginIsAllowed(t 
 	}
 }
 
-// TestServe_SecretOutputsCarryingASecretValueIsNotRefused pins that the gate
-// never inspects SecretOutputs: it is the field a Resource is meant to
-// return a legitimate secret value through, so a value there identical to a
-// request secret must reach the wire unrefused and unscrubbed.
-//
-// kittest.FakeResource has no SecretOutputs field, so this uses the
-// requestObserverFake defined in observewithrequest_test.go — same package,
-// same reasoning as leakyHandoverFake above for not extending the shared
-// fixture.
+// kittest.FakeResource has no SecretOutputs field, so this uses requestObserverFake.
 func TestServe_SecretOutputsCarryingASecretValueIsNotRefused(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "ghp_legitsecretoutput1234567890"
@@ -198,13 +146,7 @@ func TestServe_SecretOutputsCarryingASecretValueIsNotRefused(t *testing.T) {
 	}
 }
 
-// TestServe_EmptyOutputValueIsNotRefusedEvenWithAnUnsetSecretPresent pins
-// that the gate's exact-value match must not treat "" as a secret. A
-// secrets group can legitimately carry an unset optional secret as an empty
-// string, and a Resource can legitimately return an empty output value (a
-// field that is simply blank right now) — neither is a leak, and the two
-// must not combine into a false refusal the way a naive "output value
-// equals some secret value" check would if it never excluded "".
+// An unset optional secret is an empty string and a blank output is legitimate, so the two must not combine into a false refusal.
 func TestServe_EmptyOutputValueIsNotRefusedEvenWithAnUnsetSecretPresent(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "ghp_realtoken_for_empty_case_1234567890"

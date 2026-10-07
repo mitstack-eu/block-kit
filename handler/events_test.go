@@ -14,9 +14,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// recordedEvent mirrors the operatorEvent JSON shape the events package
-// POSTs (MIT-1151), decoded independently here so this test proves the
-// wire shape rather than importing the events package's own type.
+// recordedEvent is decoded independently of the events package so the test proves the wire shape rather than importing its type.
 type recordedEvent struct {
 	SubscriptionID string `json:"subscriptionId"`
 	Token          string `json:"token"`
@@ -60,22 +58,7 @@ func eventsCallbackField(url, token string) map[string]any {
 	return map[string]any{"url": url, "token": token}
 }
 
-// --- The new rule: at most one event per verb call --------------------------
-//
-// MIT-3070 review finding: the old rule (a progress event on start, a
-// terminal event on completion, for all four verbs) drives ProbeHealth into
-// a loop on validate (engine_retry.go:141,175 dispatches validate in answer
-// to a terminal event; operator_events.go:15,19,108 treats "completed" as
-// terminal) and loses the terminal event of a settled verb under the
-// lifecycle_events partial unique index on (subscription_id,
-// idempotency_key) for progress/completed/unhealthy
-// (066_lifecycle_event_operator_ingest.up.sql:23-25), since a start event
-// under the same key already took that slot.
-//
-// The rule now: validate emits nothing; subscribe/upgrade/unsubscribe emit
-// exactly one event — completed on a settled 2xx, progress on a
-// pending:true 2xx, failed (carrying the detail) on 4xx/5xx. There is no
-// start event for any verb.
+// At most one event per verb call: validate emits nothing; the others emit completed on a settled 2xx, progress on a pending:true 2xx, failed on 4xx/5xx, and no start event, which would take the unique-index slot of the terminal event and loop ProbeHealth on validate.
 
 // TestServe_ValidateEmitsNoEvents pins that a probe is not a lifecycle
 // operation: validate emits zero events, for every outcome Observe can

@@ -14,11 +14,7 @@ const (
 	classBlockLevelVerb = "block-level-verb"
 )
 
-// serveBlock runs one block-level Ensure or Delete and then observes each
-// declared resource through its own observer, handed the clock once that
-// call returned as VerbAt; a request naming one resource is served for
-// validate alone. A recorded or requested type reaches the observer even
-// when the entry no longer lists it, since the resource was created as it.
+// serveBlock serves a request naming one resource for validate alone, and a recorded or requested type reaches the observer even when the entry no longer lists it, since the resource was created as it.
 func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, contract.Response) {
 	r.refs = make(map[string]contract.ResourceRef, len(r.resources))
 	if r.d.Resource != "" {

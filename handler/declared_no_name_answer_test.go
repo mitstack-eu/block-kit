@@ -1,13 +1,6 @@
 package handler_test
 
-// declared_no_name_answer_test.go pins that a block declaring its resources
-// answers a request naming no resource with exactly the bytes it answered
-// before a request could name one: every verb runs over every declared
-// resource, in creation order or its reverse. Each expected body below was
-// captured from the handler as it stood before requests carried a resource
-// name, so any change to the no-name path, a new key included, turns this
-// file red. It also pins that a block written against DeclaredResource's
-// three calls alone still builds and serves.
+// The expected bodies are exact bytes, so any change to the no-name path, a new key included, turns this file red.
 
 import (
 	"context"
