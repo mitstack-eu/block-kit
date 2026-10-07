@@ -1,12 +1,6 @@
 package registryauth_test
 
-// The kit's rule is that a credential handed to a login driver may reach the
-// registry CLI it drives, but must never surface anywhere else: not on a
-// command line a `ps` snapshot could catch, not in a returned error, and not
-// in a log line. Both shipped drivers handle credential material — the
-// oci-basic password the caller supplies, and the ecr password the AWS CLI
-// mints on the operator's behalf — so the rule is asserted here, once, for
-// both.
+// A credential may reach the registry CLI it drives but must never surface in argv or a returned error.
 
 import (
 	"bytes"
@@ -108,10 +102,7 @@ func TestNoSecretLeak_CredentialNeverAppearsInLogOutput(t *testing.T) {
 }
 
 func TestNoSecretLeak_PasswordFlagNeverAppearsInAnyRecordedCommandLine(t *testing.T) {
-	// --password-stdin is the only safe form; --password puts the credential on
-	// the command line for anything running `ps` to read. This pins the flag
-	// choice itself, so swapping one for the other turns this test red rather
-	// than only the (equally present) stdin/argv assertions above.
+	// --password-stdin is the only safe form, since --password puts the credential on the command line.
 	cases := map[string]registryauth.Registry{
 		"ecr":       ecrRegistry("123456789012.dkr.ecr.eu-central-1.amazonaws.com", "eu-central-1"),
 		"oci-basic": ociRegistry("ghcr.io", "deploy-bot", leakOCICredential),
@@ -136,8 +127,6 @@ func TestNoSecretLeak_PasswordFlagNeverAppearsInAnyRecordedCommandLine(t *testin
 	}
 }
 
-// argvIfInvoked returns the recorded argv for record, or "" if the stub was
-// never invoked (the oci-basic case never calls aws at all).
 func argvIfInvoked(record string) string {
 	if !invoked(record) {
 		return ""

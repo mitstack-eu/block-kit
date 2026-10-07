@@ -1,20 +1,4 @@
-// Package registryauth logs a container-registry CLI in without ever putting
-// the credential where a process listing or a log line could catch it
-// (MIT-2444).
-//
-// mitstack's reference operators pull their own images from a container
-// registry before they can run, and two shapes cover every registry they need:
-// AWS ECR, authenticated through the AWS CLI's minted password, and a plain
-// username/password (or token-as-password) OCI registry such as ghcr.io. Both
-// end at `docker login`, and both share the one property that matters: the
-// credential travels over the child process's stdin, never as a `--password`
-// argument, because argv is visible to anything running `ps` and a log line
-// outlives the process that wrote it.
-//
-// The package is deliberately narrow. It does not manage a docker config file,
-// does not cache a login across calls, and does not know about any registry
-// shape beyond these two — a caller with a third kind gets a named error, not
-// a guess.
+// Package registryauth logs a container-registry CLI in with the credential passed over stdin, never as an argument or in a log line.
 package registryauth
 
 import (
@@ -27,12 +11,7 @@ import (
 	"time"
 )
 
-// subprocessWaitDelay bounds how long Wait keeps draining a killed
-// subprocess's stdout/stderr pipes after the context that killed it is done.
-// Without it, a grandchild the subprocess spawned can keep a pipe's write end
-// open long after the subprocess itself has exited, and Wait blocks on it
-// rather than returning promptly. Short enough to keep cancellation prompt,
-// long enough that a well-behaved subprocess is not force-closed mid-flush.
+// A grandchild can hold a pipe open after its parent is killed, so this bounds how long Wait keeps draining it.
 const subprocessWaitDelay = 1 * time.Second
 
 // Kind selects which login driver Login uses.
@@ -41,36 +20,25 @@ type Kind string
 const (
 	// KindECR authenticates against AWS ECR via the AWS CLI's minted password.
 	KindECR Kind = "ecr"
-	// KindOCIBasic authenticates against a plain OCI registry with a
-	// username and a password or token.
+	// KindOCIBasic authenticates against a plain OCI registry with a username and a password or token.
 	KindOCIBasic Kind = "oci-basic"
 )
 
 // Registry describes one registry login.
 type Registry struct {
-	// Kind selects the login driver.
 	Kind Kind
-	// Host is the registry host docker login authenticates against, e.g.
-	// <acct>.dkr.ecr.eu-central-1.amazonaws.com or ghcr.io.
 	Host string
-	// Username is used by KindOCIBasic only. KindECR always logs in as the
-	// literal AWS.
+	// Username is used by KindOCIBasic only; KindECR always logs in as AWS.
 	Username string
-	// Credential is the password or token for KindOCIBasic. For KindECR it
-	// must be empty — an ecr login takes no caller-supplied credential.
+	// Credential is the KindOCIBasic secret and must be empty for KindECR.
 	Credential string
-	// Region is the AWS region get-login-password runs against. Required
-	// for KindECR only.
+	// Region is required for KindECR only.
 	Region string
-	// Env is the process environment for the drivers' subprocesses. A nil or
-	// empty Env means the subprocesses inherit the ambient environment.
+	// Env is the subprocess environment; nil or empty inherits the ambient one.
 	Env []string
 }
 
-// Login authenticates the local docker CLI against r.Host, dispatching to the
-// driver named by r.Kind. Every rejection below is checked before any
-// subprocess is spawned, so a caller can rely on a failed Login having run
-// nothing.
+// Login authenticates the local docker CLI against r.Host, rejecting bad input before it spawns any subprocess.
 func Login(ctx context.Context, r Registry) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("registryauth: context already done: %w", err)
@@ -92,9 +60,6 @@ func Login(ctx context.Context, r Registry) error {
 	}
 }
 
-// loginECR runs `aws ecr get-login-password` and pipes its stdout into
-// `docker login`'s stdin, so the minted password never appears in an argument
-// list or a returned error.
 func loginECR(ctx context.Context, r Registry) error {
 	if strings.TrimSpace(r.Region) == "" {
 		return errors.New("registryauth: ecr Region is required")
@@ -107,22 +72,14 @@ func loginECR(ctx context.Context, r Registry) error {
 	applyEnv(aws, r.Env)
 	var awsErr bytes.Buffer
 	aws.Stderr = &awsErr
-	// A killed aws may leave a grandchild it spawned holding the stderr
-	// pipe's write end open; WaitDelay caps how long Wait keeps draining
-	// that pipe after cancellation, so this call still returns promptly.
 	aws.WaitDelay = subprocessWaitDelay
 	password, err := aws.Output()
 	if err != nil {
-		// A cancelled context killed the subprocess; that is why it failed,
-		// not whatever exit status the kill produced.
+		// A cancelled context killed the subprocess, so report that rather than the kill's exit status.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("registryauth: aws ecr get-login-password: %w", ctxErr)
 		}
-		// A leaked grandchild holding the stderr pipe open past WaitDelay
-		// produces exec.ErrWaitDelay even when aws itself exited zero; that
-		// is not a failure of the login this call cares about. Output() may
-		// still be truncated by the cut-short drain, so the empty-password
-		// check below is what catches a truncation that matters.
+		// ErrWaitDelay with a zero exit is not a failure; the empty-password check below catches a truncated drain.
 		waitDelayOnly := errors.Is(err, exec.ErrWaitDelay) && aws.ProcessState != nil && aws.ProcessState.Success()
 		if !waitDelayOnly {
 			stderr := strings.TrimSpace(awsErr.String())
@@ -139,8 +96,6 @@ func loginECR(ctx context.Context, r Registry) error {
 	return dockerLogin(ctx, r.Env, "AWS", r.Host, string(password))
 }
 
-// loginOCIBasic runs `docker login` with the configured username, writing
-// Credential to stdin so it never appears in an argument list.
 func loginOCIBasic(ctx context.Context, r Registry) error {
 	if strings.TrimSpace(r.Username) == "" {
 		return errors.New("registryauth: oci-basic Username is required")
@@ -151,27 +106,19 @@ func loginOCIBasic(ctx context.Context, r Registry) error {
 	return dockerLogin(ctx, r.Env, r.Username, r.Host, r.Credential)
 }
 
-// dockerLogin runs `docker login --username <username> --password-stdin
-// <host>`, writing credential to the child's stdin.
 func dockerLogin(ctx context.Context, env []string, username, host, credential string) error {
 	docker := exec.CommandContext(ctx, "docker", "login", "--username", username, "--password-stdin", host)
 	applyEnv(docker, env)
 	docker.Stdin = strings.NewReader(credential)
 	var dockerErr bytes.Buffer
 	docker.Stderr = &dockerErr
-	// A killed docker may leave a grandchild it spawned holding the stderr
-	// pipe's write end open; WaitDelay caps how long Wait keeps draining
-	// that pipe after cancellation, so this call still returns promptly.
 	docker.WaitDelay = subprocessWaitDelay
 	if err := docker.Run(); err != nil {
-		// A cancelled context killed the subprocess; that is why it failed,
-		// not whatever exit status the kill produced.
+		// A cancelled context killed the subprocess, so report that rather than the kill's exit status.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("registryauth: docker login: %w", ctxErr)
 		}
-		// A leaked grandchild holding the stderr pipe open past WaitDelay
-		// produces exec.ErrWaitDelay even when docker itself exited zero;
-		// that is not a failure of the login this call cares about.
+		// ErrWaitDelay with a zero exit is not a failure.
 		if errors.Is(err, exec.ErrWaitDelay) && docker.ProcessState != nil && docker.ProcessState.Success() {
 			return nil
 		}
@@ -184,9 +131,6 @@ func dockerLogin(ctx context.Context, env []string, username, host, credential s
 	return nil
 }
 
-// applyEnv sets cmd's environment to env when non-empty, leaving the ambient
-// environment (cmd.Env == nil, which os/exec reads as os.Environ()) in place
-// otherwise.
 func applyEnv(cmd *exec.Cmd, env []string) {
 	if len(env) > 0 {
 		cmd.Env = env

@@ -1,10 +1,6 @@
 package registryauth_test
 
-// Registry.Host reaches docker login as its final positional argument, and
-// docker login has no end-of-options marker either, so a Host beginning with
-// "-" is parsed as a flag rather than a registry host. Host values originate
-// in block manifests and subscription inputs, so up-front validation is the
-// only defence available.
+// docker login has no end-of-options marker, so a Host beginning with "-" must be rejected up front.
 
 import (
 	"context"
