@@ -15,8 +15,10 @@ const (
 )
 
 // serveBlock runs one block-level Ensure or Delete and then observes each
-// declared resource through its own observer; a request naming one
-// resource is served for validate alone.
+// declared resource through its own observer, handed the clock once that
+// call returned as VerbAt; a request naming one resource is served for
+// validate alone. A recorded or requested type reaches the observer even
+// when the entry no longer lists it, since the resource was created as it.
 func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, contract.Response) {
 	r.refs = make(map[string]contract.ResourceRef, len(r.resources))
 	if r.d.Resource != "" {
@@ -25,11 +27,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 				"resource %q: a request naming one resource is served for validate alone, since the block creates and deletes its resources through its block-level handler", r.d.Resource), r.secrets)
 		}
 		nr := r.resources[0]
-		ref := r.refFor(nr, r.d.ResourceType, r.d.ResourceIdentity)
-		if !slices.Contains(nr.declaration.Types, ref.Type) {
-			return r.h.errorResponse(typeNotListed(nr, ref.Type), r.secrets)
-		}
-		r.refs[nr.name] = ref
+		r.refs[nr.name] = r.refFor(nr, r.d.ResourceType, r.d.ResourceIdentity)
 		return r.validateEach(ctx)
 	}
 
@@ -40,12 +38,14 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
+		r.d.VerbAt = r.h.now()
 		r.setRefs(reported)
 		return r.ensureEach(ctx)
 	case "unsubscribe":
 		if err := r.deleteBlock(ctx); err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
+		r.d.VerbAt = r.h.now()
 		r.setRefs(nil)
 		return r.deleteEach(ctx)
 	case "validate":

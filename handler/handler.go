@@ -88,8 +88,10 @@ type Observer interface {
 // implements to report the resources its ensure created. When the Resource
 // implements it, the Handler calls EnsureResources in place of Ensure,
 // never both, and hands each declared resource's Observer the type and
-// identity reported for it. A reported resource the manifest does not
-// declare, or of a type its entry does not list, is refused with a 400.
+// identity reported for it. The observe package's shared observers find a
+// resource only by that identity, so a block that uses them implements
+// ResourceReporter. A reported resource the manifest does not declare, or
+// of a type its entry does not list, is refused with a 400.
 type ResourceReporter interface {
 	EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error)
 }

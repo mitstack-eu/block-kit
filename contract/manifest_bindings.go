@@ -37,10 +37,11 @@ const bindingOutputs = ".outputs."
 
 // CheckBinding judges one binding a block's code reads,
 // requires.<reference>.outputs.<output> or resources.<name>.outputs.<output>,
-// against spec and snap. It refuses a reference no requirement of spec has,
-// a requirement being named by its Reference, a name no resource of spec
-// has, and an output any type the requirement or resource lists does not
-// declare in snap, naming the type and the output.
+// against spec and snap. A requirement's reference is its name, or its type
+// id when it has no name. It refuses a reference no requirement of spec
+// has, a name no resource of spec has, and an output any type the
+// requirement or resource lists does not declare in snap, naming the type
+// and the output.
 func CheckBinding(spec ManifestSpec, snap TypeSnapshot, binding string) error {
 	source, rest, _ := strings.Cut(binding, ".")
 	ref, output, ok := strings.Cut(rest, bindingOutputs)

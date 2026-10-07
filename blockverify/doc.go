@@ -192,12 +192,12 @@
 // TestDeclaredResources and call kittest.AssertBlock, or the deprecated
 // kittest.AssertDeclaredResources. The suite checks both appear, since
 // `go test -run` matching nothing passes vacuously, then runs
-// `go test -run TestDeclaredResources ./...` in the target. AssertBlock
-// proves four guards: what carries the subscription's id matches the
-// declared resources, an observe asks the provider, PlanReplacements names
-// a replaced resource, a stateful one especially, and every declared
-// resource observes absent after unsubscribe, once per type a requirement
-// lists. A failure's detail is the first output line naming a resource, as
+// `go test -run TestDeclaredResources ./...` in the target, with -v for
+// AssertBlock, whose pass detail lists the guards it logged as run: what
+// carries the subscription's id matches the declared resources, an observe
+// asks the provider, validate names a replaced resource, every declared
+// resource observes absent after unsubscribe, and a provided resource
+// carries its required outputs. A failure's detail is the first output line naming a resource, as
 // resource "<name>" or supplied resource "<name>". A manifest the parser
 // refuses fails with its reason.
 //

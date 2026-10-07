@@ -98,6 +98,8 @@ type Request struct {
 	ResourceType      string                      `json:"resourceType,omitempty"`
 	RecordedResources map[string]RecordedResource `json:"recordedResources,omitempty"`
 	RequirementTypes  map[string]string           `json:"requirementTypes,omitempty"`
+	// SettlesAt is the time of the state-changing verb a validate settles.
+	SettlesAt *time.Time `json:"settlesAt,omitempty"`
 }
 
 // RecordedResource is what the engine recorded for one declared resource:
@@ -212,7 +214,7 @@ type Identity struct {
 // that resource's inputs and the identity that resource's ensure stored,
 // all empty when the request names no resource, as is ResourceType.
 // RecordedResources and RequirementTypes are the request's too, and VerbAt
-// is its createdAt.
+// is its settlesAt when set, else its createdAt.
 type Desired struct {
 	Identity
 
@@ -287,13 +289,13 @@ func requiredRequestFields(r Request) []requiredField {
 	return fields
 }
 
-// envelopeCreatedAt probes the raw envelope for its createdAt value ahead of
-// the full Request unmarshal, so a non-string JSON value (number, bool,
-// object, array) is reported by name instead of surfacing as
-// time.Time.UnmarshalJSON's bare "input is not a JSON string" error, which
-// carries no field name.
-type envelopeCreatedAt struct {
+// envelopeTimes probes the raw envelope for its createdAt and settlesAt
+// values ahead of the full Request unmarshal, so a value that is not an RFC
+// 3339 string is reported by name instead of surfacing as
+// time.Time.UnmarshalJSON's error, which carries no field name.
+type envelopeTimes struct {
 	CreatedAt json.RawMessage `json:"createdAt"`
+	SettlesAt json.RawMessage `json:"settlesAt"`
 }
 
 // validOperations is the envelope.schema.json operation enum.
@@ -311,12 +313,18 @@ var validOperations = map[string]bool{
 // to bind them to. Every error names the JSON field it concerns, so an
 // operator author can act on it without reading the schema.
 func DecodeRequest(raw []byte) (Request, error) {
-	var probe envelopeCreatedAt
+	var probe envelopeTimes
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return Request{}, wrapDecodeError("envelope", err)
 	}
 	if len(probe.CreatedAt) > 0 && !bytes.Equal(probe.CreatedAt, []byte("null")) && probe.CreatedAt[0] != '"' {
 		return Request{}, fmt.Errorf("contract: envelope field %q must be an RFC 3339 string", "createdAt")
+	}
+	if len(probe.SettlesAt) > 0 && !bytes.Equal(probe.SettlesAt, []byte("null")) {
+		var t time.Time
+		if err := json.Unmarshal(probe.SettlesAt, &t); err != nil {
+			return Request{}, fmt.Errorf("contract: envelope field %q must be an RFC 3339 string: %w", "settlesAt", err)
+		}
 	}
 
 	var req Request
@@ -366,11 +374,9 @@ func DecodeResponse(raw []byte) (Response, error) {
 // wrapDecodeError turns a json.Unmarshal error into one naming the JSON
 // field it concerns. A *json.UnmarshalTypeError already carries the field
 // as a JSON path (e.g. "outputs" or "instances.config"), so its Field is
-// used directly. A *time.ParseError carries no field of its own; Request is
-// the only decode target with a time.Time field (CreatedAt), so a
-// *time.ParseError surfacing from an "envelope" decode can only concern
-// "createdAt" — a second time.Time field added to Request would need this
-// function changed too.
+// used directly. A *time.ParseError carries no field of its own; DecodeRequest
+// checks settlesAt before the full decode, so one surfacing from an
+// "envelope" decode can only concern "createdAt".
 func wrapDecodeError(kind string, err error) error {
 	var ute *json.UnmarshalTypeError
 	if errors.As(err, &ute) {
@@ -420,8 +426,15 @@ func (r Request) Desired() Desired {
 		ResourceType:      r.ResourceType,
 		RecordedResources: r.RecordedResources,
 		RequirementTypes:  r.RequirementTypes,
-		VerbAt:            r.CreatedAt,
+		VerbAt:            r.verbAt(),
 	}
+}
+
+func (r Request) verbAt() time.Time {
+	if r.SettlesAt != nil {
+		return *r.SettlesAt
+	}
+	return r.CreatedAt
 }
 
 // Response turns an Observation into the typed wire Response an operator's

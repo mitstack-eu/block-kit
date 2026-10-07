@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// runGoTest runs `go test -run <pattern> ./...` with dir as the working
-// directory, returning whether it passed and its combined output.
+// runGoTest runs `go test <flags> -run <pattern> ./...` with dir as the
+// working directory, returning whether it passed and its combined output.
 //
 // The subprocess inherits the calling process's environment UNCHANGED — no
 // PATH re-pinning here — so it resolves "go" to whatever toolchain the
@@ -14,8 +14,9 @@ import (
 // the MIT-1586 harness lesson: scripts/block-verify_test.sh's own harness
 // sets PATH before invoking the tool under test, rather than the tool doing
 // it itself; blockverify follows the same discipline.
-func runGoTest(dir, pattern string) (ok bool, output string) {
-	cmd := exec.Command("go", "test", "-run", pattern, "./...")
+func runGoTest(dir, pattern string, flags ...string) (ok bool, output string) {
+	args := append(append([]string{"test"}, flags...), "-run", pattern, "./...")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return err == nil, string(out)

@@ -35,12 +35,14 @@ func (o HetznerServer) ObserveResource(ctx context.Context, r contract.ResourceR
 	case desc.Status != "running":
 		return unknown("resource %q: server %s is %s", r.Name, ids[0], desc.Status), nil
 	}
-	return present(map[string]string{
-		"hostId":       desc.ID,
-		"cloud.region": desc.Location,
-		"execKind":     "ssh",
-		"execTarget":   desc.PublicIP,
-	}), nil
+	outputs := map[string]string{"hostId": desc.ID, "execKind": "ssh"}
+	if desc.Location != "" {
+		outputs["cloud.region"] = desc.Location
+	}
+	if desc.PublicIP != "" {
+		outputs["execTarget"] = desc.PublicIP
+	}
+	return present(outputs), nil
 }
 
 type HetznerPrimaryIPDescription struct {

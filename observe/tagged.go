@@ -8,9 +8,9 @@ import (
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// AWSSubscriptionTag is the tag key an AWS resource carries its
-// subscription's id under.
-const AWSSubscriptionTag = "mitstack:subscription-id"
+// AWSSubscriptionTag is the tag key aws-app-infra writes a subscription's id
+// under, which the platform's operator trust boundary requires.
+const AWSSubscriptionTag = "mitstack:subscription"
 
 // HetznerSubscriptionLabel is the label key a Hetzner object carries its
 // subscription's id under.

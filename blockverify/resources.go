@@ -15,6 +15,8 @@ const (
 	resourcesTestNeedle       = "func TestDeclaredResources("
 	resourcesCheckNeedle      = "kittest.AssertDeclaredResources("
 	resourcesBlockCheckNeedle = "kittest.AssertBlock("
+	// guardsRanMarker starts the line kittest.AssertBlock logs.
+	guardsRanMarker = "kittest.AssertBlock guards ran:"
 )
 
 // resourcesSuite drives each resource a mitstack/v1beta manifest declares.
@@ -54,14 +56,23 @@ func resourcesSuite(target string) SuiteResult {
 			"%s defines TestDeclaredResources but never calls kittest.AssertBlock or kittest.AssertDeclaredResources, so no declared resource is driven", target)}
 	}
 
-	ok, output := runGoTest(target, "TestDeclaredResources")
+	var flags []string
+	if block {
+		flags = []string{"-v"}
+	}
+	ok, output := runGoTest(target, "TestDeclaredResources", flags...)
 	if !ok {
 		return SuiteResult{name, "fail", resourceProblemLine(output)}
 	}
 	if block {
+		_, ran, logged := strings.Cut(output, guardsRanMarker)
+		if !logged {
+			return SuiteResult{name, "pass", "TestDeclaredResources passed, but kittest.AssertBlock logged no guards, so which ran is unknown"}
+		}
+		ran, _, _ = strings.Cut(ran, "\n")
 		return SuiteResult{name, "pass", fmt.Sprintf(
-			"TestDeclaredResources proves the block's %d declared resources match what carries the subscription's id, "+
-				"observe the provider, name their replacements and observe absent after unsubscribe", len(m.Block.Spec.Resources))}
+			"TestDeclaredResources proves the block's %d declared resources hold the guards that ran: %s",
+			len(m.Block.Spec.Resources), strings.TrimSpace(ran))}
 	}
 	return SuiteResult{name, "pass", fmt.Sprintf(
 		"TestDeclaredResources proves each of the %d declared resources survives ensure twice, observe, delete and the absence proof, "+

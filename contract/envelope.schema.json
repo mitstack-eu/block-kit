@@ -54,6 +54,11 @@
         }
       }
     },
+    "settlesAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The time of the state-changing verb a validate settles. An observe reads only what was made after it. Omitted, the request settles itself, at its createdAt."
+    },
     "requirementTypes": {
       "type": "object",
       "description": "The exact type of the resource that met each of the block's requirements, keyed by the requirement's reference.",
