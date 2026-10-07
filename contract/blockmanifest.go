@@ -8,34 +8,12 @@ import (
 // ManifestAPIVersionV1Alpha is the apiVersion of today's block manifest.
 const ManifestAPIVersionV1Alpha = "mitstack/v1alpha"
 
-// ManifestAPIVersion is the apiVersion of the block manifest ADR 0083 sets
-// and ADR 0085 reshapes: a block's params, its requirements and resources
-// by exact type, the resources it provides, its lifecycle and its
-// observability.
+// ManifestAPIVersion is the apiVersion of the current block manifest.
 const ManifestAPIVersion = "mitstack/v1beta"
 
-// ParseManifest is the kit's one block manifest parser. It reads raw as
-// YAML and switches on its apiVersion. Under ManifestAPIVersion it reads the
-// whole manifest strictly into a BlockManifest: a key the types do not name,
-// a missing required field, a many that is not true or false, a type id
-// outside the grammar, a type listed twice in one entry, an entry listing
-// several types without a name, a retired kind, in, on or inputs key, a
-// resource name used twice, a requirement reference used twice and a
-// provides entry naming no resource are each refused, naming the path.
-// Whether the platform holds a type is CheckManifestTypes' question, so the
-// parser needs no type snapshot.
+// ParseManifest reads raw strictly by its apiVersion, refusing an unknown key or an alias or merge key, which bring in text from elsewhere, and naming the path in each error.
 //
-// Under ManifestAPIVersionV1Alpha it reads the whole manifest strictly into
-// a V1AlphaManifest, every field the platform's decoder reads and
-// spec.naming.appName: a key the types do not name, a value of the wrong
-// shape and two spellings of one key that disagree are each refused, naming
-// the path. Any other apiVersion, or none, is refused naming both known
-// versions.
-//
-// The YAML it reads is a subset: block and flow mappings and sequences,
-// comments, quoted scalars and block scalars. An alias or a merge key brings
-// in text from elsewhere in the document, so the parser refuses the
-// manifest rather than guessing.
+// Whether the platform holds a type is CheckManifestTypes' question, so the parser needs no type snapshot.
 func ParseManifest(raw []byte) (Manifest, error) {
 	root, err := parseYAML(string(raw))
 	if err != nil {
@@ -72,8 +50,6 @@ func ParseManifest(raw []byte) (Manifest, error) {
 	return Manifest{}, apiVersionError(apiVersion)
 }
 
-// apiVersionOf returns the apiVersion the root mapping declares, untrimmed,
-// or "" when it declares none.
 func apiVersionOf(root *yamlNode) (string, error) {
 	n := root.get("apiVersion")
 	if n == nil || isNull(n) {
@@ -97,35 +73,22 @@ func apiVersionError(got string) error {
 		got, ManifestAPIVersion, ManifestAPIVersionV1Alpha)
 }
 
-// Manifest is a parsed block manifest. Exactly one of Block and V1Alpha is
-// non-nil, chosen by APIVersion.
+// Manifest is a parsed block manifest; exactly one of Block and V1Alpha is non-nil, chosen by APIVersion.
 type Manifest struct {
 	APIVersion string
-	// Block is the manifest under ManifestAPIVersion.
-	Block *BlockManifest
-	// V1Alpha is the manifest under ManifestAPIVersionV1Alpha.
-	V1Alpha *V1AlphaManifest
-	// Warnings names each retired key the manifest carries that the parser
-	// still accepted, in the platform's order. Under
-	// ManifestAPIVersionV1Alpha a spec.dependsOn given a list comes first,
-	// then each requirement whose optional is true, in requirement order.
-	// Under ManifestAPIVersion it is empty.
+	Block      *BlockManifest
+	V1Alpha    *V1AlphaManifest
+	// Warnings is in the platform's order: a spec.dependsOn given a list first, then each requirement whose optional is true. It is empty under ManifestAPIVersion.
 	Warnings []ManifestWarning
 }
 
-// ManifestWarning is one retired key a parsed manifest carries. A warning
-// never refuses the manifest.
+// ManifestWarning is one retired key a parsed manifest carries, which never refuses the manifest.
 type ManifestWarning struct {
-	// Path names the key, such as spec.dependsOn or
-	// spec.requires[<capability>].optional.
-	Path string
-	// Message says what the key's retirement means for the manifest and
-	// what replaces it.
+	Path    string
 	Message string
 }
 
-// ID returns metadata.id under either version, untrimmed, since every
-// character of an id is judged.
+// ID returns metadata.id under either version, untrimmed, since every character of an id is judged.
 func (m Manifest) ID() string {
 	switch {
 	case m.Block != nil:
@@ -158,8 +121,7 @@ func (m Manifest) ReleaseClass() string {
 	return ""
 }
 
-// ReleaseNote returns spec.releaseNote, trimmed, so a blank note reads as
-// none.
+// ReleaseNote returns spec.releaseNote, trimmed, so a blank note reads as none.
 func (m Manifest) ReleaseNote() string {
 	switch {
 	case m.Block != nil:
@@ -170,10 +132,7 @@ func (m Manifest) ReleaseNote() string {
 	return ""
 }
 
-// BlockManifest is a block manifest under ManifestAPIVersion. The JSON
-// Schema in ManifestSchema is generated from these types and their json
-// tags, and ParseManifest reads a manifest by the same tags: a field
-// without omitempty is required.
+// BlockManifest is a block manifest under ManifestAPIVersion; a field without omitempty is required.
 type BlockManifest struct {
 	APIVersion string `json:"apiVersion"`
 	// Type must be "block".
@@ -191,18 +150,14 @@ type ManifestMetadata struct {
 
 // ManifestSpec is what a block declares.
 type ManifestSpec struct {
-	Version      string `json:"version"`
-	ReleaseClass string `json:"releaseClass,omitempty"`
-	ReleaseNote  string `json:"releaseNote,omitempty"`
-	Description  string `json:"description,omitempty"`
-	// Params are the values a subscriber or the platform supplies.
-	Params []ManifestParam `json:"params,omitempty"`
-	// Requires is what the block needs, by exact type.
-	Requires []ManifestRequirement `json:"requires,omitempty"`
-	// Resources is what the block creates, by exact type.
-	Resources []ManifestResource `json:"resources"`
-	// Provides names the resources the block offers to the rest of the
-	// app. Each names an entry of Resources.
+	Version      string                `json:"version"`
+	ReleaseClass string                `json:"releaseClass,omitempty"`
+	ReleaseNote  string                `json:"releaseNote,omitempty"`
+	Description  string                `json:"description,omitempty"`
+	Params       []ManifestParam       `json:"params,omitempty"`
+	Requires     []ManifestRequirement `json:"requires,omitempty"`
+	Resources    []ManifestResource    `json:"resources"`
+	// Provides names entries of Resources.
 	Provides      []string               `json:"provides,omitempty"`
 	Lifecycle     ManifestLifecycle      `json:"lifecycle"`
 	Observability *ManifestObservability `json:"observability,omitempty"`
@@ -218,29 +173,20 @@ type ManifestParam struct {
 	Secret      bool   `json:"secret,omitempty"`
 }
 
-// ManifestRequirement is one thing a block needs, by exact type. The
-// manifest writes it as a type id, or as a mapping of type (one id or a
-// list), name and many.
+// ManifestRequirement is one thing a block needs, by exact type.
 type ManifestRequirement struct {
-	// Deprecated: ParseManifest leaves Kind empty, since a requirement
-	// names exact types; the next major release removes it.
+	// Deprecated: ParseManifest leaves Kind empty; the next major release removes it.
 	Kind string `json:"kind,omitempty"`
-	// Deprecated: ParseManifest leaves In empty, since a type id carries its
-	// capability; the next major release removes it.
+	// Deprecated: ParseManifest leaves In empty; the next major release removes it.
 	In []string `json:"in,omitempty"`
-	// Name is the requirement's reference, which is unique in the block. It
-	// is set when the requirement lists more than one type, or when the
-	// block needs two resources of one type.
+	// Name is unique in the block and set when the requirement lists more than one type or the block needs two resources of one type.
 	Name string `json:"name,omitempty"`
 	// Many collects every offer of the types and accepts none.
-	Many bool `json:"many,omitempty"`
-	// Types lists the exact type ids a resource meeting the requirement may
-	// be of.
+	Many  bool     `json:"many,omitempty"`
 	Types []string `json:"types,omitempty"`
 }
 
-// Reference returns the name a binding uses for the requirement: its Name
-// when set, and otherwise the one type id it lists.
+// Reference returns the name a binding uses for the requirement: its Name when set, otherwise the one type id it lists.
 func (q ManifestRequirement) Reference() string {
 	if q.Name != "" {
 		return q.Name
@@ -251,38 +197,28 @@ func (q ManifestRequirement) Reference() string {
 	return q.Kind
 }
 
-// ManifestResource is one resource a block creates. The manifest writes it
-// as a type id, or as a mapping of type (one id or a list) and name.
+// ManifestResource is one resource a block creates.
 type ManifestResource struct {
-	// Name is unique in the block and stable across versions. An entry
-	// written without one is named by the one type id it lists.
+	// Name is unique in the block and stable across versions.
 	Name string `json:"name"`
-	// Type is the one type id the entry lists, and empty for an entry
-	// listing more than one.
-	Type string `json:"type"`
-	// Types lists the exact type ids the resource may be created as.
+	// Type is empty for an entry listing more than one type.
+	Type  string   `json:"type"`
 	Types []string `json:"types,omitempty"`
-	// Deprecated: ParseManifest refuses inputs under mitstack/v1beta, since
-	// a block creates its own resources; the next major release removes it.
+	// Deprecated: ParseManifest refuses inputs under mitstack/v1beta; the next major release removes it.
 	Inputs map[string]InputValue `json:"inputs,omitempty"`
-	// Deprecated: ParseManifest refuses on under mitstack/v1beta; the next
-	// major release removes it.
+	// Deprecated: ParseManifest refuses on under mitstack/v1beta; the next major release removes it.
 	On string `json:"on,omitempty"`
 }
 
-// InputValue is one input: a scalar (a binding such as params.image, or a
-// literal such as 8080, kept as its YAML text) or a mapping of named inputs
-// (as env is). Exactly one is set.
+// InputValue is one input, a scalar kept as its YAML text or a mapping of named inputs, exactly one set.
 //
-// Deprecated: a mitstack/v1beta resource carries no inputs; the next major
-// release removes it.
+// Deprecated: a mitstack/v1beta resource carries no inputs; the next major release removes it.
 type InputValue struct {
 	Scalar string
 	Map    map[string]InputValue
 }
 
-// ManifestLifecycle is the endpoint a block serves, the operations it
-// answers and the kit contract version it speaks.
+// ManifestLifecycle is the endpoint a block serves, the operations it answers and the contract version it speaks.
 type ManifestLifecycle struct {
 	Endpoint   string   `json:"endpoint"`
 	Operations []string `json:"operations"`

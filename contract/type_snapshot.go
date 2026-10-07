@@ -7,17 +7,13 @@ import (
 	"slices"
 )
 
-// TypeSnapshot is one versioned snapshot of the resource types the platform
-// serves at GET /v1/resource-types/snapshots/{version}. A manifest's types
-// and the outputs a binding reads are judged against it, never against the
-// kit's own catalogue.
+// TypeSnapshot is one versioned snapshot of the resource types the platform serves, which manifests are judged against rather than the kit's own catalogue.
 type TypeSnapshot struct {
 	Version int            `json:"version"`
 	Types   []SnapshotType `json:"types"`
 }
 
-// SnapshotType is one resource type of a snapshot, in the shape the
-// platform serves it.
+// SnapshotType is one resource type of a snapshot.
 type SnapshotType struct {
 	ID           string            `json:"id"`
 	Capability   string            `json:"capability"`
@@ -45,22 +41,19 @@ type SnapshotOutput struct {
 	Required bool   `json:"required"`
 }
 
-// SnapshotPricing says whether a resource of the type costs money while it
-// exists, and the price list it is costed against.
+// SnapshotPricing says whether a resource of the type costs money and the price list it is costed against.
 type SnapshotPricing struct {
 	Priced bool   `json:"priced"`
 	Key    string `json:"key,omitempty"`
 }
 
-// SnapshotFailure is one failure a resource of the type can meet, with its
-// class, permanent or transient.
+// SnapshotFailure is one failure a resource of the type can meet.
 type SnapshotFailure struct {
 	Class string `json:"class"`
 	Cause string `json:"cause"`
 }
 
-// ParseTypeSnapshot reads raw as a type snapshot. It refuses JSON it cannot
-// decode, a snapshot holding no type and one holding a type id twice.
+// ParseTypeSnapshot reads raw as a type snapshot, refusing one holding no type or a type id twice.
 func ParseTypeSnapshot(raw []byte) (TypeSnapshot, error) {
 	var snap TypeSnapshot
 	if err := json.Unmarshal(raw, &snap); err != nil {

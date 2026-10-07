@@ -9,135 +9,72 @@ import (
 	"time"
 )
 
-// The resource-type catalogue is the one list of resource types a block
-// creates or references. Each type implements one kind, lives in one place
-// its id prefix names, and declares its inputs, its lifecycle, how it is
-// observed and proven absent, a time budget per resource verb and the
-// failures it can meet. Its Outputs name entries of the resource registry, so
-// a type's outputs and a block's declared outputs come from one vocabulary.
-
 // Input is one input a resource type takes.
 type Input struct {
-	// Name is the input's name, unique within the type.
-	Name string `json:"name"`
-	// Required marks an input the type cannot be created without.
-	Required bool `json:"required"`
-	// Secret marks an input whose value is sensitive.
-	Secret bool `json:"secret"`
-	// Accepts says what the input takes, in exactly one of three forms:
-	// "value" for a literal value, "resource:<kind>" for a whole resource of
-	// a released kind, or "output:<kind>/<output>" for one output that kind
-	// names.
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
+	Secret   bool   `json:"secret"`
+	// Accepts is "value", "resource:<kind>" or "output:<kind>/<output>".
 	Accepts string `json:"accepts"`
-	// Place says where the resource the input takes must live, in exactly
-	// one of three forms: "own" for the type's own capability,
-	// "capability:<slug>" for a named capability of Capabilities(), or
-	// "carrier" for the capability of the resource the type lives on. It is
-	// empty exactly when the input accepts "value".
-	Place string `json:"place"`
-	// Replacement is one of InputReplacements(): whether changing the input
-	// updates the resource in place or replaces it.
+	// Place is "own", "capability:<slug>" or "carrier", and empty exactly when Accepts is "value".
+	Place       string `json:"place"`
 	Replacement string `json:"replacement"`
 }
 
 // Failure is one failure a resource type can meet.
 type Failure struct {
-	// Class is one of FailureClasses(): whether repeating the verb can
-	// succeed.
 	Class string `json:"class"`
-	// Cause says in one sentence what went wrong.
 	Cause string `json:"cause"`
 }
 
-// ProviderResource names the OpenTofu provider resource a type maps onto one
-// to one. The type's inputs are generated from that resource's schema by
-// cmd/catalogue-inputs.
+// ProviderResource names the OpenTofu provider resource a type maps onto one to one.
 type ProviderResource struct {
-	// Provider is the provider's registry address, for example
-	// "registry.opentofu.org/hashicorp/aws".
 	Provider string `json:"provider"`
-	// Resource is the provider's resource name, for example "aws_vpc".
 	Resource string `json:"resource"`
-	// ReplaceOn names the inputs whose change replaces the resource, as the
-	// provider's own schema forces a new resource. Every other input updates
-	// it in place. A provider schema carries no replacement rule, so this
-	// list is written by hand.
+	// ReplaceOn is written by hand because a provider schema carries no replacement rule.
 	ReplaceOn []string `json:"replaceOn"`
 }
 
 // ResourceType is one entry of the resource-type catalogue.
 type ResourceType struct {
-	// ID is "<place>.<name>", the name in lowercase kebab case, for example
-	// "aws.ecr-repository". The place is a capability or a released kind.
-	ID string
-	// Kind is the released kind the type implements, for example
-	// "container-image".
+	// ID is "<place>.<name>", the name in lowercase kebab case.
+	ID   string
 	Kind string
-	// ReliesOn names the capabilities the type uses that no requirement
-	// shows. It is never nil, empty when it relies on none, and holds no
-	// capability twice.
+	// ReliesOn is never nil and holds no capability twice.
 	ReliesOn []string
-	// Hosts is the capability whose API a resource of this type runs, or ""
-	// when it runs none. The type's kind publishes how to reach that API.
-	Hosts string
-	// Category is exactly one of ResourceTypeCategories().
+	// Hosts is the capability whose API a resource of this type runs, or "".
+	Hosts    string
 	Category string
-	// Languages lists the ResourceTypeLanguages() the type serves. It is
-	// never nil, empty when the type serves no particular language, and
-	// holds no value twice.
-	Languages []string
-	// ArtifactType is "" or one of ArtifactTypes(): the artifact the type
-	// holds or runs.
+	// Languages is never nil and holds no value twice.
+	Languages    []string
 	ArtifactType string
-	// Lifecycle is one of ResourceTypeLifecycles(): whether replacing the
-	// resource loses data.
-	Lifecycle string
-	// Handover is one of Handovers() for a stateful type, the way its data
-	// survives a replacement, and "" for a replaceable one.
+	Lifecycle    string
+	// Handover is set for a stateful type and "" for a replaceable one.
 	Handover string
-	// Upgrade is one of UpgradeBehaviours(): how upgrading the resource
-	// affects what it serves.
-	Upgrade string
-	// Scope is one of ResourceTypeScopes(): whether one resource serves a
-	// single app or the whole org.
-	Scope string
-	// Priced marks a type that costs money while it exists.
-	Priced bool
-	// PricingKey names the price list a priced type is costed against. It
-	// is set exactly when Priced is true.
+	Upgrade  string
+	Scope    string
+	Priced   bool
+	// PricingKey is set exactly when Priced is true.
 	PricingKey string
-	// Inputs are the inputs the type takes, sorted by name. It is never nil,
-	// and empty when the type takes none.
-	Inputs []Input
-	// ProviderResource is the OpenTofu provider resource the type maps onto
-	// one to one, or nil when its inputs are written by hand.
+	// Inputs is never nil and sorted by name.
+	Inputs           []Input
 	ProviderResource *ProviderResource
-	// Outputs are the canonical resource registry names the type publishes:
-	// every required output of its kind and any of its optional ones. It is
-	// never nil, empty when the type publishes none, and holds no name twice.
-	Outputs []string
-	// Observe says how a resource of the type is observed to exist and be
-	// usable, the proof that ensure is done.
-	Observe string
-	// Absence says how a resource of the type is proven gone, the proof that
-	// delete is done.
-	Absence string
-	// TimeBudgets holds a positive time budget for each of ResourceVerbs().
+	// Outputs is never nil and holds no name twice.
+	Outputs     []string
+	Observe     string
+	Absence     string
 	TimeBudgets map[string]time.Duration
-	// Failures are the failures the type can meet. It is never nil and never
-	// empty.
+	// Failures is never nil and never empty.
 	Failures []Failure
 }
 
-// Place returns the capability the type lives in, or the kind it lives on:
-// the part of its ID before the first dot.
+// Place returns the part of the type's ID before the first dot.
 func (t ResourceType) Place() string {
 	place, _, _ := strings.Cut(t.ID, ".")
 	return place
 }
 
-// clone returns a copy of t that shares no list, map or pointer with t. An
-// empty list stays empty rather than becoming nil.
+// clone keeps an empty list empty rather than nil.
 func (t ResourceType) clone() ResourceType {
 	t.ReliesOn = append([]string{}, t.ReliesOn...)
 	t.Languages = append([]string{}, t.Languages...)
@@ -155,9 +92,7 @@ func (t ResourceType) clone() ResourceType {
 	return t
 }
 
-// ResourceTypes returns every catalogue entry, sorted by ID. Each call
-// returns fresh copies, so a caller may change the result without changing
-// the catalogue.
+// ResourceTypes returns fresh copies of every catalogue entry, sorted by ID.
 func ResourceTypes() []ResourceType {
 	out := make([]ResourceType, len(resourceTypeCatalogue))
 	for i, t := range resourceTypeCatalogue {
@@ -167,8 +102,7 @@ func ResourceTypes() []ResourceType {
 	return out
 }
 
-// LookupResourceType returns a copy of the catalogue entry whose ID is id.
-// The match is case-sensitive.
+// LookupResourceType returns a copy of the catalogue entry whose ID is id, matched case-sensitively.
 func LookupResourceType(id string) (ResourceType, bool) {
 	for _, t := range resourceTypeCatalogue {
 		if t.ID == id {
@@ -178,15 +112,12 @@ func LookupResourceType(id string) (ResourceType, bool) {
 	return ResourceType{}, false
 }
 
-// Capabilities returns the capabilities a resource type may live in, rely on
-// or host, as a fresh slice. Each is an API that exists apart from any one
-// app.
+// Capabilities returns the APIs, each existing apart from any one app, that a resource type may live in, rely on or host.
 func Capabilities() []string {
 	return []string{"anthropic", "aws", "crossplane", "github", "hetzner", "kubernetes", "openai", "plain", "ubicloud"}
 }
 
-// ResourceTypeCategories returns the categories a resource type may belong
-// to, as a fresh slice.
+// ResourceTypeCategories returns the categories a resource type may belong to.
 func ResourceTypeCategories() []string {
 	return []string{
 		"compute", "network", "storage", "database", "artifact-registry", "build-and-delivery",
@@ -194,78 +125,56 @@ func ResourceTypeCategories() []string {
 	}
 }
 
-// ResourceTypeLanguages returns the languages a resource type may serve, as a
-// fresh slice.
+// ResourceTypeLanguages returns the languages a resource type may serve.
 func ResourceTypeLanguages() []string {
 	return []string{"go", "node", "python", "java", "rust", "static-site", "any-container"}
 }
 
-// ArtifactTypes returns the artifact types a resource type may hold or run,
-// as a fresh slice.
+// ArtifactTypes returns the artifact types a resource type may hold or run.
 func ArtifactTypes() []string {
 	return []string{"container-image", "helm-chart", "language-package", "binary", "static-bundle", "machine-image"}
 }
 
-// ResourceTypeLifecycles returns the lifecycles a resource type may have, as
-// a fresh slice.
+// ResourceTypeLifecycles returns the lifecycles a resource type may have.
 func ResourceTypeLifecycles() []string {
 	return []string{"stateful", "replaceable"}
 }
 
-// Handovers returns the ways a stateful type's data may survive a
-// replacement, as a fresh slice: from a snapshot the replacement is created
-// from, or by copying the data into the replacement.
+// Handovers returns the ways a stateful type's data may survive a replacement.
 func Handovers() []string {
 	return []string{"snapshot", "copy"}
 }
 
-// UpgradeBehaviours returns how upgrading a resource may affect what it
-// serves, the values platform ADR 0048 sets, as a fresh slice.
+// UpgradeBehaviours returns how upgrading a resource may affect what it serves.
 func UpgradeBehaviours() []string {
 	return []string{"in-place", "blue-green", "recreate"}
 }
 
-// ResourceTypeScopes returns the scopes a resource type may have, as a fresh
-// slice.
+// ResourceTypeScopes returns the scopes a resource type may have.
 func ResourceTypeScopes() []string {
 	return []string{"per-app", "org-wide"}
 }
 
-// ResourceVerbs returns the verbs the platform drives a resource through, as
-// a fresh slice. Each type declares a time budget for every one.
+// ResourceVerbs returns the verbs the platform drives a resource through.
 func ResourceVerbs() []string {
 	return []string{"ensure", "observe", "delete"}
 }
 
-// FailureClasses returns the classes a failure may carry, as a fresh slice:
-// permanent when repeating the verb cannot succeed, transient when it can.
+// FailureClasses returns the classes a failure may carry.
 func FailureClasses() []string {
 	return []string{"permanent", "transient"}
 }
 
-// InputReplacements returns what changing an input may do to a resource, as a
-// fresh slice: update it in place, or replace it.
+// InputReplacements returns what changing an input may do to a resource.
 func InputReplacements() []string {
 	return []string{"update", "replace"}
 }
 
-// ValidateResourceTypes returns the first defect it finds in ts, or nil. It
-// checks every entry's fields, refuses an ID outside the community grammar of
-// platform ADR 0080, refuses an ID prefix that is neither a capability nor a
-// released kind, refuses an ID listed more than once, and refuses two types
-// whose names, the part of the ID after the first dot, are equal but whose
-// kinds differ. The error names the defective entry by its ID, or by its index
-// when the ID is empty, and a kind mismatch also names the type and kind it
-// clashes with.
+// ValidateResourceTypes returns the first defect it finds in ts, or nil.
 //
-// The catalogue holds community types only, so an ID is a bare
-// <place>.<name> with no @<org>/ namespace, and its place is a slug
-// ParseCapabilityID accepts.
-//
-// The shared-name rule is the catalogue's naming rule. A name after the dot
-// names one real thing in every place, so every type sharing a name shares
-// its kind. A reviewer gives a different real thing a different name rather
-// than a different kind.
+// The catalogue holds community types only, so an ID is a bare <place>.<name>
+// with no @<org>/ namespace. A name after the dot names one real thing in every
+// place, so every type sharing a name shares its kind.
 func ValidateResourceTypes(ts []ResourceType) error {
 	seen := make(map[string]bool, len(ts))
 	byName := make(map[string]ResourceType, len(ts))
@@ -293,8 +202,6 @@ func ValidateResourceTypes(ts []ResourceType) error {
 	return nil
 }
 
-// validateResourceType checks one entry whose ID is non-empty against every
-// rule but uniqueness and the shared-name rule.
 func validateResourceType(t ResourceType) error {
 	kind, err := validatePlaceAndKind(t)
 	if err != nil {
@@ -312,9 +219,6 @@ func validateResourceType(t ResourceType) error {
 	return validateDeclarations(t)
 }
 
-// validatePlaceAndKind checks the ID's grammar, the place its prefix names,
-// the kind, and the capabilities the type relies on and hosts. It returns
-// the released kind the type implements.
 func validatePlaceAndKind(t ResourceType) (Kind, error) {
 	place, name, ok := strings.Cut(t.ID, ".")
 	if !ok || !isKebab(name) {
@@ -345,8 +249,6 @@ func validatePlaceAndKind(t ResourceType) (Kind, error) {
 	return kind, nil
 }
 
-// validateFacets checks the catalogue facets, the lifecycle with its
-// handover, the upgrade behaviour and the pricing.
 func validateFacets(t ResourceType) error {
 	if !slices.Contains(ResourceTypeCategories(), t.Category) {
 		return fmt.Errorf("category %q is not one of %q", t.Category, ResourceTypeCategories())
@@ -385,9 +287,6 @@ func validateFacets(t ResourceType) error {
 	return nil
 }
 
-// validateOutputs checks that the type's outputs are distinct canonical
-// registry names, that they include every required output of kind, and that
-// kind names each one.
 func validateOutputs(t ResourceType, kind Kind) error {
 	if t.Outputs == nil {
 		return fmt.Errorf("outputs is nil, want an empty list when the type publishes none")
@@ -408,8 +307,6 @@ func validateOutputs(t ResourceType, kind Kind) error {
 	return nil
 }
 
-// validateInputs checks every input and the provider resource the inputs are
-// generated from.
 func validateInputs(t ResourceType) error {
 	if t.Inputs == nil {
 		return fmt.Errorf("inputs is nil, want an empty list when the type takes none")
@@ -451,9 +348,6 @@ func validateInputs(t ResourceType) error {
 	return nil
 }
 
-// validateAccepts checks one input's accepts form: "value",
-// "resource:<kind>" or "output:<kind>/<output>", where the kind is released
-// and names the output.
 func validateAccepts(accepts string) error {
 	if accepts == "value" {
 		return nil
@@ -478,11 +372,7 @@ func validateAccepts(accepts string) error {
 	return fmt.Errorf("accepts %q is none of value, resource:<kind> or output:<kind>/<output>", accepts)
 }
 
-// validateInputPlace checks where the resource an input takes must live. A
-// value input carries no place. A resource-taking input carries "own" when
-// its type lives in a capability, "carrier" when its type lives on a
-// released kind, or "capability:<slug>" naming one of Capabilities() on
-// either.
+// validateInputPlace takes "own" only for a type living in a capability and "carrier" only for one living on a kind.
 func validateInputPlace(in Input, livesInCapability bool) error {
 	if in.Accepts == "value" {
 		if in.Place != "" {
@@ -514,8 +404,6 @@ func validateInputPlace(in Input, livesInCapability bool) error {
 	return nil
 }
 
-// validateDeclarations checks the observe and absence declarations, the time
-// budgets and the failures.
 func validateDeclarations(t ResourceType) error {
 	if t.Observe == "" {
 		return fmt.Errorf("declares no observe, how a resource is seen to exist and be usable")
@@ -550,7 +438,6 @@ func validateDeclarations(t ResourceType) error {
 	return nil
 }
 
-// checkDistinct refuses a value of vs that known rejects, or one listed twice.
 func checkDistinct(what string, vs []string, known func(string) bool) error {
 	seen := make(map[string]bool, len(vs))
 	for _, v := range vs {
@@ -565,20 +452,16 @@ func checkDistinct(what string, vs []string, known func(string) bool) error {
 	return nil
 }
 
-// isCapability reports whether c is one of Capabilities().
 func isCapability(c string) bool {
 	return slices.Contains(Capabilities(), c)
 }
 
-// isCanonicalResourceName reports whether name is the Name of a resource
-// registry entry. An alias does not count.
+// isCanonicalResourceName does not count an alias.
 func isCanonicalResourceName(name string) bool {
 	r, ok := LookupResource(name)
 	return ok && r.Name == name
 }
 
-// isKebab reports whether s is lowercase letters and digits in groups joined
-// by single hyphens.
 func isKebab(s string) bool {
 	if s == "" {
 		return false

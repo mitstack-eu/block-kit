@@ -8,34 +8,22 @@ import (
 	"strings"
 )
 
-// blockManifestType is the manifest type under ManifestAPIVersion, from
-// which the decoder and the JSON Schema both read the shape.
 var blockManifestType = reflect.TypeOf(BlockManifest{})
 
-// requirementType and resourceType are read as a type id or a mapping of
-// the entry's keys rather than as a struct of fields.
+// requirementType and resourceType are read as a type id or a mapping, not as a struct of fields.
 var (
 	requirementType = reflect.TypeOf(ManifestRequirement{})
 	resourceType    = reflect.TypeOf(ManifestResource{})
 )
 
-// v1betaDecoder reads a ManifestAPIVersion manifest by the json tags the
-// JSON Schema is generated from, refusing every null, and every plain
-// scalar YAML reads as a number or a boolean where a string is declared.
+// v1betaDecoder refuses every null, and every plain scalar YAML reads as a number or a boolean where a string is declared.
 var v1betaDecoder = manifestDecoder{version: ManifestAPIVersion, tag: "json"}
 
-// typeIDPattern is the grammar of a resource type id the platform holds:
-// <capability>.<name>, each in lowercase kebab case.
 var typeIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*\.[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
-// retiredEntryKeys are the keys ADR 0085 takes off a requirement and a
-// resource.
 var retiredEntryKeys = []string{"kind", "in", "on", "inputs"}
 
-// decodeBlockManifest reads root strictly into a BlockManifest, then holds
-// it to what the types cannot say: type is "block", a resource name appears
-// once, a requirement's reference appears once, and every spec.provides
-// entry names a resource.
+// decodeBlockManifest also holds what the types cannot say: type is "block", names and references are unique, and every provides entry names a resource.
 func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 	b := &BlockManifest{}
 	if err := v1betaDecoder.decode(root, reflect.ValueOf(b).Elem(), ""); err != nil {
@@ -67,14 +55,12 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 	return b, nil
 }
 
-// manifestEntry is what one requires or resources entry declares.
 type manifestEntry struct {
 	name  string
 	types []string
 	many  bool
 }
 
-// requirement reads one spec.requires entry.
 func (d manifestDecoder) requirement(n *yamlNode, path string) (ManifestRequirement, error) {
 	e, err := d.entry(n, path, true)
 	if err != nil {
@@ -83,8 +69,7 @@ func (d manifestDecoder) requirement(n *yamlNode, path string) (ManifestRequirem
 	return ManifestRequirement{Name: e.name, Types: e.types, Many: e.many}, nil
 }
 
-// resource reads one spec.resources entry. An entry without a name is
-// named by the one type id it lists.
+// resource names an entry without a name by the one type id it lists.
 func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, error) {
 	e, err := d.entry(n, path, false)
 	if err != nil {
@@ -100,10 +85,7 @@ func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, e
 	return r, nil
 }
 
-// entry reads a requires or resources entry: a type id, or a mapping of
-// type, name and, for a requirement, many. A retired key is refused by
-// name, and so is an entry listing several types without a name to tell
-// it by.
+// entry refuses a retired key by name and an entry listing several types without a name.
 func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (manifestEntry, error) {
 	if n.kind == yamlScalar {
 		id, err := typeID(n, path)
@@ -151,8 +133,6 @@ func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (mani
 	return e, nil
 }
 
-// typeList reads an entry's type: one type id or a non-empty list of
-// distinct ones.
 func typeList(n *yamlNode, path string) ([]string, error) {
 	if err := readable(n, path); err != nil {
 		return nil, err
@@ -189,7 +169,6 @@ func typeList(n *yamlNode, path string) ([]string, error) {
 	return ids, nil
 }
 
-// typeID reads the scalar n as a type id, refusing one outside the grammar.
 func typeID(n *yamlNode, path string) (string, error) {
 	if !typeIDPattern.MatchString(n.value) {
 		return "", fmt.Errorf("%s: %q is not a type id, which is <capability>.<name> in lowercase kebab case", path, n.value)

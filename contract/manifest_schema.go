@@ -8,31 +8,19 @@ import (
 	"reflect"
 )
 
-// ManifestSchema is the JSON Schema for a block manifest under
-// ManifestAPIVersion. It is what GenerateManifestSchema builds from
-// BlockManifest's types, regenerated with
-// go run ./cmd/manifest-schema > contract/manifest.schema.json.
+// ManifestSchema is the JSON Schema GenerateManifestSchema builds, regenerated with go run ./cmd/manifest-schema > contract/manifest.schema.json.
 //
 //go:embed manifest.schema.json
 var ManifestSchema []byte
 
-// manifestSchemaID is the $id of ManifestSchema.
 const manifestSchemaID = "https://mitstack.dev/schemas/block/manifest.schema.json"
 
-// typeIDRef and typeIDsRef point at the definitions of one type id and of
-// an entry's type, which every requires and resources entry shares.
 const (
 	typeIDRef  = "#/$defs/typeId"
 	typeIDsRef = "#/$defs/typeIds"
 )
 
-// GenerateManifestSchema builds the JSON Schema for a block manifest under
-// ManifestAPIVersion by reflection over BlockManifest's types and json
-// tags. Every object is closed, a field whose tag has no omitempty is
-// required, and a required string or list must not be empty, as
-// ParseManifest holds a manifest. A requires or resources entry is a type
-// id or a closed object whose type, one id or a list, is required.
-// The output ends in a line break and is the same on every call.
+// GenerateManifestSchema builds the manifest JSON Schema by reflection, byte-identical on every call and ending in a line break.
 func GenerateManifestSchema() ([]byte, error) {
 	doc, err := typeSchema(blockManifestType, false)
 	if err != nil {
@@ -74,8 +62,6 @@ func GenerateManifestSchema() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// typeSchema returns the schema for a value of Go type t. required marks a
-// string or a list that must not be empty.
 func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 	switch t {
 	case requirementType:
@@ -116,7 +102,6 @@ func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 	return nil, fmt.Errorf("contract: the manifest schema has no form for the Go type %s", t)
 }
 
-// structSchema returns the closed object schema for the struct t.
 func structSchema(t reflect.Type) (map[string]any, error) {
 	props := map[string]any{}
 	required := []any{}
@@ -137,9 +122,6 @@ func structSchema(t reflect.Type) (map[string]any, error) {
 	return s, nil
 }
 
-// entrySchema returns the schema of a requires or resources entry: a type
-// id, or a closed object whose type is required, with many for a
-// requirement.
 func entrySchema(description string, requirement bool) map[string]any {
 	props := map[string]any{
 		"type": map[string]any{"$ref": typeIDsRef},

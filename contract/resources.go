@@ -5,45 +5,28 @@ import (
 	"slices"
 )
 
-// The resource registry is the one list of output names a block may declare
-// in spec.outputs and read under spec.requires[].reads. The platform reads it
-// from this package, as it reads LifecycleHookPoints, and blockverify checks
-// a block's manifest against it, so neither side keeps a copy of the names.
-
-// ResourceEntry is one entry of the resource registry: an output name a block
-// declares in spec.outputs, and what a value published under that name holds.
+// ResourceEntry is one entry of the resource registry: an output name a block declares in spec.outputs.
 type ResourceEntry struct {
-	// Name is the output name as a manifest declares it.
 	Name string
-	// Kind is the group the entry belongs to, as the label the console
-	// shows: App, Host & network, Data, Build & deploy, Access, Model,
-	// Coding agent, Work or Source.
-	Kind string
-	// Meaning says in one sentence what the value is.
+	// Kind is the group label the console shows, such as App or Host & network.
+	Kind    string
 	Meaning string
-	// Shape says what form the value takes.
-	Shape string
-	// Example is a sample value. Every entry carries one except a secret
-	// entry, which carries none because it would show the secret.
+	Shape   string
+	// Example is empty for a secret entry because it would show the secret.
 	Example string
-	// Secret marks an output whose value is sensitive. For a name a kind
-	// declares, it equals the mark the kind gives the output.
+	// Secret equals the mark a kind gives the output when a kind declares the name.
 	Secret bool
-	// Aliases are other names that resolve to this entry. It is never nil,
-	// and empty when the entry answers to its name alone.
+	// Aliases is never nil.
 	Aliases []string
 }
 
-// clone returns a copy of r whose Aliases share no backing array with r's. An
-// empty list stays empty rather than becoming nil.
+// clone keeps an empty list empty rather than nil.
 func (r ResourceEntry) clone() ResourceEntry {
 	r.Aliases = append([]string{}, r.Aliases...)
 	return r
 }
 
-// Resources returns every registry entry, sorted by name. Each call returns
-// fresh copies, so a caller may change the result without changing the
-// registry.
+// Resources returns fresh copies of every registry entry, sorted by name.
 func Resources() []ResourceEntry {
 	out := make([]ResourceEntry, len(resourceRegistry))
 	for i, r := range resourceRegistry {
@@ -53,8 +36,7 @@ func Resources() []ResourceEntry {
 	return out
 }
 
-// LookupResource returns a copy of the entry named name, or of the entry that
-// lists name among its aliases. The match is case-sensitive.
+// LookupResource returns a copy of the entry named name or listing it as an alias, matched case-sensitively.
 func LookupResource(name string) (ResourceEntry, bool) {
 	for _, r := range resourceRegistry {
 		if r.Name == name || slices.Contains(r.Aliases, name) {
@@ -64,9 +46,7 @@ func LookupResource(name string) (ResourceEntry, bool) {
 	return ResourceEntry{}, false
 }
 
-// NearestResource returns the registry entry name or alias with the smallest
-// edit distance from name, the alphabetically first on a tie. A registered
-// name or alias is its own nearest.
+// NearestResource returns the registry name or alias with the smallest edit distance from name, the alphabetically first on a tie.
 func NearestResource(name string) string {
 	best, bestDist := "", -1
 	for _, r := range resourceRegistry {
@@ -80,8 +60,6 @@ func NearestResource(name string) string {
 	return best
 }
 
-// levenshtein returns the number of single-character insertions, deletions
-// and substitutions that turn a into b.
 func levenshtein(a, b string) int {
 	ra, rb := []rune(a), []rune(b)
 	prev := make([]int, len(rb)+1)
@@ -103,9 +81,6 @@ func levenshtein(a, b string) int {
 	return prev[len(rb)]
 }
 
-// resourceRegistry holds every output name the platform's pinned blocks
-// declare in their manifests and every output a kind names, under its current
-// name, with any older name as an alias.
 var resourceRegistry = []ResourceEntry{
 	{
 		Name:    "agentEndpoint",

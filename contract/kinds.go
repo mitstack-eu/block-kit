@@ -6,51 +6,36 @@ import (
 	"slices"
 )
 
-// A kind is an interface of outputs. It names the outputs every type of the
-// kind produces and the ones a type may produce, and marks each secret or
-// not. Outputs belong to kinds alone: a type produces its kind's required
-// outputs, may produce its optional ones, and names no other output.
-
 // KindOutput is one output a kind names, with its secret mark.
 type KindOutput struct {
-	// Name is the canonical resource registry name of the output.
-	Name string `json:"name"`
-	// Secret marks an output whose value is sensitive.
-	Secret bool `json:"secret"`
+	Name   string `json:"name"`
+	Secret bool   `json:"secret"`
 }
 
-// Kind is one released kind.
+// Kind is one released kind, the only owner of outputs: a type produces its kind's required outputs and may produce its optional ones.
 type Kind struct {
-	// ID is the kind's name in lowercase kebab case, for example "host".
 	ID string
-	// Required are the outputs every type of the kind produces. It is never
-	// nil, and empty when the kind requires none.
+	// Required and Optional are never nil.
 	Required []KindOutput
-	// Optional are the outputs a type of the kind may produce. It is never
-	// nil, and empty when the kind names none.
 	Optional []KindOutput
 }
 
-// clone returns a copy of k whose lists share no backing array with k's. An
-// empty list stays empty rather than becoming nil.
+// clone keeps an empty list empty rather than nil.
 func (k Kind) clone() Kind {
 	k.Required = append([]KindOutput{}, k.Required...)
 	k.Optional = append([]KindOutput{}, k.Optional...)
 	return k
 }
 
-// outputs returns every output k names, required first.
 func (k Kind) outputs() []KindOutput {
 	return append(append([]KindOutput{}, k.Required...), k.Optional...)
 }
 
-// names reports whether k names the output name, required or optional.
 func (k Kind) names(name string) bool {
 	return slices.ContainsFunc(k.outputs(), func(o KindOutput) bool { return o.Name == name })
 }
 
-// Kinds returns every released kind, sorted by ID. Each call returns fresh
-// copies, so a caller may change the result without changing the kinds.
+// Kinds returns fresh copies of every released kind, sorted by ID.
 func Kinds() []Kind {
 	out := make([]Kind, len(kindCatalogue))
 	for i, k := range kindCatalogue {
@@ -60,8 +45,7 @@ func Kinds() []Kind {
 	return out
 }
 
-// LookupKind returns a copy of the released kind whose ID is id. The match is
-// case-sensitive.
+// LookupKind returns a copy of the released kind whose ID is id, matched case-sensitively.
 func LookupKind(id string) (Kind, bool) {
 	for _, k := range kindCatalogue {
 		if k.ID == id {
@@ -71,16 +55,9 @@ func LookupKind(id string) (Kind, bool) {
 	return Kind{}, false
 }
 
-// ValidateKinds returns the first defect it finds in ks, or nil. A kind's ID
-// is lowercase kebab case and listed once; its Required and Optional lists are
-// never nil; each output is a canonical registry name, not an alias, named
-// once across both lists. One output name carries one secret mark in every
-// kind that names it, so the mark a reader finds never depends on the kind it
-// looked at. The error names the defective kind.
+// ValidateKinds returns the first defect it finds in ks, or nil; one output name carries one secret mark in every kind that names it.
 func ValidateKinds(ks []Kind) error {
 	seen := make(map[string]bool, len(ks))
-	// secretMark records, for each output, its secret mark and the first kind
-	// that named it.
 	type mark struct {
 		secret bool
 		kind   string
@@ -109,8 +86,6 @@ func ValidateKinds(ks []Kind) error {
 	return nil
 }
 
-// validateKind checks one kind against every rule but uniqueness and the
-// secret mark shared across kinds.
 func validateKind(k Kind) error {
 	if !isKebab(k.ID) {
 		return fmt.Errorf("ID is not lowercase kebab case")
@@ -147,12 +122,10 @@ func validateKind(k Kind) error {
 	return nil
 }
 
-// plain and secret build one kind output, so the kinds below read as lists.
 func plain(name string) KindOutput  { return KindOutput{Name: name} }
 func secret(name string) KindOutput { return KindOutput{Name: name, Secret: true} }
 
-// noOutputs is the empty list a kind carries for no required or no optional
-// outputs. clone copies it, so kinds never share it with a caller.
+// noOutputs is shared by every kind, so clone must copy it.
 var noOutputs = []KindOutput{}
 
 var kindCatalogue = []Kind{
