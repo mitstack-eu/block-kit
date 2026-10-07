@@ -41,10 +41,8 @@ spec:
       type: aws.vpc
     - name: firewall
       type: aws.security-group
-      inputs: { network: resources.network }
     - name: instance
       type: aws.ec2-instance
-      inputs: { securityGroup: resources.firewall }
   lifecycle:
     endpoint: https://three-resources.example/hook
     operations: [subscribe, unsubscribe, upgrade, validate]

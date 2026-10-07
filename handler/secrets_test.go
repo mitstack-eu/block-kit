@@ -77,14 +77,10 @@ func TestServe_NeverLeaksSecretsInResponseOrLogs(t *testing.T) {
 		secretValue, secretInputValue, appSecretValue, oboToken, eventsToken)
 }
 
-// secretInputsManifest declares one resource whose inputs bind secret params,
-// directly and inside a mapping, and one whose catalogued type marks an input
-// secret. The scaffold resource's type, github.scaffold-contribution, marks
-// none of its inputs secret, so only the params' secret: true makes config
-// and env.DEPLOY_TOKEN secret there. The app resource's type, host.container,
-// marks env secret, so every string under env is secret whatever it binds.
-// image, files, port and env.DEPLOY_REGION are bound to non-secret params or
-// literals.
+// secretInputsManifest declares a resource whose catalogued type marks an
+// input secret beside one whose type marks none. The app resource's type,
+// host.container, marks env secret, so every string under env is secret
+// whatever it holds, and image and port are not.
 const secretInputsManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
@@ -95,38 +91,11 @@ spec:
   params:
     - name: image
       label: Container image
-    - name: templatePath
-      label: Template path
-    - name: region
-      label: Deploy region
-    - name: licenceKey
-      label: Licence key
-      secret: true
-    - name: deployToken
-      label: Deploy credential
-      secret: true
-  requires:
-    - kind: host
-    - kind: postgres-database
   resources:
     - name: scaffold
       type: github.scaffold-contribution
-      inputs:
-        files: params.templatePath
-        config: params.licenceKey
-        env:
-          DEPLOY_TOKEN: params.deployToken
-          DEPLOY_REGION: params.region
     - name: app
       type: host.container
-      on: requires.host
-      inputs:
-        image: params.image
-        port: 8080
-        env:
-          DATABASE_PASSWORD: requires.postgres-database.outputs.password
-          DATABASE:
-            USER: requires.postgres-database.outputs.username
   lifecycle:
     endpoint: https://secret-inputs.example/hook
     operations: [subscribe, unsubscribe, upgrade, validate]
@@ -138,11 +107,6 @@ spec:
 // none follows a credential-like key with ":" or "=", so events.ScrubDetail
 // can never redact it by accident and hide a leak.
 const (
-	scaffoldTemplatePath = "templates/web-starter-q4115"
-	scaffoldRegion       = "eu-central-q4115-frankfurt"
-	scaffoldLicenceKey   = "licence-q4115-Qx7vT2mLp9RkWz3n"
-	scaffoldDeployToken  = "deploy-q4115-Hn8sYc2VbJ5tQe6u"
-
 	appImage      = "registry.example/tracker-q4115:4.2.1"
 	appDBPassword = "dbpass-q4115-Lr3Wk9ZpF6xNa2Cg"
 	appDBUser     = "dbuser-q4115-Tm4Jq8RvD1sKy7Pb"
@@ -151,14 +115,6 @@ const (
 // secretResourceInputs is the resourceInputs each declared resource of
 // secretInputsManifest is sent on a request naming it.
 var secretResourceInputs = map[string]map[string]any{
-	"scaffold": {
-		"files":  scaffoldTemplatePath,
-		"config": scaffoldLicenceKey,
-		"env": map[string]any{
-			"DEPLOY_TOKEN":  scaffoldDeployToken,
-			"DEPLOY_REGION": scaffoldRegion,
-		},
-	},
 	"app": {
 		"image": appImage,
 		"port":  8080,
@@ -306,22 +262,6 @@ func assertResourceInputNeverLeaks(t *testing.T, resource, secret string) {
 	}
 }
 
-// TestServe_UnsubscribeScrubsAResourceInputBoundToASecretParam pins that an
-// unsubscribe carrying no secretInputs still scrubs a resource input the
-// manifest binds to a param marked secret: true, though the resource's
-// catalogued type marks that input not secret.
-func TestServe_UnsubscribeScrubsAResourceInputBoundToASecretParam(t *testing.T) {
-	assertResourceInputNeverLeaks(t, "scaffold", scaffoldLicenceKey)
-}
-
-// TestServe_UnsubscribeScrubsASecretParamNestedInAMappingInput pins that a
-// secret param bound inside a mapping input is scrubbed at the same nested
-// path of the request's resource input, though the type marks the mapping
-// input not secret.
-func TestServe_UnsubscribeScrubsASecretParamNestedInAMappingInput(t *testing.T) {
-	assertResourceInputNeverLeaks(t, "scaffold", scaffoldDeployToken)
-}
-
 // TestServe_UnsubscribeScrubsAnInputTheCataloguedTypeMarksSecret pins that
 // every string under an input the resource's catalogued type marks secret
 // (host.container's env) is scrubbed, at its top level and nested deeper,
@@ -337,8 +277,8 @@ func TestServe_UnsubscribeScrubsAnInputTheCataloguedTypeMarksSecret(t *testing.T
 
 // TestServe_ScrubbingSecretResourceInputsLeavesLiteralInputsAsTheyAre pins
 // that only secret resource inputs are scrubbed: an error quoting a secret
-// input alongside inputs bound to a literal or to a non-secret param, at the
-// top level or nested in a mapping, keeps every non-secret value as it is.
+// input alongside inputs its type does not mark secret keeps every
+// non-secret value as it is.
 func TestServe_ScrubbingSecretResourceInputsLeavesLiteralInputsAsTheyAre(t *testing.T) {
 	cases := []struct {
 		resource string
@@ -349,11 +289,6 @@ func TestServe_ScrubbingSecretResourceInputsLeavesLiteralInputsAsTheyAre(t *test
 			resource: "app",
 			secret:   appDBPassword,
 			literals: []string{appImage, "port 8080"},
-		},
-		{
-			resource: "scaffold",
-			secret:   scaffoldLicenceKey,
-			literals: []string{scaffoldTemplatePath, scaffoldRegion},
 		},
 	}
 	for _, c := range cases {

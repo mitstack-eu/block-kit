@@ -1,0 +1,657 @@
+package handler_test
+
+// block_level_test.go pins the Handler serving a block whose mitstack/v1beta
+// manifest declares its resources through one block-level handler,
+// Config.Resource, with an observer for each declared resource under
+// Config.Observers:
+//
+//   - subscribe and upgrade run one Ensure for the whole block, then observe
+//     each declared resource through its own observer until present, and
+//     report each one's observe by name, with its identity and type;
+//   - unsubscribe runs one Delete, then observes each declared resource with
+//     its recorded identity until absent;
+//   - validate observes each declared resource once and names the resources
+//     an upgrade would replace;
+//   - a request naming one declared resource is served for validate alone,
+//     handed the request's identity and type;
+//   - New refuses a declared resource with no observer, naming it.
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"reflect"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/mitstack-eu/operator-kit/contract"
+	"github.com/mitstack-eu/operator-kit/handler"
+	"github.com/mitstack-eu/operator-kit/kittest"
+)
+
+// blockLevelManifest declares a network, an instance and two roles of one
+// type named a and b, and provides the instance and role a.
+const blockLevelManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: block-level
+  name: Block Level
+spec:
+  version: 1.0.0
+  resources:
+    - aws.vpc
+    - aws.ec2-instance
+    - { name: a, type: aws.iam-role }
+    - { name: b, type: aws.iam-role }
+  provides: [aws.ec2-instance, a]
+  lifecycle:
+    endpoint: https://block-level.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
+// declaredTypes is each declared resource's one listed type, by name.
+var declaredTypes = map[string]string{
+	"aws.vpc":          "aws.vpc",
+	"aws.ec2-instance": "aws.ec2-instance",
+	"a":                "aws.iam-role",
+	"b":                "aws.iam-role",
+}
+
+// blockOutputs is what each resource's observer reports once it stands.
+var blockOutputs = map[string]map[string]string{
+	"aws.vpc":          {"vpcId": "vpc-0abc"},
+	"aws.ec2-instance": {"publicIp": "203.0.113.7"},
+	"a":                {"aOut": "from-a"},
+	"b":                {"bOut": "from-b"},
+}
+
+// fakeCloud is what the provider holds for the block, by declared resource
+// name. neverPresent names a resource Ensure does not create, and
+// standsAfterDelete one Delete leaves standing.
+type fakeCloud struct {
+	mu                sync.Mutex
+	present           map[string]bool
+	neverPresent      map[string]bool
+	standsAfterDelete map[string]bool
+}
+
+func newFakeCloud() *fakeCloud {
+	return &fakeCloud{present: map[string]bool{}, neverPresent: map[string]bool{}, standsAfterDelete: map[string]bool{}}
+}
+
+func (c *fakeCloud) createAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for name := range declaredTypes {
+		if !c.neverPresent[name] {
+			c.present[name] = true
+		}
+	}
+}
+
+func (c *fakeCloud) deleteAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for name := range declaredTypes {
+		if !c.standsAfterDelete[name] {
+			delete(c.present, name)
+		}
+	}
+}
+
+func (c *fakeCloud) stands(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.present[name]
+}
+
+// blockResource is the block-level handler: one Ensure creates every
+// resource, one Delete removes them.
+type blockResource struct {
+	cloud                                  *fakeCloud
+	ensureCalls, observeCalls, deleteCalls int
+}
+
+func (b *blockResource) Ensure(ctx context.Context, d contract.Desired) error {
+	b.ensureCalls++
+	b.cloud.createAll()
+	return nil
+}
+
+func (b *blockResource) Observe(ctx context.Context, id contract.Identity) (contract.Observation, error) {
+	b.observeCalls++
+	return contract.Observation{State: contract.Unknown}, nil
+}
+
+func (b *blockResource) Delete(ctx context.Context, id contract.Identity) error {
+	b.deleteCalls++
+	b.cloud.deleteAll()
+	return nil
+}
+
+// reportingBlock is a blockResource that reports what it created.
+type reportingBlock struct {
+	*blockResource
+	report []contract.CreatedResource
+}
+
+func (r reportingBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	if err := r.Ensure(ctx, d); err != nil {
+		return nil, err
+	}
+	return r.report, nil
+}
+
+// planningBlock is a blockResource whose validate names the resources an
+// upgrade would replace.
+type planningBlock struct {
+	*blockResource
+	replaces []string
+}
+
+func (p planningBlock) PlanReplacements(ctx context.Context, d contract.Desired) ([]string, error) {
+	return p.replaces, nil
+}
+
+var (
+	_ handler.ResourceReporter   = reportingBlock{}
+	_ handler.ReplacementPlanner = planningBlock{}
+	_ handler.Observer           = (*fakeObserver)(nil)
+)
+
+// fakeObserver asks the fake cloud for one declared resource and records
+// every ResourceRef it was handed.
+type fakeObserver struct {
+	name  string
+	cloud *fakeCloud
+	mu    sync.Mutex
+	refs  []contract.ResourceRef
+}
+
+func (o *fakeObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	o.mu.Lock()
+	o.refs = append(o.refs, r)
+	o.mu.Unlock()
+	if !o.cloud.stands(o.name) {
+		return contract.Observation{State: contract.Absent}, nil
+	}
+	return contract.Observation{State: contract.Present, Outputs: blockOutputs[o.name]}, nil
+}
+
+func (o *fakeObserver) calls() []contract.ResourceRef {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]contract.ResourceRef(nil), o.refs...)
+}
+
+// blockObservers returns one observer per declared resource over cloud.
+func blockObservers(cloud *fakeCloud) map[string]*fakeObserver {
+	out := map[string]*fakeObserver{}
+	for name := range declaredTypes {
+		out[name] = &fakeObserver{name: name, cloud: cloud}
+	}
+	return out
+}
+
+func asObservers(obs map[string]*fakeObserver) map[string]handler.Observer {
+	out := make(map[string]handler.Observer, len(obs))
+	for name, o := range obs {
+		out[name] = o
+	}
+	return out
+}
+
+// blockLevelConfig serves r under blockLevelManifest with obs as its
+// observers.
+func blockLevelConfig(t *testing.T, s *kittest.Signer, r handler.Resource, obs map[string]handler.Observer) handler.Config {
+	t.Helper()
+	cfg := baseConfig(t, r, s)
+	cfg.Manifest = []byte(blockLevelManifest)
+	cfg.Observers = obs
+	return cfg
+}
+
+// serveBlockLevel serves one verb over r and returns the status and the
+// decoded response.
+func serveBlockLevel(t *testing.T, r handler.Resource, obs map[string]*fakeObserver, operation string, extra map[string]any) (int, contract.Response) {
+	t.Helper()
+	s := kittest.NewSigner(t, "kid-block-level", 17)
+	h, err := handler.New(blockLevelConfig(t, s, r, asObservers(obs)))
+	if err != nil {
+		t.Fatalf("handler.New: %v", err)
+	}
+	fields := map[string]any{"operation": operation}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-block-level-"+operation, fields))
+	assertConforms(t, raw)
+	return status, decodeResponse(t, raw)
+}
+
+// recordedAll is what the engine recorded for every declared resource.
+func recordedAll() map[string]any {
+	return map[string]any{
+		"aws.vpc":          map[string]any{"type": "aws.vpc", "identity": map[string]any{"vpcId": "vpc-0abc"}},
+		"aws.ec2-instance": map[string]any{"type": "aws.ec2-instance", "identity": map[string]any{"instanceId": "i-0abc"}},
+		"a":                map[string]any{"type": "aws.iam-role", "identity": map[string]any{"roleName": "a-role"}},
+		"b":                map[string]any{"type": "aws.iam-role", "identity": map[string]any{"roleName": "b-role"}},
+	}
+}
+
+// wantEveryResourceObserved checks the answer carries exactly one entry per
+// declared resource, each observed in state as its declared type.
+func wantEveryResourceObserved(t *testing.T, resp contract.Response, state contract.State) {
+	t.Helper()
+	got := make([]string, 0, len(resp.Resources))
+	for name := range resp.Resources {
+		got = append(got, name)
+	}
+	slices.Sort(got)
+	if want := []string{"a", "aws.ec2-instance", "aws.vpc", "b"}; !slices.Equal(got, want) {
+		t.Errorf("resources = %q, want one entry per declared resource %q", got, want)
+	}
+	for name, typ := range declaredTypes {
+		o, ok := resp.Resources[name]
+		if !ok || o.Observe == nil {
+			t.Errorf("resource %q has no observe outcome; resources: %+v", name, resp.Resources)
+			continue
+		}
+		if o.Observe.State != state || o.Observe.Type != typ || o.Observe.Error != "" {
+			t.Errorf("resource %q observe = %+v, want state %s, type %s and no error", name, *o.Observe, state, typ)
+		}
+	}
+}
+
+// --- subscribe and upgrade ---------------------------------------------------------
+
+func TestBlockLevel_SubscribeAndUpgradeRunOneEnsureThenObserveEachResourceByName(t *testing.T) {
+	for _, op := range []string{"subscribe", "upgrade"} {
+		t.Run(op, func(t *testing.T) {
+			cloud := newFakeCloud()
+			block := &blockResource{cloud: cloud}
+			obs := blockObservers(cloud)
+
+			status, resp := serveBlockLevel(t, block, obs, op, nil)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200; response %+v", status, resp)
+			}
+			if block.ensureCalls != 1 || block.deleteCalls != 0 {
+				t.Errorf("block Ensure, Delete calls = %d, %d; want one Ensure for the whole block and no Delete", block.ensureCalls, block.deleteCalls)
+			}
+			if resp.Pending {
+				t.Errorf("pending = true (%s), want false: every resource stands", resp.StatusDetail)
+			}
+			wantEveryResourceObserved(t, resp, contract.Present)
+			for name, o := range obs {
+				refs := o.calls()
+				if len(refs) == 0 {
+					t.Errorf("resource %q was never observed through its own observer", name)
+					continue
+				}
+				if r := refs[0]; r.Name != name || r.Type != declaredTypes[name] || r.Desired.SubscriptionID != "sub-1" {
+					t.Errorf("resource %q observer handed name %q, type %q, subscription %q; want %q, %q, sub-1",
+						name, r.Name, r.Type, r.Desired.SubscriptionID, name, declaredTypes[name])
+				}
+			}
+			want := map[string]string{"publicIp": "203.0.113.7", "aOut": "from-a"}
+			if !reflect.DeepEqual(resp.Outputs, want) {
+				t.Errorf("outputs = %v, want %v: the union of the provided resources' outputs alone", resp.Outputs, want)
+			}
+		})
+	}
+}
+
+func TestBlockLevel_SubscribeAnswersPendingNamingAResourceNotPresentWithinTheBudget(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.neverPresent["b"] = true
+	obs := blockObservers(cloud)
+
+	status, resp := serveBlockLevel(t, &blockResource{cloud: cloud}, obs, "subscribe", nil)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: pending is never an error", status)
+	}
+	if !resp.Pending || !strings.Contains(resp.StatusDetail, `"b"`) {
+		t.Errorf("pending, statusDetail = %v, %q; want pending naming resource \"b\"", resp.Pending, resp.StatusDetail)
+	}
+	if got := len(obs["b"].calls()); got != 3 {
+		t.Errorf("b observed %d times, want the verb budget of 3", got)
+	}
+}
+
+// Each observe is handed the identity and type the block reported for its
+// resource, else the one the engine recorded, else no identity and the one
+// type the entry lists.
+func TestBlockLevel_EachObserveIsHandedTheIdentityAndTypeOfItsResource(t *testing.T) {
+	reported := []contract.CreatedResource{
+		{Name: "aws.vpc", Type: "aws.vpc", Identity: map[string]string{"vpcId": "vpc-new"}},
+		{Name: "aws.ec2-instance", Type: "aws.ec2-instance", Identity: map[string]string{"instanceId": "i-new"}},
+		{Name: "a", Type: "aws.iam-role", Identity: map[string]string{"roleName": "a-new"}},
+		{Name: "b", Type: "aws.iam-role", Identity: map[string]string{"roleName": "b-new"}},
+	}
+	cases := []struct {
+		label     string
+		block     func(cloud *fakeCloud) handler.Resource
+		extra     map[string]any
+		wantB     map[string]string
+		wantEntry bool
+	}{
+		{"reported by the block", func(c *fakeCloud) handler.Resource {
+			return reportingBlock{blockResource: &blockResource{cloud: c}, report: reported}
+		}, map[string]any{"recordedResources": recordedAll()}, map[string]string{"roleName": "b-new"}, true},
+		{"recorded by the engine", func(c *fakeCloud) handler.Resource {
+			return &blockResource{cloud: c}
+		}, map[string]any{"recordedResources": recordedAll()}, map[string]string{"roleName": "b-role"}, true},
+		{"neither", func(c *fakeCloud) handler.Resource {
+			return &blockResource{cloud: c}
+		}, nil, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			cloud := newFakeCloud()
+			obs := blockObservers(cloud)
+			status, resp := serveBlockLevel(t, tc.block(cloud), obs, "upgrade", tc.extra)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200; response %+v", status, resp)
+			}
+			refs := obs["b"].calls()
+			if len(refs) == 0 {
+				t.Fatal("b was never observed")
+			}
+			if r := refs[0]; r.Type != "aws.iam-role" || !(reflect.DeepEqual(r.Identity, tc.wantB) || len(r.Identity)+len(tc.wantB) == 0) {
+				t.Errorf("b observer handed type %q, identity %v; want aws.iam-role, %v", r.Type, r.Identity, tc.wantB)
+			}
+			if o := resp.Resources["b"].Observe; tc.wantEntry && (o == nil || !reflect.DeepEqual(o.Identity, tc.wantB)) {
+				t.Errorf("b observe entry = %+v, want identity %v", o, tc.wantB)
+			}
+		})
+	}
+}
+
+func TestBlockLevel_RefusesAReportedResourceItsEntryDoesNotDeclare(t *testing.T) {
+	cases := []struct {
+		label    string
+		reported contract.CreatedResource
+		wants    []string
+	}{
+		{"a name the manifest does not declare", contract.CreatedResource{Name: "c", Type: "aws.iam-role"}, []string{`"c"`}},
+		{"a type its entry does not list", contract.CreatedResource{Name: "b", Type: "aws.vpc"}, []string{`"b"`, "aws.vpc"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			cloud := newFakeCloud()
+			block := reportingBlock{blockResource: &blockResource{cloud: cloud}, report: []contract.CreatedResource{tc.reported}}
+			status, resp := serveBlockLevel(t, block, blockObservers(cloud), "subscribe", nil)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; response %+v", status, resp)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(resp.Error, want) {
+					t.Errorf("error = %q, want it to name %s", resp.Error, want)
+				}
+			}
+		})
+	}
+}
+
+// --- unsubscribe -------------------------------------------------------------------------
+
+func TestBlockLevel_UnsubscribeRunsOneDeleteThenProvesEachResourceAbsentWithItsRecordedIdentity(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.createAll()
+	block := &blockResource{cloud: cloud}
+	obs := blockObservers(cloud)
+
+	status, resp := serveBlockLevel(t, block, obs, "unsubscribe", map[string]any{"recordedResources": recordedAll()})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; response %+v", status, resp)
+	}
+	if block.deleteCalls != 1 || block.ensureCalls != 0 {
+		t.Errorf("block Delete, Ensure calls = %d, %d; want one Delete for the whole block and no Ensure", block.deleteCalls, block.ensureCalls)
+	}
+	if resp.Absent == nil || !*resp.Absent {
+		t.Errorf("absent = %v, want true: every resource is gone", resp.Absent)
+	}
+	wantEveryResourceObserved(t, resp, contract.Absent)
+	refs := obs["b"].calls()
+	if len(refs) == 0 || !reflect.DeepEqual(refs[0].Identity, map[string]string{"roleName": "b-role"}) || refs[0].Type != "aws.iam-role" {
+		t.Errorf("b observer handed %+v, want its recorded identity and type", refs)
+	}
+}
+
+func TestBlockLevel_UnsubscribeAnswersAbsentFalseNamingAResourceStillStanding(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.createAll()
+	cloud.standsAfterDelete["b"] = true
+
+	status, resp := serveBlockLevel(t, &blockResource{cloud: cloud}, blockObservers(cloud), "unsubscribe",
+		map[string]any{"recordedResources": recordedAll()})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if resp.Absent == nil || *resp.Absent {
+		t.Errorf("absent = %v, want false: b still stands", resp.Absent)
+	}
+	if !strings.Contains(resp.StatusDetail, `"b"`) {
+		t.Errorf("statusDetail = %q, want it to name resource \"b\"", resp.StatusDetail)
+	}
+}
+
+// --- validate --------------------------------------------------------------------------------
+
+func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBlockPlans(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.createAll()
+	block := planningBlock{blockResource: &blockResource{cloud: cloud}, replaces: []string{"b"}}
+	obs := blockObservers(cloud)
+
+	status, resp := serveBlockLevel(t, block, obs, "validate", map[string]any{"recordedResources": recordedAll()})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; response %+v", status, resp)
+	}
+	for name, o := range obs {
+		if got := len(o.calls()); got != 1 {
+			t.Errorf("resource %q observed %d times, want once", name, got)
+		}
+	}
+	if block.ensureCalls != 0 || block.deleteCalls != 0 {
+		t.Errorf("validate ran Ensure %d and Delete %d times, want neither", block.ensureCalls, block.deleteCalls)
+	}
+	wantEveryResourceObserved(t, resp, contract.Present)
+	if !slices.Equal(resp.Replaces, []string{"b"}) {
+		t.Errorf("replaces = %q, want [b]", resp.Replaces)
+	}
+}
+
+func TestBlockLevel_ValidateRefusesAPlannedReplacementTheManifestDoesNotDeclare(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.createAll()
+	block := planningBlock{blockResource: &blockResource{cloud: cloud}, replaces: []string{"c"}}
+
+	status, resp := serveBlockLevel(t, block, blockObservers(cloud), "validate", nil)
+	if status != http.StatusBadRequest || !strings.Contains(resp.Error, `"c"`) {
+		t.Errorf("status, error = %d, %q; want 400 naming \"c\"", status, resp.Error)
+	}
+}
+
+// --- a request naming one declared resource ----------------------------------------
+
+func TestBlockLevel_ValidateNamingOneResourceObservesItAloneWithTheRequestsIdentityAndType(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.createAll()
+	block := &blockResource{cloud: cloud}
+	obs := blockObservers(cloud)
+	identity := map[string]string{"roleName": "b-role"}
+
+	status, resp := serveBlockLevel(t, block, obs, "validate", map[string]any{
+		"resource":         "b",
+		"resourceIdentity": map[string]any{"roleName": "b-role"},
+		"resourceType":     "aws.iam-role",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; response %+v", status, resp)
+	}
+	refs := obs["b"].calls()
+	if len(refs) != 1 {
+		t.Fatalf("b observed %d times, want once", len(refs))
+	}
+	if r := refs[0]; r.Name != "b" || r.Type != "aws.iam-role" || !reflect.DeepEqual(r.Identity, identity) {
+		t.Errorf("b observer handed name %q, type %q, identity %v; want b, aws.iam-role, %v", r.Name, r.Type, r.Identity, identity)
+	}
+	for name, o := range obs {
+		if name != "b" && len(o.calls()) != 0 {
+			t.Errorf("resource %q was observed, but the request names b alone", name)
+		}
+	}
+	if block.ensureCalls+block.observeCalls+block.deleteCalls != 0 {
+		t.Errorf("the block-level handler ran Ensure %d, Observe %d, Delete %d times; want none for an observe of one resource",
+			block.ensureCalls, block.observeCalls, block.deleteCalls)
+	}
+	if len(resp.Resources) != 1 {
+		t.Errorf("resources = %+v, want b's entry alone", resp.Resources)
+	}
+	o := resp.Resources["b"].Observe
+	if o == nil || o.State != contract.Present || o.Type != "aws.iam-role" || !reflect.DeepEqual(o.Identity, identity) {
+		t.Errorf("b observe entry = %+v, want present as aws.iam-role with identity %v", o, identity)
+	}
+}
+
+func TestBlockLevel_ValidateNamingOneResourceRefusesATypeItsEntryDoesNotList(t *testing.T) {
+	cloud := newFakeCloud()
+	obs := blockObservers(cloud)
+	status, resp := serveBlockLevel(t, &blockResource{cloud: cloud}, obs, "validate", map[string]any{
+		"resource":     "b",
+		"resourceType": "aws.vpc",
+	})
+	if status != http.StatusBadRequest || !strings.Contains(resp.Error, "aws.vpc") {
+		t.Errorf("status, error = %d, %q; want 400 naming aws.vpc", status, resp.Error)
+	}
+	if len(obs["b"].calls()) != 0 {
+		t.Error("b was observed under a type its entry does not list")
+	}
+}
+
+func TestBlockLevel_RefusesANamedSubscribeUpgradeOrUnsubscribe(t *testing.T) {
+	for _, op := range []string{"subscribe", "upgrade", "unsubscribe"} {
+		t.Run(op, func(t *testing.T) {
+			cloud := newFakeCloud()
+			block := &blockResource{cloud: cloud}
+			status, resp := serveBlockLevel(t, block, blockObservers(cloud), op, map[string]any{"resource": "b"})
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; response %+v", status, resp)
+			}
+			if !strings.Contains(resp.Error, "block-level handler") {
+				t.Errorf("error = %q, want it to say the block creates and deletes its resources through its block-level handler", resp.Error)
+			}
+			if block.ensureCalls+block.deleteCalls != 0 {
+				t.Errorf("a refused %s ran Ensure %d and Delete %d times", op, block.ensureCalls, block.deleteCalls)
+			}
+		})
+	}
+}
+
+func TestBlockLevel_RefusesAnUndeclaredNameAsUndeclaredResource(t *testing.T) {
+	cloud := newFakeCloud()
+	status, resp := serveBlockLevel(t, &blockResource{cloud: cloud}, blockObservers(cloud), "validate", map[string]any{"resource": "c"})
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if got := handler.RefusedClass(resp.StatusDetail); got != "undeclared-resource" {
+		t.Errorf("refusal class = %q, want undeclared-resource", got)
+	}
+}
+
+// --- New -------------------------------------------------------------------------------------
+
+func TestNew_AcceptsAnObserverForEveryDeclaredResource(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	cloud := newFakeCloud()
+	if _, err := handler.New(blockLevelConfig(t, s, &blockResource{cloud: cloud}, asObservers(blockObservers(cloud)))); err != nil {
+		t.Fatalf("handler.New: %v", err)
+	}
+}
+
+func TestNew_RefusesADeclaredResourceWithNoObserverNamingIt(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	cloud := newFakeCloud()
+	obs := asObservers(blockObservers(cloud))
+	delete(obs, "b")
+
+	_, err := handler.New(blockLevelConfig(t, s, &blockResource{cloud: cloud}, obs))
+	if err == nil {
+		t.Fatal("handler.New accepted a block whose resource b has no observe")
+	}
+	for _, want := range []string{`"b"`, "observe"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to name %s", err, want)
+		}
+	}
+}
+
+func TestNew_RefusesAnObserverConfigTheManifestCannotBack(t *testing.T) {
+	cloud := newFakeCloud()
+	cases := []struct {
+		label  string
+		mutate func(cfg *handler.Config)
+		wants  []string
+	}{
+		{"an observer for an undeclared resource", func(cfg *handler.Config) {
+			cfg.Observers["c"] = &fakeObserver{name: "c", cloud: cloud}
+		}, []string{`"c"`}},
+		{"observers beside per-resource handlers", func(cfg *handler.Config) {
+			cfg.Resource = nil
+			cfg.Resources = map[string]handler.DeclaredResource{
+				"aws.vpc": &kittest.FakeResource{}, "aws.ec2-instance": &kittest.FakeResource{},
+				"a": &kittest.FakeResource{}, "b": &kittest.FakeResource{},
+			}
+		}, nil},
+		{"observers with no manifest", func(cfg *handler.Config) { cfg.Manifest = nil }, nil},
+		{"observers under a v1alpha manifest", func(cfg *handler.Config) { cfg.Manifest = []byte(manifestWithNoHooksKey) }, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			s := kittest.NewSigner(t, "kid-1", 7)
+			cfg := blockLevelConfig(t, s, &blockResource{cloud: cloud}, asObservers(blockObservers(cloud)))
+			tc.mutate(&cfg)
+			_, err := handler.New(cfg)
+			if err == nil {
+				t.Fatal("handler.New accepted the config, want it refused")
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to name %s", err, want)
+				}
+			}
+		})
+	}
+}
+
+// errObserver fails every observe, so a test can see a failing observe
+// reported under its resource.
+type errObserver struct{}
+
+func (errObserver) ObserveResource(context.Context, contract.ResourceRef) (contract.Observation, error) {
+	return contract.Observation{}, errors.New("describe role: throttled")
+}
+
+func TestBlockLevel_AnObserveErrorIsReportedUnderItsResource(t *testing.T) {
+	cloud := newFakeCloud()
+	s := kittest.NewSigner(t, "kid-block-level", 17)
+	obs := asObservers(blockObservers(cloud))
+	obs["b"] = errObserver{}
+	h, err := handler.New(blockLevelConfig(t, s, &blockResource{cloud: cloud}, obs))
+	if err != nil {
+		t.Fatalf("handler.New: %v", err)
+	}
+	status, raw := postHook(t, h, s, envelope(t, s, "nonce-block-level-observe-error", map[string]any{"operation": "subscribe"}))
+	resp := decodeResponse(t, raw)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for an unclassified observe error", status)
+	}
+	if o := resp.Resources["b"].Observe; o == nil || !strings.Contains(o.Error, "throttled") {
+		t.Errorf("b observe entry = %+v, want the observe error", o)
+	}
+}

@@ -1,0 +1,1853 @@
+{
+  "version": 1,
+  "types": [
+    {
+      "id": "aws.ebs-volume",
+      "capability": "aws",
+      "kind": "block-volume",
+      "scope": "per-app",
+      "stateful": true,
+      "pricing": {
+        "priced": false
+      },
+      "category": "storage",
+      "outputs": [
+        {
+          "name": "dataSnapshotId",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "DescribeVolumes returns the volume in state available or in-use",
+      "absence": "DescribeVolumes answers InvalidVolume.NotFound for the volume id",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "5m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "the volume is still creating, attaching or detaching"
+        },
+        {
+          "class": "permanent",
+          "cause": "the account's EBS storage quota for the volume type is reached"
+        },
+        {
+          "class": "permanent",
+          "cause": "the KMS key the volume is encrypted with is disabled or not granted to the role"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.ec2-configuration",
+      "capability": "aws",
+      "kind": "host-configuration",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "compute",
+      "outputs": [],
+      "observe": "the configuration run on the host reports success, and the files and services it installs are in place",
+      "absence": "the files and services the configuration installed are gone from the host",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "15m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the host is not reachable through its exec mechanism"
+        },
+        {
+          "class": "permanent",
+          "cause": "a configuration command exits non-zero on the host"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.ec2-container",
+      "capability": "aws",
+      "kind": "container",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "compute",
+      "languages": [
+        "any-container"
+      ],
+      "outputs": [
+        {
+          "name": "url",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "the container runtime on the host reports the container running from its image, and the container answers on its port",
+      "absence": "the container runtime on the host no longer lists the container",
+      "timeBudgets": {
+        "delete": "2m",
+        "ensure": "10m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the host is not reachable through its exec mechanism"
+        },
+        {
+          "class": "transient",
+          "cause": "pulling the image failed or timed out"
+        },
+        {
+          "class": "permanent",
+          "cause": "the image names no image its registry holds"
+        },
+        {
+          "class": "permanent",
+          "cause": "the container exits right after it starts"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.ec2-instance",
+      "capability": "aws",
+      "kind": "host",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": true,
+        "key": "AmazonEC2"
+      },
+      "category": "compute",
+      "languages": [
+        "any-container"
+      ],
+      "outputs": [
+        {
+          "name": "cloud.region",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "execKind",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "execTarget",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "host.type",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "hostId",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "publicIp",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "DescribeInstances returns the instance in state running, and SSM reports its agent online",
+      "absence": "DescribeInstances returns the instance in state terminated, or no longer returns it, and its Elastic IP, instance role and instance profile are gone",
+      "timeBudgets": {
+        "delete": "10m",
+        "ensure": "10m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "the availability zone has no capacity for the instance type"
+        },
+        {
+          "class": "permanent",
+          "cause": "the account's vCPU quota for the instance family is reached"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.ec2-postgres-database",
+      "capability": "aws",
+      "kind": "postgres-database",
+      "scope": "per-app",
+      "stateful": true,
+      "pricing": {
+        "priced": false
+      },
+      "category": "database",
+      "outputs": [
+        {
+          "name": "dbName",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "host",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "password",
+          "secret": true,
+          "required": true
+        },
+        {
+          "name": "port",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "username",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "a connection as the database user to the database succeeds and SELECT 1 answers",
+      "absence": "pg_database no longer lists the database and pg_roles no longer lists its user",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "10m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the host is not reachable through its exec mechanism"
+        },
+        {
+          "class": "transient",
+          "cause": "the Postgres server on the host is not yet accepting connections"
+        },
+        {
+          "class": "permanent",
+          "cause": "the data volume is not attached to the host or not mounted"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.ecr-image",
+      "capability": "aws",
+      "kind": "container-image",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "artifact-registry",
+      "languages": [
+        "any-container"
+      ],
+      "artifactType": "container-image",
+      "outputs": [
+        {
+          "name": "imageRepo",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "DescribeImages finds the tag in the repository",
+      "absence": "DescribeImages answers ImageNotFoundException for the tag",
+      "timeBudgets": {
+        "delete": "2m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "permanent",
+          "cause": "the repository the image is pushed to does not exist"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.ecr-repository",
+      "capability": "aws",
+      "kind": "container-repository",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "artifact-registry",
+      "languages": [
+        "any-container"
+      ],
+      "artifactType": "container-image",
+      "outputs": [
+        {
+          "name": "registryHost",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "DescribeRepositories finds the repository by name",
+      "absence": "DescribeRepositories answers RepositoryNotFoundException for the name",
+      "timeBudgets": {
+        "delete": "2m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "permanent",
+          "cause": "the repository name is taken in the account and region"
+        },
+        {
+          "class": "permanent",
+          "cause": "delete is refused because the repository still holds images and force_delete is off"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.egress-proxy",
+      "capability": "aws",
+      "kind": "egress-proxy",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": true,
+        "key": "AmazonEC2"
+      },
+      "category": "network",
+      "outputs": [],
+      "observe": "DescribeInstances returns the proxy instance running with its public address, and the proxy answers on its port",
+      "absence": "DescribeInstances returns the proxy instance terminated, and its security group, role and instance profile answer not found",
+      "timeBudgets": {
+        "delete": "10m",
+        "ensure": "10m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "the availability zone has no capacity for the proxy's instance type"
+        },
+        {
+          "class": "permanent",
+          "cause": "the account's vCPU quota for the instance family is reached"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.iam-oidc-provider",
+      "capability": "aws",
+      "kind": "oidc-provider",
+      "scope": "org-wide",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "identity-and-access",
+      "outputs": [
+        {
+          "name": "oidcProviderArn",
+          "secret": true,
+          "required": true
+        }
+      ],
+      "observe": "GetOpenIDConnectProvider returns the provider with its client ids and thumbprints",
+      "absence": "GetOpenIDConnectProvider answers NoSuchEntity for the provider ARN",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "permanent",
+          "cause": "a provider for the issuer URL already exists in the account"
+        },
+        {
+          "class": "permanent",
+          "cause": "the account's OIDC provider quota is reached"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.iam-role",
+      "capability": "aws",
+      "kind": "iam-role",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "identity-and-access",
+      "outputs": [
+        {
+          "name": "roleArn",
+          "secret": true,
+          "required": true
+        }
+      ],
+      "observe": "GetRole returns the role with its trust policy",
+      "absence": "GetRole answers NoSuchEntity for the role name",
+      "timeBudgets": {
+        "delete": "2m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "the new role is not yet visible to every AWS service"
+        },
+        {
+          "class": "permanent",
+          "cause": "the role name is taken in the account"
+        },
+        {
+          "class": "permanent",
+          "cause": "the trust policy is malformed or names a principal that does not exist"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.route53-record",
+      "capability": "aws",
+      "kind": "app-address",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "network",
+      "outputs": [
+        {
+          "name": "appHostname",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "appUrl",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "ListResourceRecordSets returns the record, and GetChange reports its change INSYNC",
+      "absence": "ListResourceRecordSets no longer returns a record of the name and type",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "5m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "Route 53 answered PriorRequestNotComplete for the zone"
+        },
+        {
+          "class": "permanent",
+          "cause": "the hosted zone does not exist or is not reachable with the credentials"
+        },
+        {
+          "class": "permanent",
+          "cause": "a record of the same name and type exists and allow_overwrite is off"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.s3-bucket",
+      "capability": "aws",
+      "kind": "object-storage",
+      "scope": "per-app",
+      "stateful": true,
+      "pricing": {
+        "priced": true,
+        "key": "AmazonS3"
+      },
+      "category": "storage",
+      "outputs": [],
+      "version": 1
+    },
+    {
+      "id": "aws.security-group",
+      "capability": "aws",
+      "kind": "firewall",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "network",
+      "outputs": [],
+      "observe": "DescribeSecurityGroups returns the group in its VPC with its rules",
+      "absence": "DescribeSecurityGroups answers InvalidGroup.NotFound for the group id",
+      "timeBudgets": {
+        "delete": "15m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "delete is refused while a network interface still uses the group"
+        },
+        {
+          "class": "permanent",
+          "cause": "the group name is taken in the VPC"
+        },
+        {
+          "class": "permanent",
+          "cause": "the VPC's security group quota is reached"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.ssm-association",
+      "capability": "aws",
+      "kind": "host-configuration",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "compute",
+      "outputs": [],
+      "observe": "DescribeAssociation returns the association, and its overall status is Success",
+      "absence": "DescribeAssociation answers AssociationDoesNotExist for the association id",
+      "timeBudgets": {
+        "delete": "2m",
+        "ensure": "15m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "the target instance's SSM agent is not yet online"
+        },
+        {
+          "class": "permanent",
+          "cause": "the SSM document does not exist or its parameters are invalid"
+        },
+        {
+          "class": "permanent",
+          "cause": "the document's run on the target exits with a failure"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.ssm-parameter",
+      "capability": "aws",
+      "kind": "secret",
+      "scope": "per-app",
+      "stateful": true,
+      "pricing": {
+        "priced": false
+      },
+      "category": "secrets",
+      "outputs": [],
+      "observe": "GetParameter returns the parameter at its name and version",
+      "absence": "GetParameter answers ParameterNotFound for the name",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "permanent",
+          "cause": "a parameter of the name exists and overwrite is off"
+        },
+        {
+          "class": "permanent",
+          "cause": "the value exceeds the size limit of the parameter's tier"
+        },
+        {
+          "class": "permanent",
+          "cause": "the KMS key that encrypts the SecureString is disabled or not granted to the role"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.vllm-instance",
+      "capability": "aws",
+      "kind": "llm-endpoint",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": true,
+        "key": "AmazonEC2"
+      },
+      "category": "ai-model",
+      "outputs": [
+        {
+          "name": "llmEndpoint",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "model",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "DescribeInstances returns the GPU instance running with its Elastic IP associated, and the vLLM server lists the model at GET /v1/models",
+      "absence": "DescribeInstances returns the instance terminated, and DescribeAddresses and DescribeSecurityGroups answer not found for its Elastic IP and security group",
+      "timeBudgets": {
+        "delete": "10m",
+        "ensure": "30m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "the availability zone has no GPU capacity for the instance type"
+        },
+        {
+          "class": "permanent",
+          "cause": "the account's GPU instance quota is reached"
+        },
+        {
+          "class": "permanent",
+          "cause": "the vLLM server cannot load the model the model id names"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "aws.vpc",
+      "capability": "aws",
+      "kind": "network",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "network",
+      "outputs": [],
+      "observe": "DescribeVpcs returns the VPC in state available",
+      "absence": "DescribeVpcs answers InvalidVpcID.NotFound for the VPC id",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "5m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the AWS API throttled the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected AWS role lacks permission for the call"
+        },
+        {
+          "class": "transient",
+          "cause": "delete is refused while a subnet, gateway or network interface still depends on the VPC"
+        },
+        {
+          "class": "permanent",
+          "cause": "the region's VPC quota is reached"
+        },
+        {
+          "class": "permanent",
+          "cause": "the CIDR block is invalid or overlaps one the account already routes"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "crossplane.reconcile-claim",
+      "capability": "crossplane",
+      "kind": "reconcile-claim",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "outputs": [
+        {
+          "name": "claim",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "driftPolicy",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "driftedResources",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "reconciledResources",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "the claim exists on the control plane with conditions Synced and Ready both True",
+      "absence": "the control plane's Kubernetes API answers 404 for the claim and for its composite resource",
+      "timeBudgets": {
+        "delete": "15m",
+        "ensure": "15m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the control plane's Kubernetes API is unreachable"
+        },
+        {
+          "class": "transient",
+          "cause": "a composed resource is not yet ready"
+        },
+        {
+          "class": "permanent",
+          "cause": "the claim's composite resource definition or composition is not installed on the control plane"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.actions-secret",
+      "capability": "github",
+      "kind": "secret",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "secrets",
+      "outputs": [],
+      "observe": "the Actions secrets API returns the secret name on the repository",
+      "absence": "the Actions secrets API answers 404 for the secret name",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "permanent",
+          "cause": "the repository does not exist"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.actions-variable",
+      "capability": "github",
+      "kind": "ci-variable",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "outputs": [],
+      "observe": "the Actions variables API returns the variable with its value",
+      "absence": "the Actions variables API answers 404 for the variable name",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "permanent",
+          "cause": "the repository does not exist"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.commit",
+      "capability": "github",
+      "kind": "source-revision",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "source-and-work",
+      "outputs": [
+        {
+          "name": "sourceBranch",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "sourceSha",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "the git commits API returns the commit, and the branch ref points at it or at a descendant",
+      "absence": "the git refs API answers 404 for the branch that carried the commit",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "transient",
+          "cause": "the branch ref moved while the commit was pushed"
+        },
+        {
+          "class": "permanent",
+          "cause": "the branch is protected against direct pushes"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.container-image",
+      "capability": "github",
+      "kind": "container-image",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "artifact-registry",
+      "languages": [
+        "any-container"
+      ],
+      "artifactType": "container-image",
+      "outputs": [
+        {
+          "name": "imageRepo",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "the packages API returns the container package version carrying the tag",
+      "absence": "the packages API answers 404 for the package version",
+      "timeBudgets": {
+        "delete": "2m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "permanent",
+          "cause": "the package holds no version carrying the tag"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.pull-request",
+      "capability": "github",
+      "kind": "change-request",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "source-and-work",
+      "outputs": [
+        {
+          "name": "pullRequestUrl",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "the pulls API returns the pull request open from its head to its base",
+      "absence": "the pulls API returns the pull request closed",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "permanent",
+          "cause": "the head branch has no commit ahead of the base"
+        },
+        {
+          "class": "permanent",
+          "cause": "a pull request from the head to the base is already open"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.repository",
+      "capability": "github",
+      "kind": "git-repository",
+      "scope": "per-app",
+      "stateful": true,
+      "pricing": {
+        "priced": false
+      },
+      "category": "source-and-work",
+      "outputs": [
+        {
+          "name": "repo",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "the repos API returns the repository with its visibility and settings",
+      "absence": "the repos API answers 404 for the repository, or returns it archived when archive_on_destroy is set",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "permanent",
+          "cause": "the repository name is taken in the organisation"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.repository-webhook",
+      "capability": "github",
+      "kind": "webhook",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "outputs": [],
+      "observe": "the hooks API returns the webhook with its URL and events",
+      "absence": "the hooks API answers 404 for the hook id",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "permanent",
+          "cause": "the webhook configuration's URL is not a valid HTTPS address"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.runner-group",
+      "capability": "github",
+      "kind": "runner-group",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "outputs": [],
+      "observe": "the Actions runner groups API returns the group in the organisation",
+      "absence": "the Actions runner groups API answers 404 for the group id",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "permanent",
+          "cause": "the organisation's plan does not allow runner groups"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.scaffold-contribution",
+      "capability": "github",
+      "kind": "scaffold-contribution",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "source-and-work",
+      "outputs": [
+        {
+          "name": "scaffoldContribution",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "the contents API returns every file the contribution names on the repository's default branch with the contributed content",
+      "absence": "the contents API answers 404 for every file the contribution added",
+      "timeBudgets": {
+        "delete": "2m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "permanent",
+          "cause": "two contributions write the same file path"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.self-hosted-runner",
+      "capability": "github",
+      "kind": "ci-runner",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "outputs": [
+        {
+          "name": "awsCredential",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "runnerLabel",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "runsOn",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "the Actions runners API lists the runner online with its label",
+      "absence": "the Actions runners API no longer lists the runner",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "10m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "transient",
+          "cause": "the host is not reachable through its exec mechanism"
+        },
+        {
+          "class": "transient",
+          "cause": "the registration token expired before the runner registered"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "github.workflow-file",
+      "capability": "github",
+      "kind": "ci-workflow",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "outputs": [
+        {
+          "name": "ciCheckContribution",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "workflowPath",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "workflowUrl",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "the contents API returns the file at its path on the branch with the committed content",
+      "absence": "the contents API answers 404 for the path on the branch",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the GitHub API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the GitHub App installation lacks the permission the call needs"
+        },
+        {
+          "class": "transient",
+          "cause": "the file changed on the branch after it was read"
+        },
+        {
+          "class": "permanent",
+          "cause": "the branch is protected against direct commits"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.firewall",
+      "capability": "hetzner",
+      "kind": "firewall",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "network",
+      "outputs": [],
+      "observe": "GET /firewalls/{id} returns the firewall with its rules and the resources it applies to",
+      "absence": "GET /firewalls/{id} answers 404",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"
+        },
+        {
+          "class": "transient",
+          "cause": "delete is refused while the firewall is still applied to a resource"
+        },
+        {
+          "class": "permanent",
+          "cause": "a firewall of the name exists in the project"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.k3s-cluster",
+      "capability": "hetzner",
+      "kind": "kubernetes-cluster",
+      "scope": "org-wide",
+      "stateful": false,
+      "pricing": {
+        "priced": true,
+        "key": "HetznerCloud"
+      },
+      "category": "compute",
+      "hosts": "kubernetes",
+      "outputs": [
+        {
+          "name": "apiEndpoint",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "caCertificate",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "clusterCredential",
+          "secret": true,
+          "required": true
+        },
+        {
+          "name": "cloud.region",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "issuerUrl",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "privateEndpoint",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "the Kubernetes API at apiEndpoint answers /readyz with ok to the cluster credential, and every node reports Ready",
+      "absence": "GET /servers/{id} answers 404 for the cluster's server, and its firewall and primary IP answer 404",
+      "timeBudgets": {
+        "delete": "10m",
+        "ensure": "20m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"
+        },
+        {
+          "class": "transient",
+          "cause": "the location has no capacity for the server type"
+        },
+        {
+          "class": "transient",
+          "cause": "k3s has not yet reported every node Ready"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's server limit is reached"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.primary-ip",
+      "capability": "hetzner",
+      "kind": "ip-address",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "network",
+      "outputs": [
+        {
+          "name": "publicIp",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "GET /primary_ips/{id} returns the address",
+      "absence": "GET /primary_ips/{id} answers 404",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's primary IP limit is reached"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.server",
+      "capability": "hetzner",
+      "kind": "host",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": true,
+        "key": "HetznerCloud"
+      },
+      "category": "compute",
+      "languages": [
+        "any-container"
+      ],
+      "outputs": [
+        {
+          "name": "cloud.region",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "execKind",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "execTarget",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "host.type",
+          "secret": false,
+          "required": false
+        },
+        {
+          "name": "hostId",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "GET /servers/{id} returns the server with status running",
+      "absence": "GET /servers/{id} answers 404",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "10m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"
+        },
+        {
+          "class": "transient",
+          "cause": "the location has no capacity for the server type"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's server limit is reached"
+        },
+        {
+          "class": "permanent",
+          "cause": "the image names no image available in the location"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.server-configuration",
+      "capability": "hetzner",
+      "kind": "host-configuration",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "compute",
+      "outputs": [],
+      "observe": "the configuration run on the host reports success, and the files and services it installs are in place",
+      "absence": "the files and services the configuration installed are gone from the host",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "15m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the host is not reachable through its exec mechanism"
+        },
+        {
+          "class": "permanent",
+          "cause": "a configuration command exits non-zero on the host"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.server-container",
+      "capability": "hetzner",
+      "kind": "container",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "compute",
+      "languages": [
+        "any-container"
+      ],
+      "outputs": [
+        {
+          "name": "url",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "the container runtime on the host reports the container running from its image, and the container answers on its port",
+      "absence": "the container runtime on the host no longer lists the container",
+      "timeBudgets": {
+        "delete": "2m",
+        "ensure": "10m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the host is not reachable through its exec mechanism"
+        },
+        {
+          "class": "transient",
+          "cause": "pulling the image failed or timed out"
+        },
+        {
+          "class": "permanent",
+          "cause": "the image names no image its registry holds"
+        },
+        {
+          "class": "permanent",
+          "cause": "the container exits right after it starts"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.server-postgres-database",
+      "capability": "hetzner",
+      "kind": "postgres-database",
+      "scope": "per-app",
+      "stateful": true,
+      "pricing": {
+        "priced": false
+      },
+      "category": "database",
+      "outputs": [
+        {
+          "name": "dbName",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "host",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "password",
+          "secret": true,
+          "required": true
+        },
+        {
+          "name": "port",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "username",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "a connection as the database user to the database succeeds and SELECT 1 answers",
+      "absence": "pg_database no longer lists the database and pg_roles no longer lists its user",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "10m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the host is not reachable through its exec mechanism"
+        },
+        {
+          "class": "transient",
+          "cause": "the Postgres server on the host is not yet accepting connections"
+        },
+        {
+          "class": "permanent",
+          "cause": "the data volume is not attached to the host or not mounted"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.ssh-key",
+      "capability": "hetzner",
+      "kind": "ssh-key",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "identity-and-access",
+      "outputs": [],
+      "observe": "GET /ssh_keys/{id} returns the key with its fingerprint",
+      "absence": "GET /ssh_keys/{id} answers 404",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"
+        },
+        {
+          "class": "permanent",
+          "cause": "a key with the same fingerprint exists in the project"
+        },
+        {
+          "class": "permanent",
+          "cause": "the public key is not a valid OpenSSH public key"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "hetzner.volume",
+      "capability": "hetzner",
+      "kind": "block-volume",
+      "scope": "per-app",
+      "stateful": true,
+      "pricing": {
+        "priced": false
+      },
+      "category": "storage",
+      "outputs": [
+        {
+          "name": "dataSnapshotId",
+          "secret": false,
+          "required": false
+        }
+      ],
+      "observe": "GET /volumes/{id} returns the volume with status available",
+      "absence": "GET /volumes/{id} answers 404",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "5m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"
+        },
+        {
+          "class": "transient",
+          "cause": "the volume is still attaching to or detaching from a server"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's volume limit is reached"
+        },
+        {
+          "class": "permanent",
+          "cause": "the requested size is below the volume's current size"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.namespace",
+      "capability": "kubernetes",
+      "kind": "kubernetes-namespace",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "compute",
+      "outputs": [
+        {
+          "name": "namespace",
+          "secret": false,
+          "required": true
+        },
+        {
+          "name": "serviceAccount",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "the Kubernetes API of the cluster returns the namespace in phase Active and the service account in it",
+      "absence": "the Kubernetes API of the cluster answers 404 for the namespace",
+      "timeBudgets": {
+        "delete": "10m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "the namespace is still terminating from an earlier delete"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create namespaces or service accounts"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "plain.api-token",
+      "capability": "plain",
+      "kind": "api-token",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "identity-and-access",
+      "outputs": [],
+      "observe": "the Plain API accepts the token on an authenticated read",
+      "absence": "the Plain API answers 401 to the revoked token",
+      "timeBudgets": {
+        "delete": "1m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Plain API is unreachable or answers a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the connected Plain account lacks permission to issue tokens"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "ubicloud.runner",
+      "capability": "ubicloud",
+      "kind": "ci-runner",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "reliesOn": [
+        "github"
+      ],
+      "outputs": [
+        {
+          "name": "runsOn",
+          "secret": false,
+          "required": true
+        }
+      ],
+      "observe": "the Ubicloud API lists the GitHub installation that covers the repository",
+      "absence": "the Ubicloud API no longer lists the repository under the installation",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "5m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Ubicloud API is unreachable or answers a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "Ubicloud's GitHub App is not installed on the repository's organisation"
+        }
+      ],
+      "version": 1
+    }
+  ]
+}

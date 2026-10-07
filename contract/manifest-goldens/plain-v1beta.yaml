@@ -1,4 +1,4 @@
-apiVersion: mitstack/v1beta          # placeholder: the new shape gets its own version
+apiVersion: mitstack/v1beta
 type: block
 metadata:
   id: plain
@@ -7,7 +7,7 @@ metadata:
 spec:
   version: 3.0.0
   releaseClass: breaking
-  releaseNote: Plain runs on any host and takes its database from whichever block offers one.
+  releaseNote: Plain runs its container on the app's EC2 host, against the Postgres database offered there.
   description: >
     Runs the Plain tracker container on the app's host, connected to the
     app's Postgres database.
@@ -15,23 +15,9 @@ spec:
     - name: image
       label: Plain tracker container image
       required: true
-  requires:
-    - kind: host
-    - kind: postgres-database
-  resources:
-    - name: tracker
-      type: host.container
-      on: requires.host
-      inputs:
-        image: params.image
-        port: 8080
-        env:
-          TRACKER_DB_HOST: requires.postgres-database.outputs.host
-          TRACKER_DB_PORT: requires.postgres-database.outputs.port
-          TRACKER_DB_NAME: requires.postgres-database.outputs.dbName
-          TRACKER_DB_USER: requires.postgres-database.outputs.username
-          TRACKER_DB_PASSWORD: requires.postgres-database.outputs.password
-  provides: [tracker]
+  requires: [aws.ec2-instance, aws.ec2-postgres-database]
+  resources: [aws.ec2-container]
+  provides: [aws.ec2-container]
   lifecycle:
     endpoint: https://api.mitstack.dev/operators/plain/hook
     operations: [subscribe, unsubscribe, upgrade, validate]

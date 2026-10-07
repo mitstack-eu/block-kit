@@ -1,0 +1,38 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: aws-app-infra
+  name: AWS App Infrastructure
+spec:
+  version: 2.0.0
+  releaseClass: breaking
+  releaseNote: AWS App Infrastructure offers its host, data volume, registry, deploy role and address as separate resources.
+  description: >
+    Creates the app's host, data volume and image registry in the
+    consumer's own AWS account, and the app's public address.
+  params:
+    - name: instanceType
+      label: EC2 instance type
+    - name: domain
+      label: Your own domain pointed at the app
+    - name: customDomain
+      label: Extra hostname served alongside the app's address
+  requires:
+    - { type: github.repository, kind: git-repository }
+  resources:
+    - aws.s3-bucket
+    - aws.vpc
+    - aws.security-group
+    - aws.ec2-instance
+    - aws.ebs-volume
+    - aws.ecr-repository
+    - { name: ecr-push-role, type: aws.iam-role }
+    - { name: deploy-role, type: aws.iam-role }
+    - aws.egress-proxy
+    - aws.ssm-association
+    - aws.route53-record
+  provides: [aws.ec2-instance, aws.ebs-volume, aws.ecr-repository, deploy-role, aws.route53-record]
+  lifecycle:
+    endpoint: https://api.mitstack.dev/operators/aws-app-infra/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1

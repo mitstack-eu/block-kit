@@ -235,6 +235,48 @@ func TestResponseMarshal_ResourcesRoundTripByName(t *testing.T) {
 	}
 }
 
+// A validate names the declared resources its upgrade would replace under
+// "replaces", and an observe of a block-level resource reports the type it
+// observed it as beside its identity.
+func TestDecodeResponse_ReadsReplacesAndTheTypeAnObserveReports(t *testing.T) {
+	raw := `{"outputs": null, "replaces": ["aws.ebs-volume", "deploy-role"], "resources": {` +
+		`"aws.ebs-volume": {"observe": {"state": "present", "type": "aws.ebs-volume", "identity": {"volumeId": "vol-0abc"}}}}}`
+	got, err := contract.DecodeResponse([]byte(raw))
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if want := []string{"aws.ebs-volume", "deploy-role"}; !reflect.DeepEqual(got.Replaces, want) {
+		t.Errorf("Replaces = %q, want %q", got.Replaces, want)
+	}
+	want := contract.CallOutcome{State: contract.Present, Type: "aws.ebs-volume", Identity: map[string]string{"volumeId": "vol-0abc"}}
+	if o := got.Resources["aws.ebs-volume"].Observe; o == nil || !reflect.DeepEqual(*o, want) {
+		t.Errorf("aws.ebs-volume observe = %+v, want %+v", o, want)
+	}
+
+	out, err := json.Marshal(contract.Response{Pending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "replaces") {
+		t.Errorf("json.Marshal = %s, want no replaces key on a response naming no replacement", out)
+	}
+}
+
+func TestResponseSchema_DeclaresReplacesAsAListOfResourceNames(t *testing.T) {
+	var doc map[string]any
+	if err := json.Unmarshal(contract.ResponseSchema, &doc); err != nil {
+		t.Fatalf("contract.ResponseSchema is not valid JSON: %v", err)
+	}
+	props := schemaObject(t, doc, "", "properties")
+	replaces, ok := props["replaces"].(map[string]any)
+	if !ok || !hasType(replaces, "array") {
+		t.Fatalf("properties.replaces = %v, want an array", props["replaces"])
+	}
+	if items := schemaObject(t, replaces, "properties.replaces", "items"); !hasType(items, "string") {
+		t.Errorf("properties.replaces items = %v, want strings", items)
+	}
+}
+
 // schemaObject reads key from a decoded JSON Schema node as an object.
 func schemaObject(t *testing.T, node map[string]any, path, key string) map[string]any {
 	t.Helper()

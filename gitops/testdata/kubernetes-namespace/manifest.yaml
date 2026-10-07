@@ -9,13 +9,10 @@ spec:
     Places the app's resources in a namespace of their own on a Kubernetes
     cluster, with the service account the app's workloads run as, by
     committing their manifests to the cluster's GitOps repository.
-  requires:
-    - kind: kubernetes-cluster
+  requires: [hetzner.k3s-cluster]
   resources:
     - name: app-namespace
       type: kubernetes.namespace
-      on: requires.kubernetes-cluster
-      inputs: { cluster: requires.kubernetes-cluster }
   provides: [app-namespace]
   lifecycle:
     endpoint: https://api.mitstack.dev/operators/gitops-app-namespace/hook

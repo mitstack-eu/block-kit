@@ -45,7 +45,6 @@ spec:
       type: aws.vpc
     - name: instance
       type: aws.ec2-instance
-      inputs: { network: resources.network }
   lifecycle:
     endpoint: https://two-resources.example/hook
     operations: [subscribe, unsubscribe, upgrade, validate]
