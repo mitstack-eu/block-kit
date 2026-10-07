@@ -1,28 +1,31 @@
 {
   "$defs": {
-    "inputValue": {
-      "anyOf": [
+    "typeId": {
+      "description": "A resource type id, <capability>.<name> in lowercase kebab case.",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*\\.[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "type": "string"
+    },
+    "typeIds": {
+      "description": "One type id, or a list of the type ids the entry may be met or created by.",
+      "oneOf": [
         {
-          "type": [
-            "string",
-            "number",
-            "boolean"
-          ]
+          "$ref": "#/$defs/typeId"
         },
         {
-          "additionalProperties": {
-            "$ref": "#/$defs/inputValue"
+          "items": {
+            "$ref": "#/$defs/typeId"
           },
-          "type": "object"
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
         }
-      ],
-      "description": "A resource input: a binding or a literal, or an object of named inputs."
+      ]
     }
   },
   "$id": "https://mitstack.dev/schemas/block/manifest.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A block manifest under mitstack/v1beta: its params, its requirements by kind, the resources it creates in creation order, the resources it provides, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice and a provides entry that names no resource.",
+  "description": "A block manifest under mitstack/v1beta: its params, its requirements by exact type, the resources it creates by exact type, the resources it provides, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice, a requirement reference used twice, an entry listing several types without a name, and a provides entry that names no resource.",
   "properties": {
     "apiVersion": {
       "const": "mitstack/v1beta",
@@ -206,66 +209,58 @@
         },
         "requires": {
           "items": {
-            "additionalProperties": false,
-            "properties": {
-              "in": {
-                "oneOf": [
-                  {
+            "description": "A requirement: a type id, or an object of its type, its name and many.",
+            "oneOf": [
+              {
+                "$ref": "#/$defs/typeId"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "many": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "minLength": 1,
                     "type": "string"
                   },
-                  {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
+                  "type": {
+                    "$ref": "#/$defs/typeIds"
                   }
-                ]
-              },
-              "kind": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "many": {
-                "type": "boolean"
-              },
-              "name": {
-                "type": "string"
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
               }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
+            ]
           },
           "type": "array"
         },
         "resources": {
           "items": {
-            "additionalProperties": false,
-            "properties": {
-              "inputs": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/inputValue"
+            "description": "A resource the block creates: a type id, or an object of its type and its name.",
+            "oneOf": [
+              {
+                "$ref": "#/$defs/typeId"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "$ref": "#/$defs/typeIds"
+                  }
                 },
+                "required": [
+                  "type"
+                ],
                 "type": "object"
-              },
-              "name": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "on": {
-                "type": "string"
-              },
-              "type": {
-                "minLength": 1,
-                "type": "string"
               }
-            },
-            "required": [
-              "name",
-              "type"
-            ],
-            "type": "object"
+            ]
           },
           "minItems": 1,
           "type": "array"

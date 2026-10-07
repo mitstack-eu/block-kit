@@ -84,6 +84,43 @@ test fails when the committed file differs from what the types generate.
 Regenerate it with
 `go run ./cmd/manifest-schema > contract/manifest.schema.json`.
 
+Under `mitstack/v1beta` a block names what it requires and what it creates by
+exact type, as ADR 0085 sets. Each `requires` or `resources` entry is a type
+id, or a mapping of `type`, `name` and, for a requirement, `many`. The `type`
+is one id or a list of ids:
+
+```yaml
+requires:
+  - github.repository
+  - { name: host, type: [aws.ec2-instance, hetzner.server] }
+resources:
+  - aws.vpc
+  - { name: deploy-role, type: aws.iam-role }
+  - { name: app-container, type: [aws.ec2-container, hetzner.server-container] }
+provides: [app-container, deploy-role]
+```
+
+An unnamed resource is named by its type id, and an unnamed requirement is
+referenced by it. An entry that lists more than one type needs a name, and
+two entries that would share a name or a reference are refused. The parser
+refuses the retired `kind`, `in`, `on` and `inputs` keys, naming the key and
+the entry. It judges the type id grammar only, so it needs no type snapshot.
+
+Whether the platform holds a type is a question for the type snapshot the
+platform serves at `GET /v1/resource-types/snapshots/{version}`.
+`contract.ParseTypeSnapshot` reads one, and `contract.CheckManifestTypes`
+refuses an entry listing a type the snapshot does not hold.
+`contract.CheckBinding` judges a binding a block's code reads, such as
+`requires.host.outputs.hostId` or `resources.deploy-role.outputs.roleArn`. It
+refuses a reference the block lacks, and an output that any listed type does
+not declare in the snapshot. Neither reads the kit's own catalogue.
+
+`ManifestRequirement.Types` and `ManifestResource.Types` hold the listed ids,
+and `ManifestResource.Type` holds the one id of an entry that lists one.
+`ManifestRequirement.Kind` and `In`, `ManifestResource.Inputs` and `On`, and
+`contract.InputValue` are deprecated, stay empty after a parse, and go in the
+next major release.
+
 ## Importing it
 
 The module path is `github.com/mitstack-eu/operator-kit`. A block adds it the
@@ -299,7 +336,86 @@ refusal.
 ### Serving a block that declares its resources
 
 A block whose `mitstack/v1beta` manifest lists its resources under
-`spec.resources` implements `handler.DeclaredResource` once for each of them.
+`spec.resources` creates and orders them itself, through one block-level
+`handler.Resource` in `Config.Resource`. It also hands `handler.New` one
+`handler.Observer` per declared resource in `Config.Observers`, keyed by the
+names the manifest gives:
+
+```go
+type Observer interface {
+	ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error)
+}
+```
+
+An observer asks the provider what stands right now, and never answers from
+what an ensure remembered. Its `contract.ResourceRef` carries the resource's
+name, the type it was created as, the identity that addresses it when that
+is known, and the verb's `Desired`.
+
+| Verb | What the Handler does |
+|---|---|
+| subscribe, upgrade | Runs one `Ensure`, then observes each declared resource in manifest order until it reports `Present` |
+| unsubscribe | Runs one `Delete`, or `DeleteWithRequest` for a `handler.RequestDeleter`, then observes each declared resource in reverse order until it reports `Absent` |
+| validate | Observes each declared resource once, and names the resources an upgrade would replace |
+
+A block-level `Resource` that implements `handler.ResourceReporter` reports
+what its ensure created as `[]contract.CreatedResource`, and the Handler calls
+`EnsureResources` in place of `Ensure`. Each observer is handed the identity
+and type reported for its resource. When nothing was reported, it gets the
+identity and type the engine recorded under the request's
+`recordedResources`, and failing that, no identity and the one type its entry
+lists. A reported resource the manifest does not declare, or of a type its
+entry does not list, answers 400 quoting it. A `Resource` that implements
+`handler.ReplacementPlanner` names on validate the resources an upgrade would
+replace, and the answer carries them under `replaces`.
+
+The answer's `resources` map holds an `observe` entry per resource with its
+state, outputs, identity and `type`. The top-level `outputs` and
+`secretOutputs` are the union of the resources `spec.provides` names. A
+resource not present within the verb budget answers `pending:true` naming it,
+and unsubscribe answers `absent:true` only when every resource observes absent.
+A request naming one resource is served for validate alone. It observes that
+resource with the request's `resourceIdentity` and `resourceType`, and a type
+its entry does not list answers 400. A named subscribe, upgrade or
+unsubscribe answers 400. The request's `requirementTypes` say which exact type
+met each requirement, and `Desired.VerbAt` is the request's `createdAt`.
+
+`handler.New` refuses a declared resource with no observer, an observer the
+manifest does not declare, `Observers` beside `Resources`, and `Observers`
+without a `mitstack/v1beta` manifest. The trust boundary, idempotency,
+secret scrubbing, events and error classes work as for any other block.
+
+The `observe` package holds the kit's shared observers, one per type, each
+over a small API interface the operator implements. They include
+`EC2Instance`, `EgressProxy`, `S3Bucket`, `VPC`, `SecurityGroup`, `EBSVolume`,
+`ECRRepository`, `IAMRole`, `Route53Record`, `SSMAssociation`, `EC2Container`,
+`EC2PostgresDatabase`, `HetznerServer`, `HetznerPrimaryIP`, `HetznerFirewall`,
+`GitHubRepository`, `GitHubCommit`, and `NodeReported` for a resource the
+platform reaches only through the reports its node sends. `observe.AWSTagged`
+and `observe.HetznerLabelled` list everything carrying a subscription's id,
+under `observe.AWSSubscriptionTag` or `observe.HetznerSubscriptionLabel`.
+
+A block proves its guards in its own tests with `kittest.AssertBlock`. It
+takes a `kittest.Block`: the manifest, the type snapshot, the block-level
+handler, the observers, a `kittest.Provider` and the subscription. After
+subscribe, everything the provider lists under the subscription's id must
+match a declared resource by type and count. A resource the provider loses
+must then observe not present. With `Upgrade` set, a replaced resource must
+be named by `PlanReplacements`, and the problem says so when its type is
+stateful. After unsubscribe every declared resource must observe absent. A
+requirement listing more than one type runs the check once per listed type,
+with `Requirements` giving each type's outputs, and each problem names the
+type. blockverify's resources suite requires a `TestDeclaredResources` test
+that calls `kittest.AssertBlock`, and runs it.
+
+### Serving a block one handler per resource
+
+This mode is deprecated: `Config.Resources`, `handler.DeclaredResource`,
+`handler.ReportingResource`, a request running ensure or delete on one named
+resource, and `resourceInputs` go in the next major release.
+
+A block whose `mitstack/v1beta` manifest lists its resources under
+`spec.resources` may implement `handler.DeclaredResource` once for each of them.
 The interface has the same `Ensure`, `Observe` and `Delete` as
 `handler.Resource`, scoped to one resource. You hand the implementations to
 `handler.New` in `Config.Resources`, keyed by the names the manifest gives,
@@ -404,10 +520,8 @@ without a `resource`.
 
 The Handler scrubs each secret input of the named resource from the answer,
 the event it emits for the verb and every log line it writes, as it scrubs
-`secretInputs`. An input is
-secret when the manifest binds it to a param marked `secret: true`, at the
-top level or inside a mapping. It is also secret when the resource's
-catalogued type marks it secret, and then every string inside it is secret.
+`secretInputs`. An input is secret when the resource's catalogued type marks
+it secret, and then every string inside it is secret.
 
 Some declared resources can only find what they created through the inputs
 the engine recorded at subscribe and the identity their ensure stored. The
@@ -454,8 +568,8 @@ set, and nothing is driven, since the engine never sends such a request. A
 resource that implements `handler.RequestObserver` or
 `handler.RequestDeleter` is observed or deleted through it with that
 `Desired`. Each problem about a resource names it. blockverify's resources
-suite requires a `TestDeclaredResources` test that calls
-`kittest.AssertDeclaredResources`, and runs it.
+suite also accepts a `TestDeclaredResources` test that calls
+`kittest.AssertDeclaredResources`.
 
 ### Deploying a declared resource through GitOps
 
@@ -531,6 +645,14 @@ notification for the exact revision you hand them. Use them when you need the
 outcome of one particular commit, since a notification for any other revision
 leaves them pending. `Wait` polls until the deploy succeeds or fails, and a
 failed deploy is an outcome rather than an error.
+
+A block-level handler ships its whole desired state with `gitops.Deploy`. It
+takes a `gitops.BlockDeploy` holding the app, every file, the commit message,
+the request's secret values and the poll interval. It commits every file once
+through `CommitManifests` and waits on that revision, or on head when nothing
+changed. The `gitops.Deployed` it returns carries the revision, whether it
+committed, and Argo CD's verdict, so a failed sync comes back in
+`Deployed.Outcome` for the block to refuse.
 
 Its delete removes the paths the record names, without rendering, and falls
 back to the rendered paths when there is no record. Paths already gone commit

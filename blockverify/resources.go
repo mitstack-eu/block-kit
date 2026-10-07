@@ -12,17 +12,17 @@ import (
 )
 
 const (
-	resourcesTestNeedle  = "func TestDeclaredResources("
-	resourcesCheckNeedle = "kittest.AssertDeclaredResources("
+	resourcesTestNeedle       = "func TestDeclaredResources("
+	resourcesCheckNeedle      = "kittest.AssertDeclaredResources("
+	resourcesBlockCheckNeedle = "kittest.AssertBlock("
 )
 
 // resourcesSuite drives each resource a mitstack/v1beta manifest declares.
 // The target's test files must define TestDeclaredResources and call
-// kittest.AssertDeclaredResources from it, and the suite then runs that
-// test: it passes only when each declared resource survives ensure twice,
-// observe, delete and the absence proof, and each supplied resource still
-// stands afterwards. A failure's detail is the first problem naming a
-// resource. The manifest is read through contract.ParseManifest: a manifest
+// kittest.AssertBlock or kittest.AssertDeclaredResources from it, and the
+// suite then runs that test: it passes only when the block holds every
+// guard the check it calls proves. A failure's detail is the first problem
+// naming a resource. The manifest is read through contract.ParseManifest: a manifest
 // that is not mitstack/v1beta declares no resources, so the suite is
 // skipped, as it is when there is no manifest.yaml, which trust-plumbing
 // already fails; a manifest the parser refuses fails with its reason.
@@ -46,16 +46,22 @@ func resourcesSuite(target string) SuiteResult {
 	tests := concatGoTestFiles(target)
 	if !strings.Contains(tests, resourcesTestNeedle) {
 		return SuiteResult{name, "fail", fmt.Sprintf(
-			"%s declares its resources but has no TestDeclaredResources test to drive them through kittest.AssertDeclaredResources", target)}
+			"%s declares its resources but has no TestDeclaredResources test to drive them through kittest.AssertBlock", target)}
 	}
-	if !strings.Contains(tests, resourcesCheckNeedle) {
+	block := strings.Contains(tests, resourcesBlockCheckNeedle)
+	if !block && !strings.Contains(tests, resourcesCheckNeedle) {
 		return SuiteResult{name, "fail", fmt.Sprintf(
-			"%s defines TestDeclaredResources but never calls kittest.AssertDeclaredResources, so no declared resource is driven", target)}
+			"%s defines TestDeclaredResources but never calls kittest.AssertBlock or kittest.AssertDeclaredResources, so no declared resource is driven", target)}
 	}
 
 	ok, output := runGoTest(target, "TestDeclaredResources")
 	if !ok {
 		return SuiteResult{name, "fail", resourceProblemLine(output)}
+	}
+	if block {
+		return SuiteResult{name, "pass", fmt.Sprintf(
+			"TestDeclaredResources proves the block's %d declared resources match what carries the subscription's id, "+
+				"observe the provider, name their replacements and observe absent after unsubscribe", len(m.Block.Spec.Resources))}
 	}
 	return SuiteResult{name, "pass", fmt.Sprintf(
 		"TestDeclaredResources proves each of the %d declared resources survives ensure twice, observe, delete and the absence proof, "+

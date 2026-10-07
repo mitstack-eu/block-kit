@@ -19,6 +19,15 @@ var errNilResource = errors.New("handler: Config.Resource is required, or Config
 // other.
 var errResourceAndResources = errors.New("handler: Config.Resource and Config.Resources are both set; a block sets Resource, or Resources when its manifest declares its resources, never both")
 
+// errObserversAndResources is returned by New when Config.Observers and
+// Config.Resources are both set, since a block observes its resources
+// through one or the other.
+var errObserversAndResources = errors.New("handler: Config.Observers and Config.Resources are both set; a block served over Config.Resource observes each declared resource through Config.Observers, and a DeclaredResource observes itself")
+
+// errObserversWithoutManifest is returned by New when Config.Observers is
+// set but the manifest declares no resources to observe.
+var errObserversWithoutManifest = fmt.Errorf("handler: Config.Observers is set but Config.Manifest is not a %s manifest; an observer can only serve a resource the manifest declares under spec.resources", contract.ManifestAPIVersion)
+
 // errEmptyJWKSURL is returned by New when Config.JWKSURL is empty.
 // webhook.AuthenticateHook rejects every request on an empty JWKSURL before
 // it ever consults Config.PublicKey, so PublicKey is never a substitute for
@@ -33,16 +42,17 @@ var knownHooks = contract.LifecycleHookPoints()
 // manifestDeclarations is what New reads of a block's manifest: its
 // apiVersion, the hook points spec.lifecycle.hooks declares,
 // spec.lifecycle.retainsOnUnsubscribe, the resources spec.resources
-// declares with their types and inputs, and the names of the params
-// spec.params marks secret. A mitstack/v1beta lifecycle has neither hooks
-// nor retainsOnUnsubscribe, so a v1beta manifest declares no hook and does
-// not retain its resource; only a v1beta manifest declares resources and
-// params.
+// declares with their types, the resources spec.provides offers, and the
+// names of the params spec.params marks secret. A mitstack/v1beta lifecycle
+// has neither hooks nor retainsOnUnsubscribe, so a v1beta manifest declares
+// no hook and does not retain its resource; only a v1beta manifest declares
+// resources and params.
 type manifestDeclarations struct {
 	apiVersion           string
 	hooks                []string
 	retainsOnUnsubscribe bool
 	resources            []contract.ManifestResource
+	provided             map[string]bool
 	secretParams         map[string]bool
 }
 
@@ -65,9 +75,14 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 				secretParams[p.Name] = true
 			}
 		}
+		provided := make(map[string]bool, len(m.Block.Spec.Provides))
+		for _, name := range m.Block.Spec.Provides {
+			provided[name] = true
+		}
 		return manifestDeclarations{
 			apiVersion:   m.APIVersion,
 			resources:    m.Block.Spec.Resources,
+			provided:     provided,
 			secretParams: secretParams,
 		}, nil
 	}
@@ -79,11 +94,52 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 }
 
 // namedResource is one declared resource, the name the manifest gives it,
-// and its manifest declaration, which holds its type and inputs.
+// and its manifest declaration, which holds its types. A block-level
+// block's resource has an observer and no DeclaredResource.
 type namedResource struct {
 	name        string
 	resource    DeclaredResource
+	observer    Observer
 	declaration contract.ManifestResource
+}
+
+// observedResources pairs each resource the manifest's spec.resources
+// declares with its observer in Config.Observers, in creation order. It
+// refuses a hook, a declared resource with no observer, and an observer under
+// a name the manifest does not declare, quoting the name. A
+// mitstack/v1beta manifest declares no hook, so validateHooks refuses any
+// registered one.
+func observedResources(cfg Config, declared manifestDeclarations) ([]namedResource, error) {
+	if err := validateHooks(cfg, declared.hooks); err != nil {
+		return nil, err
+	}
+	declaredSet := make(map[string]bool, len(declared.resources))
+	out := make([]namedResource, 0, len(declared.resources))
+	for _, decl := range declared.resources {
+		declaredSet[decl.Name] = true
+		o := cfg.Observers[decl.Name]
+		if o == nil {
+			return nil, fmt.Errorf("handler: the manifest declares resource %q, but Config.Observers has no observe for it; every declared resource is observed through its own Observer", decl.Name)
+		}
+		out = append(out, namedResource{name: decl.Name, observer: o, declaration: decl})
+	}
+	if undeclared := undeclaredKeys(cfg.Observers, declaredSet); undeclared != "" {
+		return nil, fmt.Errorf("handler: Config.Observers has an observer for %s, which the manifest's spec.resources does not declare", undeclared)
+	}
+	return out, nil
+}
+
+// undeclaredKeys quotes the keys of m that declared does not hold, sorted
+// and joined, or returns "" when there are none.
+func undeclaredKeys[V any](m map[string]V, declared map[string]bool) string {
+	var undeclared []string
+	for name := range m {
+		if !declared[name] {
+			undeclared = append(undeclared, strconv.Quote(name))
+		}
+	}
+	sort.Strings(undeclared)
+	return strings.Join(undeclared, ", ")
 }
 
 // declaredResources pairs each resource the manifest's spec.resources
@@ -115,16 +171,8 @@ func declaredResources(cfg Config, declared manifestDeclarations) ([]namedResour
 		out = append(out, namedResource{name: decl.Name, resource: r, declaration: decl})
 	}
 
-	var undeclared []string
-	for name := range cfg.Resources {
-		if !declaredSet[name] {
-			undeclared = append(undeclared, strconv.Quote(name))
-		}
-	}
-	if len(undeclared) > 0 {
-		sort.Strings(undeclared)
-		return nil, fmt.Errorf("handler: Config.Resources has a handler for %s, which the manifest's spec.resources does not declare",
-			strings.Join(undeclared, ", "))
+	if undeclared := undeclaredKeys(cfg.Resources, declaredSet); undeclared != "" {
+		return nil, fmt.Errorf("handler: Config.Resources has a handler for %s, which the manifest's spec.resources does not declare", undeclared)
 	}
 	return out, nil
 }

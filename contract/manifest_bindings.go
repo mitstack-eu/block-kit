@@ -2,135 +2,82 @@ package contract
 
 import (
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 )
 
-// checkBindings judges every resources.<name> and requires.<name> binding in
-// each resource's inputs, nested mappings included, walking resources in
-// manifest order and inputs in name order. A binding must name a resource or
-// requirement of the block, a requirement being named by its Reference, and
-// through .outputs.<output> an output the resource's type publishes or the
-// requirement's kind names. A top-level input the resource's type declares
-// as accepting a resource or an output of one kind must be bound to that
-// kind. A type or kind the catalogue does not
-// hold leaves what depends on it unjudged. The error names the resource and
-// the input.
-func checkBindings(spec ManifestSpec) error {
-	b := blockBindings{
-		resources: make(map[string]ManifestResource, len(spec.Resources)),
-		requires:  make(map[string]ManifestRequirement, len(spec.Requires)),
-	}
-	for _, r := range spec.Resources {
-		b.resources[r.Name] = r
-	}
-	for _, q := range spec.Requires {
-		b.requires[q.Reference()] = q
+// CheckManifestTypes refuses a requirement or resource of spec listing a
+// type snap does not hold, naming the entry's path and the type id.
+func CheckManifestTypes(spec ManifestSpec, snap TypeSnapshot) error {
+	for i, q := range spec.Requires {
+		if err := checkTypesHeld(fmt.Sprintf("spec.requires[%d]", i), q.Types, snap); err != nil {
+			return err
+		}
 	}
 	for i, r := range spec.Resources {
-		// A type outside the catalogue declares no input, so none is judged
-		// by kind.
-		t, _ := LookupResourceType(r.Type)
-		accepts := make(map[string]string, len(t.Inputs))
-		for _, in := range t.Inputs {
-			accepts[in.Name] = in.Accepts
-		}
-		err := walkInputs(r.Inputs, "", func(path, binding string, top bool) error {
-			kind, err := b.resolve(binding)
-			if err != nil || kind == "" || !top {
-				return err
-			}
-			return checkAcceptedKind(t.ID, accepts[path], binding, kind)
-		})
-		if err != nil {
-			return fmt.Errorf("spec.resources[%d] %q: %w", i, r.Name, err)
+		if err := checkTypesHeld(fmt.Sprintf("spec.resources[%d]", i), r.Types, snap); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// blockBindings holds what a binding can name: the block's resources by
-// name, and its requirements by the name a binding uses for them.
-type blockBindings struct {
-	resources map[string]ManifestResource
-	requires  map[string]ManifestRequirement
-}
-
-// walkInputs calls judge for each scalar input under inputs, in name order,
-// with its path (its name at the top level, prefix.name in a nested mapping)
-// and whether it is a top-level input. A refusal names the input's path.
-func walkInputs(inputs map[string]InputValue, prefix string, judge func(path, binding string, top bool) error) error {
-	for _, name := range slices.Sorted(maps.Keys(inputs)) {
-		path := prefix + name
-		v := inputs[name]
-		if v.Map != nil {
-			if err := walkInputs(v.Map, path+".", judge); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := judge(path, v.Scalar, prefix == ""); err != nil {
-			return fmt.Errorf("input %q: %w", path, err)
+func checkTypesHeld(path string, types []string, snap TypeSnapshot) error {
+	for _, id := range types {
+		if _, ok := snap.Lookup(id); !ok {
+			return fmt.Errorf("%s: type %s is not in the platform's type snapshot version %d", path, id, snap.Version)
 		}
 	}
 	return nil
 }
 
-// resolve judges one binding and returns the kind of the resource or
-// requirement it is bound to. It returns "" when the binding names neither,
-// takes a part other than the whole or an output, or is bound to a type or
-// kind the catalogue does not hold.
-func (b blockBindings) resolve(binding string) (string, error) {
-	source, rest, ok := strings.Cut(binding, ".")
-	if !ok || (source != "resources" && source != "requires") {
-		return "", nil
+// bindingOutputs separates a binding's reference from its output. A
+// reference and an output may each hold dots, so the first ".outputs."
+// splits them.
+const bindingOutputs = ".outputs."
+
+// CheckBinding judges one binding a block's code reads,
+// requires.<reference>.outputs.<output> or resources.<name>.outputs.<output>,
+// against spec and snap. It refuses a reference no requirement of spec has,
+// a requirement being named by its Reference, a name no resource of spec
+// has, and an output any type the requirement or resource lists does not
+// declare in snap, naming the type and the output.
+func CheckBinding(spec ManifestSpec, snap TypeSnapshot, binding string) error {
+	source, rest, _ := strings.Cut(binding, ".")
+	ref, output, ok := strings.Cut(rest, bindingOutputs)
+	if !ok || ref == "" || output == "" || (source != "requires" && source != "resources") {
+		return fmt.Errorf("binding %q is not requires.<reference>.outputs.<output> or resources.<name>.outputs.<output>", binding)
 	}
-	name, part, _ := strings.Cut(rest, ".")
-	// An output name may hold a dot, as cloud.region does, so it is all
-	// that follows outputs.
-	output, isOutput := strings.CutPrefix(part, "outputs.")
-	takesKind := part == "" || isOutput
-	if source == "resources" {
-		r, ok := b.resources[name]
+	var types []string
+	if source == "requires" {
+		found := false
+		for _, q := range spec.Requires {
+			if q.Reference() == ref {
+				types, found = q.Types, true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("binding %s: %q names no requirement in spec.requires, where a requirement is named by its name when set and by its type otherwise", binding, ref)
+		}
+	} else {
+		found := false
+		for _, r := range spec.Resources {
+			if r.Name == ref {
+				types, found = r.Types, true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("binding %s: %q names no resource in spec.resources", binding, ref)
+		}
+	}
+	for _, id := range types {
+		t, ok := snap.Lookup(id)
 		if !ok {
-			return "", fmt.Errorf("%s binds %q, which names no resource in spec.resources", binding, name)
+			return fmt.Errorf("binding %s: type %s is not in the platform's type snapshot version %d", binding, id, snap.Version)
 		}
-		t, ok := LookupResourceType(r.Type)
-		if !ok || !takesKind {
-			return "", nil
-		}
-		if isOutput && !slices.Contains(t.Outputs, output) {
-			return "", fmt.Errorf("%s binds output %q, which type %s does not publish", binding, output, t.ID)
-		}
-		return t.Kind, nil
-	}
-	q, ok := b.requires[name]
-	if !ok {
-		return "", fmt.Errorf("%s binds %q, which names no requirement in spec.requires, where a requirement is named by its name when set and by its kind otherwise", binding, name)
-	}
-	k, ok := LookupKind(q.Kind)
-	if !ok || !takesKind {
-		return "", nil
-	}
-	if isOutput && !k.names(output) {
-		return "", fmt.Errorf("%s binds output %q, which kind %s does not name", binding, output, k.ID)
-	}
-	return k.ID, nil
-}
-
-// checkAcceptedKind refuses a binding to kind where the input's accepts form,
-// "resource:<kind>" or "output:<kind>/<output>", names another kind. Type
-// typeID declares the input. "value", or "" for an input the type does not
-// declare, accepts any kind.
-func checkAcceptedKind(typeID, accepts, binding, kind string) error {
-	if want, ok := strings.CutPrefix(accepts, "resource:"); ok && want != kind {
-		return fmt.Errorf("type %s takes a resource of kind %s here, but %s is of kind %s", typeID, want, binding, kind)
-	}
-	if rest, ok := strings.CutPrefix(accepts, "output:"); ok {
-		want, output, _ := strings.Cut(rest, "/")
-		if want != kind {
-			return fmt.Errorf("type %s takes output %s of a %s here, but %s is bound to a %s", typeID, output, want, binding, kind)
+		if _, ok := t.Output(output); !ok {
+			return fmt.Errorf("binding %s: type %s does not declare output %q", binding, id, output)
 		}
 	}
 	return nil
