@@ -9,11 +9,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// The operator rule is that a secret an operator receives may go to the cloud
-// it drives, but must never appear in what it hands back. The Refresher holds
-// exactly the kind of value that rule is about, so the guarantee is pinned
-// here once rather than trusted to every provider that embeds it.
-
 const leakSecret = "PROVIDER-CREDENTIAL-MATERIAL-THAT-MUST-NEVER-SURFACE"
 
 type secretCred struct {
@@ -23,7 +18,6 @@ type secretCred struct {
 func TestNoSecretLeak_RefresherErrorCarriesNoCredential(t *testing.T) {
 	clock := time.Now()
 	r := credrefresh.New(func(context.Context) (secretCred, time.Time, error) {
-		// Already dead on arrival: forces the fail-closed path.
 		return secretCred{Token: leakSecret}, clock.Add(-time.Hour), nil
 	})
 	r.Now = func() time.Time { return clock }
