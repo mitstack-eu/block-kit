@@ -1,25 +1,7 @@
 package kittest_test
 
-// block_test.go pins kittest.CheckBlock, which proves the four guards ADR
-// 0085 sets for a block served through one block-level handler with an
-// observer per declared resource:
-//
-//   - after subscribe, everything carrying the subscription's tag matches a
-//     declared resource by type and count;
-//   - after unsubscribe, every declared resource observes absent;
-//   - a resource the provider loses observes not present, so observe asks
-//     the provider;
-//   - an upgrade that changes a resource's identity is named by
-//     PlanReplacements, a stateful type's especially.
-//
-// No guard is skipped silently: a resource with no identity, or a stateful
-// type with no Upgrade to prove its replacement, is a problem. A provided
-// resource observed present must carry every output its type marks
-// required in the snapshot.
-//
-// A requirement listing types runs the whole check once per listed type,
-// and each problem names that type. Every problem names its resource as
-// resource "<name>".
+// Each fakeBlock misbehaviour breaks one of ADR 0085's guards, and every
+// problem names its resource as resource "<name>".
 
 import (
 	"context"
@@ -84,8 +66,6 @@ func typeSnapshot(t *testing.T) contract.TypeSnapshot {
 	return snap
 }
 
-// fakeProvider is the provider's own record: each object by id, with its
-// type and the subscription it is tagged with.
 type fakeProvider struct {
 	mu    sync.Mutex
 	items map[string]observe.Tagged
@@ -136,19 +116,13 @@ func (p *fakeProvider) Lose(_ context.Context, r contract.CreatedResource) error
 
 var _ kittest.Provider = (*fakeProvider)(nil)
 
-// fakeBlock is a block-level handler over the fake provider. It creates one
-// object per declared resource, tagged with the subscription, and replaces
-// its volume when the volumeSize param changes. Each misbehaviour field
-// breaks one guard.
+// fakeBlock replaces its volume when the volumeSize param changes.
 type fakeBlock struct {
-	p       *fakeProvider
-	mu      sync.Mutex
-	seq     int
-	created map[string]contract.CreatedResource
-	size    string
-
-	// container makes it the container block, creating app-container as
-	// the container type that runs on the host type that met requires.host.
+	p         *fakeProvider
+	mu        sync.Mutex
+	seq       int
+	created   map[string]contract.CreatedResource
+	size      string
 	container bool
 
 	extraTagged     bool
@@ -246,8 +220,6 @@ var (
 	_ handler.RequestDeleter     = (*fakeBlock)(nil)
 )
 
-// providerObserver asks the provider for the object the identity names,
-// and reports the outputs a host offers, less drop.
 type providerObserver struct {
 	p    *fakeProvider
 	drop string
@@ -273,8 +245,7 @@ func (o providerObserver) outputs(typ, id string) map[string]string {
 	return out
 }
 
-// byTypeObserver finds a resource by its type among what the provider holds
-// for the subscription, so it needs no identity.
+// byTypeObserver needs no identity, so a block reporting none still observes present.
 type byTypeObserver struct{ p *fakeProvider }
 
 func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
@@ -287,8 +258,7 @@ func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.Resource
 	return contract.Observation{State: contract.Absent}, nil
 }
 
-// silentBlock is a fakeBlock that reports nothing it created: it is served
-// through Ensure alone.
+// silentBlock hides EnsureResources, so it reports no identity.
 type silentBlock struct{ b *fakeBlock }
 
 func (s silentBlock) Ensure(ctx context.Context, d contract.Desired) error { return s.b.Ensure(ctx, d) }
@@ -299,8 +269,7 @@ func (s silentBlock) Delete(ctx context.Context, id contract.Identity) error {
 	return s.b.Delete(ctx, id)
 }
 
-// rememberingObserver answers from what the block remembers creating,
-// never asking the provider.
+// rememberingObserver never asks the provider.
 type rememberingObserver struct {
 	b    *fakeBlock
 	name string
@@ -322,8 +291,6 @@ func blockDesired(volumeSize string) contract.Desired {
 	}
 }
 
-// hostBlock returns a converging host block and the check over it, with an
-// upgrade that grows the volume.
 func hostBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 	t.Helper()
 	p := newFakeProvider()
@@ -350,7 +317,6 @@ func wantNoProblems(t *testing.T, problems []string) {
 	}
 }
 
-// wantProblemNaming fails unless one problem carries every one of wants.
 func wantProblemNaming(t *testing.T, problems []string, wants ...string) {
 	t.Helper()
 	for _, p := range problems {
@@ -396,8 +362,6 @@ func TestCheckBlock_FailsAValidateThatHidesTheReplacementOfAStatefulResource(t *
 	wantProblemNaming(t, kittest.CheckBlock(in), `resource "aws.ebs-volume"`, "stateful")
 }
 
-// containerBlock returns the container block, whose requirement lists both
-// host types, and the check over it.
 func containerBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 	t.Helper()
 	p := newFakeProvider()
@@ -438,8 +402,7 @@ func TestCheckBlock_NamesTheListedTypeWhoseRunFails(t *testing.T) {
 	}
 }
 
-// AssertBlock fails the test with every problem CheckBlock finds. It may
-// also log which guards ran, which blockverify reports.
+// AssertBlock may also log which guards ran, so only the problems are matched.
 func TestAssertBlock_FailsTheTestWithEveryProblem(t *testing.T) {
 	b, in := hostBlock(t)
 	b.leaveOnDelete = "aws.ebs-volume"
@@ -460,11 +423,6 @@ func TestAssertBlock_FailsTheTestWithEveryProblem(t *testing.T) {
 	}
 }
 
-// --- no guard is skipped silently ------------------------------------------------
-
-// A block that reports no identity leaves the lost-resource probe nothing
-// to lose, so the check says the block must report each one rather than
-// passing the guard untried.
 func TestCheckBlock_FailsADeclaredResourceWithNoIdentityAfterSubscribe(t *testing.T) {
 	b, in := hostBlock(t)
 	in.Handler = silentBlock{b: b}
@@ -478,26 +436,18 @@ func TestCheckBlock_FailsADeclaredResourceWithNoIdentityAfterSubscribe(t *testin
 	wantProblemNaming(t, problems, `resource "aws.ebs-volume"`, "identity")
 }
 
-// aws.ebs-volume is stateful in the snapshot, so its replacement guard
-// must run, and it cannot without an upgrade to run.
 func TestCheckBlock_FailsAStatefulResourceWithNoUpgradeToProveItsReplacement(t *testing.T) {
 	_, in := hostBlock(t)
 	in.Upgrade = nil
 	wantProblemNaming(t, kittest.CheckBlock(in), `resource "aws.ebs-volume"`, "Upgrade")
 }
 
-// --- provided outputs ------------------------------------------------------------------
-
-// The platform refuses a provided resource missing an output its type marks
-// required, so the check does too, naming the resource and the output.
 func TestCheckBlock_FailsAProvidedResourceMissingARequiredOutput(t *testing.T) {
 	b, in := hostBlock(t)
 	in.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "hostId"}
 	wantProblemNaming(t, kittest.CheckBlock(in), `resource "aws.ec2-instance"`, "hostId")
 }
 
-// An optional output may be missing, and a resource the block keeps to
-// itself is held to no output.
 func TestCheckBlock_PassesAProvidedResourceMissingOnlyAnOptionalOutput(t *testing.T) {
 	b, in := hostBlock(t)
 	in.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "publicIp"}

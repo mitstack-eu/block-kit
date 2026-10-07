@@ -3,7 +3,7 @@ package contract_test
 // type_snapshot_test.go pins contract.ParseTypeSnapshot, which reads the
 // versioned snapshot of resource types the platform serves at
 // GET /v1/resource-types/snapshots/{version}, the shape the fixture under
-// testdata holds: a snapshot of the platform's 41 type files. A snapshot is
+// testdata holds: a snapshot of the platform's 51 type files. A snapshot is
 // refused when it is not JSON, holds no type, or holds one type id twice.
 
 import (
@@ -19,8 +19,8 @@ func TestParseTypeSnapshot_ReadsThePlatformsSnapshot(t *testing.T) {
 	if snap.Version != 1 {
 		t.Errorf("Version = %d, want 1", snap.Version)
 	}
-	if len(snap.Types) != 41 {
-		t.Errorf("Types holds %d types, want the platform's 41", len(snap.Types))
+	if len(snap.Types) != 51 {
+		t.Errorf("Types holds %d types, want the platform's 51", len(snap.Types))
 	}
 
 	instance, ok := snap.Lookup("aws.ec2-instance")

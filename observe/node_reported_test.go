@@ -30,12 +30,16 @@ var _ handler.Observer = observe.NodeReported{}
 
 type fakeReports struct {
 	reports []observe.NodeReport
+	bySub   map[string][]observe.NodeReport
 	asked   []string
 	err     error
 }
 
 func (f *fakeReports) NodeReports(_ context.Context, _ contract.Desired, subscriptionID string) ([]observe.NodeReport, error) {
 	f.asked = append(f.asked, subscriptionID)
+	if f.bySub != nil {
+		return f.bySub[subscriptionID], f.err
+	}
 	return f.reports, f.err
 }
 
@@ -137,6 +141,51 @@ func TestNodeReported_ClaimsAbsenceOnlyFromACompleteReportMadeAfterTheVerb(t *te
 			wantObservation(t, got, err, tc.want, nil, tc.detail)
 			if len(api.asked) != 1 || api.asked[0] != "sub-1" {
 				t.Errorf("asked for the reports of %q, want sub-1 once", api.asked)
+			}
+		})
+	}
+}
+
+// Node reports are stored under the cluster's own subscription, whose nodes
+// send them, while a namespace carries the label of the subscription that
+// created it, here sub-1.
+func TestNodeReported_ReadsTheReportsOfTheClusterSubscriptionTheIdentityNames(t *testing.T) {
+	complete := func(items ...map[string]any) nodeReport {
+		return nodeReport{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: append([]map[string]any{}, items...)}
+	}
+	nullNamespace := map[string]any{"namespace": nil, "kind": "Namespace", "name": "app-alpha", "subscription": "sub-1"}
+	noNamespace := map[string]any{"kind": "Namespace", "name": "app-alpha", "subscription": "sub-1"}
+	clusterOwn := map[string]any{"kind": "Namespace", "name": "app-alpha", "subscription": "sub-cluster"}
+	cases := []struct {
+		label     string
+		cluster   string
+		bySub     map[string]nodeReport
+		wantAsked string
+		want      contract.State
+	}{
+		{"another block's namespace with a null namespace", "sub-cluster",
+			map[string]nodeReport{"sub-cluster": complete(nullNamespace), "sub-1": complete()}, "sub-cluster", contract.Present},
+		{"another block's namespace with no namespace key", "sub-cluster",
+			map[string]nodeReport{"sub-cluster": complete(noNamespace), "sub-1": complete()}, "sub-cluster", contract.Present},
+		{"a namespace labelled with the cluster's own subscription", "sub-cluster",
+			map[string]nodeReport{"sub-cluster": complete(clusterOwn), "sub-1": complete(noNamespace)}, "sub-cluster", contract.Absent},
+		{"no cluster subscription named, so the observing subscription's own", "",
+			map[string]nodeReport{"sub-cluster": complete(), "sub-1": complete(noNamespace)}, "sub-1", contract.Present},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			api := &fakeReports{bySub: map[string][]observe.NodeReport{}}
+			for sub, r := range tc.bySub {
+				api.bySub[sub] = []observe.NodeReport{r.build(t)}
+			}
+			ref := namespaceRef()
+			if tc.cluster != "" {
+				ref.Identity["clusterSubscription"] = tc.cluster
+			}
+			got, err := observe.NodeReported{API: api}.ObserveResource(context.Background(), ref)
+			wantObservation(t, got, err, tc.want, nil, "")
+			if len(api.asked) != 1 || api.asked[0] != tc.wantAsked {
+				t.Errorf("asked for the reports of %q, want %s once", api.asked, tc.wantAsked)
 			}
 		})
 	}

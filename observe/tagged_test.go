@@ -95,6 +95,7 @@ func TestHetznerLabelled_ListsEachLabelledObjectAsItsType(t *testing.T) {
 		{Kind: "volume", ID: "55"},
 		{Kind: "ssh_key", ID: "8"},
 		{Kind: "network", ID: "77"},
+		{Kind: "load_balancer", ID: "31"},
 	}}
 	got, err := observe.HetznerLabelled{API: api}.ListTagged(context.Background(), contract.Desired{}, "sub-1")
 	if err != nil {
@@ -106,7 +107,8 @@ func TestHetznerLabelled_ListsEachLabelledObjectAsItsType(t *testing.T) {
 		{Type: "hetzner.firewall", ID: "12"},
 		{Type: "hetzner.volume", ID: "55"},
 		{Type: "hetzner.ssh-key", ID: "8"},
-		{Type: "", ID: "network/77"},
+		{Type: "hetzner.network", ID: "77"},
+		{Type: "", ID: "load_balancer/31"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ListTagged =\n%+v\nwant\n%+v", got, want)

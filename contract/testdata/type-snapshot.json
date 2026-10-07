@@ -1401,6 +1401,44 @@
       "version": 1
     },
     {
+      "id": "hetzner.network",
+      "capability": "hetzner",
+      "kind": "network",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "network",
+      "outputs": [],
+      "observe": "GET /networks/{id} returns the network with its IP range and subnets",
+      "absence": "GET /networks/{id} answers 404",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"
+        },
+        {
+          "class": "transient",
+          "cause": "delete is refused while a server or load balancer is still attached to the network"
+        },
+        {
+          "class": "permanent",
+          "cause": "a network of the name exists in the project"
+        }
+      ],
+      "version": 1
+    },
+    {
       "id": "hetzner.primary-ip",
       "capability": "hetzner",
       "kind": "ip-address",
@@ -1736,6 +1774,142 @@
       "version": 1
     },
     {
+      "id": "kubernetes.argocd-app-project",
+      "capability": "kubernetes",
+      "kind": "kubernetes-argocd-app-project",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "outputs": [],
+      "observe": "the cluster's node report lists the Argo CD AppProject by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no Argo CD AppProject of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create Argo CD AppProjects"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.argocd-application",
+      "capability": "kubernetes",
+      "kind": "kubernetes-argocd-application",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "build-and-delivery",
+      "outputs": [],
+      "observe": "the cluster's node report lists the Argo CD Application by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no Argo CD Application of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create Argo CD Applications"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.ingress",
+      "capability": "kubernetes",
+      "kind": "kubernetes-ingress",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "network",
+      "outputs": [],
+      "observe": "the cluster's node report lists the Ingress by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no Ingress of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create ingresses"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.limit-range",
+      "capability": "kubernetes",
+      "kind": "kubernetes-limit-range",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "compute",
+      "outputs": [],
+      "observe": "the cluster's node report lists the LimitRange by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no LimitRange of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create limit ranges"
+        }
+      ],
+      "version": 1
+    },
+    {
       "id": "kubernetes.namespace",
       "capability": "kubernetes",
       "kind": "kubernetes-namespace",
@@ -1776,6 +1950,176 @@
         {
           "class": "permanent",
           "cause": "the cluster credential lacks permission to create namespaces or service accounts"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.network-policy",
+      "capability": "kubernetes",
+      "kind": "kubernetes-network-policy",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "network",
+      "outputs": [],
+      "observe": "the cluster's node report lists the NetworkPolicy by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no NetworkPolicy of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create network policies"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.resource-quota",
+      "capability": "kubernetes",
+      "kind": "kubernetes-resource-quota",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "compute",
+      "outputs": [],
+      "observe": "the cluster's node report lists the ResourceQuota by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no ResourceQuota of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create resource quotas"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.role",
+      "capability": "kubernetes",
+      "kind": "kubernetes-role",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "identity-and-access",
+      "outputs": [],
+      "observe": "the cluster's node report lists the Role by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no Role of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create roles"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.role-binding",
+      "capability": "kubernetes",
+      "kind": "kubernetes-role-binding",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "identity-and-access",
+      "outputs": [],
+      "observe": "the cluster's node report lists the RoleBinding by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no RoleBinding of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create role bindings"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "id": "kubernetes.service-account",
+      "capability": "kubernetes",
+      "kind": "kubernetes-service-account",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {
+        "priced": false
+      },
+      "category": "identity-and-access",
+      "outputs": [],
+      "observe": "the cluster's node report lists the ServiceAccount by kind, namespace and name in subscriptionResources, counted only when the report is newer than the verb",
+      "absence": "a node report made after the delete lists no ServiceAccount of the kind and name",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "1m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the cluster's Kubernetes API is unreachable or answers a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "no node report newer than the verb has arrived yet"
+        },
+        {
+          "class": "permanent",
+          "cause": "the cluster credential lacks permission to create service accounts"
         }
       ],
       "version": 1
