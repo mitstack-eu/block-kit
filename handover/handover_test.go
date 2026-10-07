@@ -1,15 +1,5 @@
 package handover_test
 
-// handover_test.go — MIT-1598.
-//
-// Almost every test here asserts a REFUSAL, and that weighting is deliberate.
-// The dangerous outcome for this package is not failing to snapshot — it is
-// reporting a snapshot that did not happen, or is not finished, because the
-// caller's very next action is destroying the volume that snapshot describes.
-//
-// So the bar is: any state that is not "the data is captured and restorable"
-// must come back as an error, however plausible it looks.
-
 import (
 	"context"
 	"errors"
@@ -20,8 +10,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/handover"
 )
 
-// fakeAPI is a scriptable EC2 stand-in. States is consumed one per poll, so a
-// test can drive pending -> pending -> completed without real time.
+// fakeAPI is a scriptable EC2 stand-in; states is consumed one per poll.
 type fakeAPI struct {
 	volumeID   string
 	findErr    error
@@ -62,8 +51,7 @@ func (f *fakeAPI) SnapshotState(context.Context, string) (string, error) {
 	return s, nil
 }
 
-// fakeClock advances only when Sleep is called, so a 15-minute timeout is
-// exercised in microseconds and the test never depends on wall time.
+// fakeClock advances only when Sleep is called, so the test never depends on wall time.
 type fakeClock struct{ now time.Time }
 
 func (c *fakeClock) Sleep(d time.Duration) { c.now = c.now.Add(d) }
@@ -95,9 +83,7 @@ func TestSnapshot_ReturnsIDOnceCompleted(t *testing.T) {
 	}
 }
 
-// THE CENTRAL REFUSAL. EC2 returns a snapshot id the instant the call is
-// accepted, long before the data is captured. Returning that id would produce a
-// handover that looks complete and restores a partial volume.
+// EC2 returns an id before the data is captured, so an incomplete snapshot must not read as success.
 func TestSnapshot_PendingForeverTimesOutRatherThanReportingSuccess(t *testing.T) {
 	api := &fakeAPI{volumeID: "vol-123", snapshotID: "snap-abc", states: []string{"pending"}}
 
@@ -118,9 +104,6 @@ func TestSnapshot_ErrorStateIsAFailure(t *testing.T) {
 	}
 }
 
-// A snapshot id is the entire product of this function. An empty one that came
-// back with no error is a broken client, and treating it as success hands the
-// caller a handle to nothing.
 func TestSnapshot_EmptyIDIsRefused(t *testing.T) {
 	api := &fakeAPI{volumeID: "vol-123", snapshotID: "", states: []string{"completed"}}
 
@@ -129,8 +112,6 @@ func TestSnapshot_EmptyIDIsRefused(t *testing.T) {
 	}
 }
 
-// A nil API is a wiring mistake, and it must be loud. ("", nil) would read to
-// the caller as "there was nothing to hand over".
 func TestSnapshot_NilAPIIsLoud(t *testing.T) {
 	_, err := handover.Snapshot(context.Background(), nil, "app_1", testOpts())
 	if err == nil {
@@ -138,8 +119,6 @@ func TestSnapshot_NilAPIIsLoud(t *testing.T) {
 	}
 }
 
-// A snapshot nobody can find again is not a handover. The app id is what tags
-// it, so an empty one is refused before anything is created.
 func TestSnapshot_EmptyAppIDIsRefusedBeforeCreating(t *testing.T) {
 	api := &fakeAPI{volumeID: "vol-123", snapshotID: "snap-abc", states: []string{"completed"}}
 
@@ -151,8 +130,6 @@ func TestSnapshot_EmptyAppIDIsRefusedBeforeCreating(t *testing.T) {
 	}
 }
 
-// NOT an error condition: an app torn down before its volume existed has
-// nothing to hand over, and failing the unsubscribe would strand it.
 func TestSnapshot_NoVolumeIsADistinctSentinel(t *testing.T) {
 	api := &fakeAPI{volumeID: ""}
 
@@ -180,9 +157,6 @@ func TestSnapshot_CreateErrorPropagates(t *testing.T) {
 	}
 }
 
-// The tag is what makes the snapshot findable AND what keeps an orphan sweep
-// from reclaiming it. A snapshot without it is a handover that gets deleted
-// later, which is worse than no handover at all — it looks preserved.
 func TestSnapshot_IsTaggedAsARetainedHandover(t *testing.T) {
 	api := &fakeAPI{volumeID: "vol-123", snapshotID: "snap-abc", states: []string{"completed"}}
 
@@ -197,9 +171,6 @@ func TestSnapshot_IsTaggedAsARetainedHandover(t *testing.T) {
 	}
 }
 
-// EC2 rejects a non-ASCII description outright — the same failure an em dash
-// caused in MIT-1543, which blocked every data-touching apply until it was
-// found. Asserting it here keeps the lesson attached to the code.
 func TestSnapshot_DescriptionIsASCII(t *testing.T) {
 	api := &fakeAPI{volumeID: "vol-123", snapshotID: "snap-abc", states: []string{"completed"}}
 
@@ -228,8 +199,6 @@ func TestIsHandover(t *testing.T) {
 	}
 }
 
-// Options{} must be usable. A zero Timeout meaning "give up immediately" would
-// make the safe-looking call the broken one.
 func TestSnapshot_ZeroOptionsAreUsable(t *testing.T) {
 	api := &fakeAPI{volumeID: "vol-123", snapshotID: "snap-abc", states: []string{"completed"}}
 
@@ -239,9 +208,6 @@ func TestSnapshot_ZeroOptionsAreUsable(t *testing.T) {
 	}
 }
 
-// The two constants must not drift apart: the engine's auto-projection carries
-// the outgoing block's OUTPUT into the incoming block's PARAM by name, with no
-// mapping table.
 func TestOutputAndParamKeysMatch(t *testing.T) {
 	if handover.OutputKey != handover.ParamKey {
 		t.Fatalf("OutputKey %q and ParamKey %q must match, or the handle never arrives",
