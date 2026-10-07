@@ -1,26 +1,5 @@
 package teardown_test
 
-// verify_test.go — MIT-2563.
-//
-// Seventeen of eighteen block operators report a teardown they never
-// verified, so the engine's verifyTeardownAndSettle fails open across the
-// fleet. This file pins the rule the kit's teardown package is about to grow:
-// after a teardown appears to succeed, ask each provider-specific Check
-// whether ITS resource is still there, and only a CONFIDENT positive answer
-// may turn that success into a failure.
-//
-// The rule is split across two entry points, because most operators never
-// call events.EmitFailed at all — their teardown success IS the bare 200
-// response and their failure a 422 from writeError.
-//
-//   - Survivor is the ambiguity rule alone: which Kind, if any, is a
-//     confirmed survivor. It reports nothing and writes nothing.
-//   - Verify calls Survivor and, when there is one, reports it through
-//     opts.Emit — logging a delivery failure rather than dropping it.
-//
-// Every case below is about the SAME failure mode the sibling packages guard
-// against: an error must never read as evidence of anything, and a silent
-// skip is exactly the paging problem this ticket exists to end.
 import (
 	"context"
 	"errors"
@@ -32,7 +11,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/teardown"
 )
 
-// present builds a Check whose Present is scripted with a fixed answer.
 func present(kind string, isPresent bool, err error) teardown.Check {
 	return teardown.Check{
 		Kind: kind,
@@ -42,9 +20,6 @@ func present(kind string, isPresent bool, err error) teardown.Check {
 	}
 }
 
-// loggedOptions returns an Options whose Logf appends every formatted line to
-// the returned *[]string, so a test can assert on substrings without pinning
-// exact wording.
 func loggedOptions() (teardown.Options, *[]string) {
 	var mu sync.Mutex
 	lines := make([]string, 0, 4)
@@ -58,19 +33,10 @@ func loggedOptions() (teardown.Options, *[]string) {
 	return opts, &lines
 }
 
-// joined flattens captured log lines into one string a test can grep with
-// strings.Contains, matching the convention the sibling suites use for
-// asserting on substrings rather than exact wording.
 func joined(lines *[]string) string {
 	return strings.Join(*lines, "\n")
 }
 
-// ---------------------------------------------------------------------------
-// Survivor — the ambiguity rule. No reporting, no side effects: it answers
-// one question, "which Kind, if any, is a confirmed survivor".
-// ---------------------------------------------------------------------------
-
-// Rule 1: only a confident positive is a survivor.
 func TestSurvivor_ConfidentPositiveReturnsKind(t *testing.T) {
 	opts, _ := loggedOptions()
 	got := teardown.Survivor(context.Background(), opts, present("instance", true, nil))
@@ -79,8 +45,6 @@ func TestSurvivor_ConfidentPositiveReturnsKind(t *testing.T) {
 	}
 }
 
-// Rule 2: an error is not evidence. Verify (via Survivor) must log it and
-// move on, never treating an error as a survivor — however many checks error.
 func TestSurvivor_ErrorIsLoggedAndPassedOver(t *testing.T) {
 	opts, lines := loggedOptions()
 	boom := errors.New("throttled by provider")
@@ -93,9 +57,6 @@ func TestSurvivor_ErrorIsLoggedAndPassedOver(t *testing.T) {
 	}
 }
 
-// The headline guarantee behind rule 2: a Verify that treated an error as a
-// survivor would rebuild the exact paging problem this ticket exists to end.
-// With EVERY check erroring, Survivor must report nothing at all.
 func TestSurvivor_EveryCheckErrors_ReturnsEmptyString(t *testing.T) {
 	opts, lines := loggedOptions()
 	got := teardown.Survivor(context.Background(), opts,
@@ -112,7 +73,6 @@ func TestSurvivor_EveryCheckErrors_ReturnsEmptyString(t *testing.T) {
 	}
 }
 
-// Rule 3: a confident negative passes over to the next check.
 func TestSurvivor_ConfidentNegativePassesOver(t *testing.T) {
 	opts, _ := loggedOptions()
 	got := teardown.Survivor(context.Background(), opts,
@@ -124,7 +84,7 @@ func TestSurvivor_ConfidentNegativePassesOver(t *testing.T) {
 	}
 }
 
-// Rule 4: (true, err) is an error, not a positive. The error channel wins.
+// (true, err) is an error, not a positive.
 func TestSurvivor_PresentTrueWithError_IsNotASurvivor(t *testing.T) {
 	opts, lines := loggedOptions()
 	got := teardown.Survivor(context.Background(), opts,
@@ -137,9 +97,7 @@ func TestSurvivor_PresentTrueWithError_IsNotASurvivor(t *testing.T) {
 	}
 }
 
-// Rule 5: a nil Present is "could not ask", never "it is gone". It must be
-// treated as an error — logged, passed over — and must never panic or be
-// silently skipped.
+// A nil Present is "could not ask", never "it is gone".
 func TestSurvivor_NilPresentIsLoggedNeverPanicsNeverSurvivor(t *testing.T) {
 	opts, lines := loggedOptions()
 	nilCheck := teardown.Check{Kind: "oauth-app"} // Present left nil on purpose
@@ -162,8 +120,6 @@ func TestSurvivor_NilPresentIsLoggedNeverPanicsNeverSurvivor(t *testing.T) {
 	}
 }
 
-// Rule 6: first survivor wins in caller order, and the second Check is never
-// even consulted once the first has confidently answered present.
 func TestSurvivor_FirstSurvivorWins_SecondNeverCalled(t *testing.T) {
 	opts, _ := loggedOptions()
 	secondCalled := false
@@ -185,8 +141,6 @@ func TestSurvivor_FirstSurvivorWins_SecondNeverCalled(t *testing.T) {
 	}
 }
 
-// Rule 7: zero checks is a programming error, not a clean teardown. It must
-// log that verification was reached with nothing to ask, not fail silently.
 func TestSurvivor_ZeroChecksLogsAndReturnsEmpty(t *testing.T) {
 	opts, lines := loggedOptions()
 	got := teardown.Survivor(context.Background(), opts)
@@ -198,8 +152,6 @@ func TestSurvivor_ZeroChecksLogsAndReturnsEmpty(t *testing.T) {
 	}
 }
 
-// Rule 9: Scrub must cover everything Survivor logs, including a credential
-// carried inside a provider error string.
 func TestSurvivor_ScrubAppliesToLoggedErrors(t *testing.T) {
 	credentialText := "not-a-real-token"
 	opts, lines := loggedOptions()
@@ -218,8 +170,6 @@ func TestSurvivor_ScrubAppliesToLoggedErrors(t *testing.T) {
 	}
 }
 
-// Rule 10 (defaults, Survivor half): a zero Options and a confidently-present
-// check must not panic — nil Logf must default (to log.Printf), not crash.
 func TestSurvivor_ZeroOptionsDoesNotPanic(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -232,8 +182,7 @@ func TestSurvivor_ZeroOptionsDoesNotPanic(t *testing.T) {
 	}
 }
 
-// Rule 11: a cancelled ctx passes through to Present unchanged; Survivor
-// itself must not inspect or reject it.
+// A cancelled ctx passes through to Present unchanged.
 func TestSurvivor_ContextPassesThroughUnchanged(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -254,13 +203,6 @@ func TestSurvivor_ContextPassesThroughUnchanged(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Verify — Survivor plus reporting. This is what an operator that reports
-// over the events channel actually calls.
-// ---------------------------------------------------------------------------
-
-// A survivor must be reported exactly once, through Emit, carrying the
-// detail Options.Detail produced, and Verify must return true.
 func TestVerify_SurvivorEmitsExactlyOnceAndReturnsTrue(t *testing.T) {
 	opts, _ := loggedOptions()
 	var emitted []string
@@ -283,7 +225,6 @@ func TestVerify_SurvivorEmitsExactlyOnceAndReturnsTrue(t *testing.T) {
 	}
 }
 
-// No survivor: Verify must emit nothing and return false.
 func TestVerify_NoSurvivorEmitsNothingReturnsFalse(t *testing.T) {
 	opts, _ := loggedOptions()
 	emitCalled := false
@@ -302,9 +243,7 @@ func TestVerify_NoSurvivorEmitsNothingReturnsFalse(t *testing.T) {
 	}
 }
 
-// Rule 8 / acceptance criterion 4: a failure to DELIVER the survivor report
-// must never be dropped. Verify still returns true, and BOTH the survivor
-// detail and the delivery error land in the log.
+// A failure to deliver the survivor report must be logged, not dropped.
 func TestVerify_EmitErrorStillReturnsTrueAndLogsBoth(t *testing.T) {
 	opts, lines := loggedOptions()
 	deliveryErr := errors.New("ingest endpoint unreachable")
@@ -325,8 +264,6 @@ func TestVerify_EmitErrorStillReturnsTrueAndLogsBoth(t *testing.T) {
 	}
 }
 
-// Rule 9, Verify half: Scrub must cover both the emitted detail and the log
-// when the survivor was found via an error carrying a credential.
 func TestVerify_ScrubCoversEmittedDetailAndLog(t *testing.T) {
 	credentialText := "not-a-real-token"
 	opts, lines := loggedOptions()
@@ -348,9 +285,7 @@ func TestVerify_ScrubCoversEmittedDetailAndLog(t *testing.T) {
 	}
 }
 
-// Rule 10, Verify half: a zero Options{} must not panic. events.EmitFailed is
-// a no-op when ctx carries no events envelope, so this is safe to assert on
-// directly without a real callback.
+// events.EmitFailed is a no-op when ctx carries no events envelope.
 func TestVerify_ZeroOptionsDefaultsToEventsEmitFailed_NoPanic(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -363,17 +298,6 @@ func TestVerify_ZeroOptionsDefaultsToEventsEmitFailed_NoPanic(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Absent — the evidence behind the validate response's `absent` marker.
-//
-// This is NOT the negation of Survivor. Survivor returns "" both when every
-// resource is confidently gone and when nothing could be asked; a stack
-// switch that trusted that as "gone" would collide with a still-standing
-// resource. Absent is true only when EVERY check was asked successfully and
-// every one of them answered (false, nil).
-// ---------------------------------------------------------------------------
-
-// The only true case: every check asked, every one confidently gone.
 func TestAbsent_EveryCheckGone_ReturnsTrue(t *testing.T) {
 	opts, _ := loggedOptions()
 	got := teardown.Absent(context.Background(), opts,
@@ -385,8 +309,6 @@ func TestAbsent_EveryCheckGone_ReturnsTrue(t *testing.T) {
 	}
 }
 
-// Any confident positive defeats absence, even alongside checks that said
-// gone.
 func TestAbsent_AnyConfidentPresence_ReturnsFalse(t *testing.T) {
 	opts, _ := loggedOptions()
 	got := teardown.Absent(context.Background(), opts,
@@ -398,9 +320,7 @@ func TestAbsent_AnyConfidentPresence_ReturnsFalse(t *testing.T) {
 	}
 }
 
-// An error defeats absence EVEN WHEN every other check said gone. "Could not
-// ask" must never be read as "it is gone" — that would rebuild the exact
-// silence this ticket exists to end.
+// An error defeats absence even when every other check said gone.
 func TestAbsent_AnyError_ReturnsFalseEvenWhenOthersAreGone(t *testing.T) {
 	opts, lines := loggedOptions()
 	got := teardown.Absent(context.Background(), opts,
@@ -415,7 +335,6 @@ func TestAbsent_AnyError_ReturnsFalseEvenWhenOthersAreGone(t *testing.T) {
 	}
 }
 
-// (true, someError): the error channel wins, exactly as it does for Survivor.
 func TestAbsent_PresentTrueWithError_ReturnsFalse(t *testing.T) {
 	opts, _ := loggedOptions()
 	got := teardown.Absent(context.Background(), opts,
@@ -425,8 +344,6 @@ func TestAbsent_PresentTrueWithError_ReturnsFalse(t *testing.T) {
 	}
 }
 
-// A nil Present is "could not ask" — logged, and it defeats absence exactly
-// as it defeats Survivor.
 func TestAbsent_NilPresentIsLoggedAndReturnsFalse(t *testing.T) {
 	opts, lines := loggedOptions()
 	nilCheck := teardown.Check{Kind: "oauth-app"}
@@ -439,8 +356,6 @@ func TestAbsent_NilPresentIsLoggedAndReturnsFalse(t *testing.T) {
 	}
 }
 
-// Zero checks must never be read as absence — a marker asserted over no
-// evidence is the false all-clear the kit exists to prevent.
 func TestAbsent_ZeroChecksReturnsFalseAndLogs(t *testing.T) {
 	opts, lines := loggedOptions()
 	got := teardown.Absent(context.Background(), opts)
@@ -452,7 +367,6 @@ func TestAbsent_ZeroChecksReturnsFalseAndLogs(t *testing.T) {
 	}
 }
 
-// Scrub must cover whatever Absent logs, exactly as it does for Survivor.
 func TestAbsent_ScrubAppliesToLoggedErrors(t *testing.T) {
 	credentialText := "not-a-real-token"
 	opts, lines := loggedOptions()
@@ -469,10 +383,7 @@ func TestAbsent_ScrubAppliesToLoggedErrors(t *testing.T) {
 	}
 }
 
-// The asymmetry a future editor is most likely to "simplify" into a bug: one
-// erroring check must make Survivor report NO survivor and Absent report NOT
-// absent, in the same call. Neither side gets to claim the answer the other
-// couldn't prove.
+// One erroring check must make Survivor report no survivor and Absent report not absent.
 func TestSurvivorAndAbsent_SingleErroringCheck_NeitherReportsAnAnswer(t *testing.T) {
 	opts, _ := loggedOptions()
 	check := present("instance", false, errors.New("throttled"))

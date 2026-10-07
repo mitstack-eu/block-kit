@@ -16,8 +16,6 @@ func owned(rid string) teardown.Resource {
 	return teardown.Resource{Kind: "instance", ID: rid, Tags: map[string]string{adopt.TagAppID: "app-42"}}
 }
 
-// stub is a class whose discovery and deletion are both scripted, and which
-// records what it was asked to delete.
 type stub struct {
 	kind    string
 	found   []teardown.Resource
@@ -35,13 +33,7 @@ func (s *stub) Delete(_ context.Context, r teardown.Resource) error {
 	return s.delErr
 }
 
-// --- The headline guarantee: detector and reclaimer cannot disagree ---------
-
 func TestSweep_ReclaimsExactlyWhatTheDetectorSelected(t *testing.T) {
-	// MIT-1126: exit-sweep.sh filtered on the app NAME while the reclaimer
-	// filtered on AppId, so the detector printed CLEAN over live resources. A
-	// false all-clear is the worst possible failure — the leak then has nothing
-	// left that would ever mention it. One Find, one selection, one delete list.
 	s := &stub{kind: "instance", found: []teardown.Resource{owned("i-1"), owned("i-2")}}
 
 	rep, err := teardown.Sweep(context.Background(), id(), []teardown.Class{s})
@@ -57,10 +49,7 @@ func TestSweep_ReclaimsExactlyWhatTheDetectorSelected(t *testing.T) {
 }
 
 func TestSweep_NeverTouchesAnotherAppsResource(t *testing.T) {
-	// Over-reach here deletes another tenant's live infrastructure, which is
-	// strictly worse than the leak being fixed (MIT-1229's rule on the reclaim
-	// path). A class that returns a foreign resource must be filtered, not
-	// trusted.
+	// A class that returns a foreign resource must be filtered, not trusted.
 	foreign := teardown.Resource{Kind: "instance", ID: "i-foreign",
 		Tags: map[string]string{adopt.TagAppID: "app-99"}}
 	s := &stub{kind: "instance", found: []teardown.Resource{owned("i-1"), foreign}}
@@ -108,11 +97,7 @@ func TestSweep_SkipsAResourceStillInUse(t *testing.T) {
 	}
 }
 
-// --- Never-there tolerance (MIT-1302 / MIT-1278) ----------------------------
-
 func TestSweep_AnAbsentResourceIsSuccess(t *testing.T) {
-	// Nine of thirteen operators hard-failed on a half-provisioned resource, so
-	// teardown retried forever instead of finishing.
 	s := &stub{kind: "instance", found: nil}
 
 	rep, err := teardown.Sweep(context.Background(), id(), []teardown.Class{s})
@@ -125,7 +110,6 @@ func TestSweep_AnAbsentResourceIsSuccess(t *testing.T) {
 }
 
 func TestSweep_DeleteOfAVanishedResourceIsSuccess(t *testing.T) {
-	// It existed at Find time and was gone by Delete time — a race, not an error.
 	s := &stub{kind: "instance", found: []teardown.Resource{owned("i-1")},
 		delErr: errors.New("InvalidInstanceID.NotFound: The instance ID 'i-1' does not exist")}
 
@@ -134,11 +118,7 @@ func TestSweep_DeleteOfAVanishedResourceIsSuccess(t *testing.T) {
 	}
 }
 
-// --- A reclaim failure must SURFACE ----------------------------------------
-
 func TestSweep_AGenuineDeleteFailureIsReturned(t *testing.T) {
-	// A silent failure is indistinguishable from a clean teardown, and the leak
-	// then has nothing left that would ever mention it.
 	s := &stub{kind: "instance", found: []teardown.Resource{owned("i-1")},
 		delErr: errors.New("DependencyViolation: resource is attached")}
 
@@ -155,8 +135,6 @@ func TestSweep_AGenuineDeleteFailureIsReturned(t *testing.T) {
 }
 
 func TestSweep_ContinuesPastOneFailureAndReportsThemAll(t *testing.T) {
-	// Stopping at the first failure leaves later classes unswept, so the
-	// consumer pays for them while the error names only the first.
 	bad := &stub{kind: "volume", found: []teardown.Resource{owned("vol-1")},
 		delErr: errors.New("DependencyViolation")}
 	good := &stub{kind: "eip", found: []teardown.Resource{owned("eip-1")}}
@@ -174,8 +152,6 @@ func TestSweep_ContinuesPastOneFailureAndReportsThemAll(t *testing.T) {
 }
 
 func TestSweep_ADiscoveryFailureIsNotAnAllClear(t *testing.T) {
-	// If Find fails we do not know whether anything is there. Reporting clean
-	// would be the false all-clear again, arrived at from the other direction.
 	s := &stub{kind: "instance", findErr: errors.New("AccessDenied")}
 
 	rep, err := teardown.Sweep(context.Background(), id(), []teardown.Class{s})
@@ -186,8 +162,6 @@ func TestSweep_ADiscoveryFailureIsNotAnAllClear(t *testing.T) {
 		t.Error("Clean() must be false when a class could not be searched")
 	}
 }
-
-// --- Report -----------------------------------------------------------------
 
 func TestReport_CleanOnlyWhenEverythingWasSearchedAndNothingFailed(t *testing.T) {
 	rep, err := teardown.Sweep(context.Background(), id(), []teardown.Class{&stub{kind: "instance"}})
@@ -200,9 +174,6 @@ func TestReport_CleanOnlyWhenEverythingWasSearchedAndNothingFailed(t *testing.T)
 }
 
 func TestReport_IsNonTrivialEvidence(t *testing.T) {
-	// check-operator-teardown-tests.sh RUNS the teardown test rather than
-	// grepping for it, precisely so a rotting one fails. The report is what such
-	// a test asserts against, so it must carry enough to be worth asserting.
 	s := &stub{kind: "instance", found: []teardown.Resource{owned("i-1")}}
 	rep, _ := teardown.Sweep(context.Background(), id(), []teardown.Class{s})
 
@@ -224,8 +195,6 @@ func TestSweep_RejectsAnIdentityThatWouldMatchEverything(t *testing.T) {
 		t.Errorf("deleted %v before validating the identity", s.deleted)
 	}
 }
-
-// --- IsNotFound -------------------------------------------------------------
 
 func TestIsNotFound(t *testing.T) {
 	for _, msg := range []string{
@@ -254,9 +223,7 @@ func TestIsNotFound(t *testing.T) {
 }
 
 func TestIsNotFound_MatchesKubernetesSpelling(t *testing.T) {
-	// AWS says NotFound; Kubernetes says `... "app" not found`. The space is not
-	// cosmetic: it cost the Crossplane twin's absent-claim teardown a 422, so
-	// the per-app control plane survived and the consumer kept paying for it.
+	// Kubernetes says `... "app" not found`, with a space.
 	for _, msg := range []string{
 		`claims.aws.mitstack.dev "app" not found`,
 		"Error from server (NotFound): pods not found",
@@ -266,7 +233,6 @@ func TestIsNotFound_MatchesKubernetesSpelling(t *testing.T) {
 			t.Errorf("IsNotFound(%q) = false, want true", msg)
 		}
 	}
-	// Still not over-reaching: a real failure is not absence.
 	if teardown.IsNotFound(errors.New("DependencyViolation: resource is attached")) {
 		t.Error("a dependency violation is not absence")
 	}
