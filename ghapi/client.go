@@ -215,55 +215,15 @@ func (c *Client) commitOnto(ctx context.Context, repo, message string, entries [
 // baseCommit returns the current main commit sha + its tree sha. haveBase is
 // false for a fresh/empty repo (no heads/main ref yet).
 func (c *Client) baseCommit(ctx context.Context, repo string) (commitSHA, treeSHA string, haveBase bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/repos/"+repo+"/git/ref/heads/main", nil)
+	commitSHA, haveBase, err = c.mainRef(ctx, repo)
+	if err != nil || !haveBase {
+		return "", "", false, err
+	}
+	treeSHA, err = c.commitTree(ctx, repo, commitSHA)
 	if err != nil {
-		return "", "", false, fmt.Errorf("ghapi: build request: %w", err)
+		return "", "", false, err
 	}
-	c.headers(req)
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return "", "", false, fmt.Errorf("ghapi: github unreachable: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return "", "", false, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return "", "", false, fmt.Errorf("ghapi: github GET git/ref/heads/main returned %d: %s", resp.StatusCode, safe.LogSafe(string(raw), c.Token))
-	}
-	var refObj struct {
-		Object struct {
-			SHA string `json:"sha"`
-		} `json:"object"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(&refObj); err != nil {
-		return "", "", false, fmt.Errorf("ghapi: decode ref: %w", err)
-	}
-
-	cr, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/repos/"+repo+"/git/commits/"+url.PathEscape(refObj.Object.SHA), nil)
-	if err != nil {
-		return "", "", false, fmt.Errorf("ghapi: build request: %w", err)
-	}
-	c.headers(cr)
-	cresp, err := c.httpClient().Do(cr)
-	if err != nil {
-		return "", "", false, fmt.Errorf("ghapi: github unreachable: %w", err)
-	}
-	defer cresp.Body.Close()
-	if cresp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(io.LimitReader(cresp.Body, 4<<10))
-		return "", "", false, fmt.Errorf("ghapi: github GET git/commits returned %d: %s", cresp.StatusCode, safe.LogSafe(string(raw), c.Token))
-	}
-	var cObj struct {
-		Tree struct {
-			SHA string `json:"sha"`
-		} `json:"tree"`
-	}
-	if err := json.NewDecoder(io.LimitReader(cresp.Body, 8<<10)).Decode(&cObj); err != nil {
-		return "", "", false, fmt.Errorf("ghapi: decode commit: %w", err)
-	}
-	return refObj.Object.SHA, cObj.Tree.SHA, true, nil
+	return commitSHA, treeSHA, true, nil
 }
 
 // postForSHA POSTs payload to path and returns the response's top-level

@@ -1,0 +1,23 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: gitops-app-namespace
+  name: GitOps App Namespace
+spec:
+  version: 1.0.0
+  description: >
+    Places the app's resources in a namespace of their own on a Kubernetes
+    cluster, with the service account the app's workloads run as, by
+    committing their manifests to the cluster's GitOps repository.
+  requires:
+    - kind: kubernetes-cluster
+  resources:
+    - name: app-namespace
+      type: kubernetes.namespace
+      on: requires.kubernetes-cluster
+      inputs: { cluster: requires.kubernetes-cluster }
+  provides: [app-namespace]
+  lifecycle:
+    endpoint: https://api.mitstack.dev/operators/gitops-app-namespace/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
