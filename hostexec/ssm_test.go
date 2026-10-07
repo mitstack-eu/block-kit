@@ -14,8 +14,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/hostexec"
 )
 
-// --- SSM driver ----------------------------------------------------------
-
 func TestSSMRun_SendCommandArgvIsExactlyDocumentInstanceAndRegion(t *testing.T) {
 	dir, argvRecord, _ := fakeSSM(t, "cmd-1", []string{"Success"}, 0)
 	setPath(t, dir)
@@ -75,8 +73,6 @@ func TestSSMRun_EmptyCommandIdIsAnError(t *testing.T) {
 }
 
 func TestSSMRun_APollErrorIsRetriedRatherThanTreatedAsFailure(t *testing.T) {
-	// Two transient get-command-invocation failures before the invocation is
-	// even visible, then Success: the whole call must still succeed.
 	dir, _, _ := fakeSSM(t, "cmd-1", []string{"Success"}, 2)
 	setPath(t, dir)
 
@@ -114,8 +110,6 @@ func TestSSMRun_ContextCancellationIsHonoured(t *testing.T) {
 }
 
 func TestSSMRun_DeadlineProducesATimeoutError(t *testing.T) {
-	// A poll that never reaches a terminal state must not hang forever — the
-	// deadline is shrunk here purely so the test does not take ten minutes.
 	dir, _, _ := fakeSSM(t, "cmd-1", []string{"InProgress"}, 0)
 	setPath(t, dir)
 
@@ -127,9 +121,7 @@ func TestSSMRun_DeadlineProducesATimeoutError(t *testing.T) {
 		hostexec.SSMPollTimeout = origTimeout
 	})
 
-	// Run in a goroutine with a hard ceiling: if the implementation ignores
-	// the shrunk deadline and falls back to the real ten minutes, this test
-	// must fail fast rather than hang the suite for ten minutes.
+	// A hard ceiling makes the test fail fast if the implementation ignores the shrunk deadline.
 	done := make(chan error, 1)
 	go func() { done <- hostexec.Run(context.Background(), ssmHost(), "true") }()
 
@@ -147,13 +139,7 @@ func TestSSMRun_DeadlineProducesATimeoutError(t *testing.T) {
 }
 
 func TestSSMRun_TimeoutErrorNamesTheLastPollFailure(t *testing.T) {
-	// The poll loop is right to treat a transient poll error as still-pending
-	// rather than terminal (TestSSMRun_APollErrorIsRetriedRatherThanTreatedAsFailure
-	// pins that), but it currently discards that error entirely rather than
-	// keeping the last one around — so an operator who hit ten straight
-	// minutes of AccessDenied learns nothing beyond "timed out waiting for a
-	// terminal state". The last poll failure is exactly the diagnostic a
-	// caller needs once the deadline is reached.
+	// The last poll failure is the diagnostic a caller needs once the deadline is reached, such as ten minutes of AccessDenied.
 	dir, _, _ := fakeSSM(t, "cmd-1", []string{"Success"}, 1_000_000)
 	setPath(t, dir)
 
@@ -175,12 +161,7 @@ func TestSSMRun_TimeoutErrorNamesTheLastPollFailure(t *testing.T) {
 }
 
 func TestSSMRun_ContextCancelledDuringSendCommandIsAttributedToTheContext(t *testing.T) {
-	// TestSSMRun_ContextCancellationIsHonoured above only cancels during the
-	// poll loop, which already checks ctx.Done() itself. send-command is a
-	// single blocking subprocess call with no such check around it, so a
-	// cancellation while IT is running must still be attributed to ctx —
-	// otherwise a killed send-command surfaces as a bare "signal: killed"
-	// rather than as context.Canceled.
+	// send-command is a single blocking subprocess call with no ctx check around it, so a cancellation while it runs must be attributed to ctx rather than surface as a bare "signal: killed".
 	dir := t.TempDir()
 	sleepyAWS := "#!/usr/bin/env bash\nsleep 5\n"
 	if err := os.WriteFile(filepath.Join(dir, "aws"), []byte(sleepyAWS), 0o755); err != nil {
@@ -204,14 +185,7 @@ func TestSSMRun_ContextCancelledDuringSendCommandIsAttributedToTheContext(t *tes
 	}
 }
 
-// --- commands= JSON wire format --------------------------------------------
-
-// fakeSSMCapturingRawArgv writes a stub aws that records its argv NUL-
-// separated rather than newline-separated, so a test can recover the exact
-// bytes of an argv element even when that element itself contains an
-// embedded newline — which is exactly what a multi-line script inside the
-// --parameters commands=... value does, and what the newline-per-line
-// records the other fakes in this package use cannot represent unambiguously.
+// fakeSSMCapturingRawArgv records argv NUL-separated so an element holding an embedded newline, as a multi-line script does, is recovered exactly.
 func fakeSSMCapturingRawArgv(t *testing.T, sendCommandID string) (dir, argvRecord string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -239,11 +213,6 @@ exit 2
 	return dir, argvRecord
 }
 
-// decodedCommandsParameter reads argvRecord, recovers the exact value of the
-// --parameters commands=... argv element, and JSON-decodes it — so the
-// assertion is about the wire format actually being valid, well-formed JSON
-// that round-trips, rather than about matching one particular escaping
-// style.
 func decodedCommandsParameter(t *testing.T, argvRecord string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(argvRecord)
@@ -298,12 +267,7 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-// shrinkSSMPolling bounds how long a test that drives Run() through a real
-// poll cycle can possibly take, restoring both package variables on cleanup.
-// Every test that reaches the poll loop applies this defensively, even one
-// whose fake answers Success on the very first poll: a harness bug that
-// leaves the poll unanswered must cost that test a fast failure, never a
-// multi-minute hang of the whole suite.
+// shrinkSSMPolling is applied even by a test whose fake answers Success at once, so a harness bug that leaves the poll unanswered costs a fast failure, never a multi-minute hang.
 func shrinkSSMPolling(t *testing.T) {
 	t.Helper()
 	origInterval, origTimeout := hostexec.SSMPollInterval, hostexec.SSMPollTimeout
@@ -314,8 +278,6 @@ func shrinkSSMPolling(t *testing.T) {
 		hostexec.SSMPollTimeout = origTimeout
 	})
 }
-
-// --- RunOutput (MIT-2507) --------------------------------------------------
 
 func TestSSMRunOutput_SuccessReturnsCapturedStdout(t *testing.T) {
 	shrinkSSMPolling(t)
@@ -332,10 +294,7 @@ func TestSSMRunOutput_SuccessReturnsCapturedStdout(t *testing.T) {
 }
 
 func TestSSMRunOutput_MultilineStdoutIsPreservedVerbatim(t *testing.T) {
-	// A probe's captured stdout can legitimately span multiple lines — exactly
-	// the shape HealthCheck's own "READY=$?" plus a captured file produces —
-	// so a single TrimSpace at the edges must not collapse the internal
-	// newline.
+	// A probe's stdout can span multiple lines, so trimming at the edges must not collapse the internal newline.
 	shrinkSSMPolling(t)
 	want := "READY=0\npg_isready output line"
 	dir, _, _ := fakeSSMOutput(t, "cmd-1", []string{"Success"}, 0, want)
@@ -351,10 +310,7 @@ func TestSSMRunOutput_MultilineStdoutIsPreservedVerbatim(t *testing.T) {
 }
 
 func TestSSMRunOutput_OutputQueryFollowsTerminalStatus(t *testing.T) {
-	// The ssm driver must read the output from a SECOND
-	// get-command-invocation call, issued only once the poll loop has
-	// already seen a terminal status — never interleaved with, or ahead of,
-	// the Status polls themselves.
+	// The output comes from a second get-command-invocation call issued only after a terminal status, never interleaved with the Status polls.
 	shrinkSSMPolling(t)
 	dir, argvRecord, _ := fakeSSMOutput(t, "cmd-1", []string{"InProgress", "InProgress", "Success"}, 0, "READY=0")
 	setPath(t, dir)
@@ -439,12 +395,7 @@ func TestSSMRunOutput_TerminalFailureStatusReturnsErrorAndNoOutput(t *testing.T)
 }
 
 func TestSSMRun_ScriptWithSpecialCharactersRoundTripsThroughTheCommandsJSONParameter(t *testing.T) {
-	// commands is documented by AWS-RunShellScript as a list of commands —
-	// the shape the original runShellOnInstance received — so the wire form
-	// this driver must produce is one JSON array element per line of the
-	// script, not the whole (possibly multi-line) script crammed into a
-	// single JSON string, which is not valid JSON the moment it contains a
-	// literal newline.
+	// AWS-RunShellScript documents commands as a list, so the wire form is one JSON array element per script line.
 	cases := map[string]string{
 		"multi-line script":              "set -e\napt-get update\napt-get install -y postgresql",
 		"line containing a tab":          "printf 'a\tb\n'",
@@ -471,10 +422,7 @@ func TestSSMRun_ScriptWithSpecialCharactersRoundTripsThroughTheCommandsJSONParam
 }
 
 func TestSSMRun_SingleLineScriptCommandsParameterIsUnchanged(t *testing.T) {
-	// The wire-shape fix above must not disturb the single-line case the
-	// exact-argv assertion in TestSSMRun_SendCommandArgvIsExactlyDocumentInstanceAndRegion
-	// depends on: a script with no embedded newline is still exactly one
-	// JSON array element.
+	// A script with no embedded newline is still exactly one JSON array element, as the exact-argv assertion depends on.
 	shrinkSSMPolling(t)
 	dir, argvRecord := fakeSSMCapturingRawArgv(t, "cmd-1")
 	setPath(t, dir)

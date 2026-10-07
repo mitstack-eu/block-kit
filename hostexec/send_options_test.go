@@ -1,12 +1,6 @@
 package hostexec_test
 
-// The SSM send options are opt-in: a comment, a delivery timeout, an
-// execution timeout, and a poll that outlives the caller's cancellation.
-// A caller that passes none gets the base send-command argv, with only
-// --parameters commands=[...] after the output flags, and a call that returns
-// as soon as its context is cancelled. Every option is validated before any
-// subprocess is spawned, and none is accepted on the ssh driver, which has no
-// equivalent to apply it to.
+// A caller passing no option gets the base send-command argv and a call that returns as soon as its context is cancelled; every option is validated before any subprocess is spawned and none is accepted on ssh.
 
 import (
 	"context"
@@ -25,17 +19,13 @@ const (
 	fixtureRegion   = "eu-central-1"
 	fixtureComment  = "mitstack app-runner install lane-a on i-0fixture"
 	fixtureScript   = "echo hi"
-	// fixtureCommands is fixtureScript as the commands parameter carries it.
 	fixtureCommands = `commands=["echo hi"]`
 )
 
-// optionsHost is an ssm Host whose target and region the argv assertions in
-// this file are pinned to.
 func optionsHost() hostexec.Host {
 	return hostexec.Host{Kind: hostexec.KindSSM, Target: fixtureInstance, Region: fixtureRegion}
 }
 
-// wantSendArgv is the send-command argv every call shares, followed by tail.
 func wantSendArgv(tail ...string) []string {
 	argv := []string{
 		"ssm", "send-command",
@@ -48,8 +38,6 @@ func wantSendArgv(tail ...string) []string {
 	return append(argv, tail...)
 }
 
-// entryPoint is Run or RunOutput behind one signature, so a behaviour both
-// must share is asserted against both.
 type entryPoint struct {
 	name string
 	call func(ctx context.Context, h hostexec.Host, script string, opts ...hostexec.SendOption) (string, error)
@@ -62,8 +50,6 @@ var entryPoints = []entryPoint{
 	{"RunOutput", hostexec.RunOutput},
 }
 
-// sendAndRecordArgv runs ep against a fake aws that answers Success at once
-// and returns the send-command argv it recorded.
 func sendAndRecordArgv(t *testing.T, ep entryPoint, opts ...hostexec.SendOption) []string {
 	t.Helper()
 	shrinkSSMPolling(t)
@@ -82,8 +68,6 @@ func assertArgv(t *testing.T, got, want []string) {
 		t.Errorf("send-command argv =\n  %q\nwant exactly\n  %q", got, want)
 	}
 }
-
-// --- argv -----------------------------------------------------------------
 
 func TestSSMSendOptions_NoOptionsSendsTheBaseArgvExactly(t *testing.T) {
 	for _, ep := range entryPoints {
@@ -186,8 +170,6 @@ func TestSSMSendOptions_BoundaryValuesAreAcceptedAndSentVerbatim(t *testing.T) {
 	}
 }
 
-// --- validation -------------------------------------------------------------
-
 func TestSSMSendOptions_InvalidOptionIsRejectedBeforeAnySubprocessIsSpawned(t *testing.T) {
 	cases := []struct {
 		name string
@@ -274,8 +256,6 @@ func TestSSHSendOptions_AnySendOptionIsRejectedBeforeSSHIsSpawned(t *testing.T) 
 		}
 	}
 }
-
-// --- detached poll ------------------------------------------------------------
 
 // heldWindow is how long a call with the detached poll must keep waiting on a
 // held command after its context is cancelled.

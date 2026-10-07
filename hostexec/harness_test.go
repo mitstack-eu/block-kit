@@ -1,11 +1,6 @@
 package hostexec_test
 
-// Shared fixtures for the hostexec suite. Both drivers are proven against a
-// PATH shim rather than a real aws/ssh binary, following the kit's established
-// idiom (see cloudid_test.go's fakeAWS): a stub executable records what it was
-// called with, so a test can assert on argv and stdin without ever touching
-// the network. Recording stdin separately from argv is what lets a test prove
-// a value arrived over stdin, rather than only that it is absent from argv.
+// Both drivers run against a PATH shim that records argv and stdin separately, so a test can prove a value arrived over stdin rather than only that it is absent from argv.
 
 import (
 	"fmt"
@@ -27,12 +22,7 @@ func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// fakeSSM writes a stub `aws` executable that understands only the two ssm
-// subcommands the ssm driver issues. send-command always echoes
-// sendCommandID. get-command-invocation fails pollFailures times first (each
-// failure proving a transient poll error must be retried, not treated as a
-// terminal status), then serves statuses in order, holding the last entry for
-// any call beyond the end of the slice.
+// fakeSSM's get-command-invocation fails pollFailures times first, proving a transient poll error is retried, then serves statuses in order and holds the last.
 func fakeSSM(t *testing.T, sendCommandID string, statuses []string, pollFailures int) (dir, argvRecord, stdinRecord string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -84,17 +74,11 @@ exit 2
 	return dir, argvRecord, stdinRecord
 }
 
-// ssmHost returns a Host that dispatches to the ssm driver with a target and
-// region the argv assertions below are pinned to.
 func ssmHost() hostexec.Host {
 	return hostexec.Host{Kind: hostexec.KindSSM, Target: "i-0123456789abcdef0", Region: "eu-central-1"}
 }
 
-// fakeSSH writes a stub `ssh` executable running body after recording: every
-// argv element (one per line, invocations separated by "---"), the full
-// stdin it received, and — whenever a "-i" flag is present — the permission
-// bits and path of the file it points at, captured while the file still
-// exists so a test can assert on both before Run cleans it up.
+// fakeSSH records the identity file's permission bits and path while it still exists, so a test can assert on both before Run cleans it up.
 func fakeSSH(t *testing.T, body string) (dir, argvRecord, stdinRecord, permRecord, idPathRecord string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -127,20 +111,11 @@ done
 	return dir, argvRecord, stdinRecord, permRecord, idPathRecord
 }
 
-// sshHost returns a Host that dispatches to the ssh driver, carrying
-// credential as the PEM the driver must write to a private temp file.
 func sshHost(credential string) hostexec.Host {
 	return hostexec.Host{Kind: hostexec.KindSSH, Target: "deploy@10.0.0.5", Credential: credential}
 }
 
-// fakeSSMOutput is fakeSSM's stub `aws` plus a second get-command-invocation
-// response: RunOutput issues that call twice, once with --query Status (the
-// existing poll loop) and once with --query StandardOutputContent, and
-// fakeSSM's argv-position dispatch ("${2:-}" alone) cannot tell those two
-// apart. This fake inspects the --query VALUE instead: a StandardOutputContent
-// query always serves stdout, unconditionally and without consuming a poll
-// slot, while a Status query keeps fakeSSM's own pollFailures / statuses
-// behaviour untouched.
+// fakeSSMOutput inspects the --query value because fakeSSM's argv-position dispatch cannot tell a Status call from a StandardOutputContent call; the latter always serves stdout without consuming a poll slot.
 func fakeSSMOutput(t *testing.T, sendCommandID string, statuses []string, pollFailures int, stdout string) (dir, argvRecord, stdinRecord string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -202,10 +177,6 @@ exit 2
 	return dir, argvRecord, stdinRecord
 }
 
-// ssmQueryOrder returns the --query value of every get-command-invocation
-// call recorded in argvRecord, in call order, so a test can assert the
-// StandardOutputContent read genuinely happens only after every earlier call
-// was a Status poll — not merely that both queries happened at some point.
 func ssmQueryOrder(t *testing.T, argvRecord string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(argvRecord)
@@ -228,14 +199,7 @@ func ssmQueryOrder(t *testing.T, argvRecord string) []string {
 	return queries
 }
 
-// fakeSSMHeld writes a stub `aws` whose get-command-invocation Status answer
-// stays InProgress for as long as holdFile exists, the way a command still
-// running on the box does, and answers finalStatus once the test removes it.
-// Every get-command-invocation call first creates pollStarted, so a test can
-// wait until the driver has sent the command and begun polling. A
-// StandardOutputContent query always serves stdout. holdFile is created
-// armed; removing it releases the command. hangStatusPoll makes every Status
-// query hang instead.
+// fakeSSMHeld answers InProgress while holdFile exists and finalStatus once the test removes it, and creates pollStarted on every call so a test can wait until polling began.
 func fakeSSMHeld(t *testing.T, sendCommandID, finalStatus, stdout string) (dir, argvRecord, pollStarted, holdFile string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -291,17 +255,12 @@ exit 2
 	return dir, argvRecord, pollStarted, holdFile
 }
 
-// hangStatusMarker names the file in a fakeSSMHeld dir that makes every
-// Status query hang; hungStatusSleep bounds that hang. The stub execs sleep,
-// so killing the Status call kills the sleep itself and leaves no process
-// holding its pipes, and an unkilled call still ends after hungStatusSleep.
+// The stub execs sleep, so killing the Status call kills the sleep itself and leaves no process holding its pipes, and an unkilled call still ends after hungStatusSleep.
 const (
 	hangStatusMarker = "hang-status-poll"
 	hungStatusSleep  = 10 * time.Second
 )
 
-// hangStatusPoll makes the fakeSSMHeld stub in dir hang on every Status query
-// for hungStatusSleep instead of answering it.
 func hangStatusPoll(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, hangStatusMarker), nil, 0o644); err != nil {
@@ -309,9 +268,7 @@ func hangStatusPoll(t *testing.T, dir string) {
 	}
 }
 
-// setSSMPolling sets SSMPollInterval and SSMPollTimeout for one test and
-// restores both on cleanup. A test that sets them must not run in parallel
-// with another test that reads them.
+// setSSMPolling must not run in parallel with a test that reads the poll variables.
 func setSSMPolling(t *testing.T, interval, timeout time.Duration) {
 	t.Helper()
 	origInterval, origTimeout := hostexec.SSMPollInterval, hostexec.SSMPollTimeout
@@ -323,12 +280,7 @@ func setSSMPolling(t *testing.T, interval, timeout time.Duration) {
 	})
 }
 
-// runInBackground runs call on its own goroutine and delivers its error on
-// the returned channel. On cleanup it removes holdFile, releasing a held
-// fakeSSMHeld command, and waits for call to return, so a failed test never
-// leaves a call running that still reads the package variables
-// setSSMPolling restores. Call setSSMPolling and fakeSSMHeld before this so
-// that wait runs before either of their cleanups.
+// runInBackground waits on cleanup for call to return, so a failed test never leaves a call reading the variables setSSMPolling restores; call setSSMPolling and fakeSSMHeld first so that wait runs before their cleanups.
 func runInBackground(t *testing.T, holdFile string, call func() error) <-chan error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -348,9 +300,6 @@ func runInBackground(t *testing.T, holdFile string, call func() error) <-chan er
 	return done
 }
 
-// waitForFile waits until path exists, failing early if done delivers first,
-// since the call under test then returned before reaching the point path
-// marks.
 func waitForFile(t *testing.T, path string, done <-chan error) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -370,10 +319,6 @@ func waitForFile(t *testing.T, path string, done <-chan error) {
 	}
 }
 
-// sendCommandArgv returns the argv of the first send-command call recorded
-// in argvRecord, one element per line as fakeSSM, fakeSSMOutput and
-// fakeSSMHeld record it. It fails the test when no send-command was
-// recorded.
 func sendCommandArgv(t *testing.T, argvRecord string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(argvRecord)

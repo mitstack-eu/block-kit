@@ -1,14 +1,6 @@
 package hostexec_test
 
-// subprocessWaitDelay bounds how long Wait keeps draining a killed
-// subprocess's pipes after a context that killed it is done — but it also
-// governs a case that has nothing to do with cancellation at all: a
-// subprocess that exits zero on its own, having backgrounded a grandchild
-// that keeps holding the stderr pipe's write end open. exec.Cmd.Run returns
-// exec.ErrWaitDelay once WaitDelay elapses in that case, even though the
-// direct child already succeeded — a provisioning script that backgrounds a
-// daemon does exactly this, so treating that as a failure would be a false
-// negative on realistic scripts.
+// A subprocess that exits zero having backgrounded a grandchild holding the stderr pipe open makes exec.Cmd.Run return exec.ErrWaitDelay, which must not be treated as a failure since a script backgrounding a daemon does exactly this.
 
 import (
 	"context"
@@ -20,10 +12,7 @@ import (
 )
 
 func TestSSHRun_SuccessfulExitIsNotFailedByALeakedGrandchildHoldingTheStderrPipeOpen(t *testing.T) {
-	// The backgrounded subshell inherits the script's own stderr file
-	// descriptor — the pipe hostexec's Stderr capture reads from — and keeps
-	// it open for three seconds, well past the package's one-second
-	// WaitDelay, while the direct child (this script) exits zero immediately.
+	// The backgrounded subshell holds the stderr pipe open three seconds, past the one-second WaitDelay, while the script exits zero at once.
 	dir, _, _, _, _ := fakeSSH(t, "( sleep 3 & ); exit 0")
 	setPath(t, dir)
 

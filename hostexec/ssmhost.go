@@ -5,9 +5,7 @@ import "errors"
 // ErrNotSSM is the refusal SSMHost returns for any kind other than KindSSM.
 var ErrNotSSM = errors.New("hostexec: host kind is not " + string(KindSSM))
 
-// SSMHost builds the Host an operator drives over AWS Systems Manager.
-// Target and region are left for Run to judge, and the refusal carries no
-// part of the host it refused.
+// SSMHost builds an SSM Host, leaving target and region for Run to judge, and its refusal carries no part of the host.
 func SSMHost(kind Kind, target, credential, region string, env []string) (Host, error) {
 	if kind != KindSSM {
 		return Host{}, ErrNotSSM

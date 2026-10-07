@@ -1,10 +1,5 @@
 package hostexec
 
-// The ssh driver. It is the stdin-piped twin of the ssm driver's
-// SecureString hand-off: the script (and, separately, the PEM identity)
-// never touch argv, and the identity never touches disk for longer than
-// the call needs it to.
-
 import (
 	"context"
 	"errors"
@@ -14,34 +9,23 @@ import (
 	"strings"
 )
 
-// runSSH writes h.Credential to a private temp file, then runs script on
-// h.Target over ssh with the script delivered on the subprocess's stdin.
 func runSSH(ctx context.Context, h Host, script string) error {
 	_, err := runSSHCommand(ctx, h, script, false)
 	return err
 }
 
-// runSSHOutput runs script exactly as runSSH does, additionally capturing
-// the subprocess's stdout. A non-zero exit returns ("", err) — never the
-// partial output the script may have printed before failing.
+// runSSHOutput never returns the partial output the script printed before failing.
 func runSSHOutput(ctx context.Context, h Host, script string) (string, error) {
 	return runSSHCommand(ctx, h, script, true)
 }
 
-// runSSHCommand writes h.Credential to a private temp file, then runs
-// script on h.Target over ssh with the script delivered on the
-// subprocess's stdin. It is shared by runSSH and runSSHOutput so the
-// identity-file lifecycle and the ssh argv/error handling are not
-// duplicated between them; captureOutput selects whether the returned
-// string carries the subprocess's trimmed stdout or is always empty.
+// runSSHCommand delivers the script on stdin so neither it nor the PEM identity ever reaches argv, and the identity file lives only as long as the call needs it.
 func runSSHCommand(ctx context.Context, h Host, script string, captureOutput bool) (stdout string, err error) {
 	keyFile, err := writeIdentityFile(h.Credential)
 	if err != nil {
 		return "", fmt.Errorf("hostexec: %w", err)
 	}
-	// A failed removal leaves the PEM on disk, against this package's own
-	// stated invariant, so it must not be silently dropped — but it must
-	// also not mask a more important error the run itself already produced.
+	// A failed removal leaves the PEM on disk so it must not be dropped, but it must not mask an error the run already produced.
 	defer func() {
 		if rmErr := os.Remove(keyFile); rmErr != nil {
 			if err == nil {
@@ -68,20 +52,15 @@ func runSSHCommand(ctx context.Context, h Host, script string, captureOutput boo
 	if captureOutput {
 		cmd.Stdout = &stdoutBuf
 	}
-	// A killed ssh may leave a grandchild it spawned holding the write end
-	// of either output pipe open; WaitDelay caps how long Wait keeps
-	// draining them after cancellation, so the call still returns promptly.
+	// WaitDelay caps how long Wait drains pipes a killed ssh's grandchild holds open, so the call returns promptly.
 	cmd.WaitDelay = subprocessWaitDelay
 
 	if runErr := cmd.Run(); runErr != nil {
-		// A cancelled context killed the subprocess; that is why it failed,
-		// not whatever exit status the kill produced.
+		// A cancelled context killed the subprocess, which is why it failed.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", fmt.Errorf("hostexec: ssh: %w", ctxErr)
 		}
-		// A leaked grandchild holding the stderr pipe open past WaitDelay
-		// produces exec.ErrWaitDelay even when ssh itself exited zero; that
-		// is not a failure of the run this call cares about.
+		// A leaked grandchild holding stderr past WaitDelay yields exec.ErrWaitDelay even when ssh exited zero.
 		if errors.Is(runErr, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 			if captureOutput {
 				return strings.TrimSpace(stdoutBuf.String()), nil
@@ -99,9 +78,7 @@ func runSSHCommand(ctx context.Context, h Host, script string, captureOutput boo
 	return "", nil
 }
 
-// writeIdentityFile writes pem to a new temp file with mode 0600 and
-// returns its path. The caller is responsible for removing it once the ssh
-// subprocess no longer needs it.
+// writeIdentityFile leaves removal of the file to the caller.
 func writeIdentityFile(pem string) (string, error) {
 	tf, err := os.CreateTemp("", "hostexec-ssh-key-*")
 	if err != nil {
@@ -118,8 +95,7 @@ func writeIdentityFile(pem string) (string, error) {
 		os.Remove(name)
 		return "", fmt.Errorf("close identity file: %w", err)
 	}
-	// CreateTemp already requests 0600, but chmod pins it explicitly
-	// rather than relying on the process's umask never being loosened.
+	// chmod pins 0600 explicitly rather than relying on the process's umask.
 	if err := os.Chmod(name, 0o600); err != nil {
 		os.Remove(name)
 		return "", fmt.Errorf("chmod identity file: %w", err)

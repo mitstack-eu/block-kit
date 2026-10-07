@@ -1,8 +1,5 @@
 package hostexec
 
-// The ssm driver, lifted from web-app-aws/postgres-db/provision.go's
-// runShellOnInstance and pollCommandInvocation.
-
 import (
 	"bytes"
 	"context"
@@ -14,8 +11,6 @@ import (
 	"time"
 )
 
-// runSSM sends script to h.Target as an AWS-RunShellScript document and
-// waits for it to reach a terminal state.
 func runSSM(ctx context.Context, h Host, script string, o sendOptions) error {
 	commandID, err := sendSSMCommand(ctx, h, script, o)
 	if err != nil {
@@ -27,13 +22,7 @@ func runSSM(ctx context.Context, h Host, script string, o sendOptions) error {
 	return waitForSSMPoll(pollCtx, o, bound, h, commandID)
 }
 
-// runSSMOutput sends script exactly as runSSM does — sharing sendSSMCommand
-// and waitForSSMTerminalStatus rather than duplicating that send/poll path —
-// and, only once the poll has already reached Success, issues a second
-// get-command-invocation call to read the captured stdout. Run itself must
-// never take this extra call, which is why it stays a separate function
-// rather than folding into runSSM. The output read runs on the same context
-// as the poll, so a detached poll's read also outlives cancellation.
+// runSSMOutput reads stdout with a second call only once the poll reached Success, which Run must never take, and on the poll's context so a detached poll's read also outlives cancellation.
 func runSSMOutput(ctx context.Context, h Host, script string, o sendOptions) (string, error) {
 	commandID, err := sendSSMCommand(ctx, h, script, o)
 	if err != nil {
@@ -48,13 +37,7 @@ func runSSMOutput(ctx context.Context, h Host, script string, o sendOptions) (st
 	return ssmCommandOutput(pollCtx, h, commandID)
 }
 
-// ssmPollBound returns how long the ssm driver waits for a command sent with
-// o to reach a terminal state. With neither a delivery nor an execution
-// timeout it is SSMPollTimeout. With either, it is the delivery timeout plus
-// the execution timeout plus one SSMPollInterval, an unset one counting as
-// zero, so the poll outlasts the time SSM itself may take to deliver and run
-// the command and report that; SSMPollTimeout stays its floor. It reads the
-// package variables at call time.
+// ssmPollBound outlasts the time SSM itself may take to deliver and run the command, an unset timeout counting as zero, and reads the package variables at call time.
 func ssmPollBound(o sendOptions) time.Duration {
 	if !o.deliveryTimeoutSet && !o.executionTimeoutSet {
 		return SSMPollTimeout
@@ -69,11 +52,7 @@ func ssmPollBound(o sendOptions) time.Duration {
 	return max(SSMPollTimeout, sum+SSMPollInterval)
 }
 
-// ssmPollContext returns the context the poll and output read run on. It is
-// ctx itself unless o asks for a detached poll, in which case it keeps ctx's
-// values but drops its cancellation and deadline, and is bounded by bound
-// instead: the command is already running on the host, and cancelling ctx
-// does not stop it there.
+// ssmPollContext drops ctx's cancellation and deadline for a detached poll, since cancelling ctx does not stop the command already running on the host.
 func ssmPollContext(ctx context.Context, o sendOptions, bound time.Duration) (context.Context, context.CancelFunc) {
 	if !o.detachedPoll {
 		return ctx, func() {}
@@ -81,9 +60,7 @@ func ssmPollContext(ctx context.Context, o sendOptions, bound time.Duration) (co
 	return context.WithTimeout(context.WithoutCancel(ctx), bound)
 }
 
-// waitForSSMPoll runs waitForSSMTerminalStatus on pollCtx under bound. A
-// detached poll's context ends only when bound runs out, so for one it
-// reports that bound rather than a bare context error.
+// waitForSSMPoll reports the bound for a detached poll, whose context ends only when the bound runs out, rather than a bare context error.
 func waitForSSMPoll(pollCtx context.Context, o sendOptions, bound time.Duration, h Host, commandID string) error {
 	err := waitForSSMTerminalStatus(pollCtx, h, commandID, bound)
 	if err != nil && o.detachedPoll {
@@ -94,16 +71,10 @@ func waitForSSMPoll(pollCtx context.Context, o sendOptions, bound time.Duration,
 	return err
 }
 
-// sendSSMCommand issues the send-command call and returns the resulting
-// CommandId. The argv order is exact — a caller depends on the document
-// name, instance id and region arriving in precisely this sequence, then
-// --comment and --timeout-seconds when o sets them, then --parameters last,
-// with executionTimeout ahead of commands when o sets it. The zero
-// sendOptions adds none of them.
+// sendSSMCommand keeps its argv order exact, since a caller depends on it: document name, instance id and region, then --comment and --timeout-seconds when set, then --parameters last with executionTimeout ahead of commands.
 func sendSSMCommand(ctx context.Context, h Host, script string, o sendOptions) (string, error) {
-	// The aws CLI's shorthand parser decodes only \" and \\ inside the
-	// commands list, so the JSON handed to it must carry <, > and & literally:
-	// json.Marshal's HTML escapes (\u003e and friends) would reach the host
+	// The aws CLI's shorthand parser decodes only \" and \\, so the JSON must
+	// carry <, > and & literally: json.Marshal's HTML escapes (\u003e and friends) would reach the host
 	// as text and turn every redirect into an argument.
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -144,16 +115,11 @@ func sendSSMCommand(ctx context.Context, h Host, script string, o sendOptions) (
 		if errors.As(err, &ee) {
 			stderr.Write(ee.Stderr)
 		}
-		// A cancelled context killed the subprocess; that is why it failed,
-		// not whatever exit status the kill produced.
+		// A cancelled context killed the subprocess, which is why it failed.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", fmt.Errorf("hostexec: ssm send-command: %w", ctxErr)
 		}
-		// A leaked grandchild holding the subprocess's stderr pipe open past
-		// WaitDelay produces exec.ErrWaitDelay even when aws itself exited
-		// zero; that is not a failure of the send this call cares about, but
-		// cmd.Output may then return truncated stdout — the empty-CommandId
-		// guard below still catches that case.
+		// A leaked grandchild holding stderr past WaitDelay yields exec.ErrWaitDelay even when aws exited zero, with stdout possibly truncated, which the empty-CommandId guard catches.
 		if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 			commandID := strings.TrimSpace(string(out))
 			if commandID == "" {
@@ -173,10 +139,7 @@ func sendSSMCommand(ctx context.Context, h Host, script string, o sendOptions) (
 	return commandID, nil
 }
 
-// waitForSSMTerminalStatus polls get-command-invocation until commandID
-// reaches a terminal state or bound runs out, returning nil only on Success.
-// A poll subprocess error (the invocation not visible yet, a transient CLI
-// failure) is treated as still-pending and retried, never as terminal.
+// waitForSSMTerminalStatus returns nil only on Success and retries a poll subprocess error, such as an invocation not visible yet, never treating it as terminal.
 func waitForSSMTerminalStatus(ctx context.Context, h Host, commandID string, bound time.Duration) error {
 	var lastPollErr error
 	deadline := time.Now().Add(bound)
@@ -211,9 +174,7 @@ func waitForSSMTerminalStatus(ctx context.Context, h Host, commandID string, bou
 	return fmt.Errorf("hostexec: ssm command %s timed out waiting for a terminal state after %s", commandID, bound)
 }
 
-// ssmCommandStatus reads the current status of commandID. Any error from
-// running the CLI — including a not-yet-visible invocation — is returned
-// as-is so the caller retries rather than treats it as terminal.
+// ssmCommandStatus returns any CLI error as-is so the caller retries rather than treats it as terminal.
 func ssmCommandStatus(ctx context.Context, h Host, commandID string) (string, error) {
 	cmd := exec.CommandContext(ctx, "aws",
 		"ssm", "get-command-invocation",
@@ -228,9 +189,7 @@ func ssmCommandStatus(ctx context.Context, h Host, commandID string) (string, er
 
 	out, err := cmd.Output()
 	if err != nil {
-		// A leaked grandchild holding this call's own stderr pipe open past
-		// WaitDelay must not turn an otherwise-successful poll into a
-		// spurious retry.
+		// A leaked grandchild holding stderr past WaitDelay must not turn a successful poll into a spurious retry.
 		if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 			return strings.TrimSpace(string(out)), nil
 		}
@@ -245,10 +204,7 @@ func ssmCommandStatus(ctx context.Context, h Host, commandID string) (string, er
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ssmCommandOutput reads the captured stdout of commandID via a second
-// get-command-invocation call, issued only once waitForSSMTerminalStatus
-// has already found commandID Success — never before, and never interleaved
-// with the Status polls themselves.
+// ssmCommandOutput is issued only once the command is found Success, never before or interleaved with the status polls.
 func ssmCommandOutput(ctx context.Context, h Host, commandID string) (string, error) {
 	cmd := exec.CommandContext(ctx, "aws",
 		"ssm", "get-command-invocation",
@@ -263,14 +219,11 @@ func ssmCommandOutput(ctx context.Context, h Host, commandID string) (string, er
 
 	out, err := cmd.Output()
 	if err != nil {
-		// A leaked grandchild holding this call's own stderr pipe open past
-		// WaitDelay must not turn an otherwise-successful read into a
-		// spurious failure.
+		// A leaked grandchild holding stderr past WaitDelay must not turn a successful read into a spurious failure.
 		if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 			return strings.TrimSpace(string(out)), nil
 		}
-		// A cancelled context killed the subprocess; that is why it failed,
-		// not whatever exit status the kill produced.
+		// A cancelled context killed the subprocess, which is why it failed.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", fmt.Errorf("hostexec: ssm get-command-invocation (output): %w", ctxErr)
 		}

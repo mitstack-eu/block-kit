@@ -1,12 +1,6 @@
 package hostexec_test
 
-// hostexec drives real subprocesses on a caller's behalf, and the script it
-// runs may carry a secret the caller embedded in it (a database password, for
-// instance). The invariant this file asserts is that neither the script's
-// secret content nor the ssh driver's PEM credential ever appears on a
-// recorded command line, in the package's own log output, or in a returned
-// error — the only place either may legitimately travel is the child
-// process's stdin, which is invisible to `ps` and to any log line.
+// Neither the script's secret content nor the ssh driver's PEM credential may appear on a command line, in the package's log output or in a returned error; only the child's stdin, invisible to `ps` and logs, may carry them.
 
 import (
 	"bytes"
@@ -21,8 +15,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// Low-entropy, non-token-shaped sentinels, deliberately, so they read as
-// placeholders rather than tripping a secret scanner on the test file itself.
+// The sentinels are low-entropy and not token-shaped so they do not trip a secret scanner on this file.
 const (
 	leakScriptSecret = "PGPASSWORD-THAT-MUST-NEVER-SURFACE"
 	leakPEM          = "PEM-KEY-THAT-MUST-NEVER-SURFACE"
@@ -94,13 +87,7 @@ func TestNoSecretLeak_SSHPrivateKeyNeverReachesTheCommandLine(t *testing.T) {
 	}
 }
 
-// TestNoSecretLeak_SSHScriptSecretNeverAppearsInReturnedOutput extends the
-// argv/stdin split above to RunOutput's third channel: the captured stdout it
-// hands back to the caller. A secret piped to the ssh subprocess on stdin must
-// not reappear in that returned string any more than it may in argv — a
-// probe's captured output is itself something a caller may log or return to a
-// user, so a driver that echoed a secret it never printed itself would leak it
-// one hop later.
+// A captured output is something a caller may log or return to a user, so a secret piped on stdin must not reappear in RunOutput's returned string.
 func TestNoSecretLeak_SSHScriptSecretNeverAppearsInReturnedOutput(t *testing.T) {
 	dir, _, stdinRecord, _, _ := fakeSSH(t, "cat >/dev/null; printf 'ok\\n'")
 	setPath(t, dir)
@@ -111,10 +98,7 @@ func TestNoSecretLeak_SSHScriptSecretNeverAppearsInReturnedOutput(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// The fake never echoes either secret, so an out == "ok" that still
-	// leaked one would be a driver bug, not a fixture artefact — this proves
-	// the assertions below are checking a real return value, not a vacuous
-	// empty string.
+	// The fake never echoes either secret, so a leak here is a driver bug and the assertions check a real return value, not an empty string.
 	if out != "ok" {
 		t.Fatalf("RunOutput() = %q, want %q — the fixture's own captured output, so the no-leak assertions below are checking something real", out, "ok")
 	}
@@ -131,26 +115,9 @@ func TestNoSecretLeak_SSHScriptSecretNeverAppearsInReturnedOutput(t *testing.T) 
 	}
 }
 
-// TestSSMRun_ScriptIsRecordedInTheCommandLineSoItMustNeverCarryASecret pins the
-// one place the two drivers genuinely differ, rather than letting the package
-// doc's blanket "never as a command-line argument" claim go unchecked for the
-// ssm driver. Unlike ssh's stdin hand-off, the ssm driver's send-command puts
-// the WHOLE script into "--parameters commands=...", which lands in this
-// process's own argv and in AWS CloudTrail's SendCommand request logging —
-// that is not a bug this test exists to catch, it is a property of the
-// AWS-RunShellScript API this driver has no way around, and it has to stay
-// pinned and named honestly rather than silently assumed away.
+// The ssm driver puts the whole script into "--parameters commands=...", which lands in argv and in CloudTrail, an AWS-RunShellScript property it cannot avoid; a caller must pass a parameter name and fetch the value on the host.
 //
-// The caller's safe route when the box needs a secret is to put a parameter
-// NAME in the script and fetch the value out of band once the script is
-// already running there, never to embed the value itself — exactly what
-// web-app-aws/postgres-db/provision.go's SSM SecureString parameter hand-off
-// does (see ssmParamName / putSecureParam / getSecureParam there).
-//
-// This test also folds in the cheap insurance that Host.Credential — unused
-// by this driver, but possibly populated by a caller reusing one Host across
-// Kinds — never rides along in that same exposed argv, so the check has real
-// teeth instead of asserting something the ssm code path could never do.
+// It also checks that Host.Credential, which a caller may populate on a reused Host, never rides along in that exposed argv.
 func TestSSMRun_ScriptIsRecordedInTheCommandLineSoItMustNeverCarryASecret(t *testing.T) {
 	shrinkSSMPolling(t)
 	dir, argvRecord, _ := fakeSSM(t, "cmd-1", []string{"Success"}, 0)

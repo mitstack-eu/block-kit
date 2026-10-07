@@ -1,12 +1,6 @@
 package hostexec_test
 
-// The package doc comment already states, for Run, that the ssm driver's
-// script is recorded in CloudTrail (an inherent AWS-RunShellScript property,
-// not a shortcut this package took) and that a caller must therefore never
-// embed a secret in the script itself. RunOutput sends the script the exact
-// same way — sendSSMCommand is shared between the two calls — so a reader who
-// finds RunOutput without first reading Run's doc comment must not be able to
-// miss that constraint.
+// RunOutput sends the script exactly as Run does, so a reader who finds it without Run's doc must not miss the CloudTrail constraint.
 
 import (
 	"go/doc"
@@ -17,9 +11,6 @@ import (
 	"testing"
 )
 
-// hostexecDocPackage parses this directory's non-test .go files and returns
-// their go/doc package, so a test can inspect an exported symbol's doc
-// comment the same way godoc would render it.
 func hostexecDocPackage(t *testing.T) *doc.Package {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -36,11 +27,6 @@ func hostexecDocPackage(t *testing.T) *doc.Package {
 	return doc.New(pkg, "", doc.AllDecls)
 }
 
-// TestRunOutputDocCarriesTheSameCloudTrailConstraintAsRun pins that RunOutput
-// exists as an exported func at all (MIT-2507's first acceptance criterion —
-// the kit exports one output-returning call beside Run) and that its own doc
-// comment restates the CloudTrail constraint, rather than leaving a reader of
-// RunOutput alone to assume it is silent the way the ssh driver is.
 func TestRunOutputDocCarriesTheSameCloudTrailConstraintAsRun(t *testing.T) {
 	docPkg := hostexecDocPackage(t)
 

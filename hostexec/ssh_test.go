@@ -11,8 +11,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/hostexec"
 )
 
-// --- SSH driver ----------------------------------------------------------
-
 func TestSSHRun_IdentityFileIsWrittenWithMode0600(t *testing.T) {
 	dir, _, _, permRecord, idPathRecord := fakeSSH(t, "exit 0")
 	setPath(t, dir)
@@ -50,8 +48,6 @@ func TestSSHRun_NonZeroExitReturnsAnErrorCarryingCapturedStderr(t *testing.T) {
 		t.Errorf("error = %v, want it to carry the ssh subprocess's stderr so the failure is actionable", err)
 	}
 }
-
-// --- RunOutput (MIT-2507) --------------------------------------------------
 
 func TestSSHRunOutput_SuccessReturnsCapturedStdout(t *testing.T) {
 	dir, _, _, _, _ := fakeSSH(t, `printf 'READY=0\n'`)

@@ -1,18 +1,8 @@
 package hostexec_test
 
-// The ssm poll bound. A call that sets neither WithDeliveryTimeout nor
-// WithExecutionTimeout gives up after SSMPollTimeout. A call that sets either
-// waits at least the delivery timeout plus the execution timeout plus one
-// SSMPollInterval, an unset option counting as zero, with SSMPollTimeout as
-// the floor:
+// bound = max(SSMPollTimeout, delivery + execution + SSMPollInterval), an unset option counting as zero.
 //
-//	bound = max(SSMPollTimeout, delivery + execution + SSMPollInterval)
-//
-// The detached poll after a cancelled context takes the same bound, and a
-// timeout error names the bound that ended the wait. These tests shrink
-// SSMPollTimeout well below the option floors (1 s execution, 30 s delivery)
-// and release the held command long before any option-derived bound ends, so
-// none of them waits out a real timeout option.
+// These tests shrink SSMPollTimeout below the option floors and release the held command long before any option-derived bound ends, so none waits out a real timeout option.
 
 import (
 	"context"
@@ -26,31 +16,20 @@ import (
 )
 
 const (
-	// pollBoundCommandID is the CommandId every fake in this file answers.
 	pollBoundCommandID = "cmd-poll-bound-1"
-	// pollBoundStdout is what a held command's StandardOutputContent read
-	// serves once it succeeds.
-	pollBoundStdout = "READY=0"
+	pollBoundStdout    = "READY=0"
 )
 
-// heldPastBound describes a command held InProgress for hold after the poll
-// begins and then released into finalStatus, with SSMPollInterval and
-// SSMPollTimeout set to interval and pollTimeout for the call.
 type heldPastBound struct {
-	ep          entryPoint
-	finalStatus string
-	opts        []hostexec.SendOption
-	interval    time.Duration
-	pollTimeout time.Duration
-	hold        time.Duration
-	// cancelAfterSend cancels the caller's context once the poll has begun,
-	// which only a call with WithDetachedPoll survives.
+	ep              entryPoint
+	finalStatus     string
+	opts            []hostexec.SendOption
+	interval        time.Duration
+	pollTimeout     time.Duration
+	hold            time.Duration
 	cancelAfterSend bool
 }
 
-// assertOutlivesHold runs h.ep against a fakeSSMHeld command and asserts the
-// call is still waiting when h.hold has passed, then releases the command and
-// asserts the call returns h.finalStatus's outcome rather than a timeout.
 func assertOutlivesHold(t *testing.T, h heldPastBound) {
 	t.Helper()
 	setSSMPolling(t, h.interval, h.pollTimeout)
@@ -88,10 +67,6 @@ func assertOutlivesHold(t *testing.T, h heldPastBound) {
 	}
 }
 
-// assertTerminalOutcome asserts a call reported the terminal state its
-// command ended in: nil and the captured stdout (for RunOutput) on Success,
-// otherwise an error naming the state that is neither a poll timeout nor the
-// caller's cancellation, with no output.
 func assertTerminalOutcome(t *testing.T, name, finalStatus, out string, err error) {
 	t.Helper()
 	if finalStatus == "Success" {
@@ -120,7 +95,6 @@ func assertTerminalOutcome(t *testing.T, name, finalStatus, out string, err erro
 	}
 }
 
-// entryPointNamed returns the entryPoints entry called name.
 func entryPointNamed(t *testing.T, name string) entryPoint {
 	t.Helper()
 	for _, ep := range entryPoints {
@@ -132,10 +106,7 @@ func entryPointNamed(t *testing.T, name string) entryPoint {
 	return entryPoint{}
 }
 
-// A short SSMPollTimeout, a hold three times as long, and an execution
-// timeout whose derived bound ends more than two seconds after the hold: a
-// call bounded by SSMPollTimeout returns inside the hold, and a call bounded
-// by the options is released with ample margin on a loaded runner.
+// The derived bound ends more than two seconds after the hold, so a call bounded by SSMPollTimeout returns inside the hold and one bounded by the options is released with margin on a loaded runner.
 const (
 	shortPollInterval = 20 * time.Millisecond
 	shortPollTimeout  = 100 * time.Millisecond
@@ -167,8 +138,6 @@ func TestSSMRun_ExecutionTimeoutKeepsThePollGoingPastSSMPollTimeoutToTheTerminal
 }
 
 func TestSSMRun_DeliveryTimeoutAloneKeepsThePollGoingPastSSMPollTimeout(t *testing.T) {
-	// The smallest delivery timeout, 30 s, derives a bound far beyond the
-	// hold; the command succeeds long before it, so nothing waits it out.
 	assertOutlivesHold(t, heldPastBound{
 		ep:          entryPointNamed(t, "Run"),
 		finalStatus: "Success",
@@ -207,9 +176,7 @@ func TestSSMRun_DetachedPollAfterCancellationTakesTheTimeoutOptionBound(t *testi
 }
 
 func TestSSMRun_SSMPollTimeoutStaysTheFloorAboveAShorterTimeoutOptionBound(t *testing.T) {
-	// A 1 s execution timeout derives 1.02 s, below the 2 s SSMPollTimeout,
-	// so SSMPollTimeout governs: the call must still be waiting 1.4 s in,
-	// past the derived sum but well short of the floor.
+	// The derived 1.02 s is below the 2 s SSMPollTimeout, so SSMPollTimeout governs and the call must still be waiting 1.4 s in.
 	assertOutlivesHold(t, heldPastBound{
 		ep:          entryPointNamed(t, "Run"),
 		finalStatus: "Success",
@@ -220,9 +187,6 @@ func TestSSMRun_SSMPollTimeoutStaysTheFloorAboveAShorterTimeoutOptionBound(t *te
 	})
 }
 
-// assertGivesUpAtBound runs Run against a command held InProgress for good
-// and asserts it gives up with a timeout error no sooner than bound, within
-// slack after it, naming bound in the error.
 func assertGivesUpAtBound(t *testing.T, opts []hostexec.SendOption, interval, pollTimeout, bound, slack time.Duration, cancelAfterSend bool) {
 	t.Helper()
 	setSSMPolling(t, interval, pollTimeout)
@@ -257,8 +221,7 @@ func assertGivesUpAtBound(t *testing.T, opts []hostexec.SendOption, interval, po
 }
 
 func TestSSMRun_TimeoutOptionPollGivesUpAfterExecutionTimeoutPlusOnePollInterval(t *testing.T) {
-	// A long SSMPollInterval makes the one-interval allowance observable: the
-	// bound is 1 s + 200 ms, well above the 100 ms SSMPollTimeout.
+	// A long SSMPollInterval makes the one-interval allowance observable.
 	const (
 		interval    = 200 * time.Millisecond
 		pollTimeout = 100 * time.Millisecond
@@ -278,8 +241,6 @@ func TestSSMRun_TimeoutOptionPollGivesUpAfterExecutionTimeoutPlusOnePollInterval
 }
 
 func TestSSMRun_NoTimeoutOptionGivesUpAtSSMPollTimeout(t *testing.T) {
-	// With no timeout option SSMPollTimeout alone is the bound, no shorter
-	// and not dramatically longer.
 	const pollTimeout = 300 * time.Millisecond
 	for _, detached := range []bool{false, true} {
 		name := "attached"
