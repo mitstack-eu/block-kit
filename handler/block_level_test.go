@@ -632,6 +632,224 @@ func TestBlockLevel_RefusesAnUndeclaredNameAsUndeclaredResource(t *testing.T) {
 	}
 }
 
+const onlyAManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: only-a
+  name: Only A
+spec:
+  version: 1.0.0
+  resources:
+    - { name: a, type: aws.iam-role }
+  provides: [a]
+  lifecycle:
+    endpoint: https://only-a.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
+type typeObserver struct {
+	state contract.State
+	mu    sync.Mutex
+	refs  []contract.ResourceRef
+}
+
+func (o *typeObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	o.mu.Lock()
+	o.refs = append(o.refs, r)
+	o.mu.Unlock()
+	return contract.Observation{State: o.state}, nil
+}
+
+func (o *typeObserver) calls() []contract.ResourceRef {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]contract.ResourceRef(nil), o.refs...)
+}
+
+func serveTypeObserved(t *testing.T, block *blockResource, vpc *typeObserver, operation string, extra map[string]any, mutate ...func(*handler.Config)) (int, contract.Response) {
+	t.Helper()
+	cloud := newFakeCloud()
+	aObs := &fakeObserver{name: "a", cloud: cloud}
+	return serveBlockLevel(t, block, map[string]*fakeObserver{"a": aObs}, operation, extra, append([]func(*handler.Config){func(cfg *handler.Config) {
+		cfg.Manifest = []byte(onlyAManifest)
+		if vpc != nil {
+			cfg.TypeObservers = map[string]handler.Observer{"aws.vpc": vpc}
+		}
+	}}, mutate...)...)
+}
+
+func TestTypeObservers_ValidateNamingAResourceTheManifestNoLongerDeclaresObservesItByRecordedType(t *testing.T) {
+	identity := map[string]string{"vpcId": "vpc-0abc"}
+	for _, state := range []contract.State{contract.Absent, contract.Present} {
+		t.Run(string(state), func(t *testing.T) {
+			block := &blockResource{cloud: newFakeCloud()}
+			vpc := &typeObserver{state: state}
+
+			status, resp := serveTypeObserved(t, block, vpc, "validate", map[string]any{
+				"resource":         "b",
+				"resourceType":     "aws.vpc",
+				"resourceIdentity": map[string]any{"vpcId": "vpc-0abc"},
+			})
+
+			if status != http.StatusOK {
+				t.Fatalf("validate naming b of type aws.vpc, observer reporting %s: status = %d, want 200; response %+v", state, status, resp)
+			}
+			refs := vpc.calls()
+			if len(refs) != 1 {
+				t.Fatalf("aws.vpc observer called %d times, want once", len(refs))
+			}
+			if r := refs[0]; r.Name != "b" || r.Type != "aws.vpc" || !reflect.DeepEqual(r.Identity, identity) {
+				t.Errorf("observer handed name %q, type %q, identity %v; want b, aws.vpc, %v", r.Name, r.Type, r.Identity, identity)
+			}
+			o := resp.Resources["b"].Observe
+			if o == nil || o.State != state {
+				t.Errorf("b observe entry = %+v, want state %s", o, state)
+			}
+			if len(resp.Resources) != 1 {
+				t.Errorf("resources = %+v, want b's entry alone", resp.Resources)
+			}
+			if block.ensureCalls+block.observeCalls+block.deleteCalls != 0 {
+				t.Errorf("block-level handler ran Ensure %d, Observe %d, Delete %d times; want none",
+					block.ensureCalls, block.observeCalls, block.deleteCalls)
+			}
+		})
+	}
+}
+
+func TestTypeObservers_RefuseSubscribeUpgradeAndUnsubscribeNamingAnUndeclaredResource(t *testing.T) {
+	for _, op := range []string{"subscribe", "upgrade", "unsubscribe"} {
+		t.Run(op, func(t *testing.T) {
+			block := &blockResource{cloud: newFakeCloud()}
+			vpc := &typeObserver{state: contract.Present}
+
+			status, resp := serveTypeObserved(t, block, vpc, op, map[string]any{"resource": "b", "resourceType": "aws.vpc"})
+
+			if status != http.StatusBadRequest {
+				t.Fatalf("%s naming b of type aws.vpc: status = %d, want 400; response %+v", op, status, resp)
+			}
+			if got := handler.RefusedClass(resp.StatusDetail); got != "undeclared-resource" {
+				t.Errorf("refusal class = %q, want undeclared-resource", got)
+			}
+			if n := len(vpc.calls()); n != 0 {
+				t.Errorf("aws.vpc observer called %d times, want none", n)
+			}
+			if block.ensureCalls+block.observeCalls+block.deleteCalls != 0 {
+				t.Errorf("block-level handler ran Ensure %d, Observe %d, Delete %d times; want none",
+					block.ensureCalls, block.observeCalls, block.deleteCalls)
+			}
+		})
+	}
+}
+
+func TestTypeObservers_ValidateNamingAnUndeclaredResourceWithNoHeldTypeIsRefusedNamingResourceAndType(t *testing.T) {
+	cases := []struct {
+		label string
+		extra map[string]any
+		wants []string
+	}{
+		{"no type", map[string]any{"resource": "b"}, []string{`"b"`}},
+		{"a type no observer holds", map[string]any{"resource": "b", "resourceType": "aws.subnet"}, []string{`"b"`, "aws.subnet"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			vpc := &typeObserver{state: contract.Present}
+
+			status, resp := serveTypeObserved(t, &blockResource{cloud: newFakeCloud()}, vpc, "validate", tc.extra)
+
+			if status != http.StatusBadRequest {
+				t.Fatalf("validate with %v: status = %d, want 400; response %+v", tc.extra, status, resp)
+			}
+			if got := handler.RefusedClass(resp.StatusDetail); got != "undeclared-resource" {
+				t.Errorf("refusal class = %q, want undeclared-resource", got)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(resp.Error, want) {
+					t.Errorf("error = %q, want it to name %s", resp.Error, want)
+				}
+			}
+			if n := len(vpc.calls()); n != 0 {
+				t.Errorf("aws.vpc observer called %d times, want none", n)
+			}
+		})
+	}
+}
+
+func TestTypeObservers_ADeclaredNameStillGoesThroughItsDeclaredObserver(t *testing.T) {
+	cloud := newFakeCloud()
+	cloud.createAll()
+	aObs := &fakeObserver{name: "a", cloud: cloud}
+	vpc := &typeObserver{state: contract.Present}
+
+	status, resp := serveBlockLevel(t, &blockResource{cloud: cloud}, map[string]*fakeObserver{"a": aObs}, "validate",
+		map[string]any{"resource": "a", "resourceType": "aws.iam-role"},
+		func(cfg *handler.Config) {
+			cfg.Manifest = []byte(onlyAManifest)
+			cfg.TypeObservers = map[string]handler.Observer{"aws.vpc": vpc}
+		})
+
+	if status != http.StatusOK {
+		t.Fatalf("validate naming declared a: status = %d, want 200; response %+v", status, resp)
+	}
+	if len(aObs.calls()) != 1 {
+		t.Errorf("declared observer for a called %d times, want once", len(aObs.calls()))
+	}
+	if n := len(vpc.calls()); n != 0 {
+		t.Errorf("type observer called %d times for a declared name, want none", n)
+	}
+}
+
+func TestNew_RefusesATypeObserversConfigTheBlockCannotBack(t *testing.T) {
+	cases := []struct {
+		label  string
+		mutate func(cfg *handler.Config)
+		wants  []string
+	}{
+		{"a key that is not a resource type id", func(cfg *handler.Config) {
+			cfg.TypeObservers["Not A Type"] = &typeObserver{}
+		}, []string{`"Not A Type"`, "Config.TypeObservers"}},
+		{"type observers beside per-resource handlers", func(cfg *handler.Config) {
+			cfg.Observers = nil
+			cfg.Resource = nil
+			cfg.Resources = map[string]handler.DeclaredResource{"a": &kittest.FakeResource{}}
+		}, []string{"Config.TypeObservers", "Config.Resources"}},
+		{"type observers with no manifest", func(cfg *handler.Config) { cfg.Observers = nil; cfg.Manifest = nil }, []string{"Config.TypeObservers", "Config.Manifest"}},
+		{"type observers under a v1alpha manifest", func(cfg *handler.Config) { cfg.Observers = nil; cfg.Manifest = []byte(manifestWithNoHooksKey) }, []string{"Config.TypeObservers", "Config.Manifest"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			s := kittest.NewSigner(t, "kid-1", 7)
+			cloud := newFakeCloud()
+			cfg := blockLevelConfig(t, s, &blockResource{cloud: cloud}, map[string]handler.Observer{"a": &fakeObserver{name: "a", cloud: cloud}})
+			cfg.Manifest = []byte(onlyAManifest)
+			cfg.TypeObservers = map[string]handler.Observer{"aws.vpc": &typeObserver{}}
+			tc.mutate(&cfg)
+
+			_, err := handler.New(cfg)
+
+			if err == nil {
+				t.Fatalf("handler.New accepted the config (%s), want it refused", tc.label)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to name %s", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestNew_AcceptsATypeObserverForAParsableTypeOnABlockLevelBlock(t *testing.T) {
+	s := kittest.NewSigner(t, "kid-1", 7)
+	cloud := newFakeCloud()
+	cfg := blockLevelConfig(t, s, &blockResource{cloud: cloud}, map[string]handler.Observer{"a": &fakeObserver{name: "a", cloud: cloud}})
+	cfg.Manifest = []byte(onlyAManifest)
+	cfg.TypeObservers = map[string]handler.Observer{"aws.vpc": &typeObserver{}}
+	if _, err := handler.New(cfg); err != nil {
+		t.Fatalf("handler.New: %v", err)
+	}
+}
+
 func TestNew_AcceptsAnObserverForEveryDeclaredResource(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	cloud := newFakeCloud()

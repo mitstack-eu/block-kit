@@ -416,10 +416,19 @@ resource with the request's `resourceIdentity` and `resourceType`. A named
 subscribe, upgrade or unsubscribe answers 400. The request's
 `requirementTypes` say which exact type met each requirement.
 
+A validate can name a resource that an earlier version declared and the
+current manifest no longer does. `Config.TypeObservers` serves that case. It
+holds observers keyed by resource-type id, and the Handler hands the request's
+`resourceType` and `resourceIdentity` to the observer filed under that type. A
+name the manifest does not declare and no type observer holds answers 400,
+quoting the resource and its type. So does a named subscribe, upgrade or
+unsubscribe.
+
 `handler.New` refuses a declared resource with no observer, an observer the
 manifest does not declare, `Observers` beside `Resources`, and `Observers`
-without a `mitstack/v1beta` manifest. The trust boundary, idempotency,
-secret scrubbing, events and error classes work as for any other block.
+without a `mitstack/v1beta` manifest. It refuses `TypeObservers` on the same
+two grounds, and also refuses a key that is not a resource-type id. The trust
+boundary, idempotency, secret scrubbing, events and error classes work as for any other block.
 
 The `observe` package holds the kit's shared observers, one per type, each
 over a small API interface the operator implements. They include

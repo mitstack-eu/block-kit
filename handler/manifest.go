@@ -18,6 +18,10 @@ var errObserversAndResources = errors.New("handler: Config.Observers and Config.
 
 var errObserversWithoutManifest = fmt.Errorf("handler: Config.Observers is set but Config.Manifest is not a %s manifest; an observer can only serve a resource the manifest declares under spec.resources", contract.ManifestAPIVersion)
 
+var errTypeObserversAndResources = errors.New("handler: Config.TypeObservers and Config.Resources are both set; a type observer serves a block served over Config.Resource, and a DeclaredResource observes itself")
+
+var errTypeObserversWithoutManifest = fmt.Errorf("handler: Config.TypeObservers is set but Config.Manifest is not a %s manifest; a type observer serves a resource a block-level block's earlier manifest declared", contract.ManifestAPIVersion)
+
 // errEmptyJWKSURL stands because webhook.AuthenticateHook rejects every request on an empty JWKSURL before consulting PublicKey.
 var errEmptyJWKSURL = errors.New("handler: Config.JWKSURL is required")
 
@@ -95,6 +99,20 @@ func observedResources(cfg Config, declared manifestDeclarations) ([]namedResour
 		return nil, fmt.Errorf("handler: Config.Observers has an observer for %s, which the manifest's spec.resources does not declare", undeclared)
 	}
 	return out, nil
+}
+
+func validateTypeObservers(observers map[string]Observer) error {
+	keys := make([]string, 0, len(observers))
+	for typ := range observers {
+		keys = append(keys, typ)
+	}
+	sort.Strings(keys)
+	for _, typ := range keys {
+		if _, _, _, err := contract.ParseResourceTypeID(typ); err != nil {
+			return fmt.Errorf("handler: Config.TypeObservers has an observer under %q, which is not a resource type id: %w", typ, err)
+		}
+	}
+	return nil
 }
 
 func undeclaredKeys[V any](m map[string]V, declared map[string]bool) string {

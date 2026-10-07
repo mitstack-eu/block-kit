@@ -12,7 +12,7 @@ import (
 
 const classUndeclaredResource = "undeclared-resource"
 
-// dispatchDeclared refuses a name the manifest does not declare with a 400 before any resource is reached.
+// dispatchDeclared refuses a name the manifest does not declare with a 400 before any resource is reached, unless a block-level validate names a type Config.TypeObservers holds.
 //
 // A resource still converging, left standing or failing stops the verb there, and the request context is checked before each resource's first call. Every answer, an error included, carries the resources map of the resources reached.
 func (h *Handler) dispatchDeclared(ctx context.Context, operation string, d contract.Desired, secrets []string) (int, contract.Response) {
@@ -20,8 +20,11 @@ func (h *Handler) dispatchDeclared(ctx context.Context, operation string, d cont
 	if d.Resource != "" {
 		nr, ok := h.declaredResource(d.Resource)
 		if !ok {
+			nr, ok = h.typeObserved(operation, d)
+		}
+		if !ok {
 			return h.errorResponse(Refuse(classUndeclaredResource,
-				"resource %q is not declared under the manifest's spec.resources", d.Resource), secrets)
+				"resource %q (type %q) is not declared under the manifest's spec.resources", d.Resource, d.ResourceType), secrets)
 		}
 		resources = []namedResource{nr}
 	}
@@ -40,6 +43,18 @@ func (h *Handler) dispatchDeclared(ctx context.Context, operation string, d cont
 	default:
 		return http.StatusInternalServerError, contract.Response{Error: "handler: unreachable — unknown operation " + operation}
 	}
+}
+
+func (h *Handler) typeObserved(operation string, d contract.Desired) (namedResource, bool) {
+	if !h.blockLevel || operation != "validate" {
+		return namedResource{}, false
+	}
+	o, ok := h.typeObservers[d.ResourceType]
+	if !ok {
+		return namedResource{}, false
+	}
+	decl := contract.ManifestResource{Name: d.Resource, Type: d.ResourceType, Types: []string{d.ResourceType}}
+	return namedResource{name: d.Resource, observer: o, declaration: decl}, true
 }
 
 func (h *Handler) declaredResource(name string) (namedResource, bool) {

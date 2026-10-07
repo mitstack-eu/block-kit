@@ -100,6 +100,9 @@ type Config struct {
 	// Observers needs one Observer for each declared resource, and is refused with Resources or without a mitstack/v1beta manifest.
 	Observers map[string]Observer
 
+	// TypeObservers is keyed by resource-type id and serves a validate naming a resource the manifest no longer declares; refused with Resources or without a mitstack/v1beta manifest.
+	TypeObservers map[string]Observer
+
 	// Resources needs Manifest, refuses Hooks, and is set instead of Resource, never both.
 	//
 	// Deprecated: serve the block over Resource with an Observer for each
@@ -143,8 +146,9 @@ type Handler struct {
 	hooks    map[string]Hook
 
 	// declared is nil for a block served over a single Resource.
-	declared   []namedResource
-	blockLevel bool
+	declared      []namedResource
+	blockLevel    bool
+	typeObservers map[string]Observer
 	// provided names the resources spec.provides offers, whose outputs a block-level answer carries.
 	provided map[string]bool
 	// secretParams are scrubbed like any request secret when a resource input binds one.
@@ -185,13 +189,20 @@ func New(cfg Config) (*Handler, error) {
 	switch {
 	case len(cfg.Resources) > 0 && len(cfg.Observers) > 0:
 		err = errObserversAndResources
+	case len(cfg.Resources) > 0 && len(cfg.TypeObservers) > 0:
+		err = errTypeObserversAndResources
 	case len(cfg.Resources) > 0:
 		resources, err = declaredResources(cfg, declared)
 	case declared.apiVersion == contract.ManifestAPIVersion:
 		blockLevel = true
 		resources, err = observedResources(cfg, declared)
+		if err == nil {
+			err = validateTypeObservers(cfg.TypeObservers)
+		}
 	case len(cfg.Observers) > 0:
 		err = errObserversWithoutManifest
+	case len(cfg.TypeObservers) > 0:
+		err = errTypeObserversWithoutManifest
 	default:
 		err = validateHooks(cfg, declared.hooks)
 	}
@@ -209,6 +220,7 @@ func New(cfg Config) (*Handler, error) {
 		hooks:                hooks,
 		declared:             resources,
 		blockLevel:           blockLevel,
+		typeObservers:        cfg.TypeObservers,
 		provided:             declared.provided,
 		secretParams:         declared.secretParams,
 		retainsOnUnsubscribe: declared.retainsOnUnsubscribe,
