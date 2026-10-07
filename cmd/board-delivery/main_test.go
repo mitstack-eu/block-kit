@@ -382,8 +382,7 @@ func TestRun_UsesAnchorTagOverBeforeFlagWhenTagIsPresent(t *testing.T) {
 	repo.setLocalTag(t, "board-synced", shaA)
 	srv, reqs := newRecordingServer(t, 200, "ok")
 
-	// --before points at the seed commit, which would (wrongly) include
-	// shaA's MIT-1 if the anchor tag were not preferred.
+	// --before points at the seed commit, which would wrongly include shaA's key if the anchor tag were not preferred.
 	_, code := runBoardDelivery(t, repo.Dir, repo.SeedSHA, shaC, srv.URL, "")
 	if code != 0 {
 		t.Fatalf("Run exit code = %d, want 0", code)

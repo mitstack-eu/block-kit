@@ -171,7 +171,7 @@ type request struct {
 
 // resourceStore is a trivial in-memory stand-in for whatever real resource a
 // production operator would provision — just enough to prove subscribe
-// creates something and unsubscribe deletes it (MIT-1124's teardown contract).
+// creates something and unsubscribe deletes it.
 type resourceStore struct {
 	mu        sync.Mutex
 	resources map[string]bool
@@ -413,7 +413,7 @@ import (
 )
 
 // TestUnsubscribeDeletesTheResourceItCreated proves unsubscribe removes what
-// subscribe created (MIT-1124's teardown contract).
+// subscribe created.
 func TestUnsubscribeDeletesTheResourceItCreated(t *testing.T) {
 	h, signer := newHandler(t)
 
