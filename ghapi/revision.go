@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,19 @@ import (
 // move main to the new commit because the parent it was handed is no longer
 // the tip, or because main already exists when the parent was "".
 var ErrNotFastForward = errors.New("ghapi: the parent is no longer the tip of main")
+
+// fullSHA matches a full commit SHA: 40 lowercase hex digits for SHA-1 or 64
+// for SHA-256.
+var fullSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// checkRevision refuses a revision that is not a full commit SHA, so no
+// branch name, short prefix, "." or ".." reaches a request path or query.
+func checkRevision(revision string) error {
+	if !fullSHA.MatchString(revision) {
+		return fmt.Errorf("ghapi: revision %q is not a full lowercase hex commit SHA", revision)
+	}
+	return nil
+}
 
 // Response size bounds for the revision-addressed reads. A contents read
 // carries a file of up to 1 MB base64-encoded, and a commits read carries
@@ -45,10 +59,14 @@ func (c *Client) HeadCommit(ctx context.Context, repoFullName string) (string, e
 }
 
 // CommitTree returns the tree of commit revision in repoFullName. A revision
-// the repository does not hold is an error.
+// the repository does not hold is an error, and so is one that is not a full
+// lowercase hex SHA of 40 or 64 digits, refused before any request.
 func (c *Client) CommitTree(ctx context.Context, repoFullName, revision string) (string, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
+		return "", err
+	}
+	if err := checkRevision(revision); err != nil {
 		return "", err
 	}
 	return c.commitTree(ctx, repo, revision)
@@ -57,10 +75,15 @@ func (c *Client) CommitTree(ctx context.Context, repoFullName, revision string) 
 // ReadFileAt returns the content of path at revision through the contents
 // API and whether the path exists there. A 404 reports the path absent with
 // no error. GitHub answers 404 for an unknown revision too, so a caller that
-// must tell the two apart checks the revision with CommitTree.
+// must tell the two apart checks the revision with CommitTree. A revision
+// that is not a full lowercase hex SHA of 40 or 64 digits is an error,
+// refused before any request.
 func (c *Client) ReadFileAt(ctx context.Context, repoFullName, revision, path string) ([]byte, bool, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
+		return nil, false, err
+	}
+	if err := checkRevision(revision); err != nil {
 		return nil, false, err
 	}
 	escaped, err := escapeRepoPath(path)
@@ -100,11 +123,18 @@ func (c *Client) ReadFileAt(ctx context.Context, repoFullName, revision, path st
 // parent. A parent of "" creates main. When the tree is unchanged it makes no
 // commit and returns parent. When GitHub refuses the ref update because
 // parent is no longer the tip, or main already exists for a parent of "", the
-// error wraps ErrNotFastForward and nothing is replayed.
+// error wraps ErrNotFastForward and nothing is replayed. A parent other than
+// "" must be a full lowercase hex SHA of 40 or 64 digits, and any other is
+// refused before any request.
 func (c *Client) CommitChanges(ctx context.Context, repoFullName, parent, message string, changes map[string]*string) (string, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
 		return "", err
+	}
+	if parent != "" {
+		if err := checkRevision(parent); err != nil {
+			return "", err
+		}
 	}
 	entries := changeEntries(changes)
 
@@ -137,10 +167,15 @@ func (c *Client) CommitChanges(ctx context.Context, repoFullName, parent, messag
 }
 
 // CommitParentAndPaths returns revision's first parent, "" for a root commit,
-// and the sorted paths it touched, a rename naming both of its paths.
+// and the sorted paths it touched, a rename naming both of its paths. A
+// revision that is not a full lowercase hex SHA of 40 or 64 digits is an
+// error, refused before any request.
 func (c *Client) CommitParentAndPaths(ctx context.Context, repoFullName, revision string) (string, []string, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
+		return "", nil, err
+	}
+	if err := checkRevision(revision); err != nil {
 		return "", nil, err
 	}
 	base := "/repos/" + repo + "/commits/" + url.PathEscape(revision)
