@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	productionTarget = 12
-	testTarget       = 8
+	productionTarget = 7
+	testTarget       = 6
 )
 
 var (
@@ -58,9 +58,14 @@ func (t *tally) add(p, src string) {
 	if isTest(p) {
 		s = &t.test
 	}
-	c, n := measure(src, lexFile(p, src).comments)
-	s.comments += c
-	s.lines += n
+	f := fileShare(p, src)
+	s.comments += f.comments
+	s.lines += f.lines
+}
+
+func fileShare(p, src string) share {
+	comments, lines := measure(src, lexFile(p, src).comments)
+	return share{comments: comments, lines: lines}
 }
 
 func measure(src string, comments []span) (commentLines, total int) {
@@ -90,11 +95,3 @@ func (s share) percent() string {
 }
 
 func (s share) above(target int) bool { return s.comments*100 > target*s.lines }
-
-func (s share) exceeds(base share) bool {
-	return base.lines == 0 || s.comments*base.lines > base.comments*s.lines
-}
-
-func rose(base, head share, target int) bool {
-	return head.lines > 0 && head.above(target) && head.exceeds(base)
-}

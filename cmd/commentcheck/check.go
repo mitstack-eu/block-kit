@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"maps"
-	"path"
 	"regexp"
 	"slices"
 )
@@ -31,44 +29,43 @@ func (s sides) judged(c change) bool {
 	return hasBase && !generated(c.base, b) || hasHead && !generated(c.head, h)
 }
 
+func readSides(g gitRepo, base string, changes []change) (sides, error) {
+	changed := map[string]bool{}
+	for _, c := range changes {
+		changed[c.base], changed[c.head] = true, true
+	}
+	keep := func(p string) bool { return changed[p] }
+	tree, err := g.tree(base)
+	if err != nil {
+		return sides{}, err
+	}
+	var s sides
+	if s.base, err = g.read(tree, keep); err != nil {
+		return sides{}, err
+	}
+	if s.head, err = g.headFiles(keep); err != nil {
+		return sides{}, err
+	}
+	return s, nil
+}
+
 func runCheck(stdout io.Writer, g gitRepo, base, short string, paths []string) (int, error) {
 	changes, err := g.changes(base, true, paths)
 	if err != nil {
 		return 2, err
 	}
-	dirs := map[string]bool{}
-	for _, c := range changes {
-		for _, p := range []string{c.base, c.head} {
-			if judgedPath(p) {
-				dirs[path.Dir(p)] = true
-			}
-		}
-	}
-	inDirs := func(p string) bool { return dirs[path.Dir(p)] }
-	tree, err := g.tree(base)
+	s, err := readSides(g, base, changes)
 	if err != nil {
 		return 2, err
 	}
-	var s sides
-	if s.base, err = g.read(tree, inDirs); err != nil {
-		return 2, err
-	}
-	if s.head, err = g.headFiles(inDirs); err != nil {
-		return 2, err
-	}
 
-	var findings []string
-	judged, n := map[string]bool{}, 0
+	var findings, shares []string
+	n := 0
 	for _, c := range changes {
 		if !s.judged(c) {
 			continue
 		}
 		n++
-		for _, p := range []string{c.base, c.head} {
-			if judgedPath(p) {
-				judged[path.Dir(p)] = true
-			}
-		}
 		src, ok := s.head[c.head]
 		if !ok || generated(c.head, src) {
 			continue
@@ -79,8 +76,10 @@ func runCheck(stdout io.Writer, g gitRepo, base, short string, paths []string) (
 			}
 		}
 		findings = append(findings, commentFindings(c, src)...)
+		shares = append(shares, fileShareFinding(c.head, src)...)
 	}
-	findings = append(findings, ratchet(s, judged)...)
+	slices.Sort(shares)
+	findings = append(findings, shares...)
 
 	if len(findings) == 0 {
 		fmt.Fprintf(stdout, "commentcheck: %d files judged against %s, no finding\n", n, short)
@@ -116,39 +115,15 @@ func commentFindings(c change, src string) []string {
 	return out
 }
 
-func ratchet(s sides, judged map[string]bool) []string {
-	tallies := func(files map[string]string) map[string]*tally {
-		t := map[string]*tally{}
-		for p, src := range files {
-			if d := path.Dir(p); judged[d] {
-				if t[d] == nil {
-					t[d] = &tally{}
-				}
-				t[d].add(p, src)
-			}
-		}
-		return t
+func fileShareFinding(p, src string) []string {
+	kind, target := "production", productionTarget
+	if isTest(p) {
+		kind, target = "test", testTarget
 	}
-	before, after := tallies(s.base), tallies(s.head)
-	var out []string
-	for _, d := range slices.Sorted(maps.Keys(judged)) {
-		b, h := before[d], after[d]
-		if b == nil {
-			b = &tally{}
-		}
-		if h == nil {
-			h = &tally{}
-		}
-		out = append(out, shareFinding(d, "production", b.prod, h.prod, productionTarget)...)
-		out = append(out, shareFinding(d, "test", b.test, h.test, testTarget)...)
-	}
-	return out
-}
-
-func shareFinding(dir, kind string, b, h share, target int) []string {
-	if !rose(b, h, target) {
+	s := fileShare(p, src)
+	if !s.above(target) {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s: %s comment share rose from %s (%d/%d) to %s (%d/%d), above the %d%% target",
-		dir, kind, b.percent(), b.comments, b.lines, h.percent(), h.comments, h.lines, target)}
+	return []string{fmt.Sprintf("%s: %s comment share %s (%d/%d), above the %d%% target",
+		p, kind, s.percent(), s.comments, s.lines, target)}
 }

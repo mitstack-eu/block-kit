@@ -22,19 +22,8 @@ func runSameCode(stdout io.Writer, g gitRepo, base, short string, paths []string
 	if err != nil {
 		return 2, err
 	}
-	changed := map[string]bool{}
-	for _, c := range changes {
-		changed[c.base], changed[c.head] = true, true
-	}
-	tree, err := g.tree(base)
+	s, err := readSides(g, base, changes)
 	if err != nil {
-		return 2, err
-	}
-	s := sides{}
-	if s.base, err = g.read(tree, func(p string) bool { return changed[p] }); err != nil {
-		return 2, err
-	}
-	if s.head, err = g.headFiles(func(p string) bool { return changed[p] }); err != nil {
 		return 2, err
 	}
 	n, code := 0, 0

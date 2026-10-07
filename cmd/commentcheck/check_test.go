@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCheck_AddedCommentText(t *testing.T) {
 	a := goFile("a", 0, 41)
@@ -77,38 +80,69 @@ func TestCheck_LexerRegressions(t *testing.T) {
 	})
 }
 
-func TestCheck_DirectoryShareRatchet(t *testing.T) {
-	big, small, edge := goFile("big", 20, 100), goFile("small", 5, 100), goFile("edge", 5, 93)
-	more := func(n int) string { return lines(n, "// more %d\n") }
+func tsFile(comments, total int) string {
+	return lines(comments, "// note %d\n") + lines(total-comments, "export const v%[1]d = %[1]d;\n")
+}
+
+func TestCheck_PerFileShare(t *testing.T) {
+	over, clean := goFile("p", 20, 100), goFile("p", 0, 100)
+	prodFail := func(path, share string) []string {
+		return []string{path + ": production comment share " + share + ", above the 7% target"}
+	}
+	testFail := func(path, share string) []string {
+		return []string{path + ": test comment share " + share + ", above the 6% target"}
+	}
 	runRows(t, []row{
-		{name: "adding comments over the 12% target fails naming both shares", base: map[string]string{"big/big.go": big}, head: map[string]string{"big/big.go": big + more(2)},
-			code: 1, want: []string{"big: production comment share rose from 20.0% (20/100) to 21.6% (22/102), above the 12% target"}},
-		{name: "the same addition at 5% passes", base: map[string]string{"small/small.go": small}, head: map[string]string{"small/small.go": small + more(2)}},
-		{name: "a directory may grow to exactly its target", base: map[string]string{"edge/edge.go": edge}, head: map[string]string{"edge/edge.go": edge + more(7)}},
-		{name: "a directory growing past its target fails", base: map[string]string{"edge/edge.go": edge}, head: map[string]string{"edge/edge.go": edge + more(8)},
-			code: 1, want: []string{"edge: production comment share rose from 5.4% (5/93) to 12.9% (13/101), above the 12% target"}},
-		{name: "an over-target directory that falls passes", base: map[string]string{"big/big.go": big}, head: map[string]string{"big/big.go": big + lines(10, "var w%[1]d = %[1]d\n")}},
-		{name: "deleting a file from an over-target directory raises its share", base: map[string]string{"del/a.go": goFile("del", 20, 50), "del/b.go": goFile("del", 0, 50)}, rm: []string{"del/b.go"},
-			code: 1, want: []string{"del: production comment share rose from 20.0% (20/100) to 40.0% (20/50), above the 12% target"}},
-		{name: "deleting comments from a file full of ticket ids passes",
-			base: map[string]string{"legacy/l.go": lines(10, "// MIT-%[1]d keeps the old path\n") + "package legacy\n" + lines(9, "var v%[1]d = %[1]d\n")},
-			head: map[string]string{"legacy/l.go": lines(5, "// MIT-%[1]d keeps the old path\n") + "package legacy\n" + lines(9, "var v%[1]d = %[1]d\n")}},
-		{name: "a test file is judged against 8% apart from production", base: map[string]string{"tst/a.go": goFile("tst", 10, 100)},
-			head: map[string]string{"tst/a_test.go": "package tst\n// checks a\n" + lines(9, "var t%[1]d = %[1]d\n")},
-			code: 1, want: []string{"tst: test comment share rose from 0.0% (0/0) to 9.1% (1/11), above the 8% target"}, not: []string{"tst: production"}},
-		{name: "a production file at 10% passes", head: map[string]string{"p10/a.go": goFile("p10", 1, 10)}},
-		{name: "a TS file under __tests__ is a test file", head: map[string]string{"web/__tests__/x.ts": "// checks x\n" + lines(9, "const x%[1]d = %[1]d;\n")},
-			code: 1, want: []string{"web/__tests__: test comment share rose from 0.0% (0/0) to 10.0% (1/10), above the 8% target"}},
-		{name: "a .spec.tsx file is a test file", head: map[string]string{"web/x.spec.tsx": "// checks x\n" + lines(9, "const x%[1]d = %[1]d;\n")},
-			code: 1, want: []string{"web: test comment share rose from 0.0% (0/0) to 10.0% (1/10), above the 8% target"}},
-		{name: "Go *p = 1 is not a comment line", base: map[string]string{"ptr/p.go": goFile("ptr", 12, 100)},
-			head: map[string]string{"ptr/p.go": goFile("ptr", 12, 100) + "func f(p *int) {\n" + lines(10, "\t*p = %d\n") + "}\n"}},
-		{name: "a line ending in a comment is not a comment line", base: map[string]string{"tr/t.go": goFile("tr", 12, 100)},
-			head: map[string]string{"tr/t.go": goFile("tr", 12, 100) + lines(10, "var w%[1]d = 1 // note %[1]d\n")}},
-		{name: "block comment continuation lines count", base: map[string]string{"blk/b.go": goFile("blk", 10, 100)},
-			head: map[string]string{"blk/b.go": goFile("blk", 10, 100) + "/*\nalpha\nbeta\ngamma\n*/\n"},
-			code: 1, want: []string{"blk: production comment share rose from 10.0% (10/100) to 14.3% (15/105), above the 12% target"}},
-		{name: "the repository root is named .", base: map[string]string{"root.go": goFile("root", 0, 10)}, head: map[string]string{"root.go": goFile("root", 0, 10) + more(2)},
-			code: 1, want: []string{".: production comment share rose from 0.0% (0/10) to 16.7% (2/12), above the 12% target"}},
+		{name: "a modified production file at 8% fails", base: map[string]string{"p/a.go": clean}, head: map[string]string{"p/a.go": goFile("p", 8, 100)},
+			code: 1, want: prodFail("p/a.go", "8.0% (8/100)")},
+		{name: "a modified production file at exactly 7% passes", base: map[string]string{"p/a.go": clean}, head: map[string]string{"p/a.go": goFile("p", 7, 100)}},
+		{name: "a modified test file at 7% fails", base: map[string]string{"p/a_test.go": goFile("p", 0, 100)}, head: map[string]string{"p/a_test.go": goFile("p", 7, 100)},
+			code: 1, want: testFail("p/a_test.go", "7.0% (7/100)")},
+		{name: "a modified test file at exactly 6% passes", base: map[string]string{"p/a_test.go": goFile("p", 0, 100)}, head: map[string]string{"p/a_test.go": goFile("p", 6, 100)}},
+		{name: "a file already over target that stays over target fails whatever it held", base: map[string]string{"p/a.go": over}, head: map[string]string{"p/a.go": goFile("p", 10, 100)},
+			code: 1, want: prodFail("p/a.go", "10.0% (10/100)")},
+		{name: "a file brought down to target passes", base: map[string]string{"p/a.go": over}, head: map[string]string{"p/a.go": goFile("p", 7, 100)}},
+		{name: "an over-target sibling that is not touched is not judged", base: map[string]string{"p/a.go": clean, "p/b.go": over}, head: map[string]string{"p/a.go": clean + "var extra = 1\n"}},
+		{name: "a newly added file over target fails", head: map[string]string{"p/n.go": goFile("p", 8, 100)},
+			code: 1, want: prodFail("p/n.go", "8.0% (8/100)")},
+		{name: "a deleted over-target file passes", base: map[string]string{"p/a.go": over, "p/b.go": clean}, rm: []string{"p/a.go"}},
+		{name: "generated Go over target passes", head: map[string]string{"p/gen.go": "// Code generated by stub. DO NOT EDIT.\n\n" + lines(20, "// note %d\n") + "package p\n" + lines(5, "var v%[1]d = 1\n")}},
+		{name: "an empty added file passes", head: map[string]string{"p/empty.go": ""}},
+		{name: "a TS file under __tests__ uses the test target", base: map[string]string{"web/__tests__/x.ts": tsFile(0, 100)}, head: map[string]string{"web/__tests__/x.ts": tsFile(7, 100)},
+			code: 1, want: testFail("web/__tests__/x.ts", "7.0% (7/100)")},
+		{name: "a .spec.tsx file uses the test target", base: map[string]string{"web/x.spec.tsx": tsFile(0, 100)}, head: map[string]string{"web/x.spec.tsx": tsFile(7, 100)},
+			code: 1, want: testFail("web/x.spec.tsx", "7.0% (7/100)")},
+		{name: "a TS production file at 7% passes and at 8% fails", base: map[string]string{"web/ok.ts": tsFile(0, 100), "web/bad.ts": tsFile(0, 100)},
+			head: map[string]string{"web/ok.ts": tsFile(7, 100), "web/bad.ts": tsFile(8, 100)},
+			code: 1, want: prodFail("web/bad.ts", "8.0% (8/100)"), not: []string{"web/ok.ts"}},
+		{name: "two failing files give two findings", base: map[string]string{"p/a.go": clean, "q/b_test.go": clean},
+			head: map[string]string{"p/a.go": goFile("p", 8, 100), "q/b_test.go": goFile("q", 7, 100)},
+			code: 1, want: append(prodFail("p/a.go", "8.0% (8/100)"), testFail("q/b_test.go", "7.0% (7/100)")...)},
+		{name: "a file outside the paths given is not judged", base: map[string]string{"p/a.go": clean, "q/b.go": clean}, head: map[string]string{"p/a.go": goFile("p", 20, 100), "q/b.go": clean + "var extra = 1\n"}, args: []string{"q"}},
+		{name: "a renamed file over target is judged at its head path", base: map[string]string{"p/old.go": clean}, mv: [][2]string{{"p/old.go", "p/new.go"}},
+			head: map[string]string{"p/new.go": goFile("p", 10, 100)}, code: 1, want: prodFail("p/new.go", "10.0% (10/100)"), not: []string{"p/old.go"}},
+		{name: "a pure rename of an over-target file is judged at its head path", base: map[string]string{"p/old.go": over}, mv: [][2]string{{"p/old.go", "p/new.go"}}, commit: true,
+			code: 1, want: prodFail("p/new.go", "20.0% (20/100)")},
+		{name: "a file at the repository root is named by its path", head: map[string]string{"root.go": goFile("root", 2, 12)},
+			code: 1, want: prodFail("root.go", "16.7% (2/12)")},
+		{name: "Go *p = 1 is not a comment line", base: map[string]string{"ptr/p.go": goFile("ptr", 7, 100)},
+			head: map[string]string{"ptr/p.go": goFile("ptr", 7, 100) + "func f(p *int) {\n" + lines(10, "\t*p = %d\n") + "}\n"}},
+		{name: "a line ending in a comment is not a comment line", base: map[string]string{"tr/t.go": goFile("tr", 7, 100)},
+			head: map[string]string{"tr/t.go": goFile("tr", 7, 100) + lines(10, "var w%[1]d = 1 // note %[1]d\n")}},
+		{name: "block comment continuation lines count", base: map[string]string{"blk/b.go": goFile("blk", 4, 100)},
+			head: map[string]string{"blk/b.go": goFile("blk", 4, 100) + "/*\nalpha\nbeta\ngamma\n*/\n"},
+			code: 1, want: prodFail("blk/b.go", "8.6% (9/105)")},
 	})
+}
+
+func TestCheck_PerFileFindingsSortByPath(t *testing.T) {
+	dir, base := repoAt(t, map[string]string{"z/z.go": goFile("z", 0, 100), "a/a.go": goFile("a", 0, 100)})
+	write(t, dir, map[string]string{"z/z.go": goFile("z", 8, 100), "a/a.go": goFile("a", 9, 100)})
+
+	out, _, code := run("-repo", dir, "-base", base)
+
+	first, second := strings.Index(out, "a/a.go: production"), strings.Index(out, "z/z.go: production")
+	if code != 1 || first < 0 || second < first {
+		t.Errorf("exit %d; want 1 with a/a.go before z/z.go; stdout:\n%s", code, out)
+	}
 }

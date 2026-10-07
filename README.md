@@ -981,14 +981,13 @@ The check fails when an added comment holds a ticket id, which is `MIT-` or
 `MS-` followed by digits, or a `file:line` reference. A comment says what the
 code does, and the ticket belongs in the commit subject.
 
-A directory's comment share is the fraction of its lines that are comment
-lines, meaning lines whose first non-blank character lies inside a comment,
-counted apart for production files and for test files, where a test file is a
-`_test.go` file, a `.test` or `.spec` TypeScript file, or anything under
-`__tests__`. The check also fails when that share rises above both its share
-at the base and its target, which is 12% for production files and 8% for test
-files. A directory already over its target may only fall, and one under it may
-grow up to the target.
+A file's comment share is the fraction of its lines that are comment lines,
+meaning lines whose first non-blank character lies inside a comment. The check
+also fails when a file the pull request adds, changes or renames holds a share
+above its target, whatever the file held at the base. The target is 7% for a
+production file and 6% for a test file, where a test file is a `_test.go` file,
+a `.test` or `.spec` TypeScript file, or anything under `__tests__`. A file the
+pull request leaves alone is not judged, nor is a deleted or generated file.
 
 You can run the check before you push, against the commit your branch started
 from:

@@ -1,4 +1,4 @@
-// Command commentcheck judges the comments a change adds, the comment share of each directory it touches, and whether a change is comment-only.
+// Command commentcheck judges the comments a change adds, the comment share of each file it touches, and whether a change is comment-only.
 package main
 
 import (
