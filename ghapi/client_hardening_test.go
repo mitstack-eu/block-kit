@@ -10,42 +10,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/ghapi"
 )
 
-// MIT-1569 — two flaws carried over verbatim from the reference
-// (examples/web-app-aws/managed-ci/repos.go):
-//
-//  1. SetVariable concatenates an unvalidated `name` into a URL path on the
-//     PATCH fallback (`/repos/{repo}/actions/variables/{name}`) — a `name`
-//     containing "/", "..", or an encoded slash can redirect that PATCH to a
-//     different same-host API path, carrying a real installation token. The
-//     POST->PATCH fallback also fires on BOTH 409 ("already exists") AND 422
-//     ("invalid name"), so a malformed name doesn't fail, it falls straight
-//     into the concatenating path.
-//  2. baseCommit's two response decodes (the ref lookup, the commit lookup)
-//     are bare `json.NewDecoder(...).Decode(...)` — every other body read in
-//     client.go is io.LimitReader-bounded; these two are not.
-//
-// CONTRACT pinned by these tests (see the task write-up for the full
-// rationale):
-//
-//   - A variable name must match GitHub's own rule: letters/digits/
-//     underscore only, must NOT start with a digit, must not be empty.
-//     ^[A-Za-z_][A-Za-z0-9_]*$ — rejects "/", "..", "%2f", a leading digit,
-//     and "". Validation happens BEFORE any HTTP call.
-//   - The two 422 meanings are told apart by the upstream JSON body's
-//     "message" field: a message containing "already exists" (any case) is
-//     the duplicate-variable case and still falls back to PATCH (no
-//     regression vs the existing TestSetVariable_SafeToCallTwice, which
-//     drives this via 409). Any other 422 body — including one that doesn't
-//     parse as JSON, or parses but carries no recognizable "already exists"
-//     message — must FAIL rather than fall through to PATCH. Ambiguous fails
-//     safe: never PATCH on doubt.
-//   - baseCommit's two decodes must be bounded (io.LimitReader), so a
-//     multi-megabyte ref/commit response can't be decoded in full; the
-//     practical assertion is that CommitFiles reports an error instead of
-//     silently reading an oversized body to completion, and that the call
-//     chain stops there (no further request is made).
-
-// --- 1a. Name validation happens before any HTTP call -----------------------
+// A malformed variable name must never reach the PATCH fallback's URL path, an ambiguous 422 must fail rather than PATCH, and baseCommit's decodes must be bounded.
 
 func TestSetVariable_RejectsMalformedNamesBeforeAnyRequest(t *testing.T) {
 	for _, name := range []string{

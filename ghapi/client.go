@@ -15,21 +15,14 @@ import (
 	"github.com/mitstack-eu/operator-kit/safe"
 )
 
-// Client is a GitHub REST API client. Base is an ALREADY-RESOLVED base URL —
-// production callers resolve the endpoint once with BaseFromEnv and pass the
-// resulting base's String() (see base.go); by the time it reaches Client the
-// trust decision has already been made once, so Client itself carries no
-// host-trust logic and a
-// test fixture can supply an httptest URL directly. Token is never a
-// package-level global — each Client carries its own.
+// Client is a GitHub REST API client whose Base is already resolved, so it carries no host-trust logic and a test can supply an httptest URL.
 type Client struct {
 	HTTP  *http.Client
 	Base  string
 	Token string
 }
 
-// NewClient builds a Client from an already-resolved base URL, an
-// installation token, and an *http.Client (nil uses http.DefaultClient).
+// NewClient builds a Client from a resolved base URL, a token and an *http.Client where nil uses http.DefaultClient.
 func NewClient(baseURL, token string, httpClient *http.Client) *Client {
 	return &Client{HTTP: httpClient, Base: baseURL, Token: token}
 }
@@ -47,10 +40,7 @@ func (c *Client) headers(req *http.Request) {
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 }
 
-// EnsureRepo idempotently creates a private repo `name` in org `org` — a GET
-// that returns 200 is treated as already-existing (no create call); a 404
-// creates it via POST /orgs/{org}/repos. Returns the repo's full name,
-// preferring the response's full_name when the create call reports one.
+// EnsureRepo idempotently creates a private repo, treating a 200 GET as already existing and a 404 as a create.
 func (c *Client) EnsureRepo(ctx context.Context, org, name string) (string, error) {
 	fullName := org + "/" + name
 	repo, err := SafeRepo(fullName)
@@ -98,9 +88,7 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name string) (string, erro
 	return fullName, nil
 }
 
-// DeleteRepo idempotently deletes org/name. A 404 (already gone) and a
-// 200/204 are all success, so a teardown can repeat safely. Any other status
-// is a real failure.
+// DeleteRepo treats a 404 as success so a teardown can repeat safely.
 func (c *Client) DeleteRepo(ctx context.Context, org, name string) error {
 	repo, err := SafeRepo(org + "/" + name)
 	if err != nil {
@@ -124,15 +112,11 @@ func (c *Client) DeleteRepo(ctx context.Context, org, name string) error {
 	return fmt.Errorf("ghapi: github DELETE /repos/%s returned %d: %s", repo, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
 }
 
-// maxFastForwardAttempts caps the PATCHes of main that one CommitFiles makes.
 const maxFastForwardAttempts = 3
 
 var errStaleBase = errors.New("ghapi: main moved before the ref update")
 
-// CommitFiles commits files onto repoFullName's main branch in one Git Data
-// API commit, making no commit when the tree is unchanged and replaying a lost
-// fast-forward race on a fresh read of main, rebuilding the tree and commit
-// rather than retrying the PATCH alone.
+// CommitFiles makes no commit when the tree is unchanged and replays a lost fast-forward race by rebuilding the tree and commit rather than retrying the PATCH alone.
 func (c *Client) CommitFiles(ctx context.Context, repoFullName, message string, files map[string]string) error {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
@@ -212,8 +196,7 @@ func (c *Client) commitOnto(ctx context.Context, repo, message string, entries [
 	return fmt.Errorf("ghapi: github PATCH %s returned %d: %s", path, status, safe.LogSafe(raw, c.Token))
 }
 
-// baseCommit returns the current main commit sha + its tree sha. haveBase is
-// false for a fresh/empty repo (no heads/main ref yet).
+// baseCommit reports haveBase false for an empty repo with no heads/main ref yet.
 func (c *Client) baseCommit(ctx context.Context, repo string) (commitSHA, treeSHA string, haveBase bool, err error) {
 	commitSHA, haveBase, err = c.mainRef(ctx, repo)
 	if err != nil || !haveBase {
@@ -226,8 +209,6 @@ func (c *Client) baseCommit(ctx context.Context, repo string) (commitSHA, treeSH
 	return commitSHA, treeSHA, true, nil
 }
 
-// postForSHA POSTs payload to path and returns the response's top-level
-// "sha" field (empty for endpoints that don't return one).
 func (c *Client) postForSHA(ctx context.Context, path string, payload any) (string, error) {
 	resp, err := c.doJSON(ctx, http.MethodPost, path, payload)
 	if err != nil {
@@ -267,18 +248,7 @@ func (c *Client) patchStatus(ctx context.Context, path string, payload any) (int
 	return resp.StatusCode, string(raw), nil
 }
 
-// SetVariable idempotently sets (creates or updates) an Actions repo
-// variable. name is validated against GitHub's Actions-variable naming rule
-// (SafeVariableName) BEFORE any HTTP call — this is also what keeps a
-// malformed name out of the PATCH fallback's concatenated URL path. A create
-// (POST) that reports <300 is done; a 409 always falls back to PATCH
-// .../actions/variables/{name} (GitHub reports the variable already exists —
-// the Actions variables API is not itself idempotent). A 422 is ambiguous —
-// it can mean "already exists" OR "invalid name/value" — so the upstream
-// JSON body's "message" field is inspected: only a message containing
-// "already exists" (case-insensitive) falls back to PATCH; anything else,
-// including an unparseable body, fails safe (no PATCH). Any other status is
-// an error.
+// SetVariable validates name before any HTTP call, falls back to PATCH on a 409, and on an ambiguous 422 patches only when the message says "already exists".
 func (c *Client) SetVariable(ctx context.Context, repoFullName, name, value string) error {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {

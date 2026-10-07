@@ -17,17 +17,12 @@ import (
 	"github.com/mitstack-eu/operator-kit/safe"
 )
 
-// ErrNotFastForward is the error CommitChanges wraps when GitHub refuses to
-// move main to the new commit because the parent it was handed is no longer
-// the tip, or because main already exists when the parent was "".
+// ErrNotFastForward is wrapped by CommitChanges when GitHub refuses to move main because the parent is no longer the tip or main already exists for a parent of "".
 var ErrNotFastForward = errors.New("ghapi: the parent is no longer the tip of main")
 
-// fullSHA matches a full commit SHA: 40 lowercase hex digits for SHA-1 or 64
-// for SHA-256.
 var fullSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
-// checkRevision refuses a revision that is not a full commit SHA, so no
-// branch name, short prefix, "." or ".." reaches a request path or query.
+// checkRevision refuses anything but a full commit SHA, so no branch name, short prefix, "." or ".." reaches a request path or query.
 func checkRevision(revision string) error {
 	if !fullSHA.MatchString(revision) {
 		return fmt.Errorf("ghapi: revision %q is not a full lowercase hex commit SHA", revision)
@@ -35,20 +30,16 @@ func checkRevision(revision string) error {
 	return nil
 }
 
-// Response size bounds for the revision-addressed reads. A contents read
-// carries a file of up to 1 MB base64-encoded, and a commits read carries
-// each file's patch.
+// A contents read carries a file of up to 1 MB base64-encoded, and a commits read carries each file's patch.
 const (
 	maxContentsBody = 4 << 20
 	maxCommitBody   = 32 << 20
 )
 
-// maxCommitFilePages bounds the pages of a commit's files CommitParentAndPaths
-// reads; GitHub lists at most 3000 files of a commit, 300 per page.
+// GitHub lists at most 3000 files of a commit, 300 per page.
 const maxCommitFilePages = 10
 
-// HeadCommit returns the commit refs/heads/main of repoFullName points at, or
-// "" when the repository has no main yet.
+// HeadCommit returns the commit refs/heads/main points at, or "" when the repository has no main yet.
 func (c *Client) HeadCommit(ctx context.Context, repoFullName string) (string, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
@@ -58,9 +49,7 @@ func (c *Client) HeadCommit(ctx context.Context, repoFullName string) (string, e
 	return sha, err
 }
 
-// CommitTree returns the tree of commit revision in repoFullName. A revision
-// the repository does not hold is an error, and so is one that is not a full
-// lowercase hex SHA of 40 or 64 digits, refused before any request.
+// CommitTree returns the tree of commit revision and errors on an unknown revision or one that is not a full lowercase hex SHA, refused before any request.
 func (c *Client) CommitTree(ctx context.Context, repoFullName, revision string) (string, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
@@ -72,12 +61,7 @@ func (c *Client) CommitTree(ctx context.Context, repoFullName, revision string) 
 	return c.commitTree(ctx, repo, revision)
 }
 
-// ReadFileAt returns the content of path at revision through the contents
-// API and whether the path exists there. A 404 reports the path absent with
-// no error. GitHub answers 404 for an unknown revision too, so a caller that
-// must tell the two apart checks the revision with CommitTree. A revision
-// that is not a full lowercase hex SHA of 40 or 64 digits is an error,
-// refused before any request.
+// ReadFileAt reports a missing path as absent with no error, and since GitHub also answers 404 for an unknown revision a caller that must tell them apart checks CommitTree.
 func (c *Client) ReadFileAt(ctx context.Context, repoFullName, revision, path string) ([]byte, bool, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
@@ -118,14 +102,7 @@ func (c *Client) ReadFileAt(ctx context.Context, repoFullName, revision, path st
 	return content, true, nil
 }
 
-// CommitChanges lands one commit on parent in repoFullName's main and returns
-// it. A nil content deletes its path, and every other path carries over from
-// parent. A parent of "" creates main. When the tree is unchanged it makes no
-// commit and returns parent. When GitHub refuses the ref update because
-// parent is no longer the tip, or main already exists for a parent of "", the
-// error wraps ErrNotFastForward and nothing is replayed. A parent other than
-// "" must be a full lowercase hex SHA of 40 or 64 digits, and any other is
-// refused before any request.
+// CommitChanges lands one commit on parent, where a nil content deletes its path, a parent of "" creates main, an unchanged tree makes no commit, and a refused ref update wraps ErrNotFastForward without replaying.
 func (c *Client) CommitChanges(ctx context.Context, repoFullName, parent, message string, changes map[string]*string) (string, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
@@ -166,10 +143,7 @@ func (c *Client) CommitChanges(ctx context.Context, repoFullName, parent, messag
 	return commitSHA, c.fastForwardMain(ctx, repo, commitSHA)
 }
 
-// CommitParentAndPaths returns revision's first parent, "" for a root commit,
-// and the sorted paths it touched, a rename naming both of its paths. A
-// revision that is not a full lowercase hex SHA of 40 or 64 digits is an
-// error, refused before any request.
+// CommitParentAndPaths returns revision's first parent, "" for a root commit, and the sorted paths it touched, with a rename naming both.
 func (c *Client) CommitParentAndPaths(ctx context.Context, repoFullName, revision string) (string, []string, error) {
 	repo, err := SafeRepo(repoFullName)
 	if err != nil {
@@ -230,8 +204,6 @@ func (c *Client) CommitParentAndPaths(ctx context.Context, repoFullName, revisio
 	return parent, paths, nil
 }
 
-// changeEntries returns the tree entries for changes in path order: a write
-// carries its content and a deletion carries "sha": null.
 func changeEntries(changes map[string]*string) []map[string]any {
 	paths := make([]string, 0, len(changes))
 	for p := range changes {
@@ -251,8 +223,6 @@ func changeEntries(changes map[string]*string) []map[string]any {
 	return entries
 }
 
-// fastForwardMain moves main to commitSHA without force, wrapping
-// ErrNotFastForward when GitHub refuses it as not a fast forward.
 func (c *Client) fastForwardMain(ctx context.Context, repo, commitSHA string) error {
 	path := "/repos/" + repo + "/git/refs/heads/main"
 	status, raw, err := c.patchStatus(ctx, path, map[string]any{"sha": commitSHA})
@@ -268,8 +238,6 @@ func (c *Client) fastForwardMain(ctx context.Context, repo, commitSHA string) er
 	return fmt.Errorf("ghapi: github PATCH %s returned %d: %s", path, status, safe.LogSafe(raw, c.Token))
 }
 
-// createMainRef creates refs/heads/main at commitSHA, wrapping
-// ErrNotFastForward when GitHub reports main already exists.
 func (c *Client) createMainRef(ctx context.Context, repo, commitSHA string) error {
 	path := "/repos/" + repo + "/git/refs"
 	resp, err := c.doJSON(ctx, http.MethodPost, path, map[string]any{"ref": "refs/heads/main", "sha": commitSHA})
@@ -287,8 +255,6 @@ func (c *Client) createMainRef(ctx context.Context, repo, commitSHA string) erro
 	return fmt.Errorf("ghapi: github POST %s returned %d: %s", path, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
 }
 
-// mainRef returns the commit main points at. haveMain is false, with no
-// error, when the repository has no main yet.
 func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain bool, err error) {
 	status, raw, _, err := c.get(ctx, "/repos/"+repo+"/git/ref/heads/main", 8<<10)
 	if err != nil {
@@ -311,7 +277,6 @@ func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain
 	return ref.Object.SHA, true, nil
 }
 
-// commitTree returns the tree of commit sha through the Git Data API.
 func (c *Client) commitTree(ctx context.Context, repo, sha string) (string, error) {
 	status, raw, _, err := c.get(ctx, "/repos/"+repo+"/git/commits/"+url.PathEscape(sha), 8<<10)
 	if err != nil {
@@ -331,8 +296,7 @@ func (c *Client) commitTree(ctx context.Context, repo, sha string) (string, erro
 	return commit.Tree.SHA, nil
 }
 
-// get GETs path and returns the status, the body read up to limit bytes,
-// unscrubbed so a caller must pass it through safe.LogSafe, and the headers.
+// get returns the body unscrubbed, so a caller must pass it through safe.LogSafe.
 func (c *Client) get(ctx context.Context, path string, limit int64) (int, []byte, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+path, nil)
 	if err != nil {
@@ -351,8 +315,7 @@ func (c *Client) get(ctx context.Context, path string, limit int64) (int, []byte
 	return resp.StatusCode, raw, resp.Header, nil
 }
 
-// escapeRepoPath escapes each segment of a repository path, refusing an
-// empty, "." or ".." segment so none can climb out of the contents API.
+// escapeRepoPath refuses an empty, "." or ".." segment so none can climb out of the contents API.
 func escapeRepoPath(path string) (string, error) {
 	segments := strings.Split(path, "/")
 	for i, s := range segments {
@@ -364,7 +327,6 @@ func escapeRepoPath(path string) (string, error) {
 	return strings.Join(segments, "/"), nil
 }
 
-// hasNextPage reports whether a Link header names a next page.
 func hasNextPage(link string) bool {
 	for _, part := range strings.Split(link, ",") {
 		if strings.Contains(part, `rel="next"`) {
