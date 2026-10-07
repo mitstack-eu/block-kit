@@ -1,18 +1,4 @@
-// Package customdomain validates the optional, consumer-supplied vanity
-// hostname (MIT-1805) that the aws-topology capability's three engines
-// (OpenTofu, CloudFormation, Crossplane) all accept as a `customDomain`
-// param.
-//
-// WHY THIS LIVES HERE, ONCE
-//
-// The value rides straight into the operator's Caddy vhost + ACME config on
-// the consumer's own box, so it is DATA, never config (the same threat class
-// as MIT-1325's GitHub host allowlist) — every engine that accepts it must
-// reject anything not shaped like a bare RFC-1035 hostname BEFORE it ever
-// reaches a rendered script or a cloud API call. Three engines, one
-// validation rule: duplicating it per engine is exactly the drift
-// `scripts/check-reconcile-scripts-sync.sh` and this package's sibling
-// `tftpl` already exist to prevent for the reconcile scripts themselves.
+// Package customdomain validates the consumer-supplied vanity hostname, which is data that must never reach a rendered Caddy or ACME config unless it is a bare hostname.
 package customdomain
 
 import (
@@ -21,19 +7,12 @@ import (
 )
 
 const (
-	// maxHostnameLength / maxLabelLength mirror RFC 1035 §3.1's limits: 255
-	// octets total including the root's implicit trailing dot (255-1=254; the
-	// conventional presentation-form limit used by browsers/ACME clients is
-	// 253), 63 octets per label.
+	// Presentation-form limits: 253 total (browsers and ACME clients) and 63 per label.
 	maxHostnameLength = 253
 	maxLabelLength    = 63
 )
 
-// Validate rejects anything that is not a bare RFC-1035-shaped hostname.
-// Empty is the documented opt-out (the feature-off default) and is always
-// valid — every other case must be a plain consumer-owned hostname: no
-// scheme, path, port, wildcard, control character, or Caddyfile-directive
-// shape (space/brace/CR/LF) can ever reach an operator's Caddy/ACME config.
+// Validate rejects anything that is not a bare RFC-1035 hostname, with empty as the always-valid opt-out.
 func Validate(domain string) error {
 	if domain == "" {
 		return nil
@@ -68,10 +47,6 @@ func Validate(domain string) error {
 	return nil
 }
 
-// validateLabel validates a single dot-separated hostname label: non-empty
-// (catches leading/trailing/double dots via the empty split result), at most
-// 63 characters, and letters/digits/hyphens only — never starting or ending
-// with a hyphen.
 func validateLabel(label string) error {
 	if label == "" {
 		return fmt.Errorf("customDomain must not contain an empty label (leading dot, trailing dot, or double dot)")
