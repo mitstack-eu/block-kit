@@ -15,6 +15,8 @@
 // nothing but a shared constant makes a mismatch visible, and a mismatch is
 // silent until an app is stranded between two stacks that disagree about which
 // resources are the same resources.
+//
+// The package also gives a subscription's CloudFormation stack name.
 package awsnames
 
 import "strings"

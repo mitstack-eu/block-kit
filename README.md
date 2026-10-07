@@ -561,17 +561,24 @@ whose parent is no longer the tip lands nothing, so `CommitManifests` and
 `Revert` retry it on a fresh head a bounded number of times. In tests, `gitopstest.NewRepository`
 and `gitopstest.NewNotifications` give in-memory fakes of both.
 
-### Driving a CloudFormation stack on an SSM host
+### Building an SSM host
 
-An operator that runs scripts on an EC2 instance builds its host with
-`hostexec.SSMHost`. It accepts only the `aws-ssm` kind and refuses any other
-with an error that matches `hostexec.ErrNotSSM` and repeats nothing from the
-host. The target and region are left for `hostexec.Run` to judge.
+An operator that runs scripts on an EC2 instance through AWS Systems Manager
+(SSM) builds its host with `hostexec.SSMHost`. The kind it passes is the
+`execKind` its app-host binding gives it. `SSMHost` accepts only the `aws-ssm`
+kind and refuses any other with an error that matches `hostexec.ErrNotSSM` and
+repeats nothing from the host.
+
+`SSMHost` takes the target, credential and region as adjacent strings, so a
+caller passes them in that order, and a block that sets no credential passes
+`""`. The target and region are left for `hostexec.Run` to judge.
+
+### Driving a CloudFormation stack
 
 An operator names its CloudFormation stack with `awsnames.StackName`, which
-prefixes `mitstack-` to the id, turns every character outside letters and digits
-into a dash through `awsnames.SanitiseCFNName`, and cuts the result to
-CloudFormation's limit of 128 characters.
+prefixes `mitstack-` to the id, turns every character outside the ASCII letters
+and digits `[A-Za-z0-9]` into a dash through `awsnames.SanitiseCFNName`, and
+cuts the result to CloudFormation's limit of 128 characters.
 
 The operator drives the stack through `cfnstack.New`. It writes a short adapter
 from its own AWS SDK client to `cfnstack.Client`, which keeps the kit free of

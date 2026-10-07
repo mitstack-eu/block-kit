@@ -35,6 +35,8 @@ type Stack struct {
 }
 
 // Client is the CloudFormation API an operator adapts its SDK client to.
+// An adapter returns the SDK's errors as they are or wrapped with %w, since a
+// wrapper with its own ErrorCode hides AlreadyExistsException from EnsureStack.
 type Client interface {
 	ValidateTemplate(ctx context.Context, templateBody string) error
 	CreateStack(ctx context.Context, in StackInput) error
