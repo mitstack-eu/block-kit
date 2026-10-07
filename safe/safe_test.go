@@ -189,3 +189,21 @@ func TestLogSafe_ComposesBothInTheRightOrder(t *testing.T) {
 		t.Errorf("LogSafe left a newline: %q", got)
 	}
 }
+
+func TestScrub_RedactsAWebIdentityTokenInAnSTSError(t *testing.T) {
+	token := "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZpeHR1cmUifQ" + "." +
+		"eyJzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6bWl0c3RhY2s6Zml4dHVyZSIsImF1ZCI6InN0cy5hbWF6b25hd3MuY29tIn0" + "." +
+		"Zml4dHVyZS1zaWduYXR1cmU"
+	msg := "operation error STS: AssumeRoleWithWebIdentity, https response error StatusCode: 400, RequestID: 0000, " +
+		"InvalidIdentityToken: Incorrect token audience in " + token + " (WebIdentityToken=" + token + ")"
+	want := "operation error STS: AssumeRoleWithWebIdentity, https response error StatusCode: 400, RequestID: 0000, " +
+		"InvalidIdentityToken: Incorrect token audience in [REDACTED] (WebIdentityToken=[REDACTED])"
+
+	got := safe.Scrub(msg, token)
+	if strings.Contains(got, token) {
+		t.Fatalf("Scrub left the web-identity token in %q", got)
+	}
+	if got != want {
+		t.Errorf("Scrub = %q, want %q", got, want)
+	}
+}
