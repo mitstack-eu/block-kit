@@ -25,7 +25,6 @@ func TestObserve_NarratesPerResource(t *testing.T) {
 }
 
 func TestObserve_CountsTerminalEventsAgainstTheTotal(t *testing.T) {
-	// "3/9" is the difference between a visible provision and a spinner.
 	lines, s := sink()
 	n := progress.NewWithSink(s)
 	n.SetTotal(3)
@@ -79,8 +78,7 @@ func TestObserve_ScrubsSecretsBeforeTheLineLeavesTheProcess(t *testing.T) {
 }
 
 func TestObserve_SanitisesNewlinesOutOfEngineOutput(t *testing.T) {
-	// Engine output is request-adjacent and multi-line; an unsanitised detail
-	// forges a log/event line (MIT-1326).
+	// An unsanitised multi-line detail could forge a log line.
 	lines, s := sink()
 	n := progress.NewWithSink(s)
 
@@ -105,19 +103,13 @@ func TestObserve_IgnoresAnEmptyEvent(t *testing.T) {
 }
 
 func TestNarrator_IsAdvisory_NoAPIReturnsASendError(t *testing.T) {
-	// ADR 0042: the channel accelerates the lifecycle, it never carries it. This
-	// is enforced by SHAPE — Observe returns nothing, so a caller cannot make
-	// narration load-bearing by checking an error it should have ignored. If
-	// someone adds an error return, this test stops compiling, which is the
-	// point.
+	// Adding an error return to Observe stops this compiling, which keeps narration from becoming load-bearing.
 	n := progress.New()
 	var observe func(context.Context, progress.Event) = n.Observe
 	_ = observe
 }
 
 func TestNarrator_SurvivesAPanickingOrSlowSinkWithoutAffectingTheCaller(t *testing.T) {
-	// A dropped or failing event must never change a lifecycle outcome. The sink
-	// here records nothing; the narrator must still count correctly and return.
 	n := progress.NewWithSink(func(string) {})
 	n.SetTotal(2)
 
@@ -130,8 +122,6 @@ func TestNarrator_SurvivesAPanickingOrSlowSinkWithoutAffectingTheCaller(t *testi
 }
 
 func TestNew_EmitsThroughTheEventsChannelAndNoOpsWithoutOne(t *testing.T) {
-	// A bare context carries no eventsCallback — an older engine, or the feature
-	// off. That must be silence, not an error the operator has to swallow.
 	n := progress.New()
 	n.Observe(context.Background(), progress.Event{Action: "creating", Resource: "a"})
 }
