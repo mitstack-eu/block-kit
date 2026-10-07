@@ -12,11 +12,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/cloudid"
 )
 
-// --- ProviderARN (T-562) ----------------------------------------------------
-
 func TestProviderARN_IsConstructedNotDiscovered(t *testing.T) {
-	// The whole point: an operator must never need iam:ListOpenIDConnectProviders
-	// to find its own provider. The ARN is a pure function of account + issuer.
 	got, err := cloudid.ProviderARN("123456789012", "https://api.mitstack.dev")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -59,11 +55,7 @@ func TestProviderARN_RejectsIncompleteInput(t *testing.T) {
 	}
 }
 
-// --- Resolve ----------------------------------------------------------------
-
-// fakeAWS writes a stub `aws` executable into a temp dir and returns the dir,
-// plus the path it records its argv/env into. The stub is how these tests prove
-// the token never reaches a command line without running real AWS.
+// fakeAWS stubs the aws CLI and records its argv and env, to prove the token never reaches a command line.
 func fakeAWS(t *testing.T, script string) (bin string, record string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -105,8 +97,7 @@ func TestResolve_ReturnsTemporaryCredentials(t *testing.T) {
 }
 
 func TestResolve_NeverPutsTheTokenOnACommandLine(t *testing.T) {
-	// The token is delivered via AWS_WEB_IDENTITY_TOKEN_FILE precisely so it is
-	// invisible in process listings. This is the assertion that keeps it that way.
+	// The token travels by file so it stays invisible in process listings.
 	dir, record := fakeAWS(t, `echo '{"AccessKeyId":"A","SecretAccessKey":"B","SessionToken":"C","Expiration":"2099-01-01T00:00:00Z"}'`)
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 
@@ -163,8 +154,7 @@ func TestResolve_SessionNameCarriesTheSuffix(t *testing.T) {
 }
 
 func TestResolve_SurfacesTheAWSErrorNotABareFailure(t *testing.T) {
-	// #436: a bare 422 tells the consumer nothing. The CLI's stderr carries the
-	// error code and role ARN and never the token, so it is safe to propagate.
+	// The CLI's stderr carries the error code and role ARN and never the token, so it is safe to propagate.
 	dir, _ := fakeAWS(t, `echo "An error occurred (AccessDenied) when calling AssumeRoleWithWebIdentity" >&2; exit 254`)
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 
@@ -181,8 +171,7 @@ func TestResolve_SurfacesTheAWSErrorNotABareFailure(t *testing.T) {
 }
 
 func TestResolve_RequiresARegion(t *testing.T) {
-	// MIT-1132: a package default that could shift under an existing app is
-	// exactly the bug. The caller must pass the subscription's pinned region.
+	// A package default could shift under an existing app, so the caller must pass the pinned region.
 	id := identity()
 	id.Region = ""
 	if _, err := cloudid.Resolve(context.Background(), id); err == nil {
@@ -203,8 +192,6 @@ func TestEnv_CarriesCredentialsAndRegion(t *testing.T) {
 		}
 	}
 }
-
-// --- Refresher (MIT-889 / MIT-412) ------------------------------------------
 
 func TestRefresher_ReusesCredentialsUntilTheyNearExpiry(t *testing.T) {
 	var calls int
@@ -237,8 +224,7 @@ func TestRefresher_RenewsBeforeExpiry(t *testing.T) {
 	if _, err := r.Get(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Inside the renewal margin but not yet expired: renew rather than hand out
-	// a credential that will die mid-operation.
+	// Inside the renewal margin but not expired, it renews rather than hand out a credential about to die.
 	r.Now = func() time.Time { return now.Add(time.Hour - cloudid.RenewMargin/2) }
 	if _, err := r.Get(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -249,10 +235,7 @@ func TestRefresher_RenewsBeforeExpiry(t *testing.T) {
 }
 
 func TestRefresher_FailsClosedWhenRenewalFails(t *testing.T) {
-	// The headline guarantee. A reconcile loop running on a stale credential
-	// does not merely error — it can take a WRONG or DESTRUCTIVE action against
-	// the consumer's account. So an expired credential yields an error and NO
-	// usable client, never the last-known-good one.
+	// An expired credential must yield an error and no usable client, never the last known good one.
 	now := time.Now()
 	var fail bool
 	r := cloudid.NewRefresher(func(context.Context) (cloudid.Credentials, error) {
@@ -280,11 +263,7 @@ func TestRefresher_FailsClosedWhenRenewalFails(t *testing.T) {
 }
 
 func TestRefresher_NeverReturnsAnAlreadyExpiredCredential(t *testing.T) {
-	// The resolver here always mints relative to t0, so once the clock moves
-	// past t0+1h it keeps handing back an already-dead credential. That is not a
-	// contrived case — a cached STS response or a clock skew between the
-	// operator and the token issuer produces exactly this — and failing closed
-	// has to cover it, or the dead credential reaches the reconcile loop.
+	// A cached STS response or clock skew can keep handing back a dead credential, and failing closed must cover it.
 	now := time.Now()
 	r := cloudid.NewRefresher(func(context.Context) (cloudid.Credentials, error) {
 		return cloudid.Credentials{AccessKeyID: "A", Expires: now.Add(time.Hour)}, nil
@@ -305,8 +284,6 @@ func TestRefresher_NeverReturnsAnAlreadyExpiredCredential(t *testing.T) {
 }
 
 func TestRefresher_RenewalYieldsAUsableCredential(t *testing.T) {
-	// The ordinary case: past expiry, the resolver mints against the CURRENT
-	// clock, and Get hands back something with life left in it.
 	now := time.Now()
 	r := cloudid.NewRefresher(func(context.Context) (cloudid.Credentials, error) {
 		return cloudid.Credentials{AccessKeyID: "A", Expires: now.Add(3 * time.Hour)}, nil
@@ -327,8 +304,7 @@ func TestRefresher_RenewalYieldsAUsableCredential(t *testing.T) {
 }
 
 func TestRefresher_ZeroExpiryIsTreatedAsUnusable(t *testing.T) {
-	// An unknown expiry must not be read as "never expires" — that is the
-	// fail-OPEN reading, and it is the one that lets a dead credential through.
+	// An unknown expiry must not be read as never expiring, which would let a dead credential through.
 	var calls int
 	r := cloudid.NewRefresher(func(context.Context) (cloudid.Credentials, error) {
 		calls++
@@ -341,8 +317,6 @@ func TestRefresher_ZeroExpiryIsTreatedAsUnusable(t *testing.T) {
 		t.Errorf("resolved %d times, want 2 — a credential with no known expiry must never be cached", calls)
 	}
 }
-
-// --- Typed failures ---------------------------------------------------------
 
 func TestClassify_NamesTheFailuresAnOperatorMustAct_On(t *testing.T) {
 	cases := []struct {
@@ -366,8 +340,7 @@ func TestClassify_NamesTheFailuresAnOperatorMustAct_On(t *testing.T) {
 }
 
 func TestClassify_PreservesTheOriginalMessage(t *testing.T) {
-	// Naming the class must not throw away the detail — the operator still has
-	// to put something actionable in statusDetail (#436).
+	// Naming the class must not throw away the detail the operator puts in statusDetail.
 	err := cloudid.Classify(errors.New("AddressLimitExceeded: maximum number of addresses reached in eu-central-1"))
 	if !strings.Contains(err.Error(), "eu-central-1") {
 		t.Errorf("classified error %v dropped the original detail", err)

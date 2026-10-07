@@ -12,20 +12,13 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// The operator rule is that a secret an operator receives may go to the cloud it
-// drives, but must never appear in what it hands back. cloudid handles the two
-// most sensitive values on the whole path — the web-identity token mitstack
-// signs, and the temporary AWS secret key it is exchanged for — so the rule is
-// asserted here, once, rather than thirteen times downstream.
-
 const (
 	leakToken  = "WEB-IDENTITY-TOKEN-THAT-MUST-NEVER-SURFACE"
 	leakSecret = "AWS-SECRET-ACCESS-KEY-THAT-MUST-NEVER-SURFACE"
 )
 
 func TestNoSecretLeak_ResolveErrorsCarryNoCredentialMaterial(t *testing.T) {
-	// Every failure path: a non-zero exit with stderr, unparseable output, and
-	// each missing-field rejection. None may echo the token back.
+	// No failure path may echo the token back.
 	cases := map[string]string{
 		"cli failure":        `echo "An error occurred (InvalidIdentityToken)" >&2; exit 254`,
 		"unparseable stdout": `echo 'not json at all'`,
@@ -86,9 +79,7 @@ func TestNoSecretLeak_RefresherErrorCarriesNoCredential(t *testing.T) {
 }
 
 func TestNoSecretLeak_ClassifyDoesNotInventCredentialText(t *testing.T) {
-	// Classify preserves the original message, so a caller that (wrongly) put a
-	// secret in an error string would still leak — but Classify itself must not
-	// ADD anything, and must not mangle the message into something misleading.
+	// Classify must not add anything to the original message.
 	err := cloudid.Classify(errors.New("AddressLimitExceeded: maximum addresses reached"))
 	if !strings.Contains(err.Error(), "AddressLimitExceeded") {
 		t.Errorf("Classify dropped the original message: %v", err)
