@@ -10,13 +10,10 @@ import (
 	"path/filepath"
 )
 
-// suiteVersion is the version of THIS suite's contract (report shape, suite
-// set, run order, digest algorithms) — bump it in the same change that
-// changes any of those.
+// suiteVersion must change with the report shape, suite set, run order or digest algorithms.
 const suiteVersion = "1.3.0"
 
-// Report is the standalone-mode conformance report blockverify emits — see
-// the package doc for the full field-by-field contract.
+// Report is the standalone-mode conformance report blockverify emits.
 type Report struct {
 	SuiteVersion   string        `json:"suiteVersion"`
 	KitVersion     string        `json:"kitVersion"`
@@ -52,10 +49,7 @@ tree, use scripts/block-verify.sh instead — that is the tool for a block
 living inside this repository; this command is its external-repo twin.
 `
 
-// Run executes the blockverify CLI and returns its process exit code — see
-// the package doc for the full 0/1/2 contract. All output goes through
-// stdout, never the real process streams directly, so the whole command is
-// testable without touching os.Stdout.
+// Run executes the blockverify CLI and returns its exit code, writing only to stdout.
 func Run(args []string, stdout io.Writer) int {
 	a, ok := parseArgs(args)
 	if !ok || !a.standalone || a.target == "" {
@@ -68,8 +62,6 @@ func Run(args []string, stdout io.Writer) int {
 	if a.jsonOut {
 		raw, err := json.Marshal(report)
 		if err != nil {
-			// Report is a plain struct of strings/slices; Marshal cannot
-			// fail on it. Guarded anyway so Run never panics on it.
 			fmt.Fprintf(stdout, "blockverify: internal error marshaling report: %v\n", err)
 			return 1
 		}
@@ -84,17 +76,13 @@ func Run(args []string, stdout io.Writer) int {
 	return 0
 }
 
-// cliArgs is the command line Run accepts.
 type cliArgs struct {
 	jsonOut, standalone bool
 	target              string
 	baseManifest        string
 }
 
-// parseArgs recognises --json and --standalone as flags, and --base-manifest
-// with the path that follows it, in any position; any other argument is the
-// target directory (the last one wins, mirroring scripts/block-verify.sh's
-// own arg loop). ok is false when --base-manifest has no path after it.
+// parseArgs lets the last non-flag argument win as the target, and reports ok false when --base-manifest has no path.
 func parseArgs(args []string) (a cliArgs, ok bool) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -115,9 +103,7 @@ func parseArgs(args []string) (a cliArgs, ok bool) {
 	return a, true
 }
 
-// runStandalone runs every suite against target, in the fixed contract
-// order, and assembles the report. baseManifest is the --base-manifest path,
-// or "" when the flag is absent.
+// runStandalone runs the suites in the fixed contract order.
 func runStandalone(target, baseManifest string) Report {
 	suites := []SuiteResult{
 		trustPlumbingSuite(target),
@@ -132,8 +118,6 @@ func runStandalone(target, baseManifest string) Report {
 
 	verdict := "pass"
 	for _, s := range suites {
-		// Only "fail" flips the verdict — "skipped" is an honest "not
-		// applicable here", never a partial pass.
 		if s.Status == "fail" {
 			verdict = "fail"
 			break
@@ -151,9 +135,6 @@ func runStandalone(target, baseManifest string) Report {
 	}
 }
 
-// manifestDigest is sha256 of <target>/manifest.yaml's raw bytes, formatted
-// "sha256:<hex>" — empty if the file is absent (trust-plumbing is what
-// reports that as a failure; this field simply has nothing to digest).
 func manifestDigest(target string) string {
 	raw, err := os.ReadFile(filepath.Join(target, "manifest.yaml"))
 	if err != nil {
@@ -163,10 +144,7 @@ func manifestDigest(target string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// suiteDigestEntry is the {name,status} shape resultsDigest is computed over —
-// detail EXCLUDED, and field order matters (name then status): the result
-// must be byte-identical to `jq -c '[.suites[] | {name, status}]' | sha256sum`
-// so a downstream consumer can recompute and verify it independently.
+// suiteDigestEntry omits detail and keeps name before status, so the digest equals `jq -c '[.suites[] | {name, status}]' | sha256sum`.
 type suiteDigestEntry struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
@@ -182,8 +160,6 @@ func resultsDigest(suites []SuiteResult) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// printHuman renders the same report as a suite-by-suite readable summary,
-// on the model of scripts/block-verify.sh's non-JSON output.
 func printHuman(w io.Writer, r Report) {
 	fmt.Fprintf(w, "blockverify %s (%s mode)\n", r.SuiteVersion, r.Mode)
 	for _, s := range r.Suites {

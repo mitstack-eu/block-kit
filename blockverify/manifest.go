@@ -11,18 +11,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// manifestSuite checks the target's manifest, which it reads through
-// contract.ParseManifest, the kit's one manifest parser. Under
-// contract.ManifestAPIVersionV1Alpha it checks the names the manifest
-// declares against the kit's resource registry: every spec.outputs name,
-// and every spec.requires[].reads name together with its requirement's
-// capability. Under either version a metadata.id, when present, must parse
-// through contract.ParseBlockID, and given a base manifest (the
-// --base-manifest path) a changed spec.version needs a release class and a
-// release note. A manifest the parser refuses fails with its reason; under
-// v1alpha the parser refuses no field it does not know. Each warning the
-// parser gives for a retired key is appended to the pass detail and never
-// fails the suite.
+// manifestSuite appends each parser warning for a retired key to the pass detail and never fails on one.
 func manifestSuite(target, baseManifest string) SuiteResult {
 	const name = "manifest"
 
@@ -59,8 +48,6 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 	return SuiteResult{name, "pass", checked + note + warningNotes(m.Warnings)}
 }
 
-// warningNotes renders each parser warning for the pass detail, naming its
-// path, or gives "" when there is none.
 func warningNotes(warnings []contract.ManifestWarning) string {
 	var b strings.Builder
 	for _, w := range warnings {
@@ -69,7 +56,6 @@ func warningNotes(warnings []contract.ManifestWarning) string {
 	return b.String()
 }
 
-// readManifest reads and parses the manifest at path. An error names path.
 func readManifest(path string) (contract.Manifest, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -82,10 +68,7 @@ func readManifest(path string) (contract.Manifest, error) {
 	return m, nil
 }
 
-// registryProblems returns one message per output or read name the registry
-// does not resolve, and per read name its requirement's capability does not
-// give. A manifest under a version other than v1alpha, given as nil,
-// declares neither.
+// registryProblems takes nil for a manifest under a version other than v1alpha, which declares neither outputs nor reads.
 func registryProblems(m *contract.V1AlphaManifest) []string {
 	if m == nil {
 		return nil
@@ -111,9 +94,7 @@ func registryProblems(m *contract.V1AlphaManifest) []string {
 	return problems
 }
 
-// readProblem judges one spec.requires[].reads name as the platform does at
-// apply: it must be non-empty, resolve through the registry, and name an
-// entry v1alphaReadCapabilities gives under capability.
+// readProblem judges a reads name with the same rule the platform applies at apply.
 func readProblem(capability, name string) string {
 	if name == "" {
 		return fmt.Sprintf("spec.requires[%s].reads: a name must not be empty", capability)
@@ -131,14 +112,7 @@ func readProblem(capability, name string) string {
 	return fmt.Sprintf("spec.requires[%s].reads: %q is not an output of capability %q", capability, name, capability)
 }
 
-// compareVersion compares m's spec.version with the base manifest at base.
-// It returns a note for the pass detail, or a problem when the version
-// changed without a release class or note. No base path, or a base path
-// that does not exist (a block new on this branch), compares nothing. A
-// base that is present but cannot be read is an error, never an absence. A
-// base contract.ParseManifest refuses leaves its version unknown, so m
-// needs a release class and note as for a changed version, and a pull
-// request that fixes the base is not held back by it.
+// compareVersion treats an unreadable base as an error, never an absence, and an unparsable base as an unknown version so a pull request fixing it is not held back.
 func compareVersion(m contract.Manifest, base string) (note, problem string, err error) {
 	if base == "" {
 		return "no --base-manifest given, so spec.version was not compared", "", nil
@@ -171,8 +145,6 @@ func compareVersion(m contract.Manifest, base string) (note, problem string, err
 	return fmt.Sprintf("spec.version changed from %s to %s with a release class and note", baseVersion, version), "", nil
 }
 
-// missingRelease names the release fields m lacks of spec.releaseClass and
-// spec.releaseNote.
 func missingRelease(m contract.Manifest) []string {
 	var missing []string
 	if m.ReleaseClass() == "" {

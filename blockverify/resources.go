@@ -15,19 +15,10 @@ const (
 	resourcesTestNeedle       = "func TestDeclaredResources("
 	resourcesCheckNeedle      = "kittest.AssertDeclaredResources("
 	resourcesBlockCheckNeedle = "kittest.AssertBlock("
-	// guardsRanMarker starts the line kittest.AssertBlock logs.
-	guardsRanMarker = "kittest.AssertBlock guards ran:"
+	guardsRanMarker           = "kittest.AssertBlock guards ran:"
 )
 
-// resourcesSuite drives each resource a mitstack/v1beta manifest declares.
-// The target's test files must define TestDeclaredResources and call
-// kittest.AssertBlock or kittest.AssertDeclaredResources from it, and the
-// suite then runs that test: it passes only when the block holds every
-// guard the check it calls proves. A failure's detail is the first problem
-// naming a resource. The manifest is read through contract.ParseManifest: a manifest
-// that is not mitstack/v1beta declares no resources, so the suite is
-// skipped, as it is when there is no manifest.yaml, which trust-plumbing
-// already fails; a manifest the parser refuses fails with its reason.
+// resourcesSuite is skipped for a manifest that is not mitstack/v1beta, since only that version declares resources.
 func resourcesSuite(target string) SuiteResult {
 	const name = "resources"
 
@@ -79,8 +70,6 @@ func resourcesSuite(target string) SuiteResult {
 			"and every supplied resource still stands", len(m.Block.Spec.Resources))}
 }
 
-// resourceProblemLine picks the first line of go test output that names a
-// resource, trimmed, falling back to detailFromGoTestOutput when none does.
 func resourceProblemLine(output string) string {
 	for _, l := range strings.Split(output, "\n") {
 		if strings.Contains(l, `resource "`) {

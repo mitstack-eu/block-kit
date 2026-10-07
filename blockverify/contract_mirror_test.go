@@ -1,22 +1,6 @@
 package main
 
-// contract_mirror_test.go pins blockverify's Go list of required contract
-// tests to the shell gate it reimplements.
-//
-// contract.go's contractRequiredTests and
-// scripts/check-operator-contract-tests.sh's required_tests are two copies of
-// one decision: which TestContract_* functions every operator must define.
-// The shell copy runs in CI on the operators inside this repo; the Go copy is
-// what an operator author OUTSIDE this repo runs, through block-verify
-// standalone (the MIT-1466 audience). Nothing links them, so when MIT-1136
-// added the response half to the shell array the Go mirror kept verifying two
-// of three requirements and reported a pass — an external operator could ship
-// an entirely unchecked response shape and be told it conformed.
-//
-// So this test does not restate the list. It PARSES the shell script at test
-// time and asserts set equality, which means a future change to either copy
-// alone fails here rather than silently widening the gap between what CI
-// demands and what an external author is told.
+// The shell script is parsed at test time and compared by set equality, so a change to either copy alone fails here rather than widening the gap between CI and what an external author is told.
 
 import (
 	"os"

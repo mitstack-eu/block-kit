@@ -1,19 +1,5 @@
 package main
 
-// run_test.go pins the CONTRACT for the `blockverify` command (MIT-1626 AC#3):
-// a standalone conformance-suite runner an external repo's CI invokes via
-// `go run github.com/mitstack-eu/operator-kit/blockverify@<tag>`.
-//
-// The seam under test is Run(args []string, stdout io.Writer) int — main()
-// is expected to be nothing but `os.Exit(Run(os.Args[1:], os.Stdout))`. Every
-// other symbol referenced below (Run itself) does not exist yet: this
-// package does not compile until code-author adds it. That is the intended
-// RED signal — see the test-author report for the confirmed `go vet` output.
-//
-// The report JSON shape is decoded into a LOCAL struct (below), not a
-// production type, so this test pins the JSON CONTRACT (field names/shapes)
-// without constraining code-author's internal Go type names.
-
 import (
 	"bytes"
 	"crypto/sha256"
@@ -25,18 +11,13 @@ import (
 	"testing"
 )
 
-// reportSuite mirrors one entry of the report's "suites" array.
 type reportSuite struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	Detail string `json:"detail"`
 }
 
-// report mirrors blockverify's standalone-mode JSON report — the same
-// contract scripts/block-verify.sh's standalone mode already emits (see its
-// header comment), now produced by this Go command instead of the shell
-// script, so a downstream consumer (api/internal/conformance.Mint) can treat
-// them identically.
+// report is a local struct, not the production type, so the test pins the JSON field names and shapes.
 type report struct {
 	SuiteVersion   string        `json:"suiteVersion"`
 	KitVersion     string        `json:"kitVersion"`
@@ -47,7 +28,6 @@ type report struct {
 	Suites         []reportSuite `json:"suites"`
 }
 
-// runBlockverify invokes the Run seam and captures its combined output.
 func runBlockverify(t *testing.T, args ...string) (stdout string, exitCode int) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -55,9 +35,6 @@ func runBlockverify(t *testing.T, args ...string) (stdout string, exitCode int) 
 	return buf.String(), exitCode
 }
 
-// decodeReport parses stdout as a report, failing loudly (not skipping) if it
-// isn't valid JSON — a --json invocation that emits anything else has already
-// broken the contract every consumer of this output depends on.
 func decodeReport(t *testing.T, stdout string) report {
 	t.Helper()
 	var r report
@@ -67,8 +44,6 @@ func decodeReport(t *testing.T, stdout string) report {
 	return r
 }
 
-// expectedManifestDigest replicates the documented algorithm: sha256 of
-// <dir>/manifest.yaml's raw bytes, formatted "sha256:<hex>".
 func expectedManifestDigest(t *testing.T, dir string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
@@ -79,16 +54,12 @@ func expectedManifestDigest(t *testing.T, dir string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// digestEntry is the {name,status} shape resultsDigest is computed over —
-// field order matters, since it is byte-identical to
-// `jq -c '[.suites[] | {name, status}]' | sha256sum`.
+// digestEntry keeps name before status, so the digest equals `jq -c '[.suites[] | {name, status}]' | sha256sum`.
 type digestEntry struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 }
 
-// expectedResultsDigest recomputes resultsDigest from a report's own suites,
-// in run order, EXCLUDING detail — pinning the exact digest algorithm.
 func expectedResultsDigest(suites []reportSuite) string {
 	entries := make([]digestEntry, 0, len(suites))
 	for _, s := range suites {
@@ -99,9 +70,6 @@ func expectedResultsDigest(suites []reportSuite) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// suiteByName finds a suite result by name, failing the test if absent —
-// every one of the 8 documented suites MUST always appear in the report,
-// pass or fail or skipped.
 func suiteByName(t *testing.T, r report, name string) reportSuite {
 	t.Helper()
 	for _, s := range r.Suites {
@@ -112,8 +80,6 @@ func suiteByName(t *testing.T, r report, name string) reportSuite {
 	t.Fatalf("report has no %q suite; suites present: %+v", name, r.Suites)
 	return reportSuite{}
 }
-
-// --- 1. Golden pass -----------------------------------------------------
 
 func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 	dir := newGoldenFixture(t)
@@ -185,8 +151,6 @@ func TestRun_StandalonePass_GoldenFixture(t *testing.T) {
 	}
 }
 
-// --- 2. Failure modes -----------------------------------------------------
-
 func TestRun_MissingManifestYaml_FailsTrustPlumbing(t *testing.T) {
 	dir := t.TempDir()
 	files := goldenFixtureFiles(t)
@@ -239,11 +203,7 @@ func TestRun_MissingDockerfile_FailsDeliverable(t *testing.T) {
 func TestRun_RedeclaredKitOwnedSymbol_FailsTrustPlumbing(t *testing.T) {
 	dir := t.TempDir()
 	files := goldenFixtureFiles(t)
-	// A second, non-shim, non-test file that redeclares a kit-owned symbol.
-	// This makes the fixture module fail to COMPILE (kitshim.go already
-	// defines EmitProgress) — which is fine: the trust-plumbing check is
-	// static/textual (reimplementing the check-operator-kit-pin.sh greps) and
-	// must catch this without needing the module to build.
+	// The redeclaration stops the module compiling, which the static trust-plumbing check must catch anyway.
 	files["rogue.go"] = `package main
 
 import "context"
@@ -294,13 +254,7 @@ func TestRun_MissingContractTests_FailsContract(t *testing.T) {
 	}
 }
 
-// TestRun_MissingResponseContractTest_FailsContract is the response-side twin
-// of the case above, and the behavioural half of contract_mirror_test.go's
-// list comparison: that test proves blockverify KNOWS about
-// TestContract_EmitsConformingResponse, this one proves it ACTS on it. Both
-// are needed — a name present in contractRequiredTests but never reached by
-// the presence check would satisfy the list comparison and still let a module
-// with no response coverage through.
+// A name in contractRequiredTests that the presence check never reaches would satisfy the list comparison yet let a module with no response coverage through.
 func TestRun_MissingResponseContractTest_FailsContract(t *testing.T) {
 	dir := t.TempDir()
 	files := goldenFixtureFiles(t)
@@ -324,8 +278,6 @@ func TestRun_MissingResponseContractTest_FailsContract(t *testing.T) {
 		t.Errorf("contract detail = %q, want it to name the missing TestContract_EmitsConformingResponse", c.Detail)
 	}
 }
-
-// --- 3. Determinism ---------------------------------------------------
 
 func TestRun_ResultsDigest_DeterministicAcrossRuns(t *testing.T) {
 	dir := newGoldenFixture(t)
@@ -370,15 +322,9 @@ func TestRun_ResultsDigest_ChangesWhenASuiteOutcomeChanges(t *testing.T) {
 	}
 }
 
-// --- 4. Golden report fixture for the API side (see golden_test.go) is
-//        tested separately.
-
-// --- 5. repo-mode refusal exits 2 ---
-
 func TestRun_RepoModeRefused_NoStandaloneFlag(t *testing.T) {
 	dir := newGoldenFixture(t)
 
-	// No --standalone flag at all — v1 supports ONLY standalone.
 	stdout, exit := runBlockverify(t, dir)
 	if exit != 2 {
 		t.Fatalf("want exit 2 (usage/config error) refusing repo mode, got %d\nstdout:\n%s", exit, stdout)
@@ -399,8 +345,6 @@ func TestRun_RepoModeRefused_NoArgsAtAll(t *testing.T) {
 }
 
 func TestRun_UsageError_StandaloneFlagWithNoTarget(t *testing.T) {
-	// --standalone IS supplied, but with no target directory: a genuine usage
-	// error (distinct from a target-specific conformance failure), still 2.
 	stdout, exit := runBlockverify(t, "--json", "--standalone")
 	if exit != 2 {
 		t.Fatalf("want exit 2 when --standalone has no target, got %d\nstdout:\n%s", exit, stdout)

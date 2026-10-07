@@ -10,29 +10,14 @@ import (
 	"strings"
 )
 
-// kitModulePath is the shared operator-kit module every conformant block
-// must depend on (MIT-1466).
 const kitModulePath = "github.com/mitstack-eu/operator-kit"
 
-// kitVersionFloor is the minimum kit version every block must pin — the
-// third copy of the ENFORCED floor scripts/check-operator-kit-pin.sh gates
-// on and api/internal/scaffold's KitVersionFloor mirrors. This module
-// cannot import that package (the kit must compile standalone, outside the
-// monorepo), so a Go test holds this constant textually equal to
-// scaffold.KitVersionFloor instead, and the two copies cannot drift apart
-// silently. Bump it in the same commit that ships a deliberate floor raise,
-// never as a side effect of a new kit tag landing.
+// kitVersionFloor is held textually equal to scaffold.KitVersionFloor by a test, because this module cannot import that package; bump it only on a deliberate floor raise.
 const kitVersionFloor = "v0.1.0"
 
-// kitShimFile is the thin binding every block must carry, byte-identical in
-// spirit (though not diffed here — that check only makes sense across
-// SEVERAL operators in this repo) to the kit's authentication/events seam.
 const kitShimFile = "kitshim.go"
 
-// kitOwnedFuncs are the symbols the kit owns — see
-// scripts/check-operator-kit-pin.sh's kit_owned_funcs. A block that declares
-// its own is diverging from the single implementation, whatever else its
-// go.mod says.
+// kitOwnedFuncs mirrors kit_owned_funcs in scripts/check-operator-kit-pin.sh.
 var kitOwnedFuncs = []string{
 	"verifyReplay",
 	"verifyTimestampSkew",
@@ -50,18 +35,7 @@ var kitOwnedFuncs = []string{
 	"scrubEventDetail",
 }
 
-// trustPlumbingSuite reimplements scripts/check-operator-kit-pin.sh's checks
-// against target ALONE, plus a standalone-only manifest.yaml presence check
-// (repo mode has no equivalent need — a standalone target has no other
-// suite positioned to catch a missing manifest). It is deliberately
-// TEXTUAL/static, so it still produces a meaningful failure on a target
-// whose module does not compile (e.g. because it redeclares a kit-owned
-// symbol, which is itself a build error).
-//
-// The binding it requires follows the block's declared lifecycle contract.
-// With none declared, that is kitshim.go. On kit/v1 the kit owns the trust
-// boundary and the /hook route, so kitshim.go is waived and a non-test .go
-// file must import the kit's handler package instead.
+// trustPlumbingSuite is textual and static so it still fails meaningfully on a module that does not compile, and it alone fails a missing manifest.yaml.
 func trustPlumbingSuite(target string) SuiteResult {
 	const name = "trust-plumbing"
 
@@ -100,8 +74,6 @@ func trustPlumbingSuite(target string) SuiteResult {
 
 var kitVersionRe = regexp.MustCompile(regexp.QuoteMeta(kitModulePath) + ` v(\d+\.\d+\.\d+)`)
 
-// checkKitDependency requires target's go.mod to require kitModulePath at or
-// above kitVersionFloor.
 func checkKitDependency(target string) (detail string, ok bool) {
 	raw, err := os.ReadFile(filepath.Join(target, "go.mod"))
 	if err != nil {
@@ -143,8 +115,6 @@ func parseVersion(v string) [3]int {
 	return out
 }
 
-// checkNoOwnedSymbolRedeclared scans every non-test, non-shim .go file under
-// target for a top-level declaration of a kit-owned symbol.
 func checkNoOwnedSymbolRedeclared(target string) (detail string, ok bool) {
 	type hit struct{ fn, file string }
 	var hits []hit
