@@ -1,11 +1,6 @@
 package handler_test
 
-// single_resource_answer_test.go pins that a block configured with one
-// handler.Resource answers every verb with exactly the bytes it answered
-// before a block could declare its resources one by one. Each expected body
-// below was captured from the handler as it stood before Config.Resources
-// existed, so any change to the single-Resource path, a new key included,
-// turns this file red.
+// The expected bodies are exact bytes, so any change to the single-Resource path, a new key included, turns this file red.
 
 import (
 	"errors"

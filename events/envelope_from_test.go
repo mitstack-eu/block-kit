@@ -1,10 +1,5 @@
 package events_test
 
-// envelope_from_test.go pins EnvelopeFrom, the getter that reads back the
-// envelope WithEnvelope stashed, so a package building on the events
-// callback (the gitops notification reader) never reaches into the context
-// key itself.
-
 import (
 	"context"
 	"reflect"

@@ -7,10 +7,6 @@ import (
 	"strings"
 )
 
-// deliverableSuite reimplements scripts/block-verify.sh's standalone-mode
-// deliverable check: the target's OWN Dockerfile must exist, and must not
-// COPY a monorepo-relative build context (examples/operator-kit) it does
-// not have as a standalone repository.
 func deliverableSuite(target string) SuiteResult {
 	const name = "deliverable"
 

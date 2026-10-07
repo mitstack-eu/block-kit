@@ -9,8 +9,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/hostexec"
 )
 
-// --- Dispatch ----------------------------------------------------------
-
 func TestRun_UnknownKindNamesTheKindInTheError(t *testing.T) {
 	h := hostexec.Host{Kind: hostexec.Kind("telnet"), Target: "somehost", Region: "eu-central-1"}
 	err := hostexec.Run(context.Background(), h, "true")
@@ -46,8 +44,6 @@ func TestRun_RejectsAnEmptyTarget(t *testing.T) {
 }
 
 func TestRun_SSMRejectsAnEmptyRegion(t *testing.T) {
-	// The kit refuses to default a region: a package default that shifts
-	// silently strands whatever already ran under the real one.
 	h := hostexec.Host{Kind: hostexec.KindSSM, Target: "i-0123456789abcdef0"}
 	if err := hostexec.Run(context.Background(), h, "true"); err == nil {
 		t.Error("Run with no Region for the ssm driver must fail rather than guess a default")
@@ -55,11 +51,7 @@ func TestRun_SSMRejectsAnEmptyRegion(t *testing.T) {
 }
 
 func TestRun_RejectsATargetBeginningWithADashBeforeSpawningAnySubprocess(t *testing.T) {
-	// Neither ssh nor the aws CLI has an end-of-options marker, so a Target
-	// starting with "-" is parsed as an option rather than a hostname or
-	// instance id — up-front validation is the only defence. Target values
-	// originate in block manifests and subscription inputs, so this is
-	// caller-controlled, not merely theoretical.
+	// Neither ssh nor the aws CLI has an end-of-options marker, and Target values originate in manifests and subscription inputs, so up-front validation is the only defence.
 	sshDir, sshArgv, _, _, _ := fakeSSH(t, "exit 0")
 	ssmDir, ssmArgv, _ := fakeSSM(t, "cmd-1", []string{"Success"}, 0)
 

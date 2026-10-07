@@ -8,14 +8,10 @@ import (
 	"time"
 )
 
-// State names what an operator observed about a resource on a validate or
-// unsubscribe call: whether it is still there, confirmed gone, or the
-// operator cannot yet tell.
+// State names what an operator observed about a resource.
 type State string
 
-// The three states an Observation can carry. Present and Absent are
-// definite; Unknown means the operator could not settle the question this
-// call — for example an async delete still converging.
+// The three states an Observation can carry; Unknown means the question was not settled this call, for example an async delete still converging.
 const (
 	Present State = "present"
 	Absent  State = "absent"
@@ -30,9 +26,7 @@ type InstanceConfig struct {
 	Config   map[string]string `json:"config"`
 }
 
-// CloudIdentity is the federated cloud-account identity the engine attaches
-// to a request when the org has a connected cloud_connection. It is nil
-// when no connected connection exists.
+// CloudIdentity is the federated cloud-account identity, nil when the org has no connected cloud_connection.
 type CloudIdentity struct {
 	Provider         string `json:"provider"`
 	RoleARN          string `json:"roleArn"`
@@ -40,8 +34,7 @@ type CloudIdentity struct {
 	AccountRef       string `json:"accountRef,omitempty"`
 }
 
-// EventsCallback tells a block where and how to report progress events back
-// to the engine.
+// EventsCallback tells a block where to report progress events.
 type EventsCallback struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
@@ -56,17 +49,9 @@ type BuildRequest struct {
 	Summary      json.RawMessage `json:"summary,omitempty"`
 }
 
-// Request is the typed form of a lifecycle webhook envelope, decoded from
-// the wire shape envelope.schema.json pins. Its JSON tags mirror the
-// engine's own request struct field for field. Resource names the one
-// declared resource the verb runs on, ResourceInputs carries that
-// resource's inputs, each a scalar or a mapping kept as raw JSON, and
-// ResourceIdentity carries the identity that resource's ensure stored and
-// ResourceType the type it was created as; a request naming no resource
-// leaves all four empty and runs the verb on every declared resource.
-// RecordedResources is what the engine recorded for each declared resource
-// by name, and RequirementTypes the exact type that met each requirement,
-// keyed by its reference.
+// Request is the typed lifecycle webhook envelope; its JSON tags mirror the engine's request struct field for field.
+//
+// A request naming no resource leaves Resource, ResourceInputs, ResourceIdentity and ResourceType empty and runs the verb on every declared resource.
 type Request struct {
 	Operation      string                         `json:"operation"`
 	SubscriptionID string                         `json:"subscriptionId"`
@@ -102,16 +87,13 @@ type Request struct {
 	SettlesAt *time.Time `json:"settlesAt,omitempty"`
 }
 
-// RecordedResource is what the engine recorded for one declared resource:
-// the type it was created as and the identity that addresses it.
+// RecordedResource is what the engine recorded for one declared resource.
 type RecordedResource struct {
 	Type     string            `json:"type"`
 	Identity map[string]string `json:"identity,omitempty"`
 }
 
-// ResourceRef is what an observe of one declared resource is handed: its
-// name, the type it was created as, the identity that addresses it, when
-// known, and the verb's Desired.
+// ResourceRef is what an observe of one declared resource is handed.
 type ResourceRef struct {
 	Name     string
 	Type     string
@@ -119,19 +101,16 @@ type ResourceRef struct {
 	Desired  Desired
 }
 
-// CreatedResource is what a block-level ensure reports for one declared
-// resource it created: its name, its type and its identity.
+// CreatedResource is what a block-level ensure reports for one resource it created.
 type CreatedResource struct {
 	Name     string
 	Type     string
 	Identity map[string]string
 }
 
-// Response is the typed form of a lifecycle webhook response, mirroring the
-// wire shape response.schema.json pins. Outputs has no omitempty: a Go nil
-// map must still encode as JSON null, the shape the engine tolerates from a
-// verb with nothing to return. Resources is omitted when nil, so a response
-// that reports no resource encodes with no resources key.
+// Response is the typed lifecycle webhook response.
+//
+// Outputs has no omitempty because a nil map must still encode as JSON null, the shape the engine tolerates from a verb with nothing to return.
 type Response struct {
 	Outputs       map[string]string `json:"outputs"`
 	SecretOutputs map[string]string `json:"secretOutputs,omitempty"`
@@ -140,32 +119,20 @@ type Response struct {
 	StatusDetail  string            `json:"statusDetail,omitempty"`
 	LastError     string            `json:"lastError,omitempty"`
 	Absent        *bool             `json:"absent,omitempty"`
-	// Resources reports, under each manifest resource name, the calls the
-	// verb ran for that resource. A resource the verb never reached has no
-	// entry.
+	// Resources has no entry for a resource the verb never reached.
 	Resources map[string]ResourceOutcome `json:"resources,omitempty"`
-	// Replaces names, on a validate, the declared resources the block's
-	// upgrade would replace rather than change in place.
+	// Replaces names, on a validate, the resources an upgrade would replace rather than change in place.
 	Replaces []string `json:"replaces,omitempty"`
 }
 
-// ResourceOutcome is what a verb's calls did to one declared resource. A
-// non-nil call means that call ran during the verb; a nil one means it did
-// not.
+// ResourceOutcome is what a verb's calls did to one declared resource; a nil call did not run.
 type ResourceOutcome struct {
 	Ensure  *CallOutcome `json:"ensure,omitempty"`
 	Observe *CallOutcome `json:"observe,omitempty"`
 	Delete  *CallOutcome `json:"delete,omitempty"`
 }
 
-// CallOutcome is the result of one ensure, observe or delete call on a
-// resource. Error is set when the call failed. State and Outputs are what
-// an observe found, and on an ensure Outputs are the outputs it published.
-// Identity is what an ensure stored as its resource's identity, or the
-// identity an observe addressed the resource by. Type is the type an
-// observe observed the resource as. StatusDetail is the human-readable
-// detail the call left. The zero value is a call that ran and succeeded
-// with nothing to report.
+// CallOutcome is the result of one ensure, observe or delete call; the zero value is a call that ran and succeeded with nothing to report.
 type CallOutcome struct {
 	Error        string            `json:"error,omitempty"`
 	State        State             `json:"state,omitempty"`
@@ -175,23 +142,15 @@ type CallOutcome struct {
 	Type         string            `json:"type,omitempty"`
 }
 
-// Ensured is what an ensure reports about the resource it converged:
-// Identity is what it stored as the resource's identity, the values that
-// address the resource where it lives, and Outputs are the outputs it
-// published.
+// Ensured is what an ensure reports about the resource it converged.
 type Ensured struct {
 	Identity map[string]string
 	Outputs  map[string]string
 }
 
-// Identity is the subset of a Request that names which subscription an
-// operation targets and where its resource lives, independent of what it
-// should converge to. Instances carries the resolved tool instances,
-// because a teardown or an observation has to address the resource where it
-// was provisioned — a region-scoped block reads that region here, on the
-// only value Delete and Observe are handed. It is nil when the request
-// carries no instances, which reads as an unset config rather than
-// panicking.
+// Identity is the subset of a Request that names which subscription an operation targets and where its resource lives.
+//
+// Instances is carried because a region-scoped block reads its region here, the only value Delete and Observe are handed.
 type Identity struct {
 	SubscriptionID string
 	BlockID        string
@@ -203,18 +162,9 @@ type Identity struct {
 	CloudIdentity  *CloudIdentity
 }
 
-// Desired is the subset of a Request describing what an operator should
-// converge a subscription's resource to. It embeds Identity, since knowing
-// what is desired is meaningless without knowing which subscription it is
-// desired for and where its resource lives, and adds the params, secrets
-// and bindings that describe the target state. The instances reach a block
-// through the embedded Identity, so d.Instances inside Ensure resolves to
-// the same map Delete and Observe are handed. Resource, ResourceInputs and
-// ResourceIdentity are the request's own: the declared resource it names,
-// that resource's inputs and the identity that resource's ensure stored,
-// all empty when the request names no resource, as is ResourceType.
-// RecordedResources and RequirementTypes are the request's too, and VerbAt
-// is its settlesAt when set, else its createdAt.
+// Desired is the subset of a Request describing what an operator should converge a subscription's resource to.
+//
+// Instances reach a block through the embedded Identity, so d.Instances in Ensure is the same map Delete and Observe are handed. VerbAt is the request's settlesAt when set, else its createdAt.
 type Desired struct {
 	Identity
 
@@ -238,8 +188,7 @@ type Desired struct {
 	VerbAt            time.Time
 }
 
-// Observation is what an operator's validate/unsubscribe check found about
-// a resource, in the shape Response() turns into the typed wire Response.
+// Observation is what an operator's validate or unsubscribe check found about a resource.
 type Observation struct {
 	State         State
 	Outputs       map[string]string
@@ -247,19 +196,12 @@ type Observation struct {
 	StatusDetail  string
 }
 
-// requiredField pairs one required JSON property name with whether the
-// decoded Request carries it.
 type requiredField struct {
 	name    string
 	present bool
 }
 
-// requiredRequestFields lists the envelope.schema.json required properties
-// in schema order, each paired with the Request field that carries it.
-// DecodeRequest walks this list so a missing property is reported by the
-// same JSON name a schema validator would use. When CloudIdentity or
-// BuildRequest is present, their own required properties join the walk
-// under the nested "cloudIdentity."/"buildRequest." names the schema uses.
+// requiredRequestFields reports a missing property by the JSON name a schema validator would use.
 func requiredRequestFields(r Request) []requiredField {
 	fields := []requiredField{
 		{"operation", r.Operation != ""},
@@ -289,16 +231,12 @@ func requiredRequestFields(r Request) []requiredField {
 	return fields
 }
 
-// envelopeTimes probes the raw envelope for its createdAt and settlesAt
-// values ahead of the full Request unmarshal, so a value that is not an RFC
-// 3339 string is reported by name instead of surfacing as
-// time.Time.UnmarshalJSON's error, which carries no field name.
+// envelopeTimes lets a value that is not an RFC 3339 string be reported by field name, which time.Time.UnmarshalJSON's error lacks.
 type envelopeTimes struct {
 	CreatedAt json.RawMessage `json:"createdAt"`
 	SettlesAt json.RawMessage `json:"settlesAt"`
 }
 
-// validOperations is the envelope.schema.json operation enum.
 var validOperations = map[string]bool{
 	"subscribe":   true,
 	"unsubscribe": true,
@@ -306,12 +244,7 @@ var validOperations = map[string]bool{
 	"validate":    true,
 }
 
-// DecodeRequest decodes raw into a Request and validates it against
-// envelope.schema.json's required set and operation enum, including the
-// nested required sets cloudIdentity and buildRequest carry when present,
-// and refuses resource inputs or a resource identity that name no resource
-// to bind them to. Every error names the JSON field it concerns, so an
-// operator author can act on it without reading the schema.
+// DecodeRequest decodes raw into a Request validated against envelope.schema.json, naming the JSON field in every error.
 func DecodeRequest(raw []byte) (Request, error) {
 	var probe envelopeTimes
 	if err := json.Unmarshal(raw, &probe); err != nil {
@@ -360,9 +293,7 @@ func DecodeRequest(raw []byte) (Request, error) {
 	return req, nil
 }
 
-// DecodeResponse decodes raw into a Response. A type mismatch on any field
-// is reported naming the JSON field it concerns, exactly as DecodeRequest
-// does for the envelope side.
+// DecodeResponse decodes raw into a Response, naming the JSON field of any type mismatch.
 func DecodeResponse(raw []byte) (Response, error) {
 	var resp Response
 	if err := json.Unmarshal(raw, &resp); err != nil {
@@ -371,12 +302,7 @@ func DecodeResponse(raw []byte) (Response, error) {
 	return resp, nil
 }
 
-// wrapDecodeError turns a json.Unmarshal error into one naming the JSON
-// field it concerns. A *json.UnmarshalTypeError already carries the field
-// as a JSON path (e.g. "outputs" or "instances.config"), so its Field is
-// used directly. A *time.ParseError carries no field of its own; DecodeRequest
-// checks settlesAt before the full decode, so one surfacing from an
-// "envelope" decode can only concern "createdAt".
+// wrapDecodeError names createdAt for a *time.ParseError because DecodeRequest checks settlesAt before the full decode.
 func wrapDecodeError(kind string, err error) error {
 	var ute *json.UnmarshalTypeError
 	if errors.As(err, &ute) {
@@ -391,8 +317,7 @@ func wrapDecodeError(kind string, err error) error {
 	return fmt.Errorf("contract: invalid %s JSON: %w", kind, err)
 }
 
-// Identity returns the subset of r that names which subscription it
-// targets and where that subscription's resource lives.
+// Identity returns the subset of r that names its subscription and where its resource lives.
 func (r Request) Identity() Identity {
 	return Identity{
 		SubscriptionID: r.SubscriptionID,
@@ -406,10 +331,7 @@ func (r Request) Identity() Identity {
 	}
 }
 
-// Desired returns the subset of r describing what an operator should
-// converge its resource to, with the resource it names, that resource's
-// inputs and the identity its ensure stored. The instances arrive through
-// the embedded Identity, which is why no field here repeats them.
+// Desired returns the subset of r describing what an operator should converge its resource to.
 func (r Request) Desired() Desired {
 	return Desired{
 		Identity:          r.Identity(),
@@ -437,12 +359,7 @@ func (r Request) verbAt() time.Time {
 	return r.CreatedAt
 }
 
-// Response turns an Observation into the typed wire Response an operator's
-// webhook handler returns. State controls the Absent pointer: Present sets
-// it to false, Absent sets it to true, and Unknown leaves it nil so the
-// engine fails open exactly as an operator that never implements the
-// marker does. Pending is always false — Response() reports what was
-// observed, not that a resource is still converging.
+// Response turns an Observation into a Response whose Absent stays nil for Unknown, so the engine fails open as for an operator without the marker.
 func (o Observation) Response() Response {
 	resp := Response{
 		Outputs:       o.Outputs,
@@ -458,7 +375,6 @@ func (o Observation) Response() Response {
 		t := true
 		resp.Absent = &t
 	case Unknown:
-		// resp.Absent stays nil.
 	}
 
 	return resp

@@ -7,86 +7,62 @@ import (
 	"slices"
 )
 
-// A catalogue release is what a consumer of the resource-type catalogue
-// relies on: each type's ID and kind, its inputs with their required marks
-// and its outputs with their secret marks. CompareCatalogues finds the
-// changes to that view that break a consumer, which a release allows only
-// when it raises CatalogueMajor by one.
-
-// CatalogueMajor is the major version of the catalogue this release ships.
-// A breaking catalogue change raises it by one.
+// CatalogueMajor is the major version of the catalogue this release ships, raised by one for a breaking change.
 const CatalogueMajor = 1
 
 // Catalogue is the resource-type catalogue as a release ships it.
 type Catalogue struct {
-	// Major is the CatalogueMajor the catalogue was shipped under.
-	Major int `json:"major"`
-	// Types holds one entry per catalogued type.
+	Major int             `json:"major"`
 	Types []CatalogueType `json:"types"`
 }
 
 // CatalogueType is one type of a Catalogue.
 type CatalogueType struct {
-	// ID is the type's ID, for example "aws.iam-role".
-	ID string `json:"id"`
-	// Kind is the released kind the type implements.
-	Kind string `json:"kind"`
-	// Inputs are the inputs the type takes.
-	Inputs []CatalogueInput `json:"inputs"`
-	// Outputs are the outputs the type publishes.
+	ID      string            `json:"id"`
+	Kind    string            `json:"kind"`
+	Inputs  []CatalogueInput  `json:"inputs"`
 	Outputs []CatalogueOutput `json:"outputs"`
 }
 
 // CatalogueInput is one input of a CatalogueType.
 type CatalogueInput struct {
-	// Name is the input's name.
-	Name string `json:"name"`
-	// Required marks an input the type cannot be created without.
-	Required bool `json:"required"`
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
 }
 
 // CatalogueOutput is one output of a CatalogueType.
 type CatalogueOutput struct {
-	// Name is the output's canonical resource registry name.
-	Name string `json:"name"`
-	// Secret is the secret mark the type's kind gives the output.
-	Secret bool `json:"secret"`
+	Name   string `json:"name"`
+	Secret bool   `json:"secret"`
 }
 
 // BreakReason names the way a catalogue change breaks a consumer.
 type BreakReason string
 
 const (
-	// BreakTypeRemoved is a type the previous release shipped that is gone,
-	// which a renamed type also is.
+	// BreakTypeRemoved includes a renamed type.
 	BreakTypeRemoved BreakReason = "type-removed"
-	// BreakKindChanged is a type that implements another kind.
+	// BreakKindChanged is a type whose kind differs from before.
 	BreakKindChanged BreakReason = "kind-changed"
-	// BreakOutputRemoved is an output the type no longer publishes.
+	// BreakOutputRemoved is an output present before and absent now.
 	BreakOutputRemoved BreakReason = "output-removed"
-	// BreakOutputSecretChanged is an output whose secret mark flipped.
+	// BreakOutputSecretChanged is an output whose secret mark differs from before.
 	BreakOutputSecretChanged BreakReason = "output-secret-changed"
-	// BreakRequiredInputAdded is an input that is required now but was
-	// absent or optional before.
+	// BreakRequiredInputAdded is an input required now but absent or optional before.
 	BreakRequiredInputAdded BreakReason = "required-input-added"
 )
 
 // Break is one breaking change between two catalogues.
 type Break struct {
-	// Type is the ID of the type the break is about.
-	Type string
-	// Reason says how the change breaks a consumer.
+	Type   string
 	Reason BreakReason
-	// Output names the output a BreakOutputRemoved or
-	// BreakOutputSecretChanged is about, and is "" otherwise.
+	// Output is set for an output break and "" otherwise.
 	Output string
-	// Input names the input a BreakRequiredInputAdded is about, and is ""
-	// otherwise.
+	// Input is set for BreakRequiredInputAdded and "" otherwise.
 	Input string
 }
 
-// String names the break's type and reason, and its output or input when
-// set.
+// String names the break's type and reason, and its output or input when set.
 func (b Break) String() string {
 	switch {
 	case b.Output != "":
@@ -97,10 +73,7 @@ func (b Break) String() string {
 	return fmt.Sprintf("type %q: %s", b.Type, b.Reason)
 }
 
-// CurrentCatalogue returns the catalogue this release ships: one entry per
-// ResourceTypes() type in ID order, each with its inputs and its outputs
-// marked secret as its kind marks them. Every list is sorted by name and
-// never nil.
+// CurrentCatalogue returns the catalogue this release ships, with every list sorted by name and never nil.
 func CurrentCatalogue() Catalogue {
 	rts := ResourceTypes()
 	c := Catalogue{Major: CatalogueMajor, Types: make([]CatalogueType, 0, len(rts))}
@@ -123,16 +96,13 @@ func CurrentCatalogue() Catalogue {
 	return sortedCatalogue(c)
 }
 
-// kindMarksSecret reports whether k marks the output name secret.
 func kindMarksSecret(k Kind, name string) bool {
 	outputs := k.outputs()
 	i := slices.IndexFunc(outputs, func(o KindOutput) bool { return o.Name == name })
 	return i >= 0 && outputs[i].Secret
 }
 
-// MarshalCatalogue returns c as indented JSON with a trailing newline, its
-// types sorted by ID and each type's inputs and outputs sorted by name. An
-// empty list is written as []. c itself is left unchanged.
+// MarshalCatalogue returns c as sorted, indented JSON with a trailing newline, writing an empty list as [].
 func MarshalCatalogue(c Catalogue) []byte {
 	raw, err := json.MarshalIndent(sortedCatalogue(c), "", "  ")
 	if err != nil {
@@ -141,8 +111,7 @@ func MarshalCatalogue(c Catalogue) []byte {
 	return append(raw, '\n')
 }
 
-// sortedCatalogue returns a copy of c that shares no list with c, its types
-// sorted by ID and their inputs and outputs by name, with every list non-nil.
+// sortedCatalogue returns a copy sharing no list with c, with every list non-nil.
 func sortedCatalogue(c Catalogue) Catalogue {
 	types := make([]CatalogueType, len(c.Types))
 	for i, ct := range c.Types {
@@ -166,9 +135,7 @@ func ParseCatalogue(raw []byte) (Catalogue, error) {
 	return c, nil
 }
 
-// CatalogueMajorRaised reports whether current raises the golden catalogue's
-// major: false when the two are equal, true when current is exactly one
-// above. Any other pair is an error naming both.
+// CatalogueMajorRaised reports whether current is exactly one above golden, and errors on any other difference.
 func CatalogueMajorRaised(golden, current int) (bool, error) {
 	switch current {
 	case golden:
@@ -179,11 +146,7 @@ func CatalogueMajorRaised(golden, current int) (bool, error) {
 	return false, fmt.Errorf("contract: catalogue major %d is neither the golden's major %d nor exactly one above it", current, golden)
 }
 
-// CompareCatalogues returns the changes from previous to current that break a
-// consumer, sorted by type ID, or nothing when majorRaised is true. List order
-// is ignored. A removed type is one break, with no output break under it. A
-// new type, a new output, a new optional input or a required input turning
-// optional is not a break.
+// CompareCatalogues returns the breaking changes from previous to current, or nothing when majorRaised is true; a removed type is one break with no output break under it.
 func CompareCatalogues(previous, current Catalogue, majorRaised bool) []Break {
 	if majorRaised {
 		return nil
@@ -204,8 +167,6 @@ func CompareCatalogues(previous, current Catalogue, majorRaised bool) []Break {
 	return breaks
 }
 
-// typeBreaks returns the breaks from was to is, two entries for the same
-// type ID with their lists sorted by name.
 func typeBreaks(was, is CatalogueType) []Break {
 	var breaks []Break
 	if was.Kind != is.Kind {

@@ -1,22 +1,5 @@
 package handler_test
 
-// declared_resources_test.go pins how the Handler serves a block that
-// declares its resources in a mitstack/v1beta manifest and implements each
-// one as a handler.DeclaredResource under Config.Resources:
-//
-//   - subscribe and upgrade ensure each resource in manifest order and settle
-//     it present before the next, reporting each one's ensure and observe
-//     outcome under its name;
-//   - unsubscribe deletes in reverse manifest order and proves each resource
-//     absent before the next;
-//   - validate observes each resource once;
-//   - a resource still converging, left standing or failing stops the verb
-//     there, and its entry says why;
-//   - request secrets are scrubbed from every entry, and an output carrying
-//     one is refused;
-//   - New refuses a configuration whose handlers and declared resources
-//     disagree, naming the resource.
-
 import (
 	"bytes"
 	"context"
@@ -191,8 +174,6 @@ func wantCallSucceeded(t *testing.T, name, call string, c *contract.CallOutcome)
 	}
 }
 
-// --- subscribe and upgrade ---------------------------------------------------
-
 func TestDeclaredResources_SubscribeEnsuresEachResourceInManifestOrderAndReportsItByName(t *testing.T) {
 	network, instance, log := twoResources()
 	network.secretOutputs = map[string]string{"flowLogKey": "fl-key-1"}
@@ -337,8 +318,6 @@ func TestDeclaredResources_SubscribeObserveErrorIsReportedUnderItsResource(t *te
 	wantNoEntry(t, resp, "instance")
 }
 
-// --- unsubscribe ---------------------------------------------------------------
-
 func TestDeclaredResources_UnsubscribeDeletesInReverseOrderAndProvesEachAbsent(t *testing.T) {
 	network, instance, log := twoResources()
 	network.Count, instance.Count = 1, 1
@@ -403,8 +382,6 @@ func TestDeclaredResources_UnsubscribeDeleteErrorIsReportedUnderItsResource(t *t
 	}
 }
 
-// --- validate ---------------------------------------------------------------
-
 func TestDeclaredResources_ValidateObservesEachResourceOnce(t *testing.T) {
 	cases := []struct {
 		name                        string
@@ -454,8 +431,6 @@ func TestDeclaredResources_ValidateObservesEachResourceOnce(t *testing.T) {
 	}
 }
 
-// --- secrets ------------------------------------------------------------------
-
 func TestDeclaredResources_ScrubsRequestSecretsFromEveryResourceEntry(t *testing.T) {
 	network, instance, _ := twoResources()
 	network.StatusDetail = "accepted token " + guardSecret
@@ -494,8 +469,6 @@ func TestDeclaredResources_RefusesAResourceOutputCarryingASecret(t *testing.T) {
 	}
 }
 
-// --- idempotency and panics -----------------------------------------------------
-
 func TestDeclaredResources_ARepeatedDeliveryReplaysTheFirstAnswer(t *testing.T) {
 	network, instance, _ := twoResources()
 	s := kittest.NewSigner(t, "kid-declared-idem", 13)
@@ -524,8 +497,6 @@ func TestDeclaredResources_APanickingResourceAnswers500(t *testing.T) {
 		t.Errorf("error = %q, want %q", resp.Error, want)
 	}
 }
-
-// --- New ----------------------------------------------------------------------
 
 func declaredConfig(t *testing.T, s *kittest.Signer, resources map[string]handler.DeclaredResource) handler.Config {
 	t.Helper()

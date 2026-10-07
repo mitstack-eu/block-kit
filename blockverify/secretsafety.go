@@ -8,11 +8,7 @@ import (
 const secretLeakNeedle = "func TestNoSecretLeak"
 const secretLeakLogsNeedle = "func TestNoSecretLeak_LogsEndpoint"
 
-// secretSafetySuite reimplements
-// scripts/check-operator-secret-leak-tests.sh against target alone, plus —
-// unlike that script, which only checks presence — actually RUNS the
-// test(s), consistent with the "it RUNS the tests; it never merely detects
-// them" rule scripts/block-verify.sh documents.
+// secretSafetySuite runs the leak tests as well as checking they exist, which the shell script does not.
 func secretSafetySuite(target string) SuiteResult {
 	const name = "secret-safety"
 

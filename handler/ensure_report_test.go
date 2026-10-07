@@ -1,18 +1,5 @@
 package handler_test
 
-// ensure_report_test.go pins what the Handler does with a declared resource
-// that also implements handler.ReportingResource, and what a named
-// resource's ensure is handed:
-//
-//   - the Handler calls EnsureWithReport in place of Ensure, never both,
-//     whether or not the request names a resource;
-//   - the resource's ensure entry carries the identity the ensure stored and
-//     the outputs it published;
-//   - an identity or output value equal to a request secret is refused as
-//     secret-in-output, naming the key;
-//   - a request naming a resource hands that resource's ensure a Desired
-//     carrying the name and the request's resource inputs.
-
 import (
 	"context"
 	"encoding/json"
@@ -66,8 +53,6 @@ func withReportingFirewall(b *threeBlock) (*reportingResource, map[string]handle
 	resources["firewall"] = f
 	return f, resources
 }
-
-// --- the ensure report -----------------------------------------------------------
 
 func TestNamedResource_TheEnsureEntryCarriesTheIdentityAndOutputsTheEnsureReported(t *testing.T) {
 	for _, operation := range []string{"subscribe", "upgrade"} {
@@ -155,8 +140,6 @@ func TestReportingResource_AnEnsureWithReportErrorIsReportedUnderItsResource(t *
 	}
 }
 
-// --- secrets -----------------------------------------------------------------------
-
 func TestReportingResource_RefusesAnEnsureReportCarryingARequestSecret(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -202,8 +185,6 @@ func TestReportingResource_RefusesAnEnsureReportCarryingARequestSecret(t *testin
 		}
 	}
 }
-
-// --- what the named resource's ensure is handed -----------------------------------
 
 // requestInputs carries a scalar input and a mapping input.
 var requestInputs = map[string]any{

@@ -12,14 +12,9 @@ import (
 	"github.com/mitstack-eu/operator-kit/credrefresh"
 )
 
-// cred is a minimal stand-in credential. It deliberately carries no provider
-// shape, because the Refresher must hold any credential type, not only AWS
-// credentials.
 type cred struct {
 	id string
 }
-
-// --- Reuse and renewal -------------------------------------------------------
 
 func TestRefresher_ReusesCredentialUntilItNearsExpiry(t *testing.T) {
 	var calls int
@@ -52,9 +47,6 @@ func TestRefresher_RenewsInsideTheRenewalMarginButNotYetExpired(t *testing.T) {
 	if _, err := r.Get(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Inside the renewal margin but not yet expired: renewing here, rather than
-	// handing out a credential that will die mid-operation, is the point of the
-	// margin at all.
 	r.Now = func() time.Time { return clock.Add(time.Hour - credrefresh.DefaultRenewMargin/2) }
 	if _, err := r.Get(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -65,11 +57,7 @@ func TestRefresher_RenewsInsideTheRenewalMarginButNotYetExpired(t *testing.T) {
 }
 
 func TestRefresher_ZeroValuedCredentialWithAGoodExpiryIsStillHeldAndReused(t *testing.T) {
-	// A generic Refresher cannot probe presence off a field of T the way
-	// cloudid's AWS-specific version probes AccessKeyID — there is no universal
-	// "empty" sentinel for an arbitrary credential type. So a resolver minting
-	// the zero value of T, alongside a good expiry, must still count as a held,
-	// reusable credential rather than as "nothing held yet".
+	// There is no universal "empty" sentinel for an arbitrary credential type, so a zero T with a good expiry is still held.
 	var calls int
 	clock := time.Now()
 	r := credrefresh.New(func(context.Context) (cred, time.Time, error) {
@@ -88,13 +76,7 @@ func TestRefresher_ZeroValuedCredentialWithAGoodExpiryIsStillHeldAndReused(t *te
 	}
 }
 
-// --- Fail closed --------------------------------------------------------------
-
 func TestRefresher_FailsClosedWhenRenewalFails(t *testing.T) {
-	// The headline guarantee: a reconcile loop acting on a dead credential does
-	// not merely error, it can take a wrong or destructive action. So a
-	// credential past expiry that cannot be renewed yields an error and the
-	// zero value, never the stale one.
 	clock := time.Now()
 	var fail bool
 	r := credrefresh.New(func(context.Context) (cred, time.Time, error) {
@@ -121,9 +103,7 @@ func TestRefresher_FailsClosedWhenRenewalFails(t *testing.T) {
 		t.Errorf("Get returned %+v alongside the error — the caller must get nothing usable, only the zero value", got)
 	}
 
-	// The held credential must be cleared, not merely masked behind the error:
-	// a later successful resolve must re-mint rather than silently reusing the
-	// credential that just failed to renew.
+	// The held credential must be cleared, so a later resolve re-mints rather than reusing the one that failed to renew.
 	fail = false
 	got, err = r.Get(context.Background())
 	if err != nil {
@@ -135,10 +115,7 @@ func TestRefresher_FailsClosedWhenRenewalFails(t *testing.T) {
 }
 
 func TestRefresher_FailsClosedOnAnAlreadyExpiredFreshCredential(t *testing.T) {
-	// Not hypothetical: a cached response from the credential issuer, or clock
-	// skew between the operator and the issuer, both hand back a credential
-	// that is already dead on arrival. Without this check it sails straight
-	// through to the caller.
+	// A cached issuer response or clock skew can hand back a credential already dead on arrival.
 	clock := time.Now()
 	r := credrefresh.New(func(context.Context) (cred, time.Time, error) {
 		return cred{id: "A"}, clock.Add(-time.Minute), nil
@@ -168,8 +145,6 @@ func TestRefresher_FailsClosedWhenFreshCredentialExpiresExactlyNow(t *testing.T)
 }
 
 func TestRefresher_RenewalPastExpiryYieldsAUsableCredential(t *testing.T) {
-	// The ordinary case: past expiry, the resolver mints against the current
-	// clock, and Get hands back something with life left in it.
 	clock := time.Now()
 	r := credrefresh.New(func(context.Context) (cred, time.Time, error) {
 		return cred{id: "A"}, clock.Add(3 * time.Hour), nil
@@ -190,8 +165,7 @@ func TestRefresher_RenewalPastExpiryYieldsAUsableCredential(t *testing.T) {
 }
 
 func TestRefresher_ZeroExpiryIsNeverCached(t *testing.T) {
-	// An unknown expiry must not be read as "never expires" — that is the
-	// fail-open reading, and it is the one that lets a dead credential through.
+	// An unknown expiry must not be read as "never expires", which is the fail-open reading.
 	var calls int
 	r := credrefresh.New(func(context.Context) (cred, time.Time, error) {
 		calls++
@@ -206,8 +180,6 @@ func TestRefresher_ZeroExpiryIsNeverCached(t *testing.T) {
 		t.Errorf("resolved %d times, want 3 — a credential with an unknown (zero) expiry must never be served from cache", calls)
 	}
 }
-
-// --- RenewMargin ---------------------------------------------------------------
 
 func TestRefresher_DefaultRenewMarginAppliesWhenUnset(t *testing.T) {
 	var calls int
@@ -243,9 +215,7 @@ func TestRefresher_NonZeroRenewMarginOverridesTheDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Well outside a one-minute margin; DefaultRenewMargin's ten minutes would
-	// have forced a renewal here, so this proves the override is honoured
-	// rather than merely widening the default.
+	// DefaultRenewMargin's ten minutes would force a renewal here, so this proves the override is honoured.
 	r.Now = func() time.Time { return clock.Add(time.Hour - 5*time.Minute) }
 	if _, err := r.Get(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -256,14 +226,7 @@ func TestRefresher_NonZeroRenewMarginOverridesTheDefault(t *testing.T) {
 }
 
 func TestRefresher_NegativeRenewMarginNeverServesAnExpiredCredential(t *testing.T) {
-	// RenewMargin is an unvalidated exported field, and the cache branch is
-	// now.Before(heldExpires.Add(-margin)) with no direct expiry check
-	// alongside it. A negative margin pushes that "still fresh" boundary
-	// PAST the real expiry — here by thirty minutes — so a credential ten
-	// minutes past its actual expiry would still be served from cache. The
-	// fix is unspecified here on purpose (rejecting a negative margin,
-	// clamping it, or adding a direct expiry check all satisfy this): the
-	// only thing pinned is the resulting behaviour.
+	// RenewMargin is unvalidated, and a negative one pushes the "still fresh" boundary past the real expiry.
 	clock := time.Now()
 	expiry := clock.Add(time.Hour)
 	r := credrefresh.New(func(context.Context) (cred, time.Time, error) {
@@ -276,8 +239,6 @@ func TestRefresher_NegativeRenewMarginNeverServesAnExpiredCredential(t *testing.
 		t.Fatalf("unexpected error priming the cache: %v", err)
 	}
 
-	// Ten minutes past the credential's real expiry, but still inside the
-	// window a -30m margin would flip into looking "fresh".
 	clock = clock.Add(70 * time.Minute)
 	got, err := r.Get(context.Background())
 	if err == nil {
@@ -286,11 +247,7 @@ func TestRefresher_NegativeRenewMarginNeverServesAnExpiredCredential(t *testing.
 }
 
 func TestRefresher_ZeroValuedCredentialAtExactExpiryBoundaryFailsClosed(t *testing.T) {
-	// The zero-value-credential caching path (see
-	// TestRefresher_ZeroValuedCredentialWithAGoodExpiryIsStillHeldAndReused
-	// above) gets no exemption from the exact-expiry rule either: serving
-	// cred{} past its expiry is exactly as unsafe as serving any other value
-	// past its expiry.
+	// A zero-valued credential gets no exemption from the exact-expiry rule.
 	clock := time.Now()
 	expiry := clock.Add(time.Hour)
 	r := credrefresh.New(func(context.Context) (cred, time.Time, error) {
@@ -310,8 +267,6 @@ func TestRefresher_ZeroValuedCredentialAtExactExpiryBoundaryFailsClosed(t *testi
 	}
 }
 
-// --- Error wrapping --------------------------------------------------------
-
 func TestRefresher_ErrorWrapsTheResolverError(t *testing.T) {
 	sentinel := errors.New("network down")
 	r := credrefresh.New(func(context.Context) (cred, time.Time, error) {
@@ -329,8 +284,6 @@ func TestRefresher_ErrorWrapsTheResolverError(t *testing.T) {
 		t.Errorf("Get error %q does not carry the resolver's message text, which a caller's classifier still matches on", err.Error())
 	}
 }
-
-// --- Concurrency -------------------------------------------------------------
 
 func TestRefresher_SerialisesConcurrentGetCalls(t *testing.T) {
 	var calls int64

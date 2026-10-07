@@ -92,12 +92,7 @@ func TestVerbSeamsOverHandler_ClobberOnUpgradeFailsConvergentUpgrade(t *testing.
 	}
 }
 
-// TestVerbSeamsOverHandler_DeadReportedPendingFailsDeadDetection pins the
-// fifth misconfigured-fake scenario the CONTRACT names: "a dead resource
-// reported pending". DeadReportedPending makes Observe answer Unknown with
-// no error even though ObserveErr is also set, modelling an operator that
-// never expresses deadness — so ValidateWhenDead's pending read comes back
-// true and the harness fires MIT-1291's problem.
+// DeadReportedPending answers Unknown with no error even though ObserveErr is set, so ValidateWhenDead reads pending and the harness must flag it.
 func TestVerbSeamsOverHandler_DeadReportedPendingFailsDeadDetection(t *testing.T) {
 	f := &kittest.FakeResource{
 		DeadReportedPending: true,

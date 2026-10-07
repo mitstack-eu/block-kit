@@ -1,8 +1,4 @@
-// Package handler_test exercises the kit's lifecycle webhook Handler
-// end to end: real signed requests in, the exact Resource/hook call
-// sequence and wire response bytes out. Every helper here builds
-// requests and handlers the same way so a defect shows up as a red test,
-// not a fixture divergence between test files.
+// Package handler_test exercises the lifecycle webhook Handler end to end with real signed requests.
 package handler_test
 
 import (
@@ -18,14 +14,8 @@ import (
 	"github.com/mitstack-eu/operator-kit/webhook"
 )
 
-// noopSleep is passed as Config.Sleep so a test never waits on wall-clock
-// time, however small the poll interval — CONTRACT: "Deterministic: ...
-// Config.Sleep as a no-op so no test waits on wall-clock time."
 func noopSleep(context.Context, time.Duration) {}
 
-// baseConfig returns a Config wired for a deterministic, hermetic test: a
-// small VerbBudget, a no-op Sleep, and JWKS served by s. Callers mutate the
-// returned value before calling handler.New.
 func baseConfig(t *testing.T, r handler.Resource, s *kittest.Signer) handler.Config {
 	t.Helper()
 	return handler.Config{
@@ -37,13 +27,7 @@ func baseConfig(t *testing.T, r handler.Resource, s *kittest.Signer) handler.Con
 	}
 }
 
-// newHandler builds a Handler from a fresh Signer and a Resource, applying
-// mutate (if any) to the Config before calling handler.New, and fails the
-// test if New errors — for tests where New is expected to succeed. r takes
-// the handler.Resource interface rather than *kittest.FakeResource
-// specifically, so a test that needs a Resource kittest does not provide
-// (a blocking or context-cancelling fake, say) still goes through this one
-// shared constructor instead of hand-rolling handler.New.
+// newHandler takes the handler.Resource interface so a test needing a fake kittest does not provide still goes through this one constructor.
 func newHandler(t *testing.T, r handler.Resource, s *kittest.Signer, mutate ...func(*handler.Config)) *handler.Handler {
 	t.Helper()
 	cfg := baseConfig(t, r, s)
@@ -57,16 +41,7 @@ func newHandler(t *testing.T, r handler.Resource, s *kittest.Signer, mutate ...f
 	return h
 }
 
-// envelope builds a minimal but DecodeRequest-complete signed-webhook body:
-// operation/subscriptionId/blockId/orgId plus nonce/createdAt (added by
-// kittest.Envelope) — the full required set contract.DecodeRequest checks —
-// merged with extra, which may override any of the defaults. It also mints
-// and attaches a valid OBO token signed by s (unless extra already sets
-// "obo" itself), so every existing call site keeps exercising the verb
-// behaviour it already pins instead of tripping the OBO-required boundary.
-// A test that wants a body with NO obo field at all — the boundary itself —
-// builds it with kittest.Envelope directly instead of this helper; see
-// obo_required_test.go.
+// envelope attaches a valid OBO token unless extra sets one, so a test that wants no obo field builds its body with kittest.Envelope directly.
 func envelope(t *testing.T, s *kittest.Signer, nonce string, extra map[string]any) []byte {
 	t.Helper()
 	fields := map[string]any{

@@ -7,10 +7,7 @@ import (
 
 const teardownNeedle = "func TestUnsubscribeDeletes"
 
-// teardownSuite reimplements scripts/check-operator-teardown-tests.sh
-// against target alone: presence AND a real run of TestUnsubscribeDeletes*
-// (MIT-1124's teardown contract) — a broken teardown test must fail this
-// gate, not merely be absent.
+// teardownSuite runs TestUnsubscribeDeletes* as well as checking it exists, so a broken teardown test fails the gate.
 func teardownSuite(target string) SuiteResult {
 	const name = "teardown"
 

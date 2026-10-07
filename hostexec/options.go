@@ -1,8 +1,5 @@
 package hostexec
 
-// Opt-in send options for the ssm driver. Each option only records a value;
-// resolveSendOptions validates the full set before anything is spawned.
-
 import (
 	"errors"
 	"fmt"
@@ -11,8 +8,7 @@ import (
 	"time"
 )
 
-// Bounds the ssm driver enforces on its send options, matching the limits
-// SendCommand itself accepts.
+// These bounds match the limits SendCommand itself accepts.
 const (
 	maxCommentBytes     = 100
 	minDeliveryTimeout  = 30 * time.Second
@@ -21,14 +17,9 @@ const (
 	maxExecutionTimeout = 172800 * time.Second
 )
 
-// SendOption adjusts how the ssm driver sends and waits for a command. Every
-// option is ssm-only: Run and RunOutput reject any option on the ssh driver
-// rather than silently ignoring it. When the same option is passed more than
-// once, the last one wins.
+// SendOption adjusts how the ssm driver sends and waits for a command, is rejected on the ssh driver rather than ignored, and the last of a repeated option wins.
 type SendOption func(*sendOptions)
 
-// sendOptions is the resolved set of send options. A zero value sends exactly
-// the argv, and polls exactly as, a call with no option does.
 type sendOptions struct {
 	comment             string
 	commentSet          bool
@@ -39,13 +30,7 @@ type sendOptions struct {
 	detachedPoll        bool
 }
 
-// WithComment sends comment as the command's --comment, so the command can be
-// found by it later. The comment must be non-empty and at most 100 bytes; it
-// is never truncated. It must not begin with "-", which the aws CLI would
-// parse as an option, nor with file://, fileb://, http:// or https://, which
-// the aws CLI can read as an instruction to load the value from that file or
-// URL; the prefix check ignores letter case. Those strings later in the
-// comment are sent verbatim.
+// WithComment sends comment as --comment, non-empty and at most 100 bytes and never truncated, and refuses a leading "-" or a case-insensitive file://, fileb://, http:// or https:// prefix, which the aws CLI would read as an option or an instruction to load the value.
 func WithComment(comment string) SendOption {
 	return func(o *sendOptions) {
 		o.comment = comment
@@ -53,11 +38,7 @@ func WithComment(comment string) SendOption {
 	}
 }
 
-// WithDeliveryTimeout sends d as the command's --timeout-seconds, how long
-// SSM keeps trying to deliver the command to the instance. d must be a whole
-// number of seconds between 30 s and 2592000 s inclusive. It also lengthens
-// the poll bound, which becomes d plus any execution timeout plus one
-// SSMPollInterval whenever that exceeds SSMPollTimeout.
+// WithDeliveryTimeout sends d as --timeout-seconds, a whole number of seconds from 30 to 2592000, and lengthens the poll bound to d plus any execution timeout plus one SSMPollInterval when that exceeds SSMPollTimeout.
 func WithDeliveryTimeout(d time.Duration) SendOption {
 	return func(o *sendOptions) {
 		o.deliveryTimeout = d
@@ -65,11 +46,7 @@ func WithDeliveryTimeout(d time.Duration) SendOption {
 	}
 }
 
-// WithExecutionTimeout sends d as the AWS-RunShellScript executionTimeout
-// parameter, how long the script may run on the instance. d must be a whole
-// number of seconds between 1 s and 172800 s inclusive. It also lengthens the
-// poll bound, which becomes d plus any delivery timeout plus one
-// SSMPollInterval whenever that exceeds SSMPollTimeout.
+// WithExecutionTimeout sends d as the executionTimeout parameter, a whole number of seconds from 1 to 172800, and lengthens the poll bound to d plus any delivery timeout plus one SSMPollInterval when that exceeds SSMPollTimeout.
 func WithExecutionTimeout(d time.Duration) SendOption {
 	return func(o *sendOptions) {
 		o.executionTimeout = d
@@ -77,22 +54,13 @@ func WithExecutionTimeout(d time.Duration) SendOption {
 	}
 }
 
-// WithDetachedPoll keeps waiting for the sent command after the caller's
-// context is cancelled. send-command still runs on the caller's context, but
-// the status poll and, for RunOutput, the output read run on a context
-// detached from its cancellation and bounded by the poll bound: SSMPollTimeout,
-// or with a delivery or execution timeout set, their sum plus one
-// SSMPollInterval if that is longer. The call then returns only once the
-// command reaches a terminal state or that bound runs out, so it can outlive a
-// cancellation by up to that bound.
+// WithDetachedPoll keeps waiting after the caller's context is cancelled, because cancelling does not stop a command already running on the host, so the call can outlive a cancellation by up to the poll bound.
 func WithDetachedPoll() SendOption {
 	return func(o *sendOptions) {
 		o.detachedPoll = true
 	}
 }
 
-// refuseSendOptions rejects any option at all, nil included, for a driver
-// that has nothing to apply it to, rather than silently ignoring it.
 func refuseSendOptions(kind Kind, opts []SendOption) error {
 	if len(opts) == 0 {
 		return nil
@@ -100,9 +68,6 @@ func refuseSendOptions(kind Kind, opts []SendOption) error {
 	return fmt.Errorf("hostexec: send options apply only to the %q driver, not %q", KindSSM, kind)
 }
 
-// resolveSendOptions applies opts in order, so a repeated option's last value
-// wins, and validates the result for the ssm driver. It rejects a nil option
-// and any value outside the bounds its With function documents.
 func resolveSendOptions(opts []SendOption) (sendOptions, error) {
 	var o sendOptions
 	for _, opt := range opts {
@@ -137,13 +102,9 @@ func resolveSendOptions(opts []SendOption) (sendOptions, error) {
 	return o, nil
 }
 
-// remoteValuePrefixes are the parameter-value prefixes that make the aws CLI
-// read the value from a local file or fetch it from a URL.
 var remoteValuePrefixes = []string{"file://", "fileb://", "http://", "https://"}
 
-// remoteValuePrefix reports which of remoteValuePrefixes s begins with,
-// compared case-insensitively, so every letter-case variant is refused
-// whether or not the aws CLI would honour it.
+// remoteValuePrefix compares case-insensitively so every letter-case variant is refused whether or not the aws CLI would honour it.
 func remoteValuePrefix(s string) (string, bool) {
 	for _, p := range remoteValuePrefixes {
 		if len(s) >= len(p) && strings.EqualFold(s[:len(p)], p) {
@@ -153,8 +114,6 @@ func remoteValuePrefix(s string) (string, bool) {
 	return "", false
 }
 
-// checkWholeSeconds rejects d unless it is a whole number of seconds within
-// [lo, hi].
 func checkWholeSeconds(name string, d, lo, hi time.Duration) error {
 	if d%time.Second != 0 {
 		return fmt.Errorf("hostexec: %s: %s is not a whole number of seconds", name, d)
@@ -165,8 +124,6 @@ func checkWholeSeconds(name string, d, lo, hi time.Duration) error {
 	return nil
 }
 
-// seconds renders d, already validated as whole seconds, as the decimal
-// integer the aws CLI expects.
 func seconds(d time.Duration) string {
 	return strconv.FormatInt(int64(d/time.Second), 10)
 }

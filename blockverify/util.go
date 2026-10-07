@@ -7,10 +7,6 @@ import (
 	"strings"
 )
 
-// concatGoTestFiles recursively concatenates every *_test.go file under dir,
-// so a presence check (grep-equivalent) works regardless of how a target
-// lays out its tree — mirrors the recursive `grep -rq ... --include='*_test.go'`
-// scripts/check-operator-contract-tests.sh uses.
 func concatGoTestFiles(dir string) string {
 	var b strings.Builder
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -30,8 +26,6 @@ func concatGoTestFiles(dir string) string {
 	return b.String()
 }
 
-// anyGoFileContains reports whether any non-test .go file under dir contains
-// needle — mirrors sibling scripts' `grep -rqsl '<needle>' "$dir"/*.go`.
 func anyGoFileContains(dir, needle string) bool {
 	found := false
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {

@@ -12,9 +12,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// awsInstances builds the "instances" envelope field for a single resolved
-// aws tool instance scoped to region — the shape the engine sends a block
-// that provisions into a consumer's cloud account.
 func awsInstances(region string) map[string]any {
 	return map[string]any{
 		"aws": map[string]any{
@@ -25,37 +22,19 @@ func awsInstances(region string) map[string]any {
 	}
 }
 
-// instanceRegion reads the aws instance's region out of an instance map. A
-// nil map, a missing "aws" entry and a missing "region" key all answer "",
-// so a block that provisioned nothing reads an empty region rather than
-// panicking.
+// instanceRegion answers "" for a nil map or a missing entry or key, so a block that provisioned nothing reads an empty region rather than panicking.
 func instanceRegion(instances map[string]contract.InstanceConfig) string {
 	return instances["aws"].Config["region"]
 }
 
-// regionScopedResource models a block that provisions a region-scoped cloud
-// resource. Ensure records one resource keyed by the region the request's
-// aws instance carries, and Delete removes the record for the region it
-// reads off the Identity it is handed. An empty region means Delete has
-// nothing to address, so it returns nil without deleting: absence is
-// success, and a Delete that refused would break unsubscribe for every
-// subscription that legitimately provisioned nothing.
-//
-// Observe does no discovery of its own; it reports observeState, which is
-// contract.Unknown unless a test sets it — the shape a block author who
-// skipped discovery leaves behind.
+// regionScopedResource's Delete returns nil without deleting for an empty region, since a Delete that refused would break unsubscribe for every subscription that legitimately provisioned nothing.
 type regionScopedResource struct {
 	mu sync.Mutex
 
-	// observeState is the state every Observe reports. Unknown when unset.
 	observeState contract.State
 
-	// provisioned holds one entry per region Ensure provisioned for.
 	provisioned map[string]bool
 
-	// ensureDesired, observeIdentities and deleteIdentities capture what
-	// each call received, so a test asserts on the instance config the real
-	// dispatch path handed the block rather than on a value it built itself.
 	ensureDesired     []contract.Desired
 	observeIdentities []contract.Identity
 	deleteIdentities  []contract.Identity
@@ -102,8 +81,6 @@ func (r *regionScopedResource) Delete(_ context.Context, id contract.Identity) e
 	return nil
 }
 
-// regions lists the regions still provisioned, sorted so a failure message
-// reads the same on every run.
 func (r *regionScopedResource) regions() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -133,10 +110,6 @@ func (r *regionScopedResource) ensured() []contract.Desired {
 	return append([]contract.Desired(nil), r.ensureDesired...)
 }
 
-// TestServe_UnsubscribeDeletesTheRegionScopedResourceSubscribeCreated is the
-// headline proof: a block whose Delete needs the region its Ensure
-// provisioned into can only tear the resource down if the unsubscribe
-// request's instance config reaches the Identity that Delete is handed.
 func TestServe_UnsubscribeDeletesTheRegionScopedResourceSubscribeCreated(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &regionScopedResource{}
@@ -177,12 +150,7 @@ func TestServe_UnsubscribeDeletesTheRegionScopedResourceSubscribeCreated(t *test
 	}
 }
 
-// TestServe_UnsubscribeReportsAbsentOnlyWithTheResourceActuallyGone pins
-// both halves of the false success: the wire answer says teardown succeeded
-// AND the resource really is gone. This fake's Observe never discovers
-// anything and simply reports Absent, so the response alone can never tell
-// the two apart — dropping the instance config again leaves absent:true on
-// the wire with the customer's resource still running, and fails here.
+// The fake's Observe simply reports Absent, so the response alone cannot tell a real teardown from a false success; the test also asserts the resource is gone.
 func TestServe_UnsubscribeReportsAbsentOnlyWithTheResourceActuallyGone(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &regionScopedResource{observeState: contract.Absent}
@@ -221,11 +189,7 @@ func TestServe_UnsubscribeReportsAbsentOnlyWithTheResourceActuallyGone(t *testin
 	}
 }
 
-// priorOutputsResource models a block already live on kit/v1: it reads the
-// region it needs out of PriorOutputs and never looks at an instance config
-// at all. Its Observe does real discovery, so the settle loop reaches a
-// definite answer. A test seeds provisioned directly, since a real
-// subscribe carries no priorOutputs.
+// priorOutputsResource reads its region from PriorOutputs and never looks at an instance config; a test seeds provisioned directly since a real subscribe carries no priorOutputs.
 type priorOutputsResource struct {
 	mu               sync.Mutex
 	provisioned      map[string]bool
@@ -280,10 +244,6 @@ func (r *priorOutputsResource) deleted() []contract.Identity {
 	return append([]contract.Identity(nil), r.deleteIdentities...)
 }
 
-// TestServe_UnsubscribeStillTearsDownABlockReadingRegionFromPriorOutputs
-// pins that carrying the instance config through Identity does not disturb
-// the blocks already live on kit/v1: one that reads its region only from
-// PriorOutputs, on a request with no instances at all, still tears down.
 func TestServe_UnsubscribeStillTearsDownABlockReadingRegionFromPriorOutputs(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &priorOutputsResource{provisioned: map[string]bool{"eu-west-1": true}}
@@ -317,9 +277,6 @@ func TestServe_UnsubscribeStillTearsDownABlockReadingRegionFromPriorOutputs(t *t
 	}
 }
 
-// TestServe_ObserveReceivesTheRequestsInstanceConfig pins that the Identity
-// handed to Observe carries the request's instance config on every path
-// that calls it: the single unpolled validate call, and both settle loops.
 func TestServe_ObserveReceivesTheRequestsInstanceConfig(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -367,10 +324,6 @@ func TestServe_ObserveReceivesTheRequestsInstanceConfig(t *testing.T) {
 	}
 }
 
-// TestServe_EnsureStillReceivesTheRequestsInstanceConfig pins the other half
-// of the move: promoting Instances through the embedded Identity leaves
-// d.Instances inside Ensure resolving to exactly what the request sent, so
-// every block already reading it keeps working.
 func TestServe_EnsureStillReceivesTheRequestsInstanceConfig(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &regionScopedResource{}
@@ -397,9 +350,6 @@ func TestServe_EnsureStillReceivesTheRequestsInstanceConfig(t *testing.T) {
 	}
 }
 
-// TestServe_DeleteHooksReceiveTheRequestsInstanceConfig pins that the
-// Desired the handler builds for beforeDelete and afterDelete carries the
-// instance config too, so a hook that has to reach a region-scoped API can.
 func TestServe_DeleteHooksReceiveTheRequestsInstanceConfig(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &regionScopedResource{observeState: contract.Absent}
@@ -439,11 +389,6 @@ func TestServe_DeleteHooksReceiveTheRequestsInstanceConfig(t *testing.T) {
 	}
 }
 
-// TestServe_UnsubscribeWithNoInstancesSucceedsWithANilInstanceMap pins the
-// legitimate "provisioned nothing" case: a request carrying no instances
-// leaves Identity.Instances nil, a block reading a region off that nil map
-// reads "", and the unsubscribe still completes cleanly rather than
-// erroring or panicking.
 func TestServe_UnsubscribeWithNoInstancesSucceedsWithANilInstanceMap(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &regionScopedResource{observeState: contract.Absent}
@@ -479,9 +424,6 @@ func TestServe_UnsubscribeWithNoInstancesSucceedsWithANilInstanceMap(t *testing.
 	}
 }
 
-// TestServe_UnsubscribeIsolatesEachOrgsRegion pins the multi-tenancy edge:
-// two subscriptions from different orgs, each scoped to its own region,
-// each tear down their own resource and never the other org's.
 func TestServe_UnsubscribeIsolatesEachOrgsRegion(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	r := &regionScopedResource{}

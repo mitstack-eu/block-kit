@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// yamlKind is the kind of a node parseYAML builds.
 type yamlKind int
 
 const (
@@ -14,38 +13,28 @@ const (
 	yamlScalar
 	yamlMap
 	yamlSeq
-	// yamlOpaque is an alias, a value YAML refuses unquoted, a flow
-	// collection the reader cannot close or a quoted scalar it cannot
-	// close.
+	// yamlOpaque is a value the reader cannot take: an alias, a value YAML refuses unquoted, or a collection or quoted scalar it cannot close.
 	yamlOpaque
 )
 
-// yamlNode is one node of the YAML subset parseYAML reads.
 type yamlNode struct {
 	kind  yamlKind
 	value string
 	keys  []string
 	vals  []*yamlNode
 	items []*yamlNode
-	// str marks a scalar written in quotes or as a block scalar, which YAML
-	// reads as a string whatever its text, never as a null, a number or a
-	// boolean.
+	// str marks a scalar YAML reads as a string whatever its text.
 	str bool
-	// misplaced marks a mapping holding a line that is neither a key of it
-	// nor inside one of its values.
+	// misplaced marks a mapping holding a line that is neither a key of it nor inside one of its values.
 	misplaced bool
-	// alias marks an opaque node written as an alias, *name.
-	alias bool
-	// reserved is the character, @, ` or %, that starts an unquoted scalar
-	// YAML refuses. Such a node is opaque.
+	alias     bool
+	// reserved is the character, @, ` or %, that YAML refuses at the start of an unquoted scalar.
 	reserved byte
-	// tag is the tag of an opaque node written with a tag YAML or the reader
-	// refuses on its value, and tagNote says why.
+	// tag is a tag YAML or the reader refuses on the value, and tagNote says why.
 	tag, tagNote string
 }
 
-// get returns the value under key in a mapping, or nil. A key written twice
-// gives its first value.
+// get gives the first value of a key written twice.
 func (n *yamlNode) get(key string) *yamlNode {
 	if n == nil || n.kind != yamlMap {
 		return nil
@@ -58,14 +47,9 @@ func (n *yamlNode) get(key string) *yamlNode {
 	return nil
 }
 
-// parseYAML reads content by indentation into block mappings, block
-// sequences, flow collections and scalars, including block scalars.
-// Anything else becomes an opaque node, which the manifest decoder refuses
-// wherever it sits. A leading byte order mark is not part of the document.
-// The content is one YAML document: a %YAML 1.1 directive and a document
-// start marker before it, content on that marker's line, and a document end
-// marker after it are read, while any other directive, a second document
-// and a line outside the document's top-level value are errors.
+// parseYAML reads one YAML document; anything it cannot read becomes an opaque node the manifest decoder refuses.
+//
+// A %YAML 1.1 directive, a start marker, content on its line and an end marker are read; any other directive, a second document or a line outside the top-level value is an error.
 func parseYAML(content string) (*yamlNode, error) {
 	r := &yamlReader{lines: strings.Split(strings.TrimPrefix(content, "\ufeff"), "\n")}
 	root := r.nested(-1, false)
@@ -79,28 +63,19 @@ func parseYAML(content string) (*yamlNode, error) {
 	return root, nil
 }
 
-// errSecondDocument refuses a stream holding more than one YAML document.
 var errSecondDocument = errors.New("the manifest holds more than one YAML document, and a manifest is one document, so write it without a second ---")
 
 type yamlReader struct {
-	lines []string
-	pos   int
-	// started marks that a line of the document's content has been read.
-	started bool
-	// opened marks a document start marker, "---", before the content.
-	opened bool
-	// directive marks a %YAML directive before the document.
+	lines     []string
+	pos       int
+	started   bool
+	opened    bool
 	directive bool
-	// ended marks a document end marker, "...", after the document.
-	ended bool
-	// err stops reading: a second document or a directive the reader does
-	// not take.
+	ended     bool
+	// err stops reading: a second document or a directive the reader does not take.
 	err error
 }
 
-// atDocumentMarker reports whether s starts with a document start marker,
-// "---", or a document end marker, "...", followed by a blank, a line break
-// or the end of s.
 func atDocumentMarker(s string) bool {
 	for _, marker := range []string{"---", "..."} {
 		if rest, ok := strings.CutPrefix(s, marker); ok && (rest == "" || strings.IndexByte(" \t\n", rest[0]) >= 0) {
@@ -110,14 +85,9 @@ func atDocumentMarker(s string) bool {
 	return false
 }
 
-// peek returns the indent and text of the next line holding content,
-// skipping over blank lines, comment lines, a %YAML 1.1 directive and
-// document markers. Content written on a document start marker's line is
-// returned at its own column. A second document start marker, or content
-// after a document end marker, begins a second document, and a directive
-// other than %YAML 1.1, or one not followed by a document start marker, is
-// one the reader does not take; either sets r.err, and peek then reports no
-// further line.
+// peek returns the next line holding content, skipping blank and comment lines, a %YAML 1.1 directive and document markers.
+//
+// A second document or an unsupported directive sets r.err, and peek then reports no further line.
 func (r *yamlReader) peek() (indent int, text string, ok bool) {
 	for ; r.err == nil && r.pos < len(r.lines); r.pos++ {
 		line := strings.TrimSuffix(r.lines[r.pos], "\r")
@@ -163,8 +133,6 @@ func (r *yamlReader) peek() (indent int, text string, ok bool) {
 	return 0, "", false
 }
 
-// skipDeeper skips over every line indented deeper than owner: the rest of
-// a value the reader has already taken what it needs from.
 func (r *yamlReader) skipDeeper(owner int) {
 	for {
 		indent, _, ok := r.peek()
@@ -175,9 +143,7 @@ func (r *yamlReader) skipDeeper(owner int) {
 	}
 }
 
-// nested reads the node on the lines after a key or item at indent parent.
-// compact admits a sequence at the parent's own indent, which YAML allows
-// under a mapping key.
+// nested reads the node after a key or item at indent parent; compact admits a sequence at the parent's own indent, which YAML allows under a mapping key.
 func (r *yamlReader) nested(parent int, compact bool) *yamlNode {
 	indent, text, ok := r.peek()
 	if !ok || indent < parent || indent == parent && !(compact && isSeqItem(text)) {
@@ -193,7 +159,6 @@ func (r *yamlReader) nested(parent int, compact bool) *yamlNode {
 	return r.value(text, parent, false)
 }
 
-// mapping reads the block mapping whose keys sit at indent.
 func (r *yamlReader) mapping(indent int) *yamlNode {
 	n := &yamlNode{kind: yamlMap}
 	for {
@@ -214,7 +179,6 @@ func (r *yamlReader) mapping(indent int) *yamlNode {
 	}
 }
 
-// sequence reads the block sequence whose "-" markers sit at indent.
 func (r *yamlReader) sequence(indent int) *yamlNode {
 	n := &yamlNode{kind: yamlSeq}
 	for {
@@ -224,8 +188,7 @@ func (r *yamlReader) sequence(indent int) *yamlNode {
 		}
 		content := strings.TrimLeft(text[1:], " \t")
 		if _, _, isKey := splitKey(content); isKey || isSeqItem(content) {
-			// The item's content is a node at its own column, as if it
-			// began on the next line.
+			// The item's content is a node at its own column, as if it began on the next line.
 			r.lines[r.pos] = strings.Repeat(" ", ind+len(text)-len(content)) + content
 			n.items = append(n.items, r.nested(ind, false))
 			continue
@@ -235,8 +198,6 @@ func (r *yamlReader) sequence(indent int) *yamlNode {
 	}
 }
 
-// value reads the value that follows a key or an item marker at indent
-// owner: rest of that line when it holds one, the lines below otherwise.
 func (r *yamlReader) value(rest string, owner int, compact bool) *yamlNode {
 	if stripped, err := stripYAMLComment(rest); err == nil {
 		rest = stripped
@@ -249,8 +210,6 @@ func (r *yamlReader) value(rest string, owner int, compact bool) *yamlNode {
 	return withTag(r.inline(rest, owner), tag)
 }
 
-// inline reads a value that starts on the current line, together with the
-// lines that continue it.
 func (r *yamlReader) inline(text string, owner int) *yamlNode {
 	switch text[0] {
 	case '|', '>':
@@ -259,8 +218,7 @@ func (r *yamlReader) inline(text string, owner int) *yamlNode {
 		r.skipDeeper(owner)
 		return &yamlNode{kind: yamlOpaque, alias: true}
 	case '@', '`', '%':
-		// YAML reserves these at the start of a plain scalar, so a real
-		// parser refuses the value unless it is quoted.
+		// YAML reserves these at the start of a plain scalar.
 		r.skipDeeper(owner)
 		return &yamlNode{kind: yamlOpaque, reserved: text[0]}
 	case '[', '{':
@@ -269,25 +227,19 @@ func (r *yamlReader) inline(text string, owner int) *yamlNode {
 		return r.quotedScalar(text, owner)
 	}
 	if isSeqItem(text) || text == "?" || strings.HasPrefix(text, "? ") || strings.HasPrefix(text, "?\t") {
-		// A sequence entry or a complex key cannot start a value written
-		// after a key or an item marker.
 		r.skipDeeper(owner)
 		return &yamlNode{kind: yamlOpaque}
 	}
 	return r.plainScalar(text, owner)
 }
 
-// quotedScalar reads the single- or double-quoted scalar that starts text.
-// It runs, as YAML lets a quoted scalar run, over the following lines up to
-// its closing quote whatever their indent, and is read as scanQuoted reads
-// it. A scalar a document marker or the end of the input leaves open, text
-// other than a comment after its closing quote, and a line indented deeper
-// than owner after it are not a scalar YAML reads, so the value is opaque.
+// quotedScalar runs over the following lines up to the closing quote whatever their indent.
+//
+// A scalar left open, text other than a comment after the closing quote, or a deeper line after it is opaque.
 func (r *yamlReader) quotedScalar(text string, owner int) *yamlNode {
 	end := closingQuote(text)
 	if end < 0 && r.pos > 0 {
-		// The blanks that end the scalar's first line are part of it when
-		// they are escaped, so the line is read up to its end.
+		// Escaped blanks at the end of the first line are part of the scalar.
 		raw := strings.TrimSuffix(r.lines[r.pos-1], "\r")
 		if trimmed := strings.TrimRight(raw, " \t"); strings.HasSuffix(trimmed, text) {
 			text = raw[len(trimmed)-len(text):]
@@ -322,8 +274,6 @@ func (r *yamlReader) quotedScalar(text string, owner int) *yamlNode {
 	return &yamlNode{kind: yamlScalar, value: v, str: true}
 }
 
-// closingQuote returns the index of the quote that closes the quoted scalar
-// s opens, or -1 when s leaves it open.
 func closingQuote(s string) int {
 	quote := s[0]
 	for i := 1; i < len(s); i++ {
@@ -335,10 +285,7 @@ func closingQuote(s string) int {
 	return -1
 }
 
-// plainScalar reads an unquoted scalar and the lines indented deeper than
-// owner that continue it, each joined with a blank as YAML folds them. A
-// line holding a key, or a ": " or a closing ":" that YAML reads as one, is
-// not a scalar YAML reads, so the value is opaque.
+// plainScalar joins continuation lines with a blank as YAML folds them; a line holding a key or a mapping-value colon makes the value opaque.
 func (r *yamlReader) plainScalar(text string, owner int) *yamlNode {
 	parts := []string{text}
 	opaque := holdsMappingValue(text)
@@ -364,18 +311,11 @@ func (r *yamlReader) plainScalar(text string, owner int) *yamlNode {
 	return &yamlNode{kind: yamlScalar, value: strings.Join(parts, " ")}
 }
 
-// holdsMappingValue reports whether the plain scalar text s holds a colon
-// YAML reads as a mapping value indicator: one followed by a blank or ending
-// the text.
 func holdsMappingValue(s string) bool {
 	return strings.Contains(s, ": ") || strings.Contains(s, ":\t") || strings.HasSuffix(s, ":")
 }
 
-// blockScalar reads the body of a "|" or ">" scalar whose header is header:
-// every following line indented deeper than owner, blank lines included. A
-// literal scalar keeps its line breaks and a folded one joins its lines
-// with blanks. The final line break is kept once, dropped under "-" and
-// kept with every trailing blank line under "+".
+// blockScalar keeps the final line break once, drops it under "-" and keeps every trailing blank line under "+".
 func (r *yamlReader) blockScalar(header string, owner int) *yamlNode {
 	literal := header[0] == '|'
 	chomp := byte(0)
@@ -432,9 +372,7 @@ func (r *yamlReader) blockScalar(header string, owner int) *yamlNode {
 	return &yamlNode{kind: yamlScalar, value: value, str: true}
 }
 
-// foldLines joins the lines of a folded block scalar: a break between two
-// lines of text becomes a blank, a run of blank lines becomes that many
-// line breaks, and a more indented line keeps its breaks.
+// foldLines turns a break between two text lines into a blank, a run of blank lines into that many breaks, and keeps the breaks around a more indented line.
 func foldLines(lines []string) string {
 	var b strings.Builder
 	blanks := 0
@@ -463,10 +401,7 @@ func foldLines(lines []string) string {
 	return b.String()
 }
 
-// joinContinuation appends the lines indented deeper than owner to text
-// until done reports the text complete. stripComments drops each joined
-// line's comment, which a flow collection allows and a quoted scalar does
-// not hold.
+// joinContinuation's stripComments drops each joined line's comment, which a flow collection allows and a quoted scalar does not hold.
 func (r *yamlReader) joinContinuation(text string, owner int, stripComments bool, done func(string) bool) string {
 	for !done(text) {
 		ind, next, ok := r.peek()
@@ -484,9 +419,7 @@ func (r *yamlReader) joinContinuation(text string, owner int, stripComments bool
 	return text
 }
 
-// flowCollection reads a "[a, b]" or "{a: b}" collection, which may run
-// over several lines and nest. One the reader cannot close, or text after
-// its closing bracket, is opaque.
+// flowCollection makes one the reader cannot close, or text after its closing bracket, opaque.
 func (r *yamlReader) flowCollection(text string, owner int) *yamlNode {
 	text = r.joinContinuation(text, owner, true, func(s string) bool { return flowClose(s) >= 0 })
 	r.skipDeeper(owner)
@@ -502,9 +435,7 @@ func (r *yamlReader) flowCollection(text string, owner int) *yamlNode {
 	return n
 }
 
-// flowClose returns the index of the bracket closing the flow collection
-// text opens, or -1 when it is not closed. A comment on a joined line ends
-// at that line's end, so text is read with comments already removed.
+// flowClose expects text with comments already removed.
 func flowClose(text string) int {
 	var quote byte
 	depth := 0
@@ -529,8 +460,7 @@ func flowClose(text string) int {
 	return -1
 }
 
-// flowParser reads one flow collection from s. failed marks text it cannot
-// read, which makes the whole collection opaque.
+// flowParser's failed marks text it cannot read, which makes the whole collection opaque.
 type flowParser struct {
 	s      string
 	i      int
@@ -543,15 +473,11 @@ func (p *flowParser) skipBlanks() {
 	}
 }
 
-// node reads the flow node at the cursor: a collection, an alias or a
-// scalar, after any anchor or tag.
 func (p *flowParser) node() *yamlNode {
 	tag := ""
 	p.skipBlanks()
 	for p.i < len(p.s) && (p.s[p.i] == '&' || p.s[p.i] == '!') {
-		// An anchor ends at a flow indicator. A tag, as yaml.v3 scans it,
-		// also takes in a comma or a bracket, so a tag written straight
-		// before one swallows it.
+		// An anchor ends at a flow indicator; a tag, as yaml.v3 scans it, swallows a comma or bracket written straight after it.
 		end := " \t,[]{}"
 		if p.s[p.i] == '!' {
 			end = " \t{}"
@@ -568,8 +494,6 @@ func (p *flowParser) node() *yamlNode {
 	return withTag(p.untagged(), tag)
 }
 
-// untagged reads the flow node at the cursor once its anchor and tag are
-// read past.
 func (p *flowParser) untagged() *yamlNode {
 	if p.i >= len(p.s) {
 		return &yamlNode{kind: yamlNull}
@@ -599,8 +523,7 @@ func (p *flowParser) untagged() *yamlNode {
 	return &yamlNode{kind: yamlScalar, value: v}
 }
 
-// plain reads an unquoted flow scalar up to the indicator that ends it.
-// asKey also ends it at a colon followed by a blank or an indicator.
+// plain's asKey also ends the scalar at a colon followed by a blank or an indicator.
 func (p *flowParser) plain(asKey bool) string {
 	start := p.i
 	for p.i < len(p.s) {
@@ -616,7 +539,6 @@ func (p *flowParser) plain(asKey bool) string {
 	return strings.TrimSpace(p.s[start:p.i])
 }
 
-// quoted reads a quoted scalar starting at the cursor.
 func (p *flowParser) quoted() *yamlNode {
 	quote := p.s[p.i]
 	start := p.i
@@ -631,7 +553,6 @@ func (p *flowParser) quoted() *yamlNode {
 	return &yamlNode{kind: yamlScalar, value: v, str: true}
 }
 
-// sequence reads "[a, b]" at the cursor.
 func (p *flowParser) sequence() *yamlNode {
 	n := &yamlNode{kind: yamlSeq}
 	p.i++
@@ -653,7 +574,6 @@ func (p *flowParser) sequence() *yamlNode {
 	return n
 }
 
-// mapping reads "{a: b, c: d}" at the cursor.
 func (p *flowParser) mapping() *yamlNode {
 	n := &yamlNode{kind: yamlMap}
 	p.i++
@@ -689,8 +609,7 @@ func (p *flowParser) mapping() *yamlNode {
 	return n
 }
 
-// separator consumes the comma after an entry, or reports whether the
-// closing bracket follows, leaving it for the caller.
+// separator leaves a closing bracket for the caller.
 func (p *flowParser) separator(closing byte) bool {
 	p.skipBlanks()
 	if p.i < len(p.s) && p.s[p.i] == ',' {
@@ -700,14 +619,11 @@ func (p *flowParser) separator(closing byte) bool {
 	return p.i < len(p.s) && p.s[p.i] == closing
 }
 
-// isSeqItem reports whether text starts a block sequence item.
 func isSeqItem(text string) bool {
 	return text == "-" || strings.HasPrefix(text, "- ") || strings.HasPrefix(text, "-\t")
 }
 
-// splitKey splits a "key: value" line into its key and the text after the
-// colon. A key is a quoted scalar or a plain one that does not start with a
-// YAML indicator, followed by a colon that ends the line or precedes a blank.
+// splitKey takes a key that is a quoted scalar or a plain one not starting with a YAML indicator, followed by a colon ending the line or preceding a blank.
 func splitKey(text string) (key, rest string, ok bool) {
 	if text == "" {
 		return "", "", false
@@ -748,9 +664,7 @@ func splitKey(text string) (key, rest string, ok bool) {
 	return "", "", false
 }
 
-// stripYAMLComment returns s up to the "#" that starts a comment: one at the
-// start of s or after a blank, outside a quoted scalar. A quote opens a
-// scalar only at the start of a token. An unterminated quote is an error.
+// stripYAMLComment cuts at a "#" at the start of s or after a blank, outside a quoted scalar; a quote opens a scalar only at the start of a token.
 func stripYAMLComment(s string) (string, error) {
 	var quote byte
 	for i := 0; i < len(s); i++ {
@@ -776,10 +690,7 @@ func stripYAMLComment(s string) (string, error) {
 	return s, nil
 }
 
-// skipQuotedYAML skips over the byte at s[i] inside a scalar opened by
-// *quote and returns the index to continue from. It consumes a backslash
-// escape in a double-quoted scalar and a doubled single quote in a
-// single-quoted one, and clears *quote when s[i] closes the scalar.
+// skipQuotedYAML clears *quote when s[i] closes the scalar.
 func skipQuotedYAML(s string, i int, quote *byte) int {
 	switch {
 	case *quote == '"' && s[i] == '\\':

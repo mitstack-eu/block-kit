@@ -7,30 +7,19 @@ import (
 	"strings"
 )
 
-// LifecycleHooksField is the one block manifest field that carries lifecycle
-// hook declarations. The kit handler and the platform's manifest parser both
-// read hooks from this path, so a block declares them in one place only.
+// LifecycleHooksField is the one block manifest field that carries lifecycle hook declarations, read by both the kit handler and the platform's parser.
 const LifecycleHooksField = "spec.lifecycle.hooks"
 
-// AppNameNamingField is the block manifest field that declares how long an
-// app name the block accepts, and the provider names it derives from it.
+// AppNameNamingField is the block manifest field that declares the longest app name the block accepts.
 const AppNameNamingField = "spec.naming.appName"
 
-// AppNameNaming is a block's AppNameNamingField declaration: the longest app
-// name the block claims to accept, and every name it derives from the app
-// name, which together set that limit. Its yaml tags name the keys
-// ParseManifest reads it under; a tag without omitempty is a key the parser
-// requires.
+// AppNameNaming is a block's AppNameNamingField declaration, whose yaml tags without omitempty are keys the parser requires.
 type AppNameNaming struct {
-	// MaxLength is the longest app name the block claims to accept.
-	MaxLength int `yaml:"maxLength"`
-	// DerivedNames lists every provider resource name the block builds from
-	// the app name.
+	MaxLength    int           `yaml:"maxLength"`
 	DerivedNames []DerivedName `yaml:"derivedNames,omitempty"`
 }
 
-// DerivedName is one provider resource name a block builds from the app
-// name.
+// DerivedName is one provider resource name a block builds from the app name.
 type DerivedName struct {
 	// Template is the name with the app name written as {appName}.
 	Template string `yaml:"template"`
@@ -38,29 +27,20 @@ type DerivedName struct {
 	Limit int `yaml:"limit"`
 }
 
-// LifecycleHookPoints returns the closed set of lifecycle hook points, in the
-// order a subscribe and an unsubscribe reach them. The kit handler and the
-// platform's manifest validation both refuse a manifest that declares a hook
-// outside this set or declares one twice. Each call returns a fresh slice the
-// caller may modify.
+// LifecycleHookPoints returns the closed set of lifecycle hook points, in the order a subscribe and an unsubscribe reach them.
 func LifecycleHookPoints() []string {
 	return []string{"beforeEnsure", "afterEnsure", "beforeDelete", "afterDelete"}
 }
 
-// ManifestGoldensDir is the directory inside ManifestGoldens holding the
-// committed block manifest fixtures.
+// ManifestGoldensDir is the directory inside ManifestGoldens holding the manifest fixtures.
 const ManifestGoldensDir = "manifest-goldens"
 
-// ManifestGoldens embeds the committed block manifest fixtures. Both the kit
-// handler and the platform's manifest parser test against these fixtures, so
-// a change to the field on either side turns the other side's tests red.
+// ManifestGoldens embeds the manifest fixtures both the kit handler and the platform's parser test against.
 //
 //go:embed manifest-goldens/*.yaml
 var ManifestGoldens embed.FS
 
-// HooksManifestGolden returns the manifest golden that declares lifecycle
-// hooks under LifecycleHooksField. It panics if the embedded file is
-// missing, since that can only be a packaging bug in this module.
+// HooksManifestGolden returns the manifest golden that declares lifecycle hooks, panicking on a missing embedded file as a packaging bug.
 func HooksManifestGolden() []byte {
 	raw, err := ManifestGoldens.ReadFile(ManifestGoldensDir + "/lifecycle-hooks.yaml")
 	if err != nil {
@@ -69,12 +49,7 @@ func HooksManifestGolden() []byte {
 	return raw
 }
 
-// TypeBlockHooksManifestGolden returns the HooksManifestGolden block written
-// with a top-level `type: block` and no top-level `kind`, no spec.layer, a
-// provided contract typed with `format:` and a continuity unit classified
-// with `store:`. It declares the same hooks as HooksManifestGolden. It panics
-// if the embedded file is missing, since that can only be a packaging bug in
-// this module.
+// TypeBlockHooksManifestGolden returns the HooksManifestGolden block written with `type: block`, `format:` and `store:` spellings, panicking on a missing embedded file as a packaging bug.
 func TypeBlockHooksManifestGolden() []byte {
 	raw, err := ManifestGoldens.ReadFile(ManifestGoldensDir + "/lifecycle-hooks-type-block.yaml")
 	if err != nil {
@@ -83,42 +58,26 @@ func TypeBlockHooksManifestGolden() []byte {
 	return raw
 }
 
-// HooksManifestGoldenDeclares returns the hook names HooksManifestGolden
-// declares, in manifest order, so a test on either side can assert its
-// parser reads exactly these. Each call returns a fresh slice the caller may
-// modify.
+// HooksManifestGoldenDeclares returns the hook names HooksManifestGolden declares, in manifest order.
 func HooksManifestGoldenDeclares() []string {
 	return []string{"beforeEnsure", "afterDelete"}
 }
 
-// slugPattern is the platform's slug: 1 to 40 characters of lowercase
-// letters, digits and dashes, starting and ending with a letter or digit.
-// Go's $ matches only at the end of the text, so a trailing newline is
-// refused.
+// slugPattern is the platform's slug; Go's $ matches only at the end of the text, so a trailing newline is refused.
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 
 func isSlug(s string) bool { return slugPattern.MatchString(s) }
 
-// ParseBlockID splits a block id into its namespace and name. It accepts a
-// bare slug, a community block, giving namespace "", and @<org slug>/<slug>,
-// a private block, giving the org slug without its @. ADR 0080 sets this
-// grammar: community names are bare and private names sit under @<org>/.
-// Nothing is trimmed, so an id carrying whitespace is refused. On error both
-// returned strings are empty.
+// ParseBlockID splits a bare slug or @<org slug>/<slug> into namespace and name, trimming nothing, so an id carrying whitespace is refused.
 func ParseBlockID(id string) (namespace, name string, err error) {
 	return parseNamespacedName("block", id)
 }
 
-// ParseCapabilityID splits a capability id into its namespace and name,
-// under the same grammar as ParseBlockID: a bare slug for a community
-// capability, @<org slug>/<slug> for a private one. ADR 0080 sets this
-// grammar. On error both returned strings are empty.
+// ParseCapabilityID splits a capability id into its namespace and name under the grammar of ParseBlockID.
 func ParseCapabilityID(id string) (namespace, name string, err error) {
 	return parseNamespacedName("capability", id)
 }
 
-// parseNamespacedName accepts <slug> or @<slug>/<slug>; kind names what the
-// id identifies in the error.
 func parseNamespacedName(kind, id string) (namespace, name string, err error) {
 	if org, rest, ok := splitNamespace(id); ok {
 		if isSlug(org) && isSlug(rest) {
@@ -133,13 +92,7 @@ func parseNamespacedName(kind, id string) (namespace, name string, err error) {
 		kind, id)
 }
 
-// ParseResourceTypeID splits a resource-type id into its namespace,
-// capability and name. It accepts <capability slug>.<name>, a community
-// type, giving namespace "", and @<org slug>/<capability slug>.<name>, a
-// private type, giving the org slug without its @. The name is lowercase
-// kebab case. ADR 0080 sets this grammar: community names are bare and
-// private names sit under @<org>/. Nothing is trimmed, so an id carrying
-// whitespace is refused. On error every returned string is empty.
+// ParseResourceTypeID splits <capability>.<name> or @<org>/<capability>.<name> into namespace, capability and name, trimming nothing.
 func ParseResourceTypeID(id string) (namespace, capability, name string, err error) {
 	rest := id
 	if strings.HasPrefix(id, "@") {
@@ -164,8 +117,6 @@ func resourceTypeIDError(id string) error {
 		id)
 }
 
-// splitNamespace splits "@<org>/<rest>" at its first slash. ok is false when
-// id does not start with @, or has no slash.
 func splitNamespace(id string) (org, rest string, ok bool) {
 	after, found := strings.CutPrefix(id, "@")
 	if !found {

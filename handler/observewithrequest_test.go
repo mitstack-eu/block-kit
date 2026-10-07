@@ -1,17 +1,3 @@
-// observewithrequest_test.go pins the route a kit/v1 block reaches through
-// handler.RequestObserver: a Resource implementing it sees the request's
-// full Desired — secrets included — on validate, and on every settle poll a
-// subscribe, upgrade or unsubscribe drives. A plain Resource that does not
-// implement it keeps calling Observe(ctx, Identity) exactly as before, and
-// the secrets one verb's polls saw are never retained anywhere the handler
-// could hand them to an unrelated later call — the idempotency cache
-// included.
-//
-// requestObserverFake structurally mirrors kittest.FakeResource but also
-// implements handler.RequestObserver, the same reasoning handover_test.go
-// gives for not extending the shared kittest fake: whether RequestObserver
-// belongs on the shipped FakeResource too is a call for whoever owns that
-// package, not one this test file should make by editing it directly.
 package handler_test
 
 import (
@@ -27,12 +13,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// requestObserverFake is a Resource that also implements
-// handler.RequestObserver. PresentAfter/AbsentAfter let a test force a known
-// number of settle polls before the loop stops, so "at least two polls" is
-// exact rather than incidental: with PresentAfter (or AbsentAfter) set to N,
-// ObserveWithRequest reports something other than the target state for the
-// first N-1 calls and the target state on the Nth.
+// requestObserverFake mirrors kittest.FakeResource but implements handler.RequestObserver, which the shared fake is not edited to do; with PresentAfter or AbsentAfter set to N, ObserveWithRequest reports the target state only on the Nth call.
 type requestObserverFake struct {
 	mu sync.Mutex
 
@@ -58,9 +39,7 @@ func (f *requestObserverFake) Ensure(ctx context.Context, d contract.Desired) er
 	return nil
 }
 
-// Observe is the plain path handler.Resource still requires. It must never
-// be called for this fake once the Handler sees it also implements
-// RequestObserver.
+// Observe must never be called once the Handler sees the fake implements RequestObserver.
 func (f *requestObserverFake) Observe(ctx context.Context, id contract.Identity) (contract.Observation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -75,10 +54,6 @@ func (f *requestObserverFake) Delete(ctx context.Context, id contract.Identity) 
 	return nil
 }
 
-// ObserveWithRequest is handler.RequestObserver's method: it receives the
-// request's full Desired — secrets included — and records it, plus every
-// secrets map it has ever seen, so a test can assert every poll saw the same
-// verb's secrets.
 func (f *requestObserverFake) ObserveWithRequest(ctx context.Context, d contract.Desired) (contract.Observation, error) {
 	f.mu.Lock()
 	f.ObserveWithRequestCalls++
@@ -109,10 +84,6 @@ func (f *requestObserverFake) ObserveWithRequest(ctx context.Context, d contract
 var _ handler.Resource = (*requestObserverFake)(nil)
 var _ handler.RequestObserver = (*requestObserverFake)(nil)
 
-// TestServe_ValidateObserveWithRequestReceivesTheValidateRequestSecrets pins
-// the first acceptance criterion: a validate request carrying
-// secrets.github.token reaches a RequestObserver Resource's
-// ObserveWithRequest, and the plain Observe is never called instead.
 func TestServe_ValidateObserveWithRequestReceivesTheValidateRequestSecrets(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "tok-validate-observes-9f3a"
@@ -139,10 +110,6 @@ func TestServe_ValidateObserveWithRequestReceivesTheValidateRequestSecrets(t *te
 	}
 }
 
-// TestServe_SubscribeSettlePollsEachReceiveTheSubscribeSecrets pins the
-// subscribe half of the second acceptance criterion: driven through at
-// least two settle polls, every poll's ObserveWithRequest call carries the
-// subscribe request's own secrets.
 func TestServe_SubscribeSettlePollsEachReceiveTheSubscribeSecrets(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "tok-subscribe-poll-7c21"
@@ -169,9 +136,6 @@ func TestServe_SubscribeSettlePollsEachReceiveTheSubscribeSecrets(t *testing.T) 
 	}
 }
 
-// TestServe_UnsubscribeSettlePollsEachReceiveTheUnsubscribeSecrets mirrors
-// the above for unsubscribe/settleAbsent, completing the second acceptance
-// criterion.
 func TestServe_UnsubscribeSettlePollsEachReceiveTheUnsubscribeSecrets(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "tok-unsubscribe-poll-4e88"
@@ -198,11 +162,7 @@ func TestServe_UnsubscribeSettlePollsEachReceiveTheUnsubscribeSecrets(t *testing
 	}
 }
 
-// TestServe_PlainResourceObserveIsUnaffectedWhenSecretsArePresent proves the
-// third hard requirement: a Resource implementing only handler.Resource — no
-// RequestObserver — keeps calling Observe(ctx, Identity) exactly as before,
-// even when the request carries secrets. kittest.FakeResource does not
-// implement RequestObserver, so this is the plain-Resource control case.
+// kittest.FakeResource does not implement RequestObserver, so this is the plain-Resource control case.
 func TestServe_PlainResourceObserveIsUnaffectedWhenSecretsArePresent(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{Outputs: map[string]string{"url": "https://example.test"}}
@@ -228,13 +188,7 @@ func TestServe_PlainResourceObserveIsUnaffectedWhenSecretsArePresent(t *testing.
 	}
 }
 
-// TestServe_PollSecretsFromOneVerbNeverReachALaterUnrelatedRequest proves
-// that a verb's secrets live only for the duration of that verb's own
-// request: a second, unrelated request that carries no secrets of its own
-// must never see the first verb's secrets show up in the Desired its
-// ObserveWithRequest is handed. A Handler that stashed the first verb's
-// secrets in any field of its own state, to reuse across calls, would leak
-// them here.
+// A Handler that stashed the first verb's secrets in its own state would leak them into a later unrelated request here.
 func TestServe_PollSecretsFromOneVerbNeverReachALaterUnrelatedRequest(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "tok-scope-should-not-leak-2b6f"
@@ -265,12 +219,7 @@ func TestServe_PollSecretsFromOneVerbNeverReachALaterUnrelatedRequest(t *testing
 	}
 }
 
-// TestServe_IdempotencyCacheNeverStoresOrLeaksVerbSecrets proves the other
-// half of "stored nowhere, the idempotency cache included": a subscribe
-// carrying a secret, replayed a second time under the same idempotencyKey,
-// never surfaces that secret in either delivery's response body or in the
-// log — the cache stores only a status and response bytes (idempotency.go),
-// and the response bytes it stores must already be clean.
+// The cache stores only a status and response bytes, which must already be clean.
 func TestServe_IdempotencyCacheNeverStoresOrLeaksVerbSecrets(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	const tokenValue = "tok-idempotency-cache-should-not-leak-5d9c"

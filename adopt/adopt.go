@@ -1,31 +1,4 @@
-// Package adopt is the idempotency contract for a provisioning operator
-// (MIT-1468).
-//
-// The single hardest thing about provisioning is that subscribe is RETRIED. Not
-// might be — is. A network blip, a redeploy, a consumer clicking twice, an engine
-// retry after a 502: your subscribe will run again over a half-built resource
-// set. A naive operator then either duplicates resources or, far worse, adopts
-// one that belongs to somebody else.
-//
-// aws-app-infra learned this in stages, each a live bug:
-//
-//   - T-501  — a retried subscribe must CONVERGE, not duplicate: import on
-//     AlreadyExists.
-//   - #478   — AlreadyExists must be recognised in plain `-no-color` engine
-//     output, not only in structured errors. The first fix matched only the
-//     structured form and missed the text the engine actually emits.
-//   - T-585  — reuse the existing box by tag-based import rather than creating a
-//     second EC2 beside it.
-//   - MIT-1224 — recovery must adopt the drifted SATELLITES too (the SSM
-//     edge-config document, the DLM role), or the app self-heals halfway.
-//   - MIT-1229 — adoption must be AppId-EXACT. A tag match on the app NAME is
-//     not identity. This is the dangerous one: match loosely and one consumer's
-//     app takes over another's live resource.
-//
-// The API is shaped so the dangerous mistake is hard to make. Identity carries
-// an immutable id, never a display name; Filter() emits a tag-VALUE filter, never
-// a tag-key one; and the zero Action is Refuse, so a code path that forgets to
-// decide fails safe.
+// Package adopt is the idempotency contract for a provisioning operator whose retried subscribe must converge without adopting another app's resources.
 package adopt
 
 import (
@@ -36,16 +9,12 @@ import (
 	"strings"
 )
 
-// The canonical identity tag set. Every resource an operator provisions carries
-// these, and adoption matches on them.
 const (
-	// TagAppID is the immutable app id. This is IDENTITY. Matching on anything
-	// else — a Name, a slug, a prefix — is MIT-1229.
+	// TagAppID is the immutable app id, the only tag adoption matches identity on.
 	TagAppID = "AppId"
 	// TagSubscriptionID records which subscription provisioned the resource.
 	TagSubscriptionID = "SubscriptionId"
-	// TagManagedBy marks the resource as mitstack-managed, so a resource another
-	// system owns is never adopted even if its ids happen to line up.
+	// TagManagedBy marks a resource as mitstack-managed, so one another system owns is never adopted.
 	TagManagedBy = "ManagedBy"
 )
 
@@ -54,14 +23,10 @@ const ManagedByValue = "mitstack"
 
 // Identity is what a resource must match to be adopted.
 type Identity struct {
-	// AppID is the immutable app id — the only thing that constitutes identity.
 	AppID string
-	// SubscriptionID is recorded when known. It is written as a tag but is NOT
-	// part of the match: a resubscribe legitimately produces a new subscription
-	// id for the same app.
+	// SubscriptionID is written as a tag but not matched on, since a resubscribe yields a new one for the same app.
 	SubscriptionID string
-	// Name is a human-chosen display name. It is carried for tagging and
-	// diagnostics and is deliberately NEVER used to match — see MIT-1229.
+	// Name is carried for tagging and diagnostics and never used to match.
 	Name string
 }
 
@@ -73,9 +38,7 @@ func (id Identity) Validate() error {
 	return nil
 }
 
-// Tags returns the tag set to write onto a provisioned resource. An unknown
-// subscription id is OMITTED rather than written empty: AWS filters match on
-// value, so an empty tag would make every app's resources look alike.
+// Tags returns the tag set to write onto a provisioned resource, omitting an unknown subscription id rather than writing it empty.
 func (id Identity) Tags() map[string]string {
 	t := map[string]string{
 		TagAppID:     id.AppID,
@@ -90,12 +53,7 @@ func (id Identity) Tags() map[string]string {
 	return t
 }
 
-// Filter returns an AWS describe filter scoped to this identity.
-//
-// It is a tag-VALUE filter (`Name=tag:AppId,Values=<id>`) and never a tag-KEY
-// filter (`Name=tag-key,Values=AppId`). The difference is the whole of MIT-1229:
-// a tag-key filter matches every app's resources, which reads as a working
-// discovery right up until it adopts or deletes somebody else's.
+// Filter returns an AWS describe filter on the AppId tag value, never the tag key, which would match every app's resources.
 func (id Identity) Filter() string {
 	return "Name=tag:" + TagAppID + ",Values=" + id.AppID
 }
@@ -104,12 +62,11 @@ func (id Identity) Filter() string {
 type Action int
 
 const (
-	// Refuse is the ZERO VALUE on purpose: a decision that was never made must
-	// fail safe, not silently adopt.
+	// Refuse is the zero value so a decision never made fails safe rather than adopting.
 	Refuse Action = iota
-	// Create — nothing exists; provision it.
+	// Create means nothing exists, so provision it.
 	Create
-	// Adopt — an exact-identity match exists; import it rather than duplicating.
+	// Adopt means an exact-identity match exists, so import it.
 	Adopt
 )
 
@@ -126,11 +83,9 @@ func (a Action) String() string {
 
 // Candidate is a resource discovered in the account that might be ours.
 type Candidate struct {
-	// ResourceID is the provider's own id (i-…, sg-…, an ARN). Used for
-	// reporting and for the import call — never for matching.
+	// ResourceID is the provider's own id, used for reporting and import and never for matching.
 	ResourceID string
-	// Tags as read back from the provider.
-	Tags map[string]string
+	Tags       map[string]string
 }
 
 // Decision is the outcome for one resource.
@@ -139,12 +94,7 @@ type Decision struct {
 	Candidate Candidate
 }
 
-// Decide chooses between creating, adopting and refusing.
-//
-// It refuses whenever identity is not EXACT — an untagged candidate, one owned
-// by another app, one another system manages, or two candidates claiming the
-// same identity. Refusing is not a failure of the algorithm; it is the correct
-// answer, because every alternative silently damages something.
+// Decide chooses between creating, adopting and refusing, and refuses whenever identity is not exact.
 func Decide(id Identity, candidates []Candidate) (Decision, error) {
 	if err := id.Validate(); err != nil {
 		return Decision{Action: Refuse}, err
@@ -205,12 +155,7 @@ func conflictError(id Identity, conflicts []Candidate) error {
 		strings.Join(parts, ", "), TagAppID, id.AppID)
 }
 
-// Plan decides for a whole resource graph at once — the primary resource plus
-// every satellite.
-//
-// If ANY member refuses, the whole plan refuses. A partial adoption is worse
-// than none: it half-rewires an app across two owners, which is how MIT-1224's
-// app came back self-healed halfway and still broken.
+// Plan decides for a whole resource graph at once, and refuses entirely if any member refuses, since a partial adoption half-rewires an app across two owners.
 func Plan(id Identity, found map[string][]Candidate) (map[string]Decision, error) {
 	if err := id.Validate(); err != nil {
 		return nil, err
@@ -233,18 +178,14 @@ func Plan(id Identity, found map[string][]Candidate) (map[string]Decision, error
 	return out, nil
 }
 
-// alreadyExistsPattern matches the AlreadyExists family across AWS services AND
-// the plain `-no-color` text an IaC engine prints. Both forms are needed: the
-// first fix for T-501 matched only the structured error, and the plain form is
-// what the engine actually emits (#478).
+// Matches the AlreadyExists family across AWS services and the plain `-no-color` text an IaC engine prints, which is the form it actually emits.
 var alreadyExistsPattern = regexp.MustCompile(
 	`(?i)(EntityAlreadyExists|BucketAlreadyOwnedByYou|BucketAlreadyExists|` +
 		`RepositoryAlreadyExistsException|AlreadyExistsException|ResourceAlreadyExistsException|` +
 		`InvalidGroup\.Duplicate|InvalidKeyPair\.Duplicate|InvalidPermission\.Duplicate|` +
 		`already exists)`)
 
-// IsAlreadyExists reports whether output describes a collision with a resource
-// that is already there — the signal to IMPORT rather than fail.
+// IsAlreadyExists reports whether output describes a collision with an existing resource, the signal to import rather than fail.
 func IsAlreadyExists(output string) bool {
 	if strings.TrimSpace(output) == "" {
 		return false

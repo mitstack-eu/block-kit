@@ -1,47 +1,4 @@
-// Package reach answers "is the app serving, and what should the platform
-// advertise?" — and, just as importantly, records that answer as a fixed set of
-// OUTPUT KEYS every provider of the same capability emits (MIT-1595).
-//
-// # Why this is a kit package and not three copies
-//
-// `settle` (MIT-1469) already answers the readiness question as a bool. That is
-// enough to decide whether to report `pending`, and the CloudFormation and
-// Crossplane twins used it for exactly that. It is NOT enough to be a
-// substitutable provider, because the OpenTofu twin does something `settle` has
-// no vocabulary for: it writes the verdict onto the subscription's OUTPUTS —
-// `reachable`, `certTrusted`, `appHostname` — and the console reads them. The
-// "Open app" CTA (MIT-1166) shows only when `reachable` is true, and
-// `certTrusted` decides whether that link leads to a browser interstitial.
-//
-// So the three aws-topology providers agreed on the declared CONTRACT and
-// diverged on what they actually returned. Nothing caught it, because a
-// schema comparison compares declarations: the twins' schemas were
-// byte-identical to the OpenTofu block's while emitting four fewer keys.
-// MIT-1439's switch verdict is what finally surfaced it, as four
-// `observed-output-undeclared` warnings per target — the app's front door
-// going dark on a stack switch, visible only because something finally
-// compared observed behaviour rather than declared intent.
-//
-// A bool cannot carry that. This package is the richer answer, in ONE place,
-// for the same reason `webhook` is: a hand-rolled copy beside the dependency is
-// precisely the divergence the kit exists to prevent (MIT-1466).
-//
-// # What it adds over settle.HTTP
-//
-//   - cert trust reported SEPARATELY from reachability, so a self-signed edge
-//     counts as serving with the trust gap reported rather than hidden (T-575);
-//   - DNS failure distinguished from "the app is down", because the first is
-//     the PLATFORM's fault and is recoverable by probing the box directly
-//     (MIT-1291);
-//   - an optional diagnosis seam for explaining WHY a name does not resolve
-//     (MIT-1300), which the OpenTofu twin fills with a Route 53 delegation
-//     check and the others may leave nil;
-//   - Apply, which is the whole point: the canonical output keys, written the
-//     same way by every provider.
-//
-// Everything here is pure or seam-injected: no globals, no package-level
-// clock, and `Checker` with a nil Probe falls back to the real HTTP probe so a
-// test never reaches the network by accident.
+// Package reach evaluates whether an app is serving and records the verdict as the fixed output keys every provider emits.
 package reach
 
 import (
@@ -58,41 +15,23 @@ import (
 	"github.com/mitstack-eu/operator-kit/settle"
 )
 
-// ProbeTimeout bounds a single probe. The engine's settle loop re-calls the
-// operator, so one probe stays short rather than blocking a webhook while a box
-// boots. Exported so an operator's own deadline can be reasoned about against
-// it rather than guessed.
+// ProbeTimeout bounds a single probe.
 const ProbeTimeout = 5 * time.Second
 
-// Output key names. These are the contract: a provider of a capability whose
-// consumers read these names must emit ALL of them, or a switch to it silently
-// drops a signal the console depends on.
-//
-// They are constants rather than string literals so `Keys` can enumerate them
-// and a parity test can assert every sibling provider agrees — the check that
-// would have caught this divergence when it was introduced instead of two
-// milestones later.
 const (
-	// OutputAppURL is the URL the platform advertises. Apply may REWRITE it to
-	// the address that actually answered.
+	// OutputAppURL is the URL the platform advertises.
 	OutputAppURL = "appUrl"
-	// OutputReachable is "true"/"false" — the app answered.
+	// OutputReachable is "true"/"false" for whether the app answered.
 	OutputReachable = "reachable"
-	// OutputCertTrusted is "true"/"false" — the answer carried a
-	// browser-trusted certificate.
+	// OutputCertTrusted is "true"/"false" for whether the answer carried a browser-trusted certificate.
 	OutputCertTrusted = "certTrusted"
-	// OutputAppHostname preserves the INTENDED hostname when appUrl was
-	// rewritten to a fallback address.
+	// OutputAppHostname preserves the intended hostname when appUrl was rewritten to a fallback address.
 	OutputAppHostname = "appHostname"
-	// OutputPublicIP is the box's stable public address. Written by the
-	// provisioner, not by this package — but named here because Evaluate READS
-	// it for the fallback probe, so a provider that omits it silently loses
-	// MIT-1291's recovery path.
+	// OutputPublicIP is the box's public address, written by the provisioner and read for the fallback probe.
 	OutputPublicIP = "publicIp"
 )
 
-// Keys returns every output name this package reads or writes, sorted for a
-// stable comparison. A capability's providers must all emit this set.
+// Keys returns every output name this package reads or writes, sorted.
 func Keys() []string {
 	return []string{
 		OutputAppHostname,
@@ -104,88 +43,42 @@ func Keys() []string {
 }
 
 // Result is what one evaluation learned.
-//
-// CertTrusted is reported SEPARATELY from Reachable on purpose. An app serving
-// a self-signed certificate on a bare-IP URL is serving; treating that as
-// unreachable would mark every pre-ACME app dead. A TLS handshake that fails
-// only on trust still proves something is listening and speaking TLS, so it
-// counts as serving with the trust gap reported rather than hidden.
 type Result struct {
 	Reachable   bool
 	CertTrusted bool
 
-	// Reason is a short, actionable explanation when Reachable is false —
-	// surfaced to the consumer instead of a silent false-green. It never
-	// carries credentials (the URL is a public address).
+	// Reason explains a false Reachable and never carries credentials.
 	Reason string
 
-	// EdgeUp reports whether the front door answered at all — any HTTP status,
-	// including a 5xx, or a TLS handshake that got far enough to fail only on
-	// trust. It is a fact about the INFRASTRUCTURE in front of the app, which is
-	// what a provisioning block actually owns; Reachable is a fact about the
-	// app, which such a block does not put there.
-	//
-	// The two were the same field until 2026-08-19, and conflating them
-	// deadlocked the Plain stack: aws-app-infra withheld `active` until the app
-	// answered, the app needed a database, and the database block could not
-	// provision until aws-app-infra was active. A provider that waits on its own
-	// consumer is a cycle no number of retries can break — five self-heal rounds
-	// spent seven hours proving it. Settle gates read EdgeUp; Reachable stays the
-	// honest answer to "does the app serve", published on the outputs either way.
+	// EdgeUp reports that the front door answered at all, including a 5xx; settle gates read it so a provider never waits on its consumer's app.
 	EdgeUp bool
 
-	// DNSFailure marks the one failure mode that is the PLATFORM's fault
-	// rather than the app's: the advertised hostname does not resolve at all.
-	// Distinguishing it from "the app is down" is what lets Evaluate fall back
-	// to the address that does work (MIT-1291).
+	// DNSFailure marks a hostname that does not resolve, which is the platform's fault rather than the app's.
 	DNSFailure bool
 
-	// ServingURL is the URL that actually answered — normally the one probed,
-	// but the IP fallback when the hostname does not resolve. The caller
-	// advertises THIS url, so `active` never promises an address the platform
-	// could not reach itself (MIT-1160).
+	// ServingURL is the URL that actually answered, which is the IP fallback when the hostname does not resolve.
 	ServingURL string
 }
 
-// Prober performs one bounded probe of a URL. Injected by tests; nil selects
-// the real HTTP probe.
+// Prober performs one bounded probe of a URL; nil selects the real HTTP probe.
 type Prober func(ctx context.Context, url string) Result
 
-// Diagnoser explains WHY a hostname does not resolve, in terms the owner can
-// act on (e.g. "the apps zone is not delegated"). Optional: an operator with no
-// zone to check leaves it nil and loses only the extra sentence, never a
-// verdict.
+// Diagnoser explains why a hostname does not resolve; nil is allowed.
 type Diagnoser func(ctx context.Context, hostname string) string
 
-// Checker evaluates reachability for one operator.
-//
-// The zero value is usable and safe: it probes for real over a default client.
-// That is deliberate — an operator that forgets to wire the seam gets the
-// correct behaviour, not a vacuous pass.
+// Checker evaluates reachability for one operator; its zero value probes for real.
 type Checker struct {
-	// Client is the HTTP client for the real probe. Nil selects one bounded by
-	// ProbeTimeout. Certificate verification is NEVER disabled — see ProbeURL.
-	Client *http.Client
-	// Probe overrides the real probe. Tests inject this so both the hostname
-	// attempt and the IP fallback are observable.
-	Probe Prober
-	// Diagnose optionally explains a resolution failure. Nil is fine.
+	// Client is the HTTP client for the real probe; certificate verification is never disabled.
+	Client   *http.Client
+	Probe    Prober
 	Diagnose Diagnoser
-	// ExtraSuffixes widens TrustedAppURL's barrier for THIS evaluation only —
-	// normally the output of VerifiedCustomDomain, never a raw, unverified
-	// claim (MIT-1688). It is set per call, not on a shared Checker value: two
-	// evaluations for two different subscriptions must never bleed trust into
-	// each other, which is also why TrustedAppURL itself has no package-level
-	// allowlist to accumulate into.
+	// ExtraSuffixes widens TrustedAppURL's barrier for this evaluation only, and must come from VerifiedCustomDomain.
 	ExtraSuffixes []string
 }
 
 // Evaluate probes the appUrl in a set of outputs and returns the verdict.
 //
-// It is tolerant in ONE direction only: outputs with no appUrl (nothing to
-// probe) are treated as reachable, because a block that reports no URL has no
-// serving promise to keep — refusing those would strand every non-web block
-// behind a web-only gate. Everything else must actually answer.
+// Outputs with no appUrl count as reachable, so non-web blocks are not stranded behind a web-only gate.
 func (c Checker) Evaluate(ctx context.Context, outputs map[string]string) Result {
 	appURL := outputs[OutputAppURL]
 	if appURL == "" {
@@ -197,17 +90,8 @@ func (c Checker) Evaluate(ctx context.Context, outputs map[string]string) Result
 		return c.promote(ctx, outputs, appURL, res)
 	}
 
-	// The hostname does not resolve. Find out WHY before anything else: a zone
-	// that is not delegated can never resolve, no matter how often the settle
-	// loop retries, and that is an owner action rather than a platform bug
-	// (MIT-1300). Diagnosing it HERE means the reason names the zone instead of
-	// surfacing a bare "no such host".
 	diagnosis := c.diagnose(ctx, appURL)
 
-	// The resolution gap is the platform's, not a dead app's — so ask the box
-	// directly at the address the provisioner recorded (MIT-1291). If it
-	// serves, the app is genuinely up and we advertise the URL we could
-	// actually reach.
 	ip := outputs[OutputPublicIP]
 	if ip == "" {
 		return withDiagnosis(res, diagnosis)
@@ -216,7 +100,6 @@ func (c Checker) Evaluate(ctx context.Context, outputs map[string]string) Result
 	fallbackURL := "https://" + ip + "/"
 	fb := c.probe(ctx, fallbackURL)
 	if !fb.Reachable {
-		// Keep the DNS reason — it is the more actionable of the two.
 		return withDiagnosis(res, diagnosis)
 	}
 	return withDiagnosis(Result{
@@ -230,17 +113,7 @@ func (c Checker) Evaluate(ctx context.Context, outputs map[string]string) Result
 	}, diagnosis)
 }
 
-// promote re-probes a preserved appHostname when the currently-advertised
-// address just served, and switches the verdict back to it once it genuinely
-// resolves and serves (MIT-2618). Apply's own comment always claimed this
-// happens automatically; nothing did, because the healthy path above returns
-// the moment the box address answers, and a name that starts resolving again
-// after its DNS window was never asked.
-//
-// Gated on appHostname being present AND different from appUrl, so the
-// common case — no rewrite ever happened — costs nothing beyond the map
-// lookup: no second probe, no change to res (MIT-1291's healthy-path probe
-// count is a load-bearing test, not an incidental one).
+// promote re-probes a preserved appHostname, adding no probe when no rewrite happened.
 func (c Checker) promote(ctx context.Context, outputs map[string]string, appURL string, res Result) Result {
 	hostname := outputs[OutputAppHostname]
 	if hostname == "" || hostname == appURL {
@@ -249,17 +122,10 @@ func (c Checker) promote(ctx context.Context, outputs map[string]string, appURL 
 
 	hres := c.probe(ctx, hostname)
 	if hres.Reachable {
-		// CertTrusted must come from THIS probe, not the box fallback's —
-		// the whole point of promoting is that the hostname's own
-		// certificate is what the platform now vouches for.
 		hres.ServingURL = hostname
 		return hres
 	}
 
-	// Not ready yet: still on the box address, exactly as before promotion
-	// existed. Only the reason changes, so a consumer reading just the
-	// verdict still learns a fallback is in force rather than a bare,
-	// unexplained success.
 	if hres.DNSFailure {
 		res.Reason = fmt.Sprintf(
 			"serving on %s; the app hostname still does not resolve, so the platform is staying on the box address",
@@ -272,13 +138,6 @@ func (c Checker) probe(ctx context.Context, url string) Result {
 	if c.Probe != nil {
 		return c.Probe(ctx, url)
 	}
-	// The Checker computed this url itself, from outputs it controls — that is
-	// the vouching. Passing it as both the probed value and its own sole
-	// allowlist entry is what ProbeURL requires before it will dial anything.
-	// c.ExtraSuffixes rides alongside as the barrier's per-call widening —
-	// probeURL, not the public ProbeURL, is what actually threads it through,
-	// since ProbeURL's exported signature has no room for it (see probeURL's
-	// doc comment).
 	return probeURL(ctx, c.Client, url, c.ExtraSuffixes, url)
 }
 
@@ -289,11 +148,7 @@ func (c Checker) diagnose(ctx context.Context, hostname string) string {
 	return c.Diagnose(ctx, hostname)
 }
 
-// withDiagnosis appends a diagnosis to a result's Reason when there is one.
-//
-// It never changes the VERDICT: an app serving on its box stays reachable, so
-// the fallback keeps converging subscriptions exactly as before. The diagnosis
-// only turns an unactionable symptom into a named cause.
+// withDiagnosis appends a diagnosis to the Reason and never changes the verdict.
 func withDiagnosis(res Result, diagnosis string) Result {
 	if diagnosis == "" {
 		return res
@@ -306,37 +161,10 @@ func withDiagnosis(res Result, diagnosis string) Result {
 	return res
 }
 
-// PlatformAppsDomain is the platform's own apps zone. It is the one
-// implicit entry in TrustedAppURL's allowlist — every app the platform
-// provisions gets a subdomain of it.
+// PlatformAppsDomain is the platform's own apps zone, the one implicit entry in TrustedAppURL's allowlist.
 const PlatformAppsDomain = "apps.mitstack.dev"
 
-// TrustedAppURL is the MIT-1686 barrier for reach.ProbeURL: it validates a
-// caller-supplied app URL against an allowed set of domain SUFFIXES — the
-// platform's own apps zone plus any operator-supplied extra suffixes — and
-// returns a URL rebuilt from the validated components, never the raw input
-// string, so a lookalike host can never ride through untouched. It is the
-// PRIMARY, unconditional gate: any real production `appUrl` is a subdomain
-// of PlatformAppsDomain, so it clears here without needing anything else.
-//
-// A suffix match, not an equality check against a fixed host list, because
-// unlike safe.TrustedBase's GitHub hosts (a handful of known values), every
-// app the platform provisions gets its OWN subdomain of apps.mitstack.dev —
-// an unbounded set no exact-match allowlist could enumerate.
-//
-// TrustedAppURL deliberately has NO loopback or address carve-out — a value
-// that fails here (a test fixture, the MIT-1291 bare-IP fallback) is not
-// automatically unsafe, it is simply outside this function's job. ProbeURL's
-// `allowedURLs` parameter (MIT-1683) is where a caller vouches for exactly
-// that kind of value instead; composing the two is what keeps this barrier
-// meaningful rather than punching a loopback-shaped hole in it.
-//
-// The single regexp match below covers the WHOLE rebuilt URL — scheme, host
-// and path/query together — rather than validating only the parsed host and
-// reassembling the rest around it. A host-only check leaves the path and
-// query flowing from raw input to the dialled string unexamined, which is a
-// request-forgery finding of its own: only a check that constrains the exact
-// value handed to the HTTP client counts as a barrier.
+// TrustedAppURL validates an app URL against the apps zone plus extra suffixes and returns a URL rebuilt from the validated parts.
 func TrustedAppURL(raw string, extraSuffixes ...string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("reach: app URL is empty")
@@ -358,20 +186,7 @@ func TrustedAppURL(raw string, extraSuffixes ...string) (string, error) {
 		host, PlatformAppsDomain)
 }
 
-// trustedAppURLPattern compiles the allowlist suffixes (the platform apps
-// domain plus any operator-supplied extras) into a single anchored regexp
-// matching the exact URL shape TrustedAppURL rebuilds: https on an allowed
-// host or subdomain of it, followed by an unconstrained path/query — the
-// destination is decided by the host alone, so the path and query never need
-// their own check.
-//
-// A regexp match is used — rather than strings.HasSuffix — because it is
-// what CodeQL's go/request-forgery query recognises as a barrier guard for
-// the value passed to it; a manual string check does not stop the taint
-// analysis from reporting the sink (proven the plain-code way already, twice:
-// MIT-1678's safeProbeURL and MIT-1683's equality vouch both left the finding
-// open). Go's regexp package (RE2) never backtracks catastrophically, so this
-// stays safe on attacker-chosen input.
+// trustedAppURLPattern uses a regexp match rather than strings.HasSuffix because CodeQL's go/request-forgery query only recognises a regexp match as a barrier; RE2 cannot backtrack catastrophically.
 func trustedAppURLPattern(extraSuffixes []string) *regexp.Regexp {
 	suffixes := append([]string{PlatformAppsDomain}, extraSuffixes...)
 	var alts []string
@@ -381,55 +196,21 @@ func trustedAppURLPattern(extraSuffixes []string) *regexp.Regexp {
 			continue
 		}
 		esc := regexp.QuoteMeta(s)
-		// The subdomain label set excludes "/", "?" and "#" on purpose: a
-		// greedy match that could cross into the path would let
-		// "https://attacker.example.com/foo.apps.mitstack.dev" masquerade as
-		// a subdomain of the allowed suffix instead of a foreign host with a
-		// deceptive path.
+		// The label set excludes "/", "?" and "#" so a path cannot masquerade as a subdomain.
 		alts = append(alts, esc, `[a-z0-9.-]+\.`+esc)
 	}
 	hostAlt := strings.Join(alts, "|")
 	return regexp.MustCompile(`^https://(?:` + hostAlt + `)(?::\d+)?(?:/.*)?$`)
 }
 
-// Resolver looks up the addresses a hostname resolves to. *net.Resolver
-// satisfies this directly (its LookupHost has the identical signature), so
-// production needs no adapter; tests inject a fixed table instead of
-// touching a real resolver.
+// Resolver looks up the addresses a hostname resolves to; *net.Resolver satisfies it.
 type Resolver interface {
 	LookupHost(ctx context.Context, host string) ([]string, error)
 }
 
-// VerifiedCustomDomain proves that a consumer-claimed custom domain (an
-// unbounded, attacker-influenceable string — MIT-1805's `customDomain` param)
-// actually points at infrastructure THIS subscription provisioned, and
-// returns the domain unchanged so the caller can pass it straight to
-// TrustedAppURL as an extra suffix. It is the missing half of MIT-1686's
-// barrier: the allowlist has always had room for an operator-supplied extra
-// suffix, but nothing could earn one for a custom domain without reopening
-// the SSRF the barrier exists to close. Resolving the domain and comparing
-// the answer against the address the operator itself created is a real proof
-// of control, not a restatement of the claim — and per MIT-1677's measured
-// CodeQL behaviour, a resolver-based check is what actually clears
-// go/request-forgery; a suffix or regexp check on the claim alone does not.
+// VerifiedCustomDomain proves a claimed custom domain resolves to an address this subscription provisioned and returns it unchanged.
 //
-// domain must be a bare hostname — no scheme, port or path. Those shapes are
-// refused before resolver.LookupHost is ever called, so a malformed claim
-// costs nothing and touches no network.
-//
-// Verification succeeds the moment ANY resolved address is in expectedAddrs,
-// not only when every resolved address is. This is deliberate: an app behind
-// round-robin or multi-AZ A records is a legitimate, ordinary shape, and this
-// subscription's own address is necessarily just one entry among several —
-// requiring all of them to match would fail a domain that is genuinely under
-// the consumer's control.
-//
-// A resolver error is always a refusal, never a success — VerifiedCustomDomain
-// returns "" in that case so a caller cannot mistake a failed lookup for an
-// empty-but-verified suffix. Nothing here is cached: a verified result is
-// trusted again only by being explicitly re-passed as an extra suffix on the
-// next call, never by a global allowlist a later, unrelated evaluation could
-// inherit from.
+// One matching address suffices, since round-robin records are ordinary; a resolver error is always a refusal.
 func VerifiedCustomDomain(ctx context.Context, resolver Resolver, domain string, expectedAddrs []string) (string, error) {
 	if domain == "" || strings.ContainsAny(domain, ":/") {
 		return "", fmt.Errorf("reach: custom domain %q is not a bare hostname", domain)
@@ -452,74 +233,16 @@ func VerifiedCustomDomain(ctx context.Context, resolver Resolver, domain string,
 		domain, addrs, expectedAddrs)
 }
 
-// ProbeURL performs ONE bounded GET of a public URL and classifies the answer.
+// ProbeURL performs one bounded GET of a public URL and classifies the answer.
 //
-// Serving means: the edge answered with a status below 500, OR the TLS
-// handshake failed only on certificate trust. Not serving means: no URL, a
-// disallowed host, a transport failure (nothing listening, timeout, DNS), or
-// a 5xx — a 502 is the edge up with the app container down, which is exactly
-// the false-green this gate exists to stop. A 4xx IS serving: the consumer's
-// own app simply has no route at "/", which is not the platform's business.
-//
-// appURL arrives from a block's published outputs — data an upstream
-// provider, not mitstack, controls — so before any request is built it must
-// clear BOTH of two checks, composed with AND, not OR (MIT-1686 + MIT-1683,
-// both aimed at the same CodeQL go/request-forgery finding, and an earlier
-// version of this composition — reviewed and rejected — used OR):
-//
-//  1. Vouched: appURL is present, verbatim, in allowedURLs. This is the
-//     CALLER asserting "this is the exact URL I computed and want probed."
-//  2. Barrier-checked: appURL also clears TrustedAppURL's domain check
-//     (MIT-1686 — the platform's own apps domain or an operator-supplied
-//     extra suffix) OR is a literal loopback/non-production host (see
-//     resolveDialURL's doc comment).
-//
-// An OR between these two would make the vouch vacuous: every real caller
-// (Checker.probe) vouches for appURL WITH ITSELF
-// (`ProbeURL(ctx, client, url, url)`), so "vouched OR on an allowed domain"
-// degrades to "any https URL a caller is willing to name" the moment
-// TrustedAppURL fails to match — which is exactly the SSRF this fix exists
-// to close, and precisely how a self-vouched, off-domain request to a cloud
-// metadata endpoint (169.254.169.254) would have slipped through. Requiring
-// BOTH means a self-vouching caller is constrained by the barrier alone
-// (vouching for itself proves nothing new), while the vouch still does real
-// work for genuinely two-source calls — a future caller vouching with a URL
-// from a source OTHER than appURL narrows what a tainted appURL may match.
-//
-// One honest, deliberate consequence: a consumer-supplied custom domain
-// (aws-app-infra's T-529 `outputs["appUrl"]`, set from a subscribe/upgrade
-// request's `domain` param) now fails this barrier and the probe fails
-// closed — until a verified-ownership path for that domain exists, it was
-// never distinguishable here from an attacker-chosen host, so probing it
-// unconditionally was the same class of gap this ticket closes elsewhere.
-// That verification is tracked as a follow-up; this function does not grow a
-// bypass for it.
-//
-// Neither the http.Client nor its RoundTripper is ever touched for a value
-// that fails either check, and the URL actually dialled is what
-// resolveDialURL RETURNS, never appURL itself — see its doc comment for why
-// that distinction is what gives a taint tracker something to recognise
-// (proven the wrong way twice already: MIT-1678's plain-code validation and
-// MIT-1683's bare equality of two untrusted values both left the CodeQL
-// finding open, which is why resolveDialURL re-does the barrier through a
-// regexp match instead of a plain `==`).
-//
-// No InsecureSkipVerify anywhere. Trust is classified from the ERROR, via
-// settle.IsUntrustedCertificate, so the probe never weakens TLS verification to
-// get an answer — a certificate error can only be produced by something that
-// completed a handshake, which is precisely the fact being established.
+// Serving means a status below 500, or a TLS failure on trust only; a 502 is the edge up with the app down.
+// appURL must be in allowedURLs AND pass the barrier, since an OR would let a self-vouching caller reach a metadata endpoint.
+// InsecureSkipVerify is never used.
 func ProbeURL(ctx context.Context, client *http.Client, appURL string, allowedURLs ...string) Result {
 	return probeURL(ctx, client, appURL, nil, allowedURLs...)
 }
 
-// probeURL is ProbeURL's implementation, plus the one thing ProbeURL's
-// exported signature has no room for: extraSuffixes, the per-call barrier
-// widening a verified custom domain earns (MIT-1688). It cannot be added to
-// ProbeURL itself — allowedURLs is already the trailing variadic parameter,
-// so a new parameter ahead of it would shift every existing positional call
-// site. Checker.probe is the only caller that ever passes a non-nil
-// extraSuffixes; ProbeURL's own callers keep the exact behaviour they had
-// before this function existed.
+// probeURL adds extraSuffixes, which ProbeURL's trailing variadic cannot take without shifting call sites.
 func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuffixes []string, allowedURLs ...string) Result {
 	if appURL == "" {
 		return Result{Reason: "no app URL to probe"}
@@ -542,10 +265,7 @@ func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuff
 		return Result{Reason: fmt.Sprintf("app URL is not usable: %v", err)}
 	}
 
-	// Never follow a redirect, whatever the injected client is configured to
-	// do: a 3xx hop to a second, response-chosen host would let the box being
-	// probed steer the request past the URL the caller vouched for. Shallow-copy
-	// so the caller's transport and timeout are otherwise untouched.
+	// Never follow a redirect: a 3xx to a response-chosen host would bypass the vouched URL.
 	noRedirect := *client
 	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -555,8 +275,6 @@ func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuff
 	resp, err := client.Do(req)
 	if err != nil {
 		if settle.IsUntrustedCertificate(err) {
-			// The box answered a TLS handshake — it is serving; we simply do
-			// not trust its (self-signed) certificate.
 			return Result{Reachable: true, CertTrusted: false, EdgeUp: true, ServingURL: dialURL}
 		}
 		if settle.IsDNSFailure(err) {
@@ -570,9 +288,6 @@ func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuff
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= http.StatusInternalServerError {
-		// The status came FROM the edge, so the edge is up — see EdgeUp's doc
-		// comment for why a settle gate must be able to tell that apart from
-		// silence.
 		return Result{
 			EdgeUp: true,
 			Reason: fmt.Sprintf("app URL answered %d — the edge is up but the app is not serving yet", resp.StatusCode),
@@ -581,27 +296,7 @@ func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuff
 	return Result{Reachable: true, CertTrusted: true, EdgeUp: true, ServingURL: dialURL}
 }
 
-// resolveDialURL decides the exact string ProbeURL is allowed to dial: the
-// caller's VOUCH (MIT-1683) SELECTS which value is even a candidate, and the
-// barrier (MIT-1686) VALIDATES that candidate — the two are ANDed, not
-// alternatives. A vouch that isn't also barrier-checked is not a security
-// boundary (a self-vouching caller could name anything); a barrier match
-// with no vouch would let "it happens to be on the apps domain" substitute
-// for "the caller actually wants this dialled" — MIT-1683's own
-// default-deny tests already pin that half.
-//
-// The vouch is checked FIRST and is a plain equality — deliberately not a
-// recognised CodeQL barrier on its own, because it isn't the value that
-// reaches net/http here; it only decides whether to proceed. dial, the value
-// actually returned and later passed to http.NewRequestWithContext, comes
-// exclusively from vouchBarrierCheckedURL's regexp-guarded result.
-//
-// No match — including an empty allowedURLs, or a vouched value that fails
-// the barrier — is default-deny: nothing is dialled.
-//
-// extraSuffixes widens the barrier half only (MIT-1688) — it never
-// substitutes for the vouch, which stays a plain equality against
-// allowedURLs regardless of what extraSuffixes contains.
+// resolveDialURL returns the string ProbeURL may dial, which comes only from the regexp-guarded barrier; no match is default-deny.
 func resolveDialURL(appURL string, allowedURLs []string, extraSuffixes []string) (string, error) {
 	vouched := false
 	for _, candidate := range allowedURLs {
@@ -625,29 +320,7 @@ func resolveDialURL(appURL string, allowedURLs []string, extraSuffixes []string)
 	return dial, nil
 }
 
-// vouchBarrierCheckedURL is the barrier half of resolveDialURL's AND: a
-// vouched candidate is dialled only if it ALSO clears one of two regexp
-// checks, tried in order.
-//
-//  1. TrustedAppURL (MIT-1686) — the platform's own apps domain or an
-//     operator-supplied extra suffix. This is what every real production
-//     probe clears, vouch or not.
-//  2. Failing that, neverRoutableCheckedURL — a literal loopback address
-//     (the operator's own box) or one of the RFC 2606/6761 reserved,
-//     PERMANENTLY UNDELEGATED test TLDs (".example"/".test"/".invalid",
-//     plus bare "localhost"). Neither can ever be a real request-forgery
-//     target: no registrar can make ".example" resolve to a host an
-//     attacker controls, and a link-local/routable address like the cloud
-//     metadata endpoint 169.254.169.254 matches neither alternative, so it
-//     is correctly refused even when a caller self-vouches for it.
-//
-// Both alternatives return a value REBUILT from parsed, regexp-matched
-// components — never the raw candidate string — for the same reason
-// TrustedAppURL does; see its doc comment.
-//
-// extraSuffixes rides straight into the first alternative's TrustedAppURL
-// call — it never applies to the loopback/reserved-TLD alternative, which
-// has no notion of an operator-supplied suffix.
+// vouchBarrierCheckedURL tries each barrier in turn; each returns a value rebuilt from parsed parts, never the raw candidate.
 func vouchBarrierCheckedURL(candidate string, extraSuffixes []string) (string, error) {
 	if dial, err := TrustedAppURL(candidate, extraSuffixes...); err == nil {
 		return dial, nil
@@ -658,27 +331,7 @@ func vouchBarrierCheckedURL(candidate string, extraSuffixes []string) (string, e
 	return neverRoutableCheckedURL(candidate)
 }
 
-// publicUnicastIPCheckedURL is vouchBarrierCheckedURL's second alternative: a
-// literal, globally-routable unicast IP address.
-//
-// It exists because the DNS fallback has no other address to probe. When an app
-// hostname does not resolve, the only thing left to ask is the box itself, at
-// the address the provisioner recorded in its own outputs — and that address is
-// always a bare public IP, which clears neither of the other two alternatives.
-// Without this the fallback is unreachable code, and an app whose hostname does
-// not resolve can never settle (MIT-1703).
-//
-// It admits strictly less than the apps-domain alternative already does. That
-// one accepts any host under a suffix; this one accepts a single address, and
-// only after net/netip has PARSED it — loopback, link-local (so the cloud
-// metadata endpoint 169.254.169.254 is refused), private, multicast,
-// unspecified and interface-local addresses are all rejected no matter what the
-// caller vouches for.
-//
-// Parsing rather than pattern-matching is what makes this a barrier rather than
-// a validation, and the returned URL is REBUILT from the parsed address — never
-// the caller's string — for the same reason TrustedAppURL rebuilds: a checked
-// value that hands back its input carries the input's taint with it.
+// publicUnicastIPCheckedURL admits only a public unicast IP literal; link-local (the metadata endpoint) and private ranges are rejected.
 func publicUnicastIPCheckedURL(candidate string) (string, error) {
 	u, err := url.Parse(candidate)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -687,8 +340,6 @@ func publicUnicastIPCheckedURL(candidate string) (string, error) {
 
 	ip := net.ParseIP(u.Hostname()) // Hostname strips the port and IPv6 brackets
 	if ip == nil {
-		// Not an IP literal at all — a name belongs to one of the other
-		// alternatives, which resolve it against their own rules.
 		return "", fmt.Errorf("reach: vouched URL %q is not an IP address", candidate)
 	}
 	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
@@ -697,9 +348,6 @@ func publicUnicastIPCheckedURL(candidate string) (string, error) {
 		return "", fmt.Errorf("reach: vouched URL %q is not a public unicast address", candidate)
 	}
 
-	// Host comes from ip.String(), never from the candidate: a checked value
-	// that hands back its input carries the input's taint with it. JoinHostPort
-	// brackets an IPv6 literal for us.
 	host := ip.String()
 	if port := u.Port(); port != "" {
 		host = net.JoinHostPort(host, port)
@@ -713,46 +361,17 @@ func publicUnicastIPCheckedURL(candidate string) (string, error) {
 		RawQuery: u.RawQuery,
 	}).String()
 
-	// The ParseIP predicates above are what make this SAFE; this match is what
-	// makes the safety VISIBLE to the taint analyzer. CodeQL's
-	// go/request-forgery query recognises a regexp match as a barrier guard for
-	// the value passed to it, and recognises no boolean predicate — so a
-	// semantically airtight check that returns a value the query still considers
-	// tainted reports the sink anyway, turns the codeql job red, and skips
-	// deploy. That is not theoretical: this function first shipped with the
-	// ParseIP checks alone and wedged main's delivery on exactly that.
-	//
-	// Both sibling alternatives use the same shape for the same reason — see
-	// trustedAppURLPattern's comment.
+	// ParseIP makes this safe; the regexp match makes it visible to CodeQL, which recognises no boolean predicate as a barrier.
 	if !publicUnicastURLPattern.MatchString(rebuilt) {
 		return "", fmt.Errorf("reach: vouched URL %q is not usable", candidate)
 	}
 	return rebuilt, nil
 }
 
-// publicUnicastURLPattern matches the exact URL shape publicUnicastIPCheckedURL
-// rebuilds: http or https on a literal IPv4 dotted quad or a bracketed IPv6
-// address, with an optional port and an unconstrained path/query — the
-// destination is decided by the host alone.
-//
-// It deliberately does NOT try to express "public unicast". Encoding the
-// reserved ranges as a regexp would be unreadable and wrong at the edges;
-// ParseIP has already rejected them by the time this runs. This pattern's only
-// job is to be the barrier guard the analyzer understands.
 var publicUnicastURLPattern = regexp.MustCompile(
 	`^https?://(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\])(?::\d+)?(?:/.*)?$`)
 
-// neverRoutableCheckedURL validates candidate against neverRoutableURLPattern
-// and returns the URL rebuilt from its parsed components. It is
-// vouchBarrierCheckedURL's second alternative, not a general-purpose relaxed
-// check: it exists so an operator's own test/dev fixture (an httptest
-// loopback server) and this package's own transport-error classification
-// tests (fixed reserved-TLD literals, never a real network target) can be
-// vouched for and dialled without widening what a REAL, routable,
-// caller-chosen host may reach. The reserved-TLD half assumes the standard
-// public DNS root, where these names can never delegate; a host whose own
-// resolver is configured to answer for .test/.example (split-horizon DNS)
-// weakens that assumption and should not run operators.
+// neverRoutableCheckedURL admits loopback and the reserved test TLDs, assuming the public DNS root.
 func neverRoutableCheckedURL(candidate string) (string, error) {
 	u, err := url.Parse(candidate)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -767,24 +386,11 @@ func neverRoutableCheckedURL(candidate string) (string, error) {
 	return rebuilt, nil
 }
 
-// neverRoutableURLPattern matches loopback (127.0.0.1, [::1], localhost) and
-// the RFC 2606/6761 reserved, non-delegatable test TLDs — see
-// neverRoutableCheckedURL's doc comment for why both are safe to accept
-// regardless of what a caller vouches for.
 var neverRoutableURLPattern = regexp.MustCompile(
 	`^https?://(?:127\.0\.0\.1|localhost|\[::1\]|(?:example|test|invalid)|[a-z0-9.-]+\.(?:example|test|invalid))(?::\d+)?(?:/.*)?$`)
 
-// Apply records the verdict on the outputs the engine persists, so downstream
-// surfaces read a first-class signal instead of re-deriving it.
-//
-// This is the function that makes providers substitutable. Every aws-topology
-// provider calls it, so every one emits the same keys — which is the property
-// a stack switch actually depends on, and the one a schema comparison cannot
-// check.
-//
-// It never mutates its argument: the caller's map is copied, because an
-// operator that shares an outputs map between the response and its own
-// bookkeeping should not have the two drift.
+// Apply records the verdict on the outputs so every provider emits the same keys.
+// It copies the caller's map and never mutates it.
 func Apply(outputs map[string]string, res Result) map[string]string {
 	merged := make(map[string]string, len(outputs)+len(Keys()))
 	for k, v := range outputs {
@@ -795,30 +401,18 @@ func Apply(outputs map[string]string, res Result) map[string]string {
 
 	switch {
 	case res.ServingURL != "" && res.ServingURL == merged[OutputAppHostname]:
-		// Promotion (MIT-2618): Evaluate re-probed the hostname preserved
-		// below and it now serves. Advertise it again and drop the
-		// preserved field entirely — it existed only to remember the
-		// intended name while appUrl pointed at the box, and now that appUrl
-		// IS the hostname again there is nothing left for it to preserve.
-		// Leaving it behind would either duplicate appUrl or, worse, read as
-		// a fresh fallback on the very next Apply.
+		// Promotion: appUrl is the hostname again, so the preserved field must go or it reads as a fresh fallback.
 		merged[OutputAppURL] = res.ServingURL
 		delete(merged, OutputAppHostname)
 	case res.ServingURL != "" && res.ServingURL != merged[OutputAppURL]:
-		// Fallback (MIT-1291): the probe had to answer at a different
-		// address than the one advertised. Advertise THAT url — the
-		// consumer's "Open app" CTA must lead somewhere that answers — and
-		// preserve the intended hostname so the surface can show it and
-		// Evaluate can probe it again on the next call.
+		// Fallback: advertise the address that answered and preserve the intended hostname.
 		merged[OutputAppHostname] = merged[OutputAppURL]
 		merged[OutputAppURL] = res.ServingURL
 	}
 	return merged
 }
 
-// BoolString renders a bool as the "true"/"false" the outputs carry. Outputs
-// are a string map, so every provider must agree on the spelling — "1"/"yes"
-// would read as absent to a console checking for "true".
+// BoolString renders a bool as "true" or "false", the only spelling the console reads.
 func BoolString(b bool) string {
 	if b {
 		return "true"
@@ -826,12 +420,7 @@ func BoolString(b bool) string {
 	return "false"
 }
 
-// safeProbeURL parses a caller-supplied app URL and returns the URL to dial,
-// rebuilt from the components that were checked.
-//
-// Only http and https are accepted, and that refusal is the one that matters:
-// a file: or gopher: URL turns "probe the consumer's app" into a read of
-// whatever the process can reach, and no app URL has ever needed one.
+// safeProbeURL rebuilds a URL from checked parts and accepts only http and https, since file: or gopher: would read whatever the process can reach.
 func safeProbeURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {

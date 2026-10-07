@@ -1,19 +1,6 @@
 package main
 
-// fixture_test.go builds a minimal, ACTUALLY COMPILING external block module
-// on disk (t.TempDir()) that blockverify's standalone suite can be pointed
-// at. It is deliberately independent of api/internal/scaffold's golden (this
-// module cannot import api/internal, and blockverify must work against a
-// genuinely external repo anyway) — every file below is a literal string,
-// modelled on examples/llm-stack-aws/aws-iam-bootstrap's real kitshim.go
-// (copied verbatim, since MIT-1466 requires it byte-identical) plus a
-// hand-trimmed handler/test set that satisfies the same gates
-// scripts/check-operator-kit-pin.sh, scripts/check-operator-contract-tests.sh,
-// scripts/check-operator-secret-leak-tests.sh and
-// scripts/check-operator-teardown-tests.sh already enforce in repo mode —
-// verified directly against those scripts (KIT_PIN_ONLY_EXTRA=1 etc.) while
-// authoring this fixture, so blockverify's Go reimplementation has a known-
-// good target to agree with.
+// The fixture is a compiling external block module written from literal strings, because this module cannot import api/internal/scaffold.
 
 import (
 	"os"
@@ -22,9 +9,7 @@ import (
 	"testing"
 )
 
-// kitModuleDir resolves the operator-kit module's own absolute directory
-// (one level up from this file), so the fixture's go.mod can `replace` onto
-// it regardless of the caller's working directory.
+// kitModuleDir is absolute so the fixture's go.mod can replace onto it from any working directory.
 func kitModuleDir(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -383,11 +368,7 @@ func contractAccepts(raw []byte) bool {
 }
 `
 
-// contractResponseTestGo is the response half of the webhook contract
-// (MIT-1136). It is deliberately trivial: the fixture exists to prove
-// blockverify ACCEPTS a conformant module, so this file only has to satisfy
-// the presence requirement and pass deterministically. What a real operator
-// puts here is asserted by that operator's own suite, not by this fixture.
+// contractResponseTestGo is trivial on purpose: it only has to satisfy the presence check and pass.
 const contractResponseTestGo = `package main
 
 import "testing"

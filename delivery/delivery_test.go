@@ -1,13 +1,4 @@
-// Package delivery_test pins the operator-side contract for the dispatcher's
-// delivery mirror: a typed Record joining a registered build spec with its
-// gate verdict, deploy outcome and build result, plus a Client that fetches
-// one over GET /delivery/{appId}/{sha}.
-//
-// testdata/delivery.golden.json is shared with the dispatcher's own
-// index.test.mjs (the golden fixture test there): the SAME bytes are both the
-// JSON the dispatcher's handler must produce and the JSON this package must
-// round-trip through Record without loss. Editing either side alone breaks a
-// test — that is the whole point of a shared golden file.
+// Package delivery_test pins the contract against the golden file shared with the dispatcher's tests, so editing either side alone breaks a test.
 package delivery_test
 
 import (
@@ -41,8 +32,6 @@ func compactJSON(t *testing.T, s string) []byte {
 	}
 	return buf.Bytes()
 }
-
-// --- Record: golden round trip -----------------------------------------------
 
 func TestRecord_GoldenFileRoundTripsByteForByte(t *testing.T) {
 	golden := readGolden(t)
@@ -100,8 +89,6 @@ func TestRecord_GoldenFieldsDecodeAsExpected(t *testing.T) {
 		t.Errorf("Verdict = %s, want %s", rec.Verdict, wantVerdict)
 	}
 }
-
-// --- Client.Get: request shape -----------------------------------------------
 
 func TestClient_Get_RequestsTheRightPathAndHeaders(t *testing.T) {
 	golden := readGolden(t)
@@ -187,8 +174,6 @@ func TestClient_Get_ANilHTTPClientFallsBackToDefaultClient(t *testing.T) {
 	}
 }
 
-// --- Client.Get: error paths --------------------------------------------------
-
 func TestClient_Get_404ReturnsAnErrorSatisfyingErrNotFound(t *testing.T) {
 	const token = "sekrit-token-xyz-404"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -253,8 +238,6 @@ func TestClient_Get_A200WithANonJSONBodyIsAnError(t *testing.T) {
 		t.Fatal("Get with a 200 non-JSON body returned a nil error, want a decode error")
 	}
 }
-
-// --- Type shape (compile-time pin, no behaviour to assert beyond building) ---
 
 func TestBuildResult_FieldsAndConstants(t *testing.T) {
 	br := delivery.BuildResult{Conclusion: delivery.ConclusionFailure, RunURL: "https://example.test/run/9"}

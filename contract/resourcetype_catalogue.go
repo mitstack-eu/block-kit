@@ -6,19 +6,14 @@ import (
 	"time"
 )
 
-// providerInputsJSON holds the inputs of every type that maps one to one onto
-// an OpenTofu provider resource, keyed by type ID, exactly as
-// cmd/catalogue-inputs prints them. Regenerate it with
+// providerInputsJSON is the output of cmd/catalogue-inputs, regenerated with
 //
 //	go run ./cmd/catalogue-inputs -schema cmd/catalogue-inputs/testdata/provider-schema-extract.json > contract/provider-inputs.json
 //
 //go:embed provider-inputs.json
 var providerInputsJSON []byte
 
-// withProviderInputs returns ts with each provider-mapped type's Inputs taken
-// from providerInputsJSON. A mapped type the file does not cover gets an
-// empty list, which the catalogue tests refuse. It panics if the embedded
-// file is not JSON, since that can only be a packaging bug in this module.
+// withProviderInputs gives a mapped type the file does not cover an empty list, which the catalogue tests refuse.
 func withProviderInputs(ts []ResourceType) []ResourceType {
 	var generated map[string][]Input
 	if err := json.Unmarshal(providerInputsJSON, &generated); err != nil {
@@ -33,28 +28,22 @@ func withProviderInputs(ts []ResourceType) []ResourceType {
 	return ts
 }
 
-// Provider registry addresses of the OpenTofu providers the mapped types use.
 const (
 	awsProvider     = "registry.opentofu.org/hashicorp/aws"
 	githubProvider  = "registry.opentofu.org/integrations/github"
 	hetznerProvider = "registry.opentofu.org/hetznercloud/hcloud"
 )
 
-// none is the empty list a catalogue entry carries for no languages, no
-// outputs or no capabilities relied on. clone copies it, so entries never
-// share it with a caller.
+// none is shared by every entry, so clone must copy it.
 var none = []string{}
 
-// timeBudgets returns a time budget for each resource verb.
 func timeBudgets(ensure, observe, delete time.Duration) map[string]time.Duration {
 	return map[string]time.Duration{"ensure": ensure, "observe": observe, "delete": delete}
 }
 
-// transient and permanent build one failure of their class.
 func transient(cause string) Failure { return Failure{Class: "transient", Cause: cause} }
 func permanent(cause string) Failure { return Failure{Class: "permanent", Cause: cause} }
 
-// The failures every type reached through one provider's API can meet.
 var (
 	awsThrottled   = transient("the AWS API throttled the call or answered a server error")
 	awsDenied      = permanent("the connected AWS role lacks permission for the call")
@@ -65,11 +54,7 @@ var (
 	hostDown       = transient("the host is not reachable through its exec mechanism")
 )
 
-// Each provider-mapped type's ReplaceOn lists the arguments its provider
-// resource forces a new resource on, as the provider's own schema declares
-// them at the version the schema extract was cut from: ForceNew or
-// RequiresReplace on the argument, a CustomizeDiff that forces a new resource,
-// and for every regional AWS resource the region argument.
+// Each mapped type's ReplaceOn lists the arguments its provider schema forces a new resource on, and the region argument for every regional AWS resource.
 var resourceTypeCatalogue = withProviderInputs([]ResourceType{
 	{
 		ID: "aws.ebs-volume", Kind: "block-volume", ReliesOn: none,

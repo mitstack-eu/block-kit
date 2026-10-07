@@ -5,8 +5,7 @@ import (
 	"strings"
 )
 
-// CheckManifestTypes refuses a requirement or resource of spec listing a
-// type snap does not hold, naming the entry's path and the type id.
+// CheckManifestTypes refuses a requirement or resource of spec listing a type snap does not hold.
 func CheckManifestTypes(spec ManifestSpec, snap TypeSnapshot) error {
 	for i, q := range spec.Requires {
 		if err := checkTypesHeld(fmt.Sprintf("spec.requires[%d]", i), q.Types, snap); err != nil {
@@ -30,18 +29,10 @@ func checkTypesHeld(path string, types []string, snap TypeSnapshot) error {
 	return nil
 }
 
-// bindingOutputs separates a binding's reference from its output. A
-// reference and an output may each hold dots, so the first ".outputs."
-// splits them.
+// bindingOutputs splits at the first occurrence because a reference and an output may each hold dots.
 const bindingOutputs = ".outputs."
 
-// CheckBinding judges one binding a block's code reads,
-// requires.<reference>.outputs.<output> or resources.<name>.outputs.<output>,
-// against spec and snap. A requirement's reference is its name, or its type
-// id when it has no name. It refuses a reference no requirement of spec
-// has, a name no resource of spec has, and an output any type the
-// requirement or resource lists does not declare in snap, naming the type
-// and the output.
+// CheckBinding judges one requires.<reference>.outputs.<output> or resources.<name>.outputs.<output> binding against spec and snap.
 func CheckBinding(spec ManifestSpec, snap TypeSnapshot, binding string) error {
 	source, rest, _ := strings.Cut(binding, ".")
 	ref, output, ok := strings.Cut(rest, bindingOutputs)

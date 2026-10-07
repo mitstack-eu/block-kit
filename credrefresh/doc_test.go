@@ -10,20 +10,11 @@ import (
 	"testing"
 )
 
-// --- Provider neutrality -----------------------------------------------------
-
-// providerNames are the cloud provider names credrefresh's exported surface
-// and doc comment must never mention.
 var providerNames = []string{"aws", "azure", "gcp", "stackit"}
 
-// providerNamePattern matches any of providerNames as a whole word, case
-// insensitively — a plain substring match would false-positive on "flaws",
-// "draws" or "jaws" for the "aws" entry, which is not a provider mention at
-// all.
+// A whole-word match, since a substring match would false-positive on "flaws" for "aws".
 var providerNamePattern = regexp.MustCompile(`(?i)\b(` + strings.Join(providerNames, "|") + `)\b`)
 
-// mentionsProviderName reports whether text names a cloud provider as a
-// whole word, and if so, which one (lowercased).
 func mentionsProviderName(text string) (name string, found bool) {
 	m := providerNamePattern.FindString(text)
 	if m == "" {
@@ -51,11 +42,6 @@ func TestMentionsProviderName_MatchesWholeWordsOnlyNotSubstrings(t *testing.T) {
 	}
 }
 
-// TestPackageMakesNoProviderSpecificClaim pins the reason credrefresh exists
-// apart from cloudid: cloudid is AWS-only by design and says so in its own
-// package doc, and credrefresh is the part of it that generalises. A provider
-// name anywhere in the package's exported surface or its doc comment would be
-// exactly the kind of claim the split is meant to avoid.
 func TestPackageMakesNoProviderSpecificClaim(t *testing.T) {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {

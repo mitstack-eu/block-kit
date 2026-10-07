@@ -1,14 +1,5 @@
 package handler_test
 
-// manifest_parser_test.go pins that handler.New reads Config.Manifest
-// through contract.ParseManifest, the kit's one manifest parser: a
-// non-empty manifest the parser refuses makes New return an error carrying
-// the parser's message, whatever the Config registers, and the hooks and
-// retainsOnUnsubscribe a block declares are read from the parsed
-// spec.lifecycle. A mitstack/v1beta lifecycle has neither, so a v1beta
-// manifest declares no hook, and one that writes either key is refused by
-// the parser.
-
 import (
 	"strings"
 	"testing"

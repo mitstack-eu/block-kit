@@ -20,42 +20,27 @@ import (
 	"github.com/mitstack-eu/operator-kit/webhook"
 )
 
-// Provider is the provider a block creates its resources in, as the check
-// reaches it: it lists everything carrying a subscription's id, and loses
-// one resource out from under the block.
+// Provider is the provider a block creates its resources in, which lists everything carrying a subscription's id and loses one resource out from under the block.
 type Provider interface {
 	ListTagged(ctx context.Context, subscriptionID string) ([]observe.Tagged, error)
 	Lose(ctx context.Context, r contract.CreatedResource) error
 }
 
-// Block is what a block served through one block-level handler, with an
-// observer per declared resource, supplies to have its guards checked.
+// Block is what a block served through one block-level handler supplies to have its guards checked.
 type Block struct {
-	// Manifest is the block's mitstack/v1beta manifest.yaml.
-	Manifest []byte
-	// Types is the platform's type snapshot the manifest's types are read
-	// from.
-	Types contract.TypeSnapshot
-	// Handler is the block-level handler, as handler.Config.Resource holds it.
-	Handler handler.Resource
-	// Observers holds one observer per declared resource, keyed by its name,
-	// as handler.Config.Observers does.
+	Manifest  []byte
+	Types     contract.TypeSnapshot
+	Handler   handler.Resource
 	Observers map[string]handler.Observer
-	// Provider is where the block creates its resources.
-	Provider Provider
-	// Desired is the subscription the check subscribes and unsubscribes; its
-	// SubscriptionID, BlockID and OrgID are required.
+	Provider  Provider
+	// Desired needs its SubscriptionID, BlockID and OrgID.
 	Desired contract.Desired
-	// Upgrade is the Desired the check upgrades the subscription to. It is
-	// required when a declared type is stateful.
+	// Upgrade is required when a declared type is stateful.
 	Upgrade *contract.Desired
-	// Requirements holds, by requirement reference and then by type, the
-	// outputs a resource of that type offers the requirement, bound on the
-	// Desired of the run that meets the requirement with that type.
+	// Requirements is keyed by requirement reference then type, giving the outputs bound on the run that meets the requirement with that type.
 	Requirements map[string]map[string]map[string]string
 }
 
-// The guards CheckBlock proves, as AssertBlock logs those that ran.
 const (
 	guardTagging     = "tagging"
 	guardProvider    = "observe-asks-the-provider"
@@ -64,32 +49,13 @@ const (
 	guardOutputs     = "required-outputs"
 )
 
-// CheckBlock serves the block through handler.New, as the engine reaches
-// it, and returns one problem per violation, empty when the block conforms.
-// It subscribes Desired, and every declared resource must observe present
-// with an identity, and every provided one with the outputs its type marks
-// required. Then:
-//
-//   - everything the Provider lists under the subscription's id must match
-//     a declared resource by type and count;
-//   - with Upgrade set, a validate of Upgrade must name in replaces every
-//     resource the upgrade then replaces, a stateful type's especially, and
-//     Upgrade nil while a declared type is stateful is a problem;
-//   - each resource the Provider loses must observe not present on a
-//     validate, after which the check upgrades to recreate them;
-//   - after unsubscribe every declared resource must observe absent.
-//
-// A requirement listing more than one type runs the whole check once per
-// listed type, its RequirementTypes and Bindings set for that type, and
-// each problem of such a run names the requirement and the type. Each
-// problem about a resource begins `resource "<name>"`.
+// CheckBlock serves the block through handler.New as the engine reaches it and returns one problem per violation.
 func CheckBlock(in Block) []string {
 	problems, _ := checkBlock(in)
 	return problems
 }
 
-// AssertBlock runs CheckBlock, logs which guards ran, and fails tb with one
-// error per problem, in the order the check found them.
+// AssertBlock runs CheckBlock, logs which guards ran, and fails tb with one error per problem.
 func AssertBlock(tb testing.TB, in Block) {
 	tb.Helper()
 	problems, ran := checkBlock(in)
@@ -123,8 +89,6 @@ func checkBlock(in Block) ([]string, []string) {
 	return problems, names
 }
 
-// blockSpec reads the manifest's spec, or the problems that leave the check
-// nothing it may drive.
 func blockSpec(in Block) (contract.ManifestSpec, []string) {
 	m, err := contract.ParseManifest(in.Manifest)
 	if err != nil {
@@ -146,8 +110,6 @@ func blockSpec(in Block) (contract.ManifestSpec, []string) {
 	return m.Block.Spec, problems
 }
 
-// blockServer is the block served through handler.New, and the key its
-// requests are signed with.
 type blockServer struct {
 	h      http.Handler
 	signer *Signer
@@ -175,7 +137,6 @@ func newBlockServer(in Block) (*blockServer, error) {
 	return &blockServer{h: h, signer: signer}, nil
 }
 
-// send posts one signed request for d and returns the answer.
 func (s *blockServer) send(operation string, d contract.Desired) (int, contract.Response, error) {
 	now := time.Now()
 	obo, err := webhook.MintOBO(s.signer.Private, s.signer.Kid,
@@ -200,16 +161,12 @@ func (s *blockServer) send(operation string, d contract.Desired) (int, contract.
 	return rec.Code, resp, err
 }
 
-// blockRun is one pass of the check: the Desired it subscribes, and the
-// label naming the requirement type it runs for, empty for the only run.
 type blockRun struct {
 	label   string
 	desired contract.Desired
 }
 
-// blockRuns returns one run per listed type of each requirement listing
-// more than one, every other requirement met by the first type it lists,
-// or the one run when no requirement lists more than one.
+// blockRuns runs once per listed type of each requirement listing more than one, meeting every other requirement with its first type.
 func blockRuns(spec contract.ManifestSpec, in Block) []blockRun {
 	base := make(map[string]string, len(spec.Requires))
 	for _, q := range spec.Requires {
@@ -235,8 +192,6 @@ func blockRuns(spec contract.ManifestSpec, in Block) []blockRun {
 	return runs
 }
 
-// requirementDesired is d with each requirement met by the type types names
-// for it, and bound to the outputs requirements gives that type.
 func requirementDesired(d contract.Desired, requirements map[string]map[string]map[string]string, types map[string]string) contract.Desired {
 	if len(types) == 0 {
 		return d
@@ -258,9 +213,6 @@ func requirementDesired(d contract.Desired, requirements map[string]map[string]m
 	return d
 }
 
-// blockCheck is one run of CheckBlock, collecting problems. desired carries
-// what the engine recorded of each resource, as the subscription's answers
-// reported it.
 type blockCheck struct {
 	in       Block
 	spec     contract.ManifestSpec
@@ -297,8 +249,6 @@ func (c *blockCheck) run() {
 	c.unsubscribe()
 }
 
-// converge sends a subscribe or upgrade, which must answer every declared
-// resource present, and records each resource's type and identity.
 func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 	_, resp, ok := c.sendOK(operation, c.desired)
 	if !ok {
@@ -327,8 +277,6 @@ func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 	return resp, true
 }
 
-// sendOK sends one request and records a problem unless it answers 200,
-// naming each resource whose call failed.
 func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract.Response, bool) {
 	status, resp, err := c.server.send(operation, d)
 	if err != nil {
@@ -353,9 +301,7 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 	return status, resp, false
 }
 
-// requiredOutputs refuses a provided resource observed present without an
-// output its snapshot type marks required. A secret output is read from
-// the answer's secretOutputs, which carry no resource's name.
+// requiredOutputs reads a secret output from the answer's secretOutputs, which carry no resource's name.
 func (c *blockCheck) requiredOutputs(resp contract.Response, operation string) {
 	c.ran[guardOutputs] = true
 	for _, name := range c.spec.Provides {
@@ -380,9 +326,6 @@ func (c *blockCheck) requiredOutputs(resp contract.Response, operation string) {
 	}
 }
 
-// taggedMatchDeclared lists what the provider holds tagged with the
-// subscription's id, which must match the declared resources by type and
-// count.
 func (c *blockCheck) taggedMatchDeclared() {
 	tagged, err := c.in.Provider.ListTagged(context.Background(), c.desired.SubscriptionID)
 	if err != nil {
@@ -407,10 +350,7 @@ func (c *blockCheck) taggedMatchDeclared() {
 	}
 }
 
-// upgrade validates Upgrade, upgrades, and refuses a resource whose
-// identity changed that the validate's replaces did not name. With no
-// Upgrade, a stateful declared type is a problem, since its replacement
-// cannot be proved.
+// upgrade flags a stateful declared type when Upgrade is nil, since its replacement cannot be proved.
 func (c *blockCheck) upgrade() bool {
 	if c.in.Upgrade == nil {
 		for _, entry := range c.spec.Resources {
@@ -449,9 +389,7 @@ func (c *blockCheck) upgrade() bool {
 	return true
 }
 
-// observesTheProvider loses each resource with an identity from the
-// provider, which a validate must then observe not present, and upgrades
-// again so the teardown has the block whole.
+// observesTheProvider upgrades again afterwards so the teardown has the block whole.
 func (c *blockCheck) observesTheProvider() bool {
 	var lost []string
 	for _, entry := range c.spec.Resources {
@@ -482,8 +420,6 @@ func (c *blockCheck) observesTheProvider() bool {
 	return ok
 }
 
-// unsubscribe sends an unsubscribe, after which every declared resource
-// must observe absent.
 func (c *blockCheck) unsubscribe() {
 	_, resp, ok := c.sendOK("unsubscribe", c.desired)
 	if !ok {

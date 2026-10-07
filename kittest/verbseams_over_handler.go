@@ -14,21 +14,9 @@ import (
 	"github.com/mitstack-eu/operator-kit/webhook"
 )
 
-// verbSeamRequestSeq gives every request VerbSeamsOverHandler builds a
-// fresh nonce and idempotency key, across every call and every test in the
-// process.
 var verbSeamRequestSeq int64
 
-// VerbSeamsOverHandler builds VerbSeams that drive h — a real lifecycle
-// webhook handler — over signed requests against f, so CheckVerbSemantics
-// can judge any http.Handler exactly as it judges an operator's own
-// hand-written seams. h is taken as http.Handler, not a concrete handler
-// type, so this package keeps no dependency on the package it is built to
-// test.
-//
-// Every request carries a fresh nonce and a fresh idempotency key: the
-// handler's idempotency cache must never make a property pass by accident,
-// so convergence has to come from f itself.
+// VerbSeamsOverHandler drives h as an http.Handler to avoid depending on the package it tests, with a fresh nonce and idempotency key per request so the idempotency cache cannot make a property pass.
 func VerbSeamsOverHandler(t *testing.T, h http.Handler, s *Signer, f *FakeResource) VerbSeams {
 	t.Helper()
 
@@ -86,9 +74,7 @@ func VerbSeamsOverHandler(t *testing.T, h http.Handler, s *Signer, f *FakeResour
 		},
 
 		Upgrade: func() (bool, error) {
-			// A preservation check over an empty output set passes
-			// without observing anything, so the seam seeds one marker
-			// output when the fake carries none.
+			// A preservation check over an empty output set observes nothing, so seed one marker.
 			if len(f.Outputs) == 0 {
 				f.Outputs = map[string]string{"verbseam-marker": "present"}
 			}

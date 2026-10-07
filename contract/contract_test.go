@@ -1,14 +1,4 @@
-// Package contract_test pins the behaviour of the new contract package
-// (MIT-3068, ADR 0068 decision 5): this repository, not the platform, now
-// owns envelope.schema.json, response.schema.json and both golden sets, and
-// kittest re-exports them rather than embedding its own copies.
-//
-// Every assertion here is against the exported surface the code-author must
-// build: contract.EnvelopeSchema, contract.ResponseSchema,
-// contract.Goldens/GoldensDir, contract.ResponseGoldens/ResponseGoldensDir,
-// contract.InvalidPrefix and the four Valid*/Invalid* accessor functions.
-// None of it exists yet, so every test below fails to compile until the
-// contract package is written — that is the intended red.
+// Package contract_test pins the schemas and golden sets this repository owns.
 package contract_test
 
 import (

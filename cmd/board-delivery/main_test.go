@@ -1,19 +1,5 @@
 package main
 
-// main_test.go pins the CONTRACT for the `board-delivery` command: the CLI
-// a push-to-main CI job calls to derive which board keys the push delivered
-// and record them once. The seam under test is
-// Run(args []string, stdout io.Writer) int, following the kit's own
-// blockprov.Run idiom: the whole command is testable without a real
-// process, and TRACKER_BASE_URL / TRACKER_API_TOKEN are read from the
-// environment via t.Setenv, exactly as the workflow job will set them.
-//
-// The git half runs against a hermetic temporary repository built with
-// os/exec (git init/commit/tag), plus a bare "origin" remote, so the
-// board-synced anchor tag's push can be observed without any network
-// access or dependence on the real operator-kit repository's history. The
-// HTTP half runs against httptest.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -26,12 +12,7 @@ import (
 	"testing"
 )
 
-// --- hermetic git fixture ------------------------------------------------
-
-// testRepo is a temporary working copy plus a bare "origin" remote, so a
-// test can both make commits and observe what the command under test pushed
-// — the board-synced tag only persists across CI runs once it reaches the
-// remote, since each run's checkout is thrown away.
+// testRepo is a temporary working copy plus a bare origin, since the board-synced tag only persists across CI runs once it reaches the remote.
 type testRepo struct {
 	Dir       string // working copy, passed to the command as --repo
 	OriginDir string // bare remote
@@ -103,8 +84,6 @@ func (r *testRepo) originTagSHA(t *testing.T, tag string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// --- HTTP fixture ---------------------------------------------------------
-
 type capturedRequest struct {
 	Method  string
 	Path    string
@@ -154,8 +133,6 @@ func keysEqual(got, want []string) bool {
 	return true
 }
 
-// --- CLI fixture -----------------------------------------------------------
-
 // runBoardDelivery invokes Run with --repo/--before/--after flags and
 // TRACKER_BASE_URL/TRACKER_API_TOKEN set exactly as the workflow job will
 // set them.
@@ -171,8 +148,6 @@ func runBoardDelivery(t *testing.T, repoDir, before, after, baseURL, token strin
 	exitCode = Run(args, &buf)
 	return buf.String(), exitCode
 }
-
-// --- the HTTP half ----------------------------------------------------------
 
 func TestRun_PostsExactlyOneRequestWithDecodedJSONBody(t *testing.T) {
 	repo := newTestRepo(t)
@@ -319,8 +294,6 @@ func TestRun_TokenNeverAppearsInErrorTextOrOutput(t *testing.T) {
 	}
 }
 
-// --- the git half: range resolution wired to real commits -----------------
-
 func TestRun_RangeExcludesTheBeforeCommitItself(t *testing.T) {
 	repo := newTestRepo(t)
 	shaA := repo.commit(t, "MIT-1: one", "")
@@ -401,8 +374,6 @@ func TestRun_DedupesKeyAppearingInSubjectAndTrailerOfOneCommit(t *testing.T) {
 	}
 }
 
-// --- the board-synced anchor tag --------------------------------------------
-
 func TestRun_UsesAnchorTagOverBeforeFlagWhenTagIsPresent(t *testing.T) {
 	repo := newTestRepo(t)
 	shaA := repo.commit(t, "MIT-1: one", "")
@@ -411,8 +382,7 @@ func TestRun_UsesAnchorTagOverBeforeFlagWhenTagIsPresent(t *testing.T) {
 	repo.setLocalTag(t, "board-synced", shaA)
 	srv, reqs := newRecordingServer(t, 200, "ok")
 
-	// --before points at the seed commit, which would (wrongly) include
-	// shaA's MIT-1 if the anchor tag were not preferred.
+	// --before points at the seed commit, which would wrongly include shaA's key if the anchor tag were not preferred.
 	_, code := runBoardDelivery(t, repo.Dir, repo.SeedSHA, shaC, srv.URL, "")
 	if code != 0 {
 		t.Fatalf("Run exit code = %d, want 0", code)

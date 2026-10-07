@@ -17,18 +17,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/webhook"
 )
 
-// TestServe_NeverLeaksSecretsInResponseOrLogs pins the CONTRACT's secrets
-// section: a request carrying secrets, secretInputs, appSecrets, an OBO
-// token and an events callback token must produce a response body AND log
-// lines containing none of them — even when the block's own error message
-// quotes one, since safe.LogSafe/events.ScrubDetail must run on every
-// string this package writes, not just the ones it authored itself.
-//
-// ASSUMPTION: the handler logs via the standard library "log" package, the
-// convention every other kit package documents (see webhook/logs.go's
-// LogBuffer.Writer doc). This test redirects log.SetOutput itself, exactly
-// as an operator's main() wires LogBuffer, since Config carries no logger
-// field of its own.
+// The handler logs via the standard "log" package, so this test redirects log.SetOutput as an operator's main() wires LogBuffer, since Config has no logger field.
 func TestServe_NeverLeaksSecretsInResponseOrLogs(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 
@@ -44,8 +33,7 @@ func TestServe_NeverLeaksSecretsInResponseOrLogs(t *testing.T) {
 		t.Fatalf("minting a test OBO token: %v", err)
 	}
 
-	// The block's own error message quotes the secret — proving scrubbing
-	// runs on block-authored text too, not only on request-derived text.
+	// The block's own error quotes the secret, so scrubbing must cover block-authored text.
 	f := &kittest.FakeResource{EnsureErr: fmt.Errorf("upstream rejected credential %s", secretValue)}
 
 	var logBuf bytes.Buffer
@@ -77,10 +65,7 @@ func TestServe_NeverLeaksSecretsInResponseOrLogs(t *testing.T) {
 		secretValue, secretInputValue, appSecretValue, oboToken, eventsToken)
 }
 
-// secretInputsManifest declares a resource whose catalogued type marks an
-// input secret beside one whose type marks none. The app resource's type,
-// host.container, marks env secret, so every string under env is secret
-// whatever it holds, and image and port are not.
+// secretInputsManifest's app type, host.container, marks env secret, so every string under env is secret whatever it holds, and image and port are not.
 const secretInputsManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
@@ -102,18 +87,13 @@ spec:
     contract: kit/v1
 `
 
-// The values the engine resolves each input to before it sends a request.
-// Each secret is distinctive and long enough for safe.Scrub to redact, and
-// none follows a credential-like key with ":" or "=", so events.ScrubDetail
-// can never redact it by accident and hide a leak.
+// Each secret is long enough for safe.Scrub to redact, and none follows a credential-like key with ":" or "=", so events.ScrubDetail cannot redact it by accident and hide a leak.
 const (
 	appImage      = "registry.example/tracker-q4115:4.2.1"
 	appDBPassword = "dbpass-q4115-Lr3Wk9ZpF6xNa2Cg"
 	appDBUser     = "dbuser-q4115-Tm4Jq8RvD1sKy7Pb"
 )
 
-// secretResourceInputs is the resourceInputs each declared resource of
-// secretInputsManifest is sent on a request naming it.
 var secretResourceInputs = map[string]map[string]any{
 	"app": {
 		"image": appImage,
@@ -125,12 +105,8 @@ var secretResourceInputs = map[string]map[string]any{
 	},
 }
 
-// redactionMarker is what safe.Scrub writes in place of a secret.
 const redactionMarker = "[REDACTED]"
 
-// secretInputsUnsubscribe is what one unsubscribe naming a resource of
-// secretInputsManifest produced: the answer, every event the handler emitted
-// and every log line written while it ran.
 type secretInputsUnsubscribe struct {
 	status int
 	raw    []byte
@@ -139,9 +115,7 @@ type secretInputsUnsubscribe struct {
 	log    string
 }
 
-// serveSecretInputsUnsubscribe sends an unsubscribe naming resource, with its
-// resourceInputs and NO secretInputs, to a handler over secretInputsManifest
-// whose named resource is fake, capturing the events callback and the log.
+// serveSecretInputsUnsubscribe sends resourceInputs and no secretInputs.
 func serveSecretInputsUnsubscribe(t *testing.T, resource string, fake *kittest.FakeResource) secretInputsUnsubscribe {
 	t.Helper()
 	calls := &callLog{}
@@ -179,9 +153,6 @@ func serveSecretInputsUnsubscribe(t *testing.T, resource string, fake *kittest.F
 	}
 }
 
-// resourceInputLeakPath is one way a value a resource echoes reaches what the
-// handler writes on an unsubscribe: carrier returns the answer field that
-// must hold the value, scrubbed.
 type resourceInputLeakPath struct {
 	name       string
 	fake       *kittest.FakeResource
@@ -189,12 +160,7 @@ type resourceInputLeakPath struct {
 	carrier    func(t *testing.T, resp contract.Response) (field, text string)
 }
 
-// resourceInputLeakPaths returns the three ways an unsubscribe can echo
-// value: a Delete that fails and quotes it, which reaches the error, the
-// failed event and the log; a Delete refused quoting it, which reaches the
-// error and the statusDetail; and a resource still standing after its Delete
-// whose Observe statusDetail quotes it, which reaches the resource's observe
-// entry on the absent:false answer.
+// resourceInputLeakPaths covers a Delete that fails quoting the value, a Delete refused quoting it, and a resource still standing whose Observe statusDetail quotes it.
 func resourceInputLeakPaths(resource, value string) []resourceInputLeakPath {
 	return []resourceInputLeakPath{
 		{
@@ -229,10 +195,6 @@ func resourceInputLeakPaths(resource, value string) []resourceInputLeakPath {
 	}
 }
 
-// assertResourceInputNeverLeaks runs every leak path for one secret resource
-// input of resource and fails if the value reaches the answer, any event the
-// handler emits or the log, or if the answer field that carried it does not
-// hold the redaction marker in its place.
 func assertResourceInputNeverLeaks(t *testing.T, resource, secret string) {
 	t.Helper()
 	for _, path := range resourceInputLeakPaths(resource, secret) {
@@ -262,10 +224,6 @@ func assertResourceInputNeverLeaks(t *testing.T, resource, secret string) {
 	}
 }
 
-// TestServe_UnsubscribeScrubsAnInputTheCataloguedTypeMarksSecret pins that
-// every string under an input the resource's catalogued type marks secret
-// (host.container's env) is scrubbed, at its top level and nested deeper,
-// whatever the manifest binds it to.
 func TestServe_UnsubscribeScrubsAnInputTheCataloguedTypeMarksSecret(t *testing.T) {
 	t.Run("a string at the top of env", func(t *testing.T) {
 		assertResourceInputNeverLeaks(t, "app", appDBPassword)
@@ -275,10 +233,6 @@ func TestServe_UnsubscribeScrubsAnInputTheCataloguedTypeMarksSecret(t *testing.T
 	})
 }
 
-// TestServe_ScrubbingSecretResourceInputsLeavesLiteralInputsAsTheyAre pins
-// that only secret resource inputs are scrubbed: an error quoting a secret
-// input alongside inputs its type does not mark secret keeps every
-// non-secret value as it is.
 func TestServe_ScrubbingSecretResourceInputsLeavesLiteralInputsAsTheyAre(t *testing.T) {
 	cases := []struct {
 		resource string

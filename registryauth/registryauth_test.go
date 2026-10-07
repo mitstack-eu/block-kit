@@ -10,14 +10,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/registryauth"
 )
 
-// --- test harness ------------------------------------------------------------
-
-// fakeRegistryBins writes bash stubs for `aws` and `docker` into a fresh temp
-// directory and puts that directory first on PATH, so Login talks to these
-// stubs rather than a real registry. Each stub records its full argv and its
-// full stdin into its own record file before running awsScript / dockerScript,
-// which is what lets a test assert positively that a credential travelled over
-// stdin rather than merely being absent from argv.
+// fakeRegistryBins puts recording stubs for aws and docker first on PATH, so a test can assert a credential travelled over stdin and not merely that it was absent from argv.
 func fakeRegistryBins(t *testing.T, awsScript, dockerScript string) (awsRecord, dockerRecord string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -41,10 +34,6 @@ func writeStub(t *testing.T, path, record, script string) {
 	}
 }
 
-// recordedArgv returns the argv a stub was invoked with. It fails the test if
-// the stub was never invoked, so a positive assertion about what ran is a
-// separate concept from invoked(), which is how "this must NOT have run" is
-// written.
 func recordedArgv(t *testing.T, record string) string {
 	t.Helper()
 	return fieldFromRecord(t, record, "ARGV:")
@@ -70,8 +59,7 @@ func fieldFromRecord(t *testing.T, record, prefix string) string {
 	return ""
 }
 
-// invoked reports whether the stub at record ever ran. A stub only creates its
-// record file on its first invocation, so a missing file means "never called".
+// A stub only creates its record file on first invocation, so a missing file means never called.
 func invoked(record string) bool {
 	_, err := os.ReadFile(record)
 	return err == nil
@@ -91,8 +79,6 @@ func dockerOK() string                { return "exit 0" }
 func dockerFails(stderr string) string {
 	return "echo \"" + stderr + "\" >&2\nexit 1"
 }
-
-// --- Dispatch ----------------------------------------------------------------
 
 func TestLogin_UnknownKindNamesTheKindInTheError(t *testing.T) {
 	err := registryauth.Login(context.Background(), registryauth.Registry{Kind: registryauth.Kind("s3"), Host: "example.com"})
@@ -121,8 +107,6 @@ func TestLogin_UnknownKindNeverInvokesASubprocess(t *testing.T) {
 		t.Error("Login ran a subprocess for a kind it cannot recognise")
 	}
 }
-
-// --- ECR ----------------------------------------------------------------------
 
 func TestLogin_ECR_InvokesAWSGetLoginPasswordThenDockerLoginWithHost(t *testing.T) {
 	awsRecord, dockerRecord := fakeRegistryBins(t, awsEmits("ecr-password"), dockerOK())
@@ -192,9 +176,7 @@ func TestLogin_ECR_RejectsEmptyRegion(t *testing.T) {
 }
 
 func TestLogin_ECR_RejectsANonEmptyCredential(t *testing.T) {
-	// An ecr login takes no caller-supplied credential — the instance role
-	// covers it — so a non-empty Credential must be refused rather than
-	// silently ignored, since silently ignoring it hides a misconfiguration.
+	// A non-empty Credential must be refused rather than silently ignored, which would hide a misconfiguration.
 	awsRecord, dockerRecord := fakeRegistryBins(t, awsEmits("pw"), dockerOK())
 	r := ecrRegistry("123456789012.dkr.ecr.eu-central-1.amazonaws.com", "eu-central-1")
 	r.Credential = "should-not-be-set-for-ecr"
@@ -207,10 +189,7 @@ func TestLogin_ECR_RejectsANonEmptyCredential(t *testing.T) {
 }
 
 func TestLogin_ECR_RejectsAnEmptyMintedPassword(t *testing.T) {
-	// The sibling paths already reject exactly this shape — an empty
-	// caller-supplied Credential for oci-basic, an empty CommandId for the
-	// ssm hostexec driver — so a minted password of "" running docker login
-	// with nothing on stdin is the one gap left.
+	// An empty minted password must be rejected rather than run docker login with nothing on stdin.
 	_, dockerRecord := fakeRegistryBins(t, awsEmits(""), dockerOK())
 	r := ecrRegistry("123456789012.dkr.ecr.eu-central-1.amazonaws.com", "eu-central-1")
 	if err := registryauth.Login(context.Background(), r); err == nil {
@@ -231,8 +210,6 @@ func TestLogin_ECR_RejectsAWhitespaceOnlyMintedPassword(t *testing.T) {
 		t.Error("docker login ran despite a whitespace-only minted password")
 	}
 }
-
-// --- oci-basic -----------------------------------------------------------------
 
 func TestLogin_OCIBasic_InvokesDockerLoginWithUsernameAndPasswordStdin(t *testing.T) {
 	_, dockerRecord := fakeRegistryBins(t, "", dockerOK())
@@ -280,8 +257,6 @@ func TestLogin_OCIBasic_RejectsEmptyCredential(t *testing.T) {
 	}
 }
 
-// --- shared across both drivers ------------------------------------------------
-
 func TestLogin_RejectsEmptyHost(t *testing.T) {
 	cases := map[string]registryauth.Registry{
 		"ecr":       {Kind: registryauth.KindECR, Host: "", Region: "eu-central-1"},
@@ -322,9 +297,6 @@ func TestLogin_HonoursContextCancellation(t *testing.T) {
 	}
 }
 
-// fakeRegistryBinsAndAssertDockerFailureSurfaces drives Login against a
-// docker login stub that fails, for whichever registry r names, and asserts
-// the resulting error carries the CLI's own failure text.
 func fakeRegistryBinsAndAssertDockerFailureSurfaces(t *testing.T, r registryauth.Registry, awsScript string) {
 	t.Helper()
 	_, _ = fakeRegistryBins(t, awsScript, dockerFails("denied: requested access to the resource is denied"))

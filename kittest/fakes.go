@@ -11,35 +11,20 @@ import (
 	"time"
 )
 
-// Tier-1 hermetic fakes (MIT-1138).
-//
-// The point is that an operator runs its REAL provisioning code — its own
-// client wiring, its own retry logic, its own error classification — against an
-// endpoint that needs no cloud credential and no network. CI never ran an
-// operator for real, so a broken one shipped green; but reaching for real cloud
-// credentials in CI trades that problem for a worse one.
-//
-// These are deliberately SHALLOW. They implement the handful of calls operators
-// actually make, and they FAIL LOUDLY on anything else rather than returning a
-// plausible empty response. That choice is the whole value: a fake that answers
-// 200 to everything makes every test pass, which is precisely how MIT-1484
-// happened — three green tests over a dispatch route the processor never
-// implemented, because the fake accepted any POST.
-
-// FakeSTS is a stand-in for AWS STS's AssumeRoleWithWebIdentity.
+// FakeSTS is a stand-in for AWS STS's AssumeRoleWithWebIdentity that fails loudly on any other action instead of answering plausibly.
 type FakeSTS struct {
 	*httptest.Server
 
 	mu sync.Mutex
 	// Calls records the role ARNs assumed, in order.
 	Calls []string
-	// FailWith, when set, makes every assume return this AWS error code.
+	// FailWith makes every assume return this AWS error code.
 	FailWith string
-	// Expiry sets the returned credential's expiry. Zero means one hour out.
+	// Expiry zero means one hour out.
 	Expiry time.Time
 }
 
-// NewFakeSTS starts a fake STS endpoint. It is closed when the test ends.
+// NewFakeSTS starts a fake STS endpoint that is closed when the test ends.
 func NewFakeSTS(t *testing.T) *FakeSTS {
 	t.Helper()
 	f := &FakeSTS{}
@@ -47,8 +32,6 @@ func NewFakeSTS(t *testing.T) *FakeSTS {
 		_ = r.ParseForm()
 		action := r.FormValue("Action")
 		if action != "AssumeRoleWithWebIdentity" {
-			// Loudly, not plausibly. An operator calling something this fake
-			// does not model should find out here, not in production.
 			http.Error(w, fmt.Sprintf(
 				"FakeSTS: unmodelled action %q — this fake implements AssumeRoleWithWebIdentity only. "+
 					"If the operator genuinely needs this call, model it; do not make the fake permissive.", action),
@@ -87,25 +70,19 @@ func (f *FakeSTS) AssumeCount() int {
 	return len(f.Calls)
 }
 
-// FakeGitHub is a stand-in for the GitHub App + REST surface operators use:
-// minting an installation token, reading and creating a repo, and the Git Data
-// API calls app-scaffold commits through.
+// FakeGitHub is a stand-in for the GitHub App and REST calls operators make, and it fails loudly on any other call.
 type FakeGitHub struct {
 	*httptest.Server
 
-	mu sync.Mutex
-	// Requests records "METHOD /path" for every call, in order.
+	mu       sync.Mutex
 	Requests []string
-	// Repos that already exist. A create against one of these returns 422, the
-	// way GitHub does — which is what an operator's idempotency path must handle.
-	Repos map[string]bool
-	// Commits records every commit message pushed.
-	Commits []string
-	// TokenRevoked records whether DELETE /installation/token was called.
+	// Repos that already exist return 422 on create, as GitHub does, which an operator's idempotency path must handle.
+	Repos        map[string]bool
+	Commits      []string
 	TokenRevoked bool
 }
 
-// NewFakeGitHub starts a fake GitHub API. It is closed when the test ends.
+// NewFakeGitHub starts a fake GitHub API that is closed when the test ends.
 func NewFakeGitHub(t *testing.T) *FakeGitHub {
 	t.Helper()
 	f := &FakeGitHub{Repos: map[string]bool{}}
@@ -155,8 +132,6 @@ func NewFakeGitHub(t *testing.T) *FakeGitHub {
 			f.Repos[body.Name] = true
 			f.mu.Unlock()
 			if already {
-				// GitHub's real response for an existing repo. An operator that
-				// treats this as fatal has a broken retry path (T-501).
 				http.Error(w, `{"message":"Repository creation failed: name already exists"}`, http.StatusUnprocessableEntity)
 				return
 			}
@@ -175,12 +150,11 @@ func NewFakeGitHub(t *testing.T) *FakeGitHub {
 			_ = json.NewEncoder(w).Encode(map[string]any{"sha": "fakecommitsha"})
 
 		case strings.Contains(r.URL.Path, "/git/"):
-			// The rest of the Git Data API: trees, blobs, refs.
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"sha": "fakesha", "object": map[string]any{"sha": "fakesha"}})
 
 		default:
-			// Loudly, not plausibly. See the package note on MIT-1484.
+			// A fake that answers everything makes every test pass.
 			http.Error(w, fmt.Sprintf(
 				"FakeGitHub: unmodelled call %s %s — this fake implements only what operators actually use. "+
 					"Model the call rather than making the fake permissive: a fake that answers everything makes every test pass.",

@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// The edge answering at all is a different fact from the app being reachable,
-// and only the first one is provisioned by the block that runs the probe. A
-// block that withholds `active` until the app answers is waiting on a sibling
-// that cannot run until it is active — the deadlock that stalled Plain for
-// seven hours on 2026-08-19. These tests pin the distinction so the settle
-// gates can be written against a field instead of against Reason's wording.
-
 func TestProbe_EdgeUp_WhenAppReturns502(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -64,8 +57,6 @@ func TestProbe_EdgeUp_WhenCertificateIsUntrusted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// The default client does not trust httptest's self-signed certificate, so
-	// this exercises the handshake-only branch.
 	got := probeURL(context.Background(), &http.Client{}, srv.URL, nil, srv.URL)
 
 	if !got.Reachable || !got.EdgeUp {

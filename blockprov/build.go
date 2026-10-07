@@ -14,15 +14,12 @@ import (
 	"github.com/mitstack-eu/operator-kit/provenance"
 )
 
-// blockverifyReport is the subset of blockverify's --json Report shape
-// build needs: the conformance verdict a record's Conformance field carries.
 type blockverifyReport struct {
 	SuiteVersion  string `json:"suiteVersion"`
 	Verdict       string `json:"verdict"`
 	ResultsDigest string `json:"resultsDigest"`
 }
 
-// runBuild implements `blockprov build`.
 func runBuild(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -75,10 +72,7 @@ func runBuild(args []string, stdout io.Writer) int {
 		fmt.Fprintf(stdout, "blockprov build: report is not valid JSON: %v\n", err)
 		return 1
 	}
-	// Refused a second time, over the fresh report in hand: a red
-	// conformance run should already have kept a workflow_call caller's
-	// publish job from starting at all, but this is the last gate before a
-	// token is ever requested.
+	// The last gate before a token is requested, in case a stale or hand-edited failing report reaches this command.
 	if report.Verdict != "pass" {
 		fmt.Fprintf(stdout, "blockprov build: refusing to sign — blockverify verdict was %q, not \"pass\"\n", report.Verdict)
 		return 1

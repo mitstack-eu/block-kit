@@ -20,10 +20,7 @@ Usage:
                     (--password <pass> | --password-env <ENV_VAR>)
 `
 
-// Run executes the blockprov CLI and returns its process exit code: 0 on
-// success, 1 on a real failure, 2 on a usage error. All output goes through
-// stdout, never the real process streams directly, so the whole command is
-// testable without touching os.Stdout.
+// Run executes the blockprov CLI and returns its exit code, 0 on success, 1 on a failure and 2 on a usage error.
 func Run(args []string, stdout io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stdout, usageMessage)

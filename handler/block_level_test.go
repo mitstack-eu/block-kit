@@ -1,24 +1,5 @@
 package handler_test
 
-// block_level_test.go pins the Handler serving a block whose mitstack/v1beta
-// manifest declares its resources through one block-level handler,
-// Config.Resource, with an observer for each declared resource under
-// Config.Observers:
-//
-//   - subscribe and upgrade run one Ensure for the whole block, then observe
-//     each declared resource through its own observer until present, and
-//     report each one's observe by name, with its identity and type;
-//   - unsubscribe runs one Delete, then observes each declared resource with
-//     its recorded identity until absent;
-//   - validate observes each declared resource once and names the resources
-//     an upgrade would replace;
-//   - a request naming one declared resource is served for validate alone,
-//     handed the request's identity and type, even a type its entry no
-//     longer lists;
-//   - each observe is handed, as VerbAt, the time of the verb it settles:
-//     the clock once Ensure or Delete returned, or a validate's settlesAt;
-//   - New refuses a declared resource with no observer, naming it.
-
 import (
 	"context"
 	"errors"
@@ -35,8 +16,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// blockLevelManifest declares a network, an instance and two roles of one
-// type named a and b, and provides the instance and role a.
 const blockLevelManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
@@ -56,7 +35,6 @@ spec:
     contract: kit/v1
 `
 
-// declaredTypes is each declared resource's one listed type, by name.
 var declaredTypes = map[string]string{
 	"aws.vpc":          "aws.vpc",
 	"aws.ec2-instance": "aws.ec2-instance",
@@ -64,7 +42,6 @@ var declaredTypes = map[string]string{
 	"b":                "aws.iam-role",
 }
 
-// blockOutputs is what each resource's observer reports once it stands.
 var blockOutputs = map[string]map[string]string{
 	"aws.vpc":          {"vpcId": "vpc-0abc"},
 	"aws.ec2-instance": {"publicIp": "203.0.113.7"},
@@ -72,9 +49,6 @@ var blockOutputs = map[string]map[string]string{
 	"b":                {"bOut": "from-b"},
 }
 
-// fakeCloud is what the provider holds for the block, by declared resource
-// name. neverPresent names a resource Ensure does not create, and
-// standsAfterDelete one Delete leaves standing.
 type fakeCloud struct {
 	mu                sync.Mutex
 	present           map[string]bool
@@ -112,8 +86,6 @@ func (c *fakeCloud) stands(name string) bool {
 	return c.present[name]
 }
 
-// blockResource is the block-level handler: one Ensure creates every
-// resource, one Delete removes them.
 type blockResource struct {
 	cloud                                  *fakeCloud
 	ensureCalls, observeCalls, deleteCalls int
@@ -136,7 +108,6 @@ func (b *blockResource) Delete(ctx context.Context, id contract.Identity) error 
 	return nil
 }
 
-// reportingBlock is a blockResource that reports what it created.
 type reportingBlock struct {
 	*blockResource
 	report []contract.CreatedResource
@@ -149,8 +120,6 @@ func (r reportingBlock) EnsureResources(ctx context.Context, d contract.Desired)
 	return r.report, nil
 }
 
-// planningBlock is a blockResource whose validate names the resources an
-// upgrade would replace.
 type planningBlock struct {
 	*blockResource
 	replaces []string
@@ -166,8 +135,6 @@ var (
 	_ handler.Observer           = (*fakeObserver)(nil)
 )
 
-// fakeObserver asks the fake cloud for one declared resource and records
-// every ResourceRef it was handed.
 type fakeObserver struct {
 	name  string
 	cloud *fakeCloud
@@ -191,7 +158,6 @@ func (o *fakeObserver) calls() []contract.ResourceRef {
 	return append([]contract.ResourceRef(nil), o.refs...)
 }
 
-// blockObservers returns one observer per declared resource over cloud.
 func blockObservers(cloud *fakeCloud) map[string]*fakeObserver {
 	out := map[string]*fakeObserver{}
 	for name := range declaredTypes {
@@ -208,8 +174,6 @@ func asObservers(obs map[string]*fakeObserver) map[string]handler.Observer {
 	return out
 }
 
-// blockLevelConfig serves r under blockLevelManifest with obs as its
-// observers.
 func blockLevelConfig(t *testing.T, s *kittest.Signer, r handler.Resource, obs map[string]handler.Observer) handler.Config {
 	t.Helper()
 	cfg := baseConfig(t, r, s)
@@ -218,8 +182,6 @@ func blockLevelConfig(t *testing.T, s *kittest.Signer, r handler.Resource, obs m
 	return cfg
 }
 
-// serveBlockLevel serves one verb over r and returns the status and the
-// decoded response.
 func serveBlockLevel(t *testing.T, r handler.Resource, obs map[string]*fakeObserver, operation string, extra map[string]any, mutate ...func(*handler.Config)) (int, contract.Response) {
 	t.Helper()
 	s := kittest.NewSigner(t, "kid-block-level", 17)
@@ -240,7 +202,6 @@ func serveBlockLevel(t *testing.T, r handler.Resource, obs map[string]*fakeObser
 	return status, decodeResponse(t, raw)
 }
 
-// recordedAll is what the engine recorded for every declared resource.
 func recordedAll() map[string]any {
 	return map[string]any{
 		"aws.vpc":          map[string]any{"type": "aws.vpc", "identity": map[string]any{"vpcId": "vpc-0abc"}},
@@ -250,8 +211,6 @@ func recordedAll() map[string]any {
 	}
 }
 
-// wantEveryResourceObserved checks the answer carries exactly one entry per
-// declared resource, each observed in state as its declared type.
 func wantEveryResourceObserved(t *testing.T, resp contract.Response, state contract.State) {
 	t.Helper()
 	got := make([]string, 0, len(resp.Resources))
@@ -273,8 +232,6 @@ func wantEveryResourceObserved(t *testing.T, resp contract.Response, state contr
 		}
 	}
 }
-
-// --- subscribe and upgrade ---------------------------------------------------------
 
 func TestBlockLevel_SubscribeAndUpgradeRunOneEnsureThenObserveEachResourceByName(t *testing.T) {
 	for _, op := range []string{"subscribe", "upgrade"} {
@@ -330,9 +287,7 @@ func TestBlockLevel_SubscribeAnswersPendingNamingAResourceNotPresentWithinTheBud
 	}
 }
 
-// Each observe is handed the identity and type the block reported for its
-// resource, else the one the engine recorded, else no identity and the one
-// type the entry lists.
+// Each observe is handed the reported identity and type, else the recorded ones, else no identity and the entry's one type.
 func TestBlockLevel_EachObserveIsHandedTheIdentityAndTypeOfItsResource(t *testing.T) {
 	reported := []contract.CreatedResource{
 		{Name: "aws.vpc", Type: "aws.vpc", Identity: map[string]string{"vpcId": "vpc-new"}},
@@ -405,8 +360,6 @@ func TestBlockLevel_RefusesAReportedResourceItsEntryDoesNotDeclare(t *testing.T)
 	}
 }
 
-// --- unsubscribe -------------------------------------------------------------------------
-
 func TestBlockLevel_UnsubscribeRunsOneDeleteThenProvesEachResourceAbsentWithItsRecordedIdentity(t *testing.T) {
 	cloud := newFakeCloud()
 	cloud.createAll()
@@ -448,8 +401,6 @@ func TestBlockLevel_UnsubscribeAnswersAbsentFalseNamingAResourceStillStanding(t 
 	}
 }
 
-// --- validate --------------------------------------------------------------------------------
-
 func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBlockPlans(t *testing.T) {
 	cloud := newFakeCloud()
 	cloud.createAll()
@@ -484,8 +435,6 @@ func TestBlockLevel_ValidateRefusesAPlannedReplacementTheManifestDoesNotDeclare(
 		t.Errorf("status, error = %d, %q; want 400 naming \"c\"", status, resp.Error)
 	}
 }
-
-// --- a request naming one declared resource ----------------------------------------
 
 func TestBlockLevel_ValidateNamingOneResourceObservesItAloneWithTheRequestsIdentityAndType(t *testing.T) {
 	cloud := newFakeCloud()
@@ -527,9 +476,7 @@ func TestBlockLevel_ValidateNamingOneResourceObservesItAloneWithTheRequestsIdent
 	}
 }
 
-// The engine observes a resource by the type it recorded, which an older
-// manifest's entry may list and the current one not, so the requested type
-// reaches the observer rather than a refusal.
+// The engine observes by the type it recorded, which an older manifest may list and the current one not, so the requested type reaches the observer rather than a refusal.
 func TestBlockLevel_ValidateNamingOneResourceHandsTheObserverARequestedTypeItsEntryDoesNotList(t *testing.T) {
 	cloud := newFakeCloud()
 	cloud.createAll()
@@ -566,10 +513,6 @@ func TestBlockLevel_UnsubscribeHandsTheObserverARecordedTypeItsEntryDoesNotList(
 	}
 }
 
-// --- which verb an observation settles ----------------------------------------------
-
-// tickingClock moves only when a test advances it, so the reading the
-// handler takes after the block-level call returns is known.
 type tickingClock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -588,8 +531,6 @@ func (c *tickingClock) advance() time.Time {
 	return c.now
 }
 
-// clockedBlock advances the clock as its Ensure and its Delete return,
-// recording the reading.
 type clockedBlock struct {
 	*blockResource
 	clock                *tickingClock
@@ -608,9 +549,7 @@ func (b *clockedBlock) Delete(ctx context.Context, id contract.Identity) error {
 	return err
 }
 
-// An observe after subscribe or upgrade settles the ensure, and one after
-// unsubscribe proves absence made after the delete, so each is handed the
-// clock's reading once the block-level call returned.
+// Each observe is handed the clock's reading once the block-level call returned, since it settles that verb.
 func TestBlockLevel_ObservesAreHandedTheTimeTheBlockLevelCallReturned(t *testing.T) {
 	for _, op := range []string{"subscribe", "upgrade", "unsubscribe"} {
 		t.Run(op, func(t *testing.T) {
@@ -693,8 +632,6 @@ func TestBlockLevel_RefusesAnUndeclaredNameAsUndeclaredResource(t *testing.T) {
 	}
 }
 
-// --- New -------------------------------------------------------------------------------------
-
 func TestNew_AcceptsAnObserverForEveryDeclaredResource(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	cloud := newFakeCloud()
@@ -758,8 +695,6 @@ func TestNew_RefusesAnObserverConfigTheManifestCannotBack(t *testing.T) {
 	}
 }
 
-// errObserver fails every observe, so a test can see a failing observe
-// reported under its resource.
 type errObserver struct{}
 
 func (errObserver) ObserveResource(context.Context, contract.ResourceRef) (contract.Observation, error) {

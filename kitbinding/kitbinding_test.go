@@ -1,16 +1,5 @@
 package kitbinding_test
 
-// kitbinding_test.go pins the one definition of "a kit/v1 block imports the
-// kit's handler package": a non-test .go file that a default build of the
-// block compiles carries the import in its import declarations. A comment, a
-// string literal, a build-ignored file, and a file under testdata/, vendor/,
-// or a directory starting with "_" or "." do not count. A scan that could
-// not run is an error, never an empty answer.
-//
-// The cases live in testdata/handler-import as txtar files, one block source
-// tree each, whose comment section opens with the verdict every judge must
-// reach. The platform's operator gates are held to the same files.
-
 import (
 	"bufio"
 	"os"
@@ -25,7 +14,7 @@ import (
 
 const fixtureDir = "testdata/handler-import"
 
-// fixtureCase is one txtar file of the shared set.
+// The txtar cases under testdata/handler-import are shared with the platform's operator gates.
 type fixtureCase struct {
 	name    string
 	verdict string
@@ -33,7 +22,6 @@ type fixtureCase struct {
 	files   map[string]string
 }
 
-// loadFixtureSet reads every .txtar file in fixtureDir.
 func loadFixtureSet(t *testing.T) []fixtureCase {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(fixtureDir, "*.txtar"))
@@ -51,8 +39,6 @@ func loadFixtureSet(t *testing.T) []fixtureCase {
 	return cases
 }
 
-// parseFixture reads the txtar format: a comment section, then files each
-// opened by a "-- path --" line.
 func parseFixture(t *testing.T, path string) fixtureCase {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -106,7 +92,6 @@ func parseFixture(t *testing.T, path string) fixtureCase {
 	return c
 }
 
-// materialise writes a case's source tree into a fresh directory.
 func materialise(t *testing.T, c fixtureCase) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -128,8 +113,7 @@ func TestHandlerPackage_IsTheKitsHandlerImportPath(t *testing.T) {
 	}
 }
 
-// The set must keep every case the ticket names, so deleting a hard fixture
-// cannot turn the agreement between the kit and the platform vacuous.
+// Deleting a hard fixture must fail here, or the agreement between the kit and the platform turns vacuous.
 func TestFixtureSet_HoldsEveryRequiredCase(t *testing.T) {
 	want := map[string]string{
 		"comment-only":                "absent",
@@ -195,7 +179,6 @@ func TestHandlerImportFiles_AnswersEveryFixtureWithItsVerdict(t *testing.T) {
 	}
 }
 
-// Every importing file is reported, sorted, not just the first one met.
 func TestHandlerImportFiles_ReportsEveryImportingFileSorted(t *testing.T) {
 	const imp = "package main\n\nimport \"github.com/mitstack-eu/operator-kit/handler\"\n\nvar _ = handler.New\n"
 	dir := materialise(t, fixtureCase{files: map[string]string{
@@ -227,8 +210,7 @@ func TestHandlerImportFiles_MissingDirectoryIsAnError(t *testing.T) {
 	}
 }
 
-// A directory the scan cannot enter is an error even when a readable file
-// elsewhere already imports the handler: what it could not read is unknown.
+// A directory the scan cannot enter is an error even when another file imports the handler, since what it could not read is unknown.
 func TestHandlerImportFiles_UnreadableDirectoryIsAnError(t *testing.T) {
 	dir := materialise(t, fixtureCase{files: map[string]string{
 		"main.go":               "package main\n\nimport \"github.com/mitstack-eu/operator-kit/handler\"\n\nfunc main() { _ = handler.New }\n",

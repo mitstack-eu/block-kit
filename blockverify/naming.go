@@ -11,21 +11,9 @@ import (
 	"github.com/mitstack-eu/operator-kit/handler"
 )
 
-// appNamePlaceholder is the text a derived-name template writes in place of
-// the app name.
 const appNamePlaceholder = "{appName}"
 
-// namingSuite checks the app-name limit the target's manifest declares at
-// spec.naming.appName. Each derived name leaves its limit minus the length
-// of its fixed text (the template with {appName} removed) for the app name,
-// and maxLength must equal the smallest of those. A template with no
-// {appName}, a template using {appName} more than once, a template whose
-// fixed text alone reaches its limit, and a maxLength with no derivedNames
-// behind it all fail. The declaration is read through
-// handler.ManifestAppNameNaming, which reads the manifest through
-// contract.ParseManifest, so a manifest the parser refuses fails with the
-// parser's message. A manifest the parser accepts that declares no
-// spec.naming.appName is skipped.
+// namingSuite requires maxLength to equal the smallest room any derived name leaves once its fixed text is removed from its limit.
 func namingSuite(target string) SuiteResult {
 	const name = "naming"
 

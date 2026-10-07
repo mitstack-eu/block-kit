@@ -12,18 +12,7 @@ import (
 	"github.com/mitstack-eu/operator-kit/kittest"
 )
 
-// MIT-3068 (ADR 0068 decision 5) — the contract package, not kittest, now
-// embeds envelope.schema.json, response.schema.json and both golden sets.
-// kittest.ValidGoldens, kittest.Golden and kittest.GoldensDir re-export what
-// the contract package holds, so kittest keeps its own public signatures
-// (all still (t *testing.T, ...) shaped) while carrying no goldens of its
-// own — kittest/goldens/ and kittest/response-goldens/ are gone.
-//
-// The portability property this file has always pinned (MIT-1585) still
-// applies: every function below is exercised from a working directory with
-// no relationship to this repository, and must keep working precisely
-// because the goldens are embedded rather than read from a path relative to
-// the caller.
+// Every function below is exercised from a working directory unrelated to this repository, because the goldens are embedded rather than read from a path relative to the caller.
 
 // chdirOutsideMonorepo moves the test process's cwd to a fresh temp
 // directory with no ancestor relationship to this repo, and restores the

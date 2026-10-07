@@ -1,10 +1,6 @@
 package main
 
-// v1alphaReadCapabilities maps each canonical registry name a v1alpha manifest
-// may read under spec.requires[].reads to the capabilities that give it. A
-// v1alpha requirement names a capability, not a kind, and the registry names
-// no capability, so the read check holds this table itself. A name absent here
-// is given by no capability.
+// v1alphaReadCapabilities is held here because the registry names no capability; a name absent is given by none.
 var v1alphaReadCapabilities = map[string][]string{
 	"agentEndpoint":        {"agent-session"},
 	"appHostname":          {"app-host", "aws-topology"},

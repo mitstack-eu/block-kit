@@ -1,11 +1,5 @@
 package awsnames_test
 
-// The point of these tests is not that string concatenation works. It is that
-// these exact strings are what all three engines produce — the CloudFormation
-// !Sub, the OpenTofu local.prefix, and the Crossplane Format transform. If any
-// engine's template changes its naming, this file is where the disagreement
-// has to show up, because nothing else compares them.
-
 import (
 	"testing"
 
@@ -26,8 +20,6 @@ func TestNames_MatchWhatTheEnginesActuallyCreate(t *testing.T) {
 	}
 }
 
-// An app name with surrounding whitespace would otherwise produce a name that
-// looks right in a log and matches nothing in AWS.
 func TestNames_TrimTheAppName(t *testing.T) {
 	if got := awsnames.ECRRepository("  checkout "); got != "mitstack-app-checkout" {
 		t.Fatalf("got %q", got)

@@ -7,8 +7,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/adopt"
 )
 
-// --- Identity ---------------------------------------------------------------
-
 func TestIdentity_TagsCarryTheAppIdAndOwner(t *testing.T) {
 	tags := adopt.Identity{AppID: "app-42"}.Tags()
 
@@ -28,8 +26,7 @@ func TestIdentity_SubscriptionIDIsIncludedWhenKnown(t *testing.T) {
 }
 
 func TestIdentity_OmitsSubscriptionTagWhenUnknown(t *testing.T) {
-	// An empty tag value is not the same as an absent tag: AWS filters match on
-	// value, so an empty one would make every app's resource look alike.
+	// AWS filters match on value, so an empty tag would make every app's resource look alike.
 	tags := (adopt.Identity{AppID: "app-42"}).Tags()
 	if _, ok := tags[adopt.TagSubscriptionID]; ok {
 		t.Error("an unknown subscription id must be omitted, not written as an empty tag")
@@ -43,8 +40,6 @@ func TestIdentity_RejectsAnEmptyAppID(t *testing.T) {
 }
 
 func TestIdentity_FilterMatchesOnValueNotTagKey(t *testing.T) {
-	// MIT-1229's core lesson in filter form. A tag-KEY filter ("has an AppId")
-	// matches every app's resources; only a tag-VALUE filter is identity.
 	f := adopt.Identity{AppID: "app-42"}.Filter()
 
 	if !strings.Contains(f, "tag:"+adopt.TagAppID) || !strings.Contains(f, "app-42") {
@@ -54,8 +49,6 @@ func TestIdentity_FilterMatchesOnValueNotTagKey(t *testing.T) {
 		t.Errorf("Filter() = %q, must never be a tag-KEY filter — that matches every app", f)
 	}
 }
-
-// --- Decide -----------------------------------------------------------------
 
 func candidate(appID string) adopt.Candidate {
 	return adopt.Candidate{ResourceID: "i-abc", Tags: map[string]string{
@@ -88,8 +81,6 @@ func TestDecide_CreatesWhenNothingExists(t *testing.T) {
 }
 
 func TestDecide_RefusesAResourceBelongingToAnotherApp(t *testing.T) {
-	// MIT-1229. This is the dangerous one: adopting here takes over another
-	// consumer's live resource.
 	d, err := adopt.Decide(adopt.Identity{AppID: "app-42"}, []adopt.Candidate{candidate("app-99")})
 	if err == nil {
 		t.Fatal("expected a refusal")
@@ -103,7 +94,6 @@ func TestDecide_RefusesAResourceBelongingToAnotherApp(t *testing.T) {
 }
 
 func TestDecide_RefusesACandidateWithNoAppIdTag(t *testing.T) {
-	// An untagged resource has no identity. "It looks like ours" is not identity.
 	c := adopt.Candidate{ResourceID: "i-untagged", Tags: map[string]string{}}
 	d, err := adopt.Decide(adopt.Identity{AppID: "app-42"}, []adopt.Candidate{c})
 	if err == nil {
@@ -115,8 +105,6 @@ func TestDecide_RefusesACandidateWithNoAppIdTag(t *testing.T) {
 }
 
 func TestDecide_RefusesWhenTwoCandidatesMatch(t *testing.T) {
-	// Two resources carrying the same AppId means the invariant is already
-	// broken. Picking one at random would silently orphan the other.
 	a, b := candidate("app-42"), candidate("app-42")
 	b.ResourceID = "i-def"
 
@@ -133,8 +121,6 @@ func TestDecide_RefusesWhenTwoCandidatesMatch(t *testing.T) {
 }
 
 func TestDecide_RefusesWhenTheNameMatchesButTheIdDiffers(t *testing.T) {
-	// The exact shape of MIT-1229 and of the MIT-1126 exit-sweep bug: matching
-	// on a human-chosen name instead of the immutable id.
 	c := adopt.Candidate{ResourceID: "i-abc", Tags: map[string]string{
 		"Name":             "myapp",
 		adopt.TagAppID:     "app-99",
@@ -169,8 +155,6 @@ func TestDecide_RefusesOnAnInvalidIdentity(t *testing.T) {
 }
 
 func TestDecide_DefaultIsRefuseNotAdopt(t *testing.T) {
-	// The zero Action value must not be Adopt: a future code path that forgets
-	// to set it should fail safe.
 	var zero adopt.Action
 	if zero == adopt.Adopt {
 		t.Error("the zero Action must not be Adopt — an unset decision has to fail safe")
@@ -179,8 +163,6 @@ func TestDecide_DefaultIsRefuseNotAdopt(t *testing.T) {
 		t.Errorf("the zero Action = %v, want Refuse", zero)
 	}
 }
-
-// --- AlreadyExists classification -------------------------------------------
 
 func TestIsAlreadyExists_RecognisesStructuredAWSCodes(t *testing.T) {
 	for _, msg := range []string{
@@ -197,8 +179,6 @@ func TestIsAlreadyExists_RecognisesStructuredAWSCodes(t *testing.T) {
 }
 
 func TestIsAlreadyExists_RecognisesPlainNoColorEngineOutput(t *testing.T) {
-	// #478: the collision handler matched only structured errors, and missed
-	// the plain `-no-color` text the engine actually emits.
 	plain := `Error: creating IAM Role (mitstack-app): operation error IAM: CreateRole,
 	https response error StatusCode: 409, EntityAlreadyExists: Role with name
 	mitstack-app already exists.`
@@ -219,11 +199,7 @@ func TestIsAlreadyExists_IsNotFooledByUnrelatedText(t *testing.T) {
 	}
 }
 
-// --- Satellites (MIT-1224) --------------------------------------------------
-
 func TestPlan_AdoptsEveryDriftedSatelliteNotJustThePrimary(t *testing.T) {
-	// MIT-1224: recovery that adopts the instance but not the SSM document and
-	// DLM role leaves the app self-healed halfway, which reads as "still broken".
 	id := adopt.Identity{AppID: "app-42"}
 	found := map[string][]adopt.Candidate{
 		"instance":     {candidate("app-42")},
@@ -244,8 +220,6 @@ func TestPlan_AdoptsEveryDriftedSatelliteNotJustThePrimary(t *testing.T) {
 }
 
 func TestPlan_OneForeignSatelliteRefusesTheWholePlan(t *testing.T) {
-	// A partial adoption is worse than none: it half-rewires an app across two
-	// owners. If any member refuses, the whole plan refuses.
 	id := adopt.Identity{AppID: "app-42"}
 	found := map[string][]adopt.Candidate{
 		"instance":     {candidate("app-42")},

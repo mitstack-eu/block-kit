@@ -1,13 +1,5 @@
 package handler_test
 
-// declared_cancellation_test.go pins that a request naming no resource
-// stops at a resource boundary once its context is done: before each
-// resource's first call the Handler checks the request context, and once it
-// is done no further resource is reached. subscribe and upgrade then answer
-// pending, unsubscribe answers absent:false and validate answers pending,
-// each naming the first resource not reached and reporting only the entries
-// recorded before it.
-
 import (
 	"context"
 	"net/http"

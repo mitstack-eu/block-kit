@@ -1,20 +1,5 @@
 package handler_test
 
-// recorded_inputs_test.go pins that a request naming one declared resource
-// hands that resource's observe and delete the inputs recorded at subscribe
-// and the identity its ensure stored, the same way its ensure gets them:
-//
-//   - a declared resource implementing handler.RequestDeleter is deleted
-//     through DeleteWithRequest, never Delete, handed the verb's own
-//     Desired;
-//   - a declared resource implementing handler.RequestObserver is observed
-//     through ObserveWithRequest, never Observe, on validate and on every
-//     settle poll of subscribe, upgrade and unsubscribe, handed the verb's
-//     own Desired;
-//   - that Desired names the resource and carries the request's
-//     resourceInputs and resourceIdentity, and no other resource is
-//     reached.
-
 import (
 	"context"
 	"fmt"

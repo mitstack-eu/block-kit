@@ -1,29 +1,6 @@
 package main
 
-// manifest_reads_guard_test.go pins that every manifest read under
-// blockverify/ and handler/ goes through contract.ParseManifest, the kit's
-// one manifest parser, so no second reader with its own strictness can
-// return.
-//
-// The guard parses the non-test .go files of both packages and follows
-// manifest content from where it enters to where it is used:
-//
-//   - it enters as the bytes of a file read whose path is built from a
-//     manifest path (the manifestFile constant, a string naming a manifest,
-//     a constant string expression that folds to one, or a name or
-//     parameter carrying one, as --base-manifest does), as a
-//     Config.Manifest value, or as a []byte parameter of a function whose
-//     name or parameter name says manifest;
-//   - it is followed through local variables, string and []byte
-//     conversions, return values, and calls into any function of either
-//     package, across the two packages;
-//   - it may only be handed to contract.ParseManifest, measured with len,
-//     compared with nil, closed when it is an open file, or hashed with
-//     sha256.Sum256, which reads no field of it.
-//
-// Any other use is a manifest read off the parser and fails the guard. A
-// test below runs the guard over small hand-written packages, so it cannot
-// go quiet: each known way of reading text by hand must still be caught.
+// The guard pins that manifest content under blockverify/ and handler/ is only handed to contract.ParseManifest, measured with len, compared with nil, closed or hashed with sha256.Sum256.
 
 import (
 	"fmt"
@@ -45,15 +22,11 @@ const (
 	kitBlockverify  = "github.com/mitstack-eu/operator-kit/blockverify"
 )
 
-// guardPackage is one package the guard reads: its import path and its
-// files.
 type guardPackage struct {
 	path  string
 	files []*ast.File
 }
 
-// guardFunc is one function or method of a guarded package and what the
-// guard has learned about it.
 type guardFunc struct {
 	key            string
 	pkg            *guardPackage
@@ -79,9 +52,6 @@ type manifestReadGuard struct {
 	violations map[token.Pos]string
 }
 
-// guardManifestReads runs the guard over pkgs and returns the number of
-// manifest sources it found in each package and every use of manifest
-// content off the parser, sorted.
 func guardManifestReads(fset *token.FileSet, pkgs []*guardPackage) (map[string]int, []string) {
 	g := &manifestReadGuard{
 		fset:       fset,
@@ -168,8 +138,6 @@ func (g *manifestReadGuard) addFunc(p *guardPackage, f *ast.File, decl *ast.Func
 	g.byKey[key] = append(g.byKey[key], fn)
 }
 
-// collectConsts records the package-level constants of f that carry a
-// value, by name, so a constant string expression can be folded.
 func (g *manifestReadGuard) collectConsts(pkgPath string, f *ast.File) {
 	if g.consts[pkgPath] == nil {
 		g.consts[pkgPath] = map[string]ast.Expr{}
@@ -190,9 +158,6 @@ func (g *manifestReadGuard) collectConsts(pkgPath string, f *ast.File) {
 	}
 }
 
-// constString folds e to the string it always holds: a string literal, a
-// sum of constant strings, or a constant declared in the function, in its
-// package or in another guarded package.
 func (st *funcState) constString(e ast.Expr, depth int) (string, bool) {
 	if depth > 16 {
 		return "", false
@@ -250,8 +215,6 @@ func isByteSlice(e ast.Expr) bool {
 	return ok && id.Name == "byte"
 }
 
-// funcState is what the guard knows inside one function: which local names
-// hold manifest content and which hold a manifest path.
 type funcState struct {
 	g       *manifestReadGuard
 	fn      *guardFunc
@@ -324,8 +287,6 @@ func (st *funcState) walk() {
 	})
 }
 
-// mark sets flags[i], or the last flag for a variadic argument past the
-// end, recording that the guard learned something new.
 func (g *manifestReadGuard) mark(flags []bool, i int) {
 	if len(flags) == 0 {
 		return
@@ -366,8 +327,6 @@ func (st *funcState) inFuncLit(stack []ast.Node) bool {
 	return false
 }
 
-// pkgOf returns the import path x names when x is a package name in the
-// function's file.
 func (st *funcState) pkgOf(x ast.Expr) (string, bool) {
 	id, ok := x.(*ast.Ident)
 	if !ok || id.Obj != nil {
@@ -377,7 +336,6 @@ func (st *funcState) pkgOf(x ast.Expr) (string, bool) {
 	return path, ok
 }
 
-// isPkgFunc reports whether fun is pkgPath.name.
 func (st *funcState) isPkgFunc(fun ast.Expr, pkgPath, name string) bool {
 	sel, ok := fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != name {
@@ -387,7 +345,6 @@ func (st *funcState) isPkgFunc(fun ast.Expr, pkgPath, name string) bool {
 	return ok && path == pkgPath
 }
 
-// resolve returns the guarded functions call may reach.
 func (st *funcState) resolve(call *ast.CallExpr) []*guardFunc {
 	switch fun := call.Fun.(type) {
 	case *ast.Ident:
@@ -404,7 +361,6 @@ func (st *funcState) resolve(call *ast.CallExpr) []*guardFunc {
 	return nil
 }
 
-// isPath reports whether e may hold the path of a manifest.
 func (st *funcState) isPath(e ast.Expr) bool {
 	if v, ok := st.constString(e, 0); ok && saysManifest(v) {
 		return true
@@ -436,15 +392,11 @@ func (st *funcState) isPath(e ast.Expr) bool {
 	return false
 }
 
-// fileReads are the calls that read or open a file, by the index of their
-// path argument.
 var fileReads = map[string]int{
 	"os.ReadFile": 0, "os.Open": 0, "os.OpenFile": 0,
 	"io/ioutil.ReadFile": 0, "io/fs.ReadFile": 1,
 }
 
-// isContent reports whether e holds manifest content, recording e as a
-// source when content enters there.
 func (st *funcState) isContent(e ast.Expr) bool {
 	switch e := e.(type) {
 	case *ast.Ident:
@@ -486,8 +438,6 @@ func (st *funcState) source(n ast.Node) {
 	}
 }
 
-// isConversion reports whether call converts its one argument to string or
-// to a slice type.
 func (st *funcState) isConversion(call *ast.CallExpr) bool {
 	if len(call.Args) != 1 {
 		return false
@@ -501,7 +451,6 @@ func (st *funcState) isConversion(call *ast.CallExpr) bool {
 	return false
 }
 
-// checkUse judges the use of the content expression on top of stack.
 func (st *funcState) checkUse(stack []ast.Node) {
 	i := len(stack) - 1
 	child := stack[i]
@@ -618,7 +567,6 @@ func nodeText(fset *token.FileSet, n ast.Node) string {
 	return s
 }
 
-// loadGuardPackage parses the non-test .go files of dir.
 func loadGuardPackage(t *testing.T, fset *token.FileSet, dir, importPath string) *guardPackage {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -660,12 +608,9 @@ func TestEveryManifestReadUnderBlockverifyAndHandlerGoesThroughTheParser(t *test
 	}
 }
 
-// The identifier the old manifest reader went by, written in two pieces so
-// this file does not name it.
+// Written in two pieces so this file does not name the old reader.
 var oldReaderName = "read" + "BlockManifest"
 
-// TestNoFileUnderBlockverifyOrHandlerNamesTheOldReader keeps a git grep for
-// oldReaderName over blockverify and handler empty, test files included.
 func TestNoFileUnderBlockverifyOrHandlerNamesTheOldReader(t *testing.T) {
 	files := 0
 	for _, dir := range []string{".", filepath.Join("..", "handler")} {
@@ -694,8 +639,6 @@ func TestNoFileUnderBlockverifyOrHandlerNamesTheOldReader(t *testing.T) {
 	}
 }
 
-// guardCase is a pair of hand-written packages the guard is run over, with
-// the number of uses off the parser it must report.
 type guardCase struct {
 	label       string
 	blockverify string
@@ -877,9 +820,6 @@ func declared(target string) bool {
 	},
 }
 
-// TestManifestReadGuard_CatchesEveryHandReaderAndPassesAParserRead runs the
-// guard over hand-written packages: each way of reading manifest text off
-// the parser is reported, and a read through contract.ParseManifest is not.
 func TestManifestReadGuard_CatchesEveryHandReaderAndPassesAParserRead(t *testing.T) {
 	for _, tc := range guardCases {
 		t.Run(tc.label, func(t *testing.T) {

@@ -89,8 +89,6 @@ func TestEnsureRepo_CreatesWhenRepoIsMissing(t *testing.T) {
 	}
 }
 
-// --- DeleteRepo: 404 is success (MIT-1302 / MIT-1124 teardown contract) -----
-
 func TestDeleteRepo_AbsentRepoIsSuccessNotError(t *testing.T) {
 	var deleteCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,8 +123,6 @@ func TestDeleteRepo_PropagatesARealFailure(t *testing.T) {
 		t.Error("a real (non-404) failure must be surfaced, not swallowed as if it were a successful teardown")
 	}
 }
-
-// --- CommitFiles: unchanged tree is a TRUE no-op (MIT-1230) ------------------
 
 func TestCommitFiles_NoOpWhenTheTreeIsUnchanged(t *testing.T) {
 	var commitCalls, refPatches int

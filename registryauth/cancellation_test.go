@@ -1,12 +1,6 @@
 package registryauth_test
 
-// Login checks ctx.Err() exactly once, up front (see
-// TestLogin_HonoursContextCancellation in registryauth_test.go, which only
-// exercises an already-cancelled context). A context cancelled while the aws
-// or docker subprocess is actually running is never rechecked, so it
-// surfaces as a bare subprocess failure instead of context.Canceled. These
-// pin the fix, following the bounded-select shape hostexec's ssh driver test
-// already uses so a regression fails the test rather than hanging the suite.
+// A context cancelled while the subprocess runs must surface as context.Canceled; the select is bounded so a regression fails rather than hangs.
 
 import (
 	"context"

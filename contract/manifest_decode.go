@@ -9,73 +9,42 @@ import (
 	"strings"
 )
 
-// manifestDecoder reads a node tree parseYAML built into a manifest's Go
-// types by their struct tags. Both manifest versions read through it, so
-// under either a key no field names is refused, naming its path, and so is
-// a key written twice, a merge key, an alias and a line the reader could not
-// place.
-//
-// A field whose tag has no omitempty option is required: it must be present
-// and, for a string or a list, not empty. A field whose fold tag names a
-// second key also takes its value under that key; written under both keys
-// the two values must agree. A field named _ takes its key's value by its
-// type and keeps none of it, for a key a version accepts and drops.
+// manifestDecoder reads a node tree by struct tags: a field whose tag has no omitempty is required, a fold tag names a second key whose value must agree, and a field named _ takes a key's value and keeps none of it.
 type manifestDecoder struct {
-	// version is the apiVersion a refused unknown key names.
 	version string
-	// tag is the struct tag whose name, before any option, is a field's key.
-	tag string
-	// coerce reads each scalar as yaml.v3 reads it into a typed Go value,
-	// as the platform's decoder does: a null is the zero value and a null
-	// list item is dropped, a string takes any scalar's text, a bool also
-	// takes the YAML 1.1 words for true and false, and an int takes a plain
-	// number, a float truncated toward zero. Without it a null is refused, a string refuses a plain scalar
-	// YAML reads as a number or a boolean, and a bool takes true or false
-	// only.
+	tag     string
+	// coerce reads each scalar as the platform's yaml.v3 decoder does: a null is the zero value, a string takes any scalar's text, a bool also takes the YAML 1.1 words, and an int truncates a float toward zero.
 	coerce bool
-	// dropped, when set, collects the path of each key a field named _
-	// reads with a non-null value.
+	// dropped collects the path of each key a field named _ reads with a non-null value.
 	dropped *[]string
 }
 
-// The YAML 1.2 core schema reads a plain scalar matching one of these as a
-// null, a boolean or a number rather than as a string.
 var (
 	plainNull    = regexp.MustCompile(`^(null|Null|NULL|~)$`)
 	plainBoolean = regexp.MustCompile(`^(true|True|TRUE|false|False|FALSE)$`)
 	plainNumber  = regexp.MustCompile(`^([-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+|` +
 		`[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN))$`)
-	// yamlStyleFloat is the decimal float form yaml.v3 resolves a plain
-	// scalar to a float by, once its underscores are dropped.
 	yamlStyleFloat = regexp.MustCompile(`^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$`)
 )
 
-// yaml11Booleans are the words yaml.v3 also reads into a Go bool, plain or
-// quoted, for compatibility with YAML 1.1.
+// yaml11Booleans are the words yaml.v3 reads into a Go bool, plain or quoted, for YAML 1.1.
 var yaml11Booleans = map[string]bool{
 	"y": true, "Y": true, "yes": true, "Yes": true, "YES": true, "on": true, "On": true, "ON": true,
 	"n": false, "N": false, "no": false, "No": false, "NO": false, "off": false, "Off": false, "OFF": false,
 }
 
-// isNull reports whether YAML reads n as a null.
 func isNull(n *yamlNode) bool {
 	return n.kind == yamlNull || n.kind == yamlScalar && !n.str && plainNull.MatchString(n.value)
 }
 
-// manifestField is one field of a manifest struct as its tag names it.
 type manifestField struct {
-	name  string
-	index int
-	// required is a field whose tag has no omitempty.
+	name     string
+	index    int
 	required bool
-	// fold is a second key the field's value may be written under.
-	fold string
-	// dropped is a field named _, whose value is read and not kept.
-	dropped bool
+	fold     string
+	dropped  bool
 }
 
-// manifestFields returns t's fields in declaration order, by the name tag
-// gives them.
 func manifestFields(t reflect.Type, tag string) []manifestField {
 	fields := make([]manifestField, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
@@ -92,7 +61,6 @@ func manifestFields(t reflect.Type, tag string) []manifestField {
 	return fields
 }
 
-// fieldPath names key under path.
 func fieldPath(path, key string) string {
 	if path == "" {
 		return key
@@ -100,7 +68,6 @@ func fieldPath(path, key string) string {
 	return path + "." + key
 }
 
-// describe names path in an error, the document itself when path is empty.
 func describe(path string) string {
 	if path == "" {
 		return "the document"
@@ -108,7 +75,6 @@ func describe(path string) string {
 	return path
 }
 
-// readable refuses a node the reader could not follow, naming path.
 func readable(n *yamlNode, path string) error {
 	switch {
 	case n.alias:
@@ -125,13 +91,10 @@ func readable(n *yamlNode, path string) error {
 	return nil
 }
 
-// noValue refuses a null where a value is required: a key is left out or
-// given a value.
 func noValue(path string) error {
 	return fmt.Errorf("%s has no value, so leave it out or give it one", describe(path))
 }
 
-// decode reads n into v.
 func (d manifestDecoder) decode(n *yamlNode, v reflect.Value, path string) error {
 	if err := readable(n, path); err != nil {
 		return err
@@ -195,9 +158,7 @@ func (d manifestDecoder) decode(n *yamlNode, v reflect.Value, path string) error
 	return nil
 }
 
-// boolean reads the scalar n as a bool. Under coerce a quoted true or false
-// is a string, which a bool does not take, while a YAML 1.1 word is taken
-// plain or quoted, as yaml.v3 takes it.
+// boolean takes no quoted true or false under coerce, but takes a YAML 1.1 word plain or quoted, as yaml.v3 does.
 func (d manifestDecoder) boolean(n *yamlNode) (value, ok bool) {
 	if n.kind != yamlScalar {
 		return false, false
@@ -211,10 +172,7 @@ func (d manifestDecoder) boolean(n *yamlNode) (value, ok bool) {
 	return value, ok
 }
 
-// plainInteger reads the plain scalar n into an integer as yaml.v3 does for
-// a Go int: with any underscores dropped, an integer in decimal or with a
-// 0x, 0o or 0b prefix, or a decimal float that fits an int64, truncated
-// toward zero. A quoted scalar is a string, which an int does not take.
+// plainInteger reads a plain scalar as yaml.v3 does for a Go int; a quoted scalar is a string, which an int does not take.
 func plainInteger(n *yamlNode) (int64, bool) {
 	if n.kind != yamlScalar || n.str {
 		return 0, false
@@ -236,7 +194,6 @@ func plainInteger(n *yamlNode) (int64, bool) {
 	return int64(f), true
 }
 
-// list reads the list n into the slice v.
 func (d manifestDecoder) list(n *yamlNode, v reflect.Value, path string) error {
 	if n.kind != yamlSeq {
 		return fmt.Errorf("%s must be a list", path)
@@ -256,8 +213,6 @@ func (d manifestDecoder) list(n *yamlNode, v reflect.Value, path string) error {
 	return nil
 }
 
-// mapEntries checks that n is a mapping with no merge key and no key
-// written twice, naming path.
 func mapEntries(n *yamlNode, path string) error {
 	if n.kind != yamlMap {
 		return fmt.Errorf("%s must be a mapping", describe(path))
@@ -275,7 +230,6 @@ func mapEntries(n *yamlNode, path string) error {
 	return nil
 }
 
-// mapping reads the mapping n into the map v.
 func (d manifestDecoder) mapping(n *yamlNode, v reflect.Value, path string) error {
 	if err := mapEntries(n, path); err != nil {
 		return err
@@ -292,15 +246,11 @@ func (d manifestDecoder) mapping(n *yamlNode, v reflect.Value, path string) erro
 	return nil
 }
 
-// foldedValue is a value written under a field's fold key.
 type foldedValue struct {
 	field manifestField
 	value string
 }
 
-// structure reads the mapping n into the struct v by its tags. A key no
-// field names is refused, and so is a required field that is absent, null
-// or, for a string or a list, empty.
 func (d manifestDecoder) structure(n *yamlNode, v reflect.Value, path string) error {
 	if err := mapEntries(n, path); err != nil {
 		return err
@@ -365,9 +315,6 @@ func (d manifestDecoder) structure(n *yamlNode, v reflect.Value, path string) er
 	return nil
 }
 
-// foldInto writes a value given under a field's fold key into the field:
-// the one that is set, or their shared value. Two different values are
-// refused, naming both keys and both values.
 func foldInto(field reflect.Value, fv foldedValue, path string) error {
 	switch current := field.String(); {
 	case fv.value == "":

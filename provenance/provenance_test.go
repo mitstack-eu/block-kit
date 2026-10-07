@@ -1,21 +1,6 @@
 package provenance_test
 
-// provenance_test.go pins the CONTRACT for the publisher-signed provenance
-// record (MIT-3097): the payload shape, the canonical encoding both the
-// writer and the reader must agree on byte for byte, the audience-binding
-// that ties a GitHub Actions OIDC token to those exact bytes, and Verify's
-// fail-closed order over the committed goldens.
-//
-// Every symbol referenced below — Build, Verify, Canonical, Audience,
-// ParseJWKS, the sentinel errors, ValidGoldens/InvalidGoldens, Schema — does
-// not exist yet. This package does not compile until code-author adds
-// provenance.go; that is the intended RED signal.
-//
-// The goldens under goldens/ are generated fixtures (see the golden files'
-// own values): a shared valid record for postgres-db, its JWKS, and four
-// records that each fail exactly one Verify step. No private key is
-// committed — the four rejection goldens and the golden itself were signed
-// by throwaway keys generated once and discarded.
+// No private key is committed: the goldens were signed by throwaway keys that were discarded.
 
 import (
 	"bytes"
@@ -36,12 +21,6 @@ import (
 	"github.com/mitstack-eu/operator-kit/provenance"
 )
 
-// --- fixtures shared across tests -------------------------------------------
-
-// validPayload is a complete, self-consistent payload for the unit-level
-// Build/Canonical/Audience tests. The golden-based tests below use the
-// committed postgres-db golden instead, which is the shared artefact the
-// platform's reader also tests against.
 func validPayload() provenance.Payload {
 	manifest := []byte("apiVersion: mitstack/v1alpha\nkind: Block\nmetadata:\n  id: sample-block\n")
 	sum := sha256.Sum256(manifest)
@@ -66,7 +45,6 @@ func validPayload() provenance.Payload {
 	}
 }
 
-// loadGolden reads and decodes one committed record fixture.
 func loadGolden(t *testing.T, name string) provenance.Record {
 	t.Helper()
 	raw, err := provenance.Goldens.ReadFile(provenance.GoldensDir + "/" + name)
@@ -80,10 +58,7 @@ func loadGolden(t *testing.T, name string) provenance.Record {
 	return r
 }
 
-// committedResolver returns the KeyResolver backed by the committed JWKS —
-// the same public key that signed the golden and its rejection siblings
-// (except invalid-unknown-key.json, which is signed by a key deliberately
-// absent from it).
+// invalid-unknown-key.json is signed by a key deliberately absent from the committed JWKS.
 func committedResolver(t *testing.T) provenance.KeyResolver {
 	t.Helper()
 	raw, err := provenance.Goldens.ReadFile(provenance.GoldensDir + "/record.golden.jwks.json")
@@ -97,8 +72,6 @@ func committedResolver(t *testing.T) provenance.KeyResolver {
 	return resolve
 }
 
-// decodeJWTSegment base64url-decodes and JSON-parses one segment (0=header,
-// 1=payload) of a three-segment token.
 func decodeJWTSegment(t *testing.T, token string, index int) map[string]interface{} {
 	t.Helper()
 	parts := strings.Split(token, ".")
@@ -129,8 +102,6 @@ func stringClaim(t *testing.T, doc map[string]interface{}, key string) string {
 	return s
 }
 
-// newTestRSAKey generates a throwaway RSA key for a single test — never the
-// key that signed any committed golden.
 func newTestRSAKey(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey) {
 	t.Helper()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -149,8 +120,6 @@ func resolverFor(kid string, pub *rsa.PublicKey) provenance.KeyResolver {
 	}
 }
 
-// signTestToken mints an RS256 JWT over claims, signed by priv under kid —
-// the same shape a GitHub Actions OIDC token has, without calling GitHub.
 func signTestToken(t *testing.T, priv *rsa.PrivateKey, kid string, claims map[string]interface{}) string {
 	t.Helper()
 	header := map[string]interface{}{"alg": "RS256", "kid": kid, "typ": "JWT"}
@@ -170,8 +139,6 @@ func signTestToken(t *testing.T, priv *rsa.PrivateKey, kid string, claims map[st
 	}
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
-
-// --- Canonical / Audience ----------------------------------------------------
 
 func TestCanonical_DeterministicAcrossCalls(t *testing.T) {
 	p := validPayload()
@@ -205,8 +172,6 @@ func TestAudience_EqualsPrefixPlusSha256OfCanonical(t *testing.T) {
 		t.Errorf("Audience(p) = %q, want %q (AudiencePrefix + sha256 of Canonical(p))", got, want)
 	}
 }
-
-// --- Build --------------------------------------------------------------
 
 func TestBuild_MintsTokenForExactlyTheComputedAudience(t *testing.T) {
 	p := validPayload()
@@ -277,8 +242,6 @@ func TestBuild_RefusesIncompletePayload(t *testing.T) {
 	}
 }
 
-// --- The shared golden: writer side --------------------------------------
-
 func TestBuild_ReproducesGoldenCanonicalAndAudience(t *testing.T) {
 	golden := loadGolden(t, "record.golden.json")
 
@@ -308,8 +271,6 @@ func TestBuild_ReproducesGoldenCanonicalAndAudience(t *testing.T) {
 		t.Errorf("golden token's aud claim = %q, want Audience(golden.Payload) = %q", tokenAud, wantAud)
 	}
 }
-
-// --- The shared golden: reader side ---------------------------------------
 
 func TestVerify_AcceptsTheGoldenRecord(t *testing.T) {
 	rec := loadGolden(t, "record.golden.json")
@@ -373,12 +334,8 @@ func TestVerify_EmptyExpectedRepositoryIsRefused(t *testing.T) {
 	}
 }
 
-// --- exp is deliberately not checked; iat is ------------------------------
-
 func TestVerify_DoesNotRejectAnExpiredToken(t *testing.T) {
-	// A record attests a publish that already happened, and an OIDC token
-	// lives about ten minutes. Checking exp would make every record
-	// unverifiable within the hour — deliberately not checked.
+	// exp is deliberately not checked: an OIDC token lives about ten minutes, so checking it would make every record unverifiable within the hour.
 	priv, pub := newTestRSAKey(t)
 	const kid = "test-kid-expired"
 	p := validPayload()
@@ -426,8 +383,6 @@ func TestVerify_RejectsIatMoreThanFiveMinutesInTheFuture(t *testing.T) {
 		t.Errorf("err = %v, want ErrMalformedToken for an iat more than five minutes in the future", err)
 	}
 }
-
-// --- The rest of the sentinel surface, exercised directly ------------------
 
 func TestVerify_RejectsWrongIssuer(t *testing.T) {
 	priv, pub := newTestRSAKey(t)
@@ -479,9 +434,7 @@ func TestVerify_RejectsIncompletePayloadMissingSchemaVersion(t *testing.T) {
 }
 
 func TestVerify_SignatureCheckedBeforeIdentityMismatch(t *testing.T) {
-	// Everything the presenter controls (repository, sha) must be judged
-	// AFTER the signature, so a forged token cannot leak whether its claims
-	// were otherwise well-formed — the same ordering attest.Verify documents.
+	// Presenter-controlled claims are judged after the signature, so a forged token cannot leak whether they were well-formed.
 	_, pub := newTestRSAKey(t)
 	wrongPriv, _ := newTestRSAKey(t)
 	const kid = "test-kid-order"
@@ -497,8 +450,6 @@ func TestVerify_SignatureCheckedBeforeIdentityMismatch(t *testing.T) {
 		"sha":        p.SourceCommit,
 		"iat":        time.Now().UTC().Unix(),
 	}
-	// Signed by wrongPriv, but resolved against pub — the kid is known, the
-	// signature is not valid for it.
 	rec := provenance.Record{Payload: p, Token: signTestToken(t, wrongPriv, kid, claims)}
 
 	err = provenance.Verify(rec, resolverFor(kid, pub), provenance.Expect{Repository: p.SourceRepository})
@@ -536,8 +487,6 @@ func TestVerify_RejectsMalformedToken(t *testing.T) {
 	}
 }
 
-// --- ParseJWKS ------------------------------------------------------------
-
 func TestParseJWKS_RoundTripsAndUnknownKidReturnsFalse(t *testing.T) {
 	golden := loadGolden(t, "record.golden.json")
 	kid := stringClaim(t, decodeJWTSegment(t, golden.Token, 0), "kid")
@@ -550,8 +499,6 @@ func TestParseJWKS_RoundTripsAndUnknownKidReturnsFalse(t *testing.T) {
 		t.Error("ParseJWKS's resolver must return false for an unknown kid, not silently accept it")
 	}
 }
-
-// --- Schema and goldens are embedded and non-vacuous -----------------------
 
 func TestSchema_DeclaresDraft202012VersionAndTopLevelVersion(t *testing.T) {
 	if len(provenance.Schema) == 0 {
@@ -570,10 +517,6 @@ func TestSchema_DeclaresDraft202012VersionAndTopLevelVersion(t *testing.T) {
 	}
 }
 
-// TestValidGoldens_ExcludesAnyJWKSCompanionBySuffix pins the exclusion rule
-// as a general one — any goldens/*.jwks.json file is a JWKS companion, not a
-// record golden — rather than a special case for record.golden.jwks.json by
-// name, so a second JWKS fixture would also be excluded.
 func TestValidGoldens_ExcludesAnyJWKSCompanionBySuffix(t *testing.T) {
 	valid, err := provenance.ValidGoldens()
 	if err != nil {
@@ -618,8 +561,6 @@ func TestInvalidGoldens_NonVacuous(t *testing.T) {
 	}
 }
 
-// --- The golden pins the platform's own manifest sha256 --------------------
-
 const platformPinManifestSha256 = "sha256:1300af076bfb7994658ffa101c9e444d7dd2665accc7f24f6b71b6b86aef9cee"
 
 func TestGoldenManifestSha256_MatchesThePlatformPinLiteralAndItsOwnBytes(t *testing.T) {
@@ -640,17 +581,8 @@ func TestGoldenManifestSha256_MatchesThePlatformPinLiteralAndItsOwnBytes(t *test
 	}
 }
 
-// sha256FieldPattern is the shape every "sha256:<hex>" field must match: the
-// literal prefix plus exactly 64 lowercase hex characters. A results digest
-// that is some other length or alphabet is not a sha256, whatever else is
-// right about it.
 var sha256FieldPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-// TestGoldenDigestFields_AreShapedLikeSha256 catches a class of defect a
-// value-equality check alone would miss: every digest-shaped field in every
-// committed golden — imageDigest, manifestSha256 and
-// conformance.resultsDigest — must be exactly "sha256:" plus 64 hex
-// characters, not merely non-empty.
 func TestGoldenDigestFields_AreShapedLikeSha256(t *testing.T) {
 	valid, err := provenance.ValidGoldens()
 	if err != nil {
@@ -710,33 +642,9 @@ func TestGoldenRecord_CarriesEveryAcceptanceCriterionField(t *testing.T) {
 	}
 }
 
-// --- Decode rejects any field the schema does not declare -------------------
-//
-// json.Unmarshal into Record silently drops a key neither Record nor Payload
-// declares: Canonical(decoded) then reproduces the original bytes, the
-// audience still matches, and Verify has nothing left to object to. That
-// lets attacker-controlled data ride inside a payload that still looks
-// signed to anything reading the stored JSON directly, or to any future
-// field the platform's reader knows before this struct does. Decode is the
-// strict entry point that closes that hole: it must refuse a record whose
-// JSON carries anything the shape does not declare, at any of the three
-// places a field could hide — the record's own top level, the payload's top
-// level, and inside conformance.
-//
-// Judgement call: Decode does NOT require the stored bytes to equal
-// Canonical(decoded) exactly. That stricter rule would also catch reordered
-// keys and incidental whitespace, but a record is JSON that an intermediary
-// (a registry, a formatter, a human editing it by hand) may legitimately
-// reformat, and the audience binding already covers every VALUE the schema
-// declares — reordering or reformatting changes no value. Rejecting unknown
-// fields closes the actual hole (attacker-controlled data smuggled in
-// alongside the declared shape) without also rejecting harmless reformatting
-// the signature was never meant to pin. TestDecode_AcceptsReorderedKeysAndExtraWhitespace
-// pins that this is deliberate, not an oversight.
+// Decode accepts reordered keys and reformatted whitespace on purpose, because an intermediary may reformat a record and the audience already covers every value.
 
-// loadGoldenRaw reads a fixture's raw bytes, unmodified — needed wherever a
-// test must inspect or mutate the JSON as bytes, since json.Unmarshal into
-// Record would itself silently drop the very field under test.
+// loadGoldenRaw returns raw bytes because json.Unmarshal into Record would drop the very field under test.
 func loadGoldenRaw(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := provenance.Goldens.ReadFile(provenance.GoldensDir + "/" + name)
@@ -746,10 +654,7 @@ func loadGoldenRaw(t *testing.T, name string) []byte {
 	return raw
 }
 
-// injectField decodes raw generically, adds key=value at path (an empty
-// path means the record's own top level; "payload" or "payload.conformance"
-// reaches inside it), and re-encodes — used to construct a record carrying
-// exactly one field the schema does not declare, with nothing else changed.
+// injectField treats an empty path as the record's own top level.
 func injectField(t *testing.T, raw []byte, path, key string, value interface{}) []byte {
 	t.Helper()
 	var doc map[string]interface{}
@@ -806,12 +711,6 @@ func TestDecode_RejectsUnknownFieldAtRecordTopLevel(t *testing.T) {
 	}
 }
 
-// TestDecode_RejectsTheUnknownFieldGolden is the golden-based twin of the
-// three unit tests above: invalid-unknown-field.json is the committed
-// golden with one extra payload key and the ORIGINAL token kept, exactly
-// the probe that found this hole (imageDigest swapped was caught; an added
-// field was not, because Canonical(decode(raw)) reproduced the original
-// bytes and the audience still matched).
 func TestDecode_RejectsTheUnknownFieldGolden(t *testing.T) {
 	raw := loadGoldenRaw(t, "invalid-unknown-field.json")
 	if _, err := provenance.Decode(raw); !errors.Is(err, provenance.ErrUnknownField) {
@@ -819,20 +718,12 @@ func TestDecode_RejectsTheUnknownFieldGolden(t *testing.T) {
 	}
 }
 
-// TestDecode_AcceptsReorderedKeysAndExtraWhitespace pins the judgement call
-// above as deliberate: Decode rejects an unknown FIELD, not a reformatting.
-// Reordering the record's top-level keys and reformatting the whitespace
-// must not trip ErrUnknownField, because no value the schema declares has
-// changed — only its incidental presentation on the wire.
 func TestDecode_AcceptsReorderedKeysAndExtraWhitespace(t *testing.T) {
 	want := loadGolden(t, "record.golden.json")
 	payloadJSON, err := json.Marshal(want.Payload)
 	if err != nil {
 		t.Fatalf("marshalling payload: %v", err)
 	}
-	// token BEFORE payload (the struct declares the opposite order) and
-	// spread across extra lines and indentation the golden itself does not
-	// use.
 	reordered := []byte(fmt.Sprintf("{\n\n  \"token\":   %q  ,\n\n  \"payload\":\n%s\n\n}\n", want.Token, payloadJSON))
 
 	rec, err := provenance.Decode(reordered)

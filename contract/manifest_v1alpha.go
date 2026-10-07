@@ -6,9 +6,6 @@ import (
 	"strings"
 )
 
-// v1alphaDecoder reads a ManifestAPIVersionV1Alpha manifest by the yaml
-// tags of its types, which name the keys the platform's decoder reads, and
-// reads each scalar as that decoder does.
 var v1alphaDecoder = manifestDecoder{version: ManifestAPIVersionV1Alpha, tag: "yaml", coerce: true}
 
 // The top-level type key is the `type: block` spelling of kind: Block.
@@ -17,21 +14,16 @@ const (
 	v1alphaTypeBlock = "block"
 )
 
-// V1AlphaManifest is a manifest under ManifestAPIVersionV1Alpha, read
-// whole: Kind, Metadata and Spec hold every field the platform's decoder
-// reads, and ID, Version, ReleaseClass, ReleaseNote, Outputs and Requires
-// repeat the fields blockverify's manifest suite checks.
+// V1AlphaManifest is a manifest under ManifestAPIVersionV1Alpha; ID, Version, ReleaseClass, ReleaseNote, Outputs and Requires repeat fields blockverify checks.
 type V1AlphaManifest struct {
 	// ID is metadata.id, untrimmed.
 	ID string
-	// Version, ReleaseClass and ReleaseNote are spec.version,
-	// spec.releaseClass and spec.releaseNote, trimmed.
+	// Version, ReleaseClass and ReleaseNote are trimmed.
 	Version      string
 	ReleaseClass string
 	ReleaseNote  string
-	// Outputs is spec.outputs, each name trimmed.
-	Outputs []string
-	// Requires is spec.requires, each capability and read name trimmed.
+	// Outputs and Requires have each name trimmed.
+	Outputs  []string
 	Requires []V1AlphaRequirement
 
 	// Kind is "Block" when the manifest writes kind: Block or type: block.
@@ -49,33 +41,28 @@ type V1AlphaMetadata struct {
 
 // V1AlphaSpec is what a v1alpha block declares.
 type V1AlphaSpec struct {
-	Layer       string            `yaml:"layer,omitempty"`
-	Version     string            `yaml:"version,omitempty"`
-	Description string            `yaml:"description,omitempty"`
-	Optional    bool              `yaml:"optional,omitempty"`
-	Tags        []string          `yaml:"tags,omitempty"`
-	Resources   []V1AlphaResource `yaml:"resources,omitempty"`
-	_           []string          `yaml:"dependsOn,omitempty"`
-	Provides    []string          `yaml:"provides,omitempty"`
-	// ProvidedContracts types entries of Provides.
-	ProvidedContracts []V1AlphaProvidedContract    `yaml:"providedContracts,omitempty"`
-	Requires          []V1AlphaRequirement         `yaml:"requires,omitempty"`
-	UpgradeStrategy   string                       `yaml:"upgradeStrategy,omitempty"`
-	ReleaseClass      string                       `yaml:"releaseClass,omitempty"`
-	ReleaseNote       string                       `yaml:"releaseNote,omitempty"`
-	Lifecycle         *V1AlphaLifecycle            `yaml:"lifecycle,omitempty"`
-	Params            []V1AlphaParam               `yaml:"params,omitempty"`
-	Outputs           []string                     `yaml:"outputs,omitempty"`
-	Observability     *V1AlphaObservability        `yaml:"observability,omitempty"`
-	Docs              *V1AlphaDocs                 `yaml:"docs,omitempty"`
-	Troubleshooting   []V1AlphaTroubleshootingRule `yaml:"troubleshooting,omitempty"`
-	// ReceivesAppSecrets declares that the block is handed the consumer
-	// app's own secrets.
-	ReceivesAppSecrets bool `yaml:"receivesAppSecrets,omitempty"`
-	// Continuity declares the durable state the block keeps.
-	Continuity []V1AlphaContinuityUnit `yaml:"continuity,omitempty"`
-	// Naming is the kit's own spec.naming, which holds AppNameNamingField
-	// and nothing else.
+	Layer              string                       `yaml:"layer,omitempty"`
+	Version            string                       `yaml:"version,omitempty"`
+	Description        string                       `yaml:"description,omitempty"`
+	Optional           bool                         `yaml:"optional,omitempty"`
+	Tags               []string                     `yaml:"tags,omitempty"`
+	Resources          []V1AlphaResource            `yaml:"resources,omitempty"`
+	_                  []string                     `yaml:"dependsOn,omitempty"`
+	Provides           []string                     `yaml:"provides,omitempty"`
+	ProvidedContracts  []V1AlphaProvidedContract    `yaml:"providedContracts,omitempty"`
+	Requires           []V1AlphaRequirement         `yaml:"requires,omitempty"`
+	UpgradeStrategy    string                       `yaml:"upgradeStrategy,omitempty"`
+	ReleaseClass       string                       `yaml:"releaseClass,omitempty"`
+	ReleaseNote        string                       `yaml:"releaseNote,omitempty"`
+	Lifecycle          *V1AlphaLifecycle            `yaml:"lifecycle,omitempty"`
+	Params             []V1AlphaParam               `yaml:"params,omitempty"`
+	Outputs            []string                     `yaml:"outputs,omitempty"`
+	Observability      *V1AlphaObservability        `yaml:"observability,omitempty"`
+	Docs               *V1AlphaDocs                 `yaml:"docs,omitempty"`
+	Troubleshooting    []V1AlphaTroubleshootingRule `yaml:"troubleshooting,omitempty"`
+	ReceivesAppSecrets bool                         `yaml:"receivesAppSecrets,omitempty"`
+	Continuity         []V1AlphaContinuityUnit      `yaml:"continuity,omitempty"`
+	// Naming holds AppNameNamingField and nothing else.
 	Naming *V1AlphaNaming `yaml:"naming,omitempty"`
 }
 
@@ -86,13 +73,11 @@ type V1AlphaResource struct {
 	Produces    []string `yaml:"produces,omitempty"`
 }
 
-// V1AlphaRequirement is one item of a v1alpha spec.requires. Kind is also
-// read under the key format.
+// V1AlphaRequirement is one item of a v1alpha spec.requires, whose Kind is also read under the key format.
 type V1AlphaRequirement struct {
 	Capability string   `yaml:"capability,omitempty"`
 	Reads      []string `yaml:"reads,omitempty"`
-	// Extension is the retired fan-in entry, read so it can be refused by
-	// name.
+	// Extension is the retired fan-in entry, read so it can be refused by name.
 	Extension          string                    `yaml:"extension,omitempty"`
 	Hint               string                    `yaml:"hint,omitempty"`
 	Kind               string                    `yaml:"kind,omitempty" fold:"format"`
@@ -104,8 +89,7 @@ type V1AlphaRequirement struct {
 	Scope              string                    `yaml:"scope,omitempty"`
 }
 
-// V1AlphaTokenSchemaField is one credential field a stored-token
-// capability needs. Kind is also read under the key format.
+// V1AlphaTokenSchemaField is one credential field a stored-token capability needs, whose Kind is also read under the key format.
 type V1AlphaTokenSchemaField struct {
 	Name        string `yaml:"name,omitempty"`
 	Kind        string `yaml:"kind,omitempty" fold:"format"`
@@ -113,8 +97,7 @@ type V1AlphaTokenSchemaField struct {
 	Placeholder string `yaml:"placeholder,omitempty"`
 }
 
-// V1AlphaVerifyProbe is the HTTP probe a requirement declares to check its
-// stored credential.
+// V1AlphaVerifyProbe is the HTTP probe that checks a requirement's stored credential.
 type V1AlphaVerifyProbe struct {
 	Method        string            `yaml:"method,omitempty"`
 	URLTemplate   string            `yaml:"urlTemplate,omitempty"`
@@ -124,16 +107,14 @@ type V1AlphaVerifyProbe struct {
 	ExpectStatus  []int             `yaml:"expectStatus,omitempty"`
 }
 
-// V1AlphaProvidedContract types a capability the block provides. Kind is
-// also read under the key format.
+// V1AlphaProvidedContract types a capability the block provides, whose Kind is also read under the key format.
 type V1AlphaProvidedContract struct {
 	Capability string `yaml:"capability,omitempty"`
 	Kind       string `yaml:"kind,omitempty" fold:"format"`
 	Schema     string `yaml:"schema,omitempty"`
 }
 
-// V1AlphaLifecycle is the endpoint a block serves and how the platform
-// drives it.
+// V1AlphaLifecycle is the endpoint a block serves and how the platform drives it.
 type V1AlphaLifecycle struct {
 	Endpoint               string            `yaml:"endpoint,omitempty"`
 	Operations             []string          `yaml:"operations,omitempty"`
@@ -141,15 +122,9 @@ type V1AlphaLifecycle struct {
 	AbsenceProbe           bool              `yaml:"absenceProbe,omitempty"`
 	ExclusiveNames         bool              `yaml:"exclusiveNames,omitempty"`
 	VerbBudgets            map[string]string `yaml:"verbBudgets,omitempty"`
-	// Contract names the operator-kit lifecycle contract the endpoint
-	// speaks.
-	Contract string `yaml:"contract,omitempty"`
-	// RetainsOnUnsubscribe declares that the block keeps its resource on
-	// unsubscribe by design.
-	RetainsOnUnsubscribe bool `yaml:"retainsOnUnsubscribe,omitempty"`
-	// Hooks is LifecycleHooksField: the hook points the block's kit handler
-	// registers.
-	Hooks []string `yaml:"hooks,omitempty"`
+	Contract               string            `yaml:"contract,omitempty"`
+	RetainsOnUnsubscribe   bool              `yaml:"retainsOnUnsubscribe,omitempty"`
+	Hooks                  []string          `yaml:"hooks,omitempty"`
 }
 
 // V1AlphaParam is one value a subscriber or the platform supplies.
@@ -162,16 +137,14 @@ type V1AlphaParam struct {
 	Secret      bool   `yaml:"secret,omitempty"`
 }
 
-// V1AlphaObservability is what a block provisions and where its telemetry
-// and cost live.
+// V1AlphaObservability is what a block provisions and where its telemetry and cost live.
 type V1AlphaObservability struct {
 	Resources []V1AlphaObservabilityResource `yaml:"resources,omitempty"`
 	Metrics   []V1AlphaMetricGroup           `yaml:"metrics,omitempty"`
 	Cost      *V1AlphaCost                   `yaml:"cost,omitempty"`
 }
 
-// V1AlphaObservabilityResource is one provisioned resource, identified by an
-// output the block publishes.
+// V1AlphaObservabilityResource is one provisioned resource, identified by an output the block publishes.
 type V1AlphaObservabilityResource struct {
 	ID     string         `yaml:"id,omitempty"`
 	Type   string         `yaml:"type,omitempty"`
@@ -223,8 +196,7 @@ type V1AlphaDocsSource struct {
 	Path string `yaml:"path,omitempty"`
 }
 
-// V1AlphaDocsPage is one documentation page, with the anchor each param it
-// explains is found at.
+// V1AlphaDocsPage is one documentation page.
 type V1AlphaDocsPage struct {
 	Title   string            `yaml:"title,omitempty"`
 	Path    string            `yaml:"path,omitempty"`
@@ -238,8 +210,7 @@ type V1AlphaDocsLink struct {
 	URL   string `yaml:"url,omitempty"`
 }
 
-// V1AlphaTroubleshootingRule is one failure a block knows how to explain:
-// the text that matches it and the fixes for it.
+// V1AlphaTroubleshootingRule is one failure a block knows how to explain.
 type V1AlphaTroubleshootingRule struct {
 	Signature string   `yaml:"signature,omitempty"`
 	Title     string   `yaml:"title,omitempty"`
@@ -248,9 +219,7 @@ type V1AlphaTroubleshootingRule struct {
 	Doc       string   `yaml:"doc,omitempty"`
 }
 
-// V1AlphaContinuityUnit is one durable thing a block keeps, and what
-// happens to it when the block is replaced. Kind is also read under the
-// key store.
+// V1AlphaContinuityUnit is one durable thing a block keeps, whose Kind is also read under the key store.
 type V1AlphaContinuityUnit struct {
 	Name           string `yaml:"name,omitempty"`
 	Kind           string `yaml:"kind,omitempty" fold:"store"`
@@ -264,9 +233,7 @@ type V1AlphaNaming struct {
 	AppName *AppNameNaming `yaml:"appName,omitempty"`
 }
 
-// v1alphaDocument is a v1alpha manifest's top level as the decoder reads
-// it. Type is the type: block spelling of Kind, which readV1Alpha folds
-// into Kind.
+// v1alphaDocument's Type is the type: block spelling of Kind, which readV1Alpha folds into Kind.
 type v1alphaDocument struct {
 	APIVersion string          `yaml:"apiVersion,omitempty"`
 	Type       string          `yaml:"type,omitempty"`
@@ -275,17 +242,12 @@ type v1alphaDocument struct {
 	Spec       V1AlphaSpec     `yaml:"spec,omitempty"`
 }
 
-// v1alphaRetiredKeys maps the path of each key a v1alpha manifest may carry
-// and the decoder drops to the message of the warning it gives.
 var v1alphaRetiredKeys = map[string]string{
 	"spec.dependsOn": "spec.dependsOn is retired and was ignored; " +
 		"declare the dependency with spec.requires as a capability the target provides",
 }
 
-// readV1Alpha reads root strictly into a V1AlphaManifest and folds a
-// top-level type: block into Kind. A type other than block, or a kind beside
-// it other than Block, is refused. It also returns the manifest's warnings,
-// as v1alphaWarnings gives them.
+// readV1Alpha folds a top-level type: block into Kind and refuses a type other than block or a kind beside it other than Block.
 func readV1Alpha(root *yamlNode) (*V1AlphaManifest, []ManifestWarning, error) {
 	var doc v1alphaDocument
 	var dropped []string
@@ -319,9 +281,7 @@ func readV1Alpha(root *yamlNode) (*V1AlphaManifest, []ManifestWarning, error) {
 	return a, v1alphaWarnings(dropped, a.Spec.Requires), nil
 }
 
-// v1alphaWarnings returns one warning per retired key among the dropped
-// paths, then one per requirement whose optional is true, in requirement
-// order and keyed by its capability as written, untrimmed.
+// v1alphaWarnings keys each requirement by its capability as written, untrimmed.
 func v1alphaWarnings(dropped []string, requires []V1AlphaRequirement) []ManifestWarning {
 	var warnings []ManifestWarning
 	for _, path := range dropped {
@@ -344,7 +304,6 @@ func v1alphaWarnings(dropped []string, requires []V1AlphaRequirement) []Manifest
 	return warnings
 }
 
-// trimmedNames returns a copy of names with each name trimmed.
 func trimmedNames(names []string) []string {
 	if names == nil {
 		return nil
@@ -356,8 +315,6 @@ func trimmedNames(names []string) []string {
 	return out
 }
 
-// trimmedRequires returns a copy of requires with each capability and read
-// name trimmed.
 func trimmedRequires(requires []V1AlphaRequirement) []V1AlphaRequirement {
 	if requires == nil {
 		return nil

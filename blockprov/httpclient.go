@@ -10,10 +10,7 @@ import (
 	"strings"
 )
 
-// mintOIDCToken calls GitHub's ACTIONS_ID_TOKEN_REQUEST_URL for a token
-// scoped to audience, the same call the publishing workflow's own runtime
-// would make. tokenURL may already carry query parameters, so audience is
-// added to whatever is there rather than replacing it.
+// mintOIDCToken adds audience to any query parameters tokenURL already carries rather than replacing them.
 func mintOIDCToken(tokenURL, requestToken, audience string) (string, error) {
 	u, err := url.Parse(tokenURL)
 	if err != nil {
@@ -52,8 +49,6 @@ func mintOIDCToken(tokenURL, requestToken, audience string) (string, error) {
 	return out.Value, nil
 }
 
-// readPathOrURL reads ref as an http(s) URL if it looks like one, otherwise
-// as a local file path — the shape --jwks accepts.
 func readPathOrURL(ref string) ([]byte, error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		resp, err := http.Get(ref)

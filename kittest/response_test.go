@@ -5,31 +5,14 @@ import (
 	"testing"
 )
 
-// The response half of the lifecycle webhook contract (MIT-1136).
-//
-// The request direction has a schema, goldens and a per-operator conformance
-// test. The response an operator emits had none of the three, so an operator
-// could answer with a shape the engine mis-decodes and nothing anywhere would
-// notice. The engine's decoder discards its unmarshal error, so a response
-// whose outputs values are numbers rather than strings loses the whole payload
-// in silence.
-//
-// CheckResponse is the operator-side judge of that contract. Every operator's
-// TestContract_EmitsConformingResponse trusts it, so it is checked here first,
-// against the same committed goldens the engine-side schema is checked
-// against. A checker that accepts everything would make sixteen operator tests
-// pass while proving nothing, which is the vacuous pass this package exists to
-// prevent.
+// The engine's decoder discards its unmarshal error, so a response with numeric outputs loses the whole payload in silence, and CheckResponse must not accept everything.
 
-// invalidGoldenField maps each invalid- response golden to the top-level
-// property whose type it breaks. The table is explicit rather than derived
-// from the file name so that adding an invalid golden forces a decision about
-// what its problem text must name, instead of quietly widening the set.
+// invalidGoldenField is explicit rather than derived from the file name so that a new invalid golden forces a decision about what its problem text must name.
 var invalidGoldenField = map[string]string{
-	"invalid-outputs-not-strings":       "outputs",
-	"invalid-outputs-not-object":        "outputs",
-	"invalid-pending-not-bool":          "pending",
-	"invalid-absent-not-bool":           "absent",
+	"invalid-outputs-not-strings":        "outputs",
+	"invalid-outputs-not-object":         "outputs",
+	"invalid-pending-not-bool":           "pending",
+	"invalid-absent-not-bool":            "absent",
 	"invalid-secret-outputs-not-strings": "secretOutputs",
 }
 

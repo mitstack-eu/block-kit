@@ -7,8 +7,7 @@ const (
 	maxStackNameLen = 128
 )
 
-// StackName is the CloudFormation stack name for id: the "mitstack-" prefix
-// makes it start with a letter, and it is cut to CloudFormation's 128 bytes.
+// StackName is the CloudFormation stack name for id, prefixed to start with a letter and cut to 128 bytes.
 func StackName(id string) string {
 	sanitised := SanitiseCFNName(id)
 	if sanitised == "" {
