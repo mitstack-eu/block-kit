@@ -9,13 +9,7 @@ import (
 
 func allow() safe.Allowlist { return safe.NewAllowlist("api.github.com", "ghe.corp.example") }
 
-// --- The host is the operator's choice (MIT-1325) ---------------------------
-
 func TestTrustedBase_ReturnsTheAllowlistEntryNotTheInput(t *testing.T) {
-	// The whole point. The first fix validated the host and then returned
-	// "https://" + u.Host — still an SSRF, and still the go/request-forgery
-	// carrier. Validating a value and then using it is not the same as not
-	// using it.
 	b, err := safe.TrustedBase("https://API.GitHub.com/", allow())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -36,7 +30,6 @@ func TestTrustedBase_RefusesAHostNotOnTheAllowlist(t *testing.T) {
 }
 
 func TestTrustedBase_RefusesALookalikeHost(t *testing.T) {
-	// The classic bypasses: a suffix match, a userinfo prefix, and a subdomain.
 	for _, endpoint := range []string{
 		"https://api.github.com.evil.example",
 		"https://evil.example/api.github.com",
@@ -64,8 +57,6 @@ func TestTrustedBase_RefusesGarbage(t *testing.T) {
 }
 
 func TestTrustedBase_AnEnterpriseHostOptsInViaTheAllowlistOnly(t *testing.T) {
-	// A GitHub Enterprise deployment opts in through operator CONFIG. A payload
-	// can never assert it.
 	if _, err := safe.TrustedBase("https://ghe.corp.example", allow()); err != nil {
 		t.Errorf("an allowlisted enterprise host must be accepted: %v", err)
 	}
@@ -75,8 +66,6 @@ func TestTrustedBase_AnEnterpriseHostOptsInViaTheAllowlistOnly(t *testing.T) {
 }
 
 func TestBase_ZeroValueBuildsNoURL(t *testing.T) {
-	// A refused resolution must not silently produce a relative URL that some
-	// client helpfully resolves against something else.
 	var b safe.Base
 	if !b.IsZero() {
 		t.Error("the zero Base must report IsZero")
@@ -102,8 +91,6 @@ func TestNewAllowlist_IgnoresEmptyAndDuplicateEntries(t *testing.T) {
 	}
 }
 
-// --- Log sanitisation order is load-bearing (MIT-1326) ----------------------
-
 func TestLogValue_RemovesCRAndLF(t *testing.T) {
 	got := safe.LogValue("first line\ninjected: ERROR fake\r\nmore")
 	if strings.ContainsAny(got, "\r\n") {
@@ -120,15 +107,8 @@ func TestLogValue_RemovesResidualControlCharacters(t *testing.T) {
 	}
 }
 
+// A newline becomes a space while a control character is deleted, which pins CR/LF removal as its own step.
 func TestLogValue_StripsCRLFBeforeControlCharacters(t *testing.T) {
-	// Asserting the ORDER, not just the output. A single strings.Map pass
-	// removes exactly the same characters and produces an identical string — but
-	// is not recognised as a sanitisation barrier, so go/log-injection still saw
-	// request data reaching the logger. This test pins the property that the
-	// CR/LF removal is its own explicit step: a newline becomes a SPACE (the
-	// ReplaceAll substitution), while a control character is DELETED. If someone
-	// collapses the two passes into one, the substitution disappears and this
-	// fails.
 	got := safe.LogValue("a\nb\x00c")
 	if got != "a b"+"c" {
 		t.Errorf("LogValue(%q) = %q, want %q — newline replaced by a space, control char deleted",
@@ -143,8 +123,6 @@ func TestLogValue_LeavesOrdinaryTextAlone(t *testing.T) {
 	}
 }
 
-// --- Scrub is a different operation from LogValue ---------------------------
-
 func TestScrub_RedactsEverySecretOccurrence(t *testing.T) {
 	got := safe.Scrub("token=ghp_secretvalue and again ghp_secretvalue", "ghp_secretvalue")
 	if strings.Contains(got, "ghp_secretvalue") {
@@ -156,8 +134,6 @@ func TestScrub_RedactsEverySecretOccurrence(t *testing.T) {
 }
 
 func TestScrub_DoesNotSanitiseNewlines(t *testing.T) {
-	// Half of MIT-1326: these two are routinely confused. Pinning the
-	// distinction is what stops one being used in place of the other.
 	got := safe.Scrub("secret\nvalue", "secret")
 	if !strings.Contains(got, "\n") {
 		t.Error("Scrub must NOT remove newlines — that is LogValue's job, and conflating them leaves one hole open")
@@ -165,7 +141,6 @@ func TestScrub_DoesNotSanitiseNewlines(t *testing.T) {
 }
 
 func TestLogValue_DoesNotScrubSecrets(t *testing.T) {
-	// The other half of the same distinction.
 	got := safe.LogValue("token=ghp_secretvalue")
 	if !strings.Contains(got, "ghp_secretvalue") {
 		t.Error("LogValue must NOT remove secrets — that is Scrub's job")
@@ -173,8 +148,6 @@ func TestLogValue_DoesNotScrubSecrets(t *testing.T) {
 }
 
 func TestScrub_IgnoresSecretsTooShortToRedactSafely(t *testing.T) {
-	// Redacting a 2-character "secret" would mangle ordinary prose and hide the
-	// very diagnostics the log exists for.
 	if got := safe.Scrub("the instance is up", "up"); got != "the instance is up" {
 		t.Errorf("Scrub = %q, want ordinary text untouched", got)
 	}
