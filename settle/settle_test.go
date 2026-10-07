@@ -16,12 +16,8 @@ func ready(context.Context) (bool, error)  { return true, nil }
 func notYet(context.Context) (bool, error) { return false, nil }
 func broken(context.Context) (bool, error) { return false, errors.New("connection refused") }
 
-// --- The deadline is not optional (MIT-1291) --------------------------------
-
 func TestNew_RefusesAZeroDeadline(t *testing.T) {
-	// The bug MIT-1291 represents is not "someone chose a bad timeout" — it is
-	// "nobody remembered there should be one". A zero deadline read as "no
-	// limit" is exactly the fail-open reading that hung a subscription forever.
+	// A zero deadline read as "no limit" is the fail-open reading that hung a subscription forever.
 	if _, err := settle.New(time.Time{}); err == nil {
 		t.Fatal("a zero deadline must be refused, never treated as unbounded")
 	}
@@ -50,8 +46,6 @@ func TestGate_ReportsFailedOnceTheDeadlineHasPassed(t *testing.T) {
 	}
 }
 
-// --- Converging is NOT failed (MIT-1293) ------------------------------------
-
 func TestGate_ANotYetProbeIsConvergingNotFailed(t *testing.T) {
 	g := settle.MustNew(time.Hour)
 	g.Add("http", notYet)
@@ -62,7 +56,6 @@ func TestGate_ANotYetProbeIsConvergingNotFailed(t *testing.T) {
 }
 
 func TestGate_AProbeErrorInsideTheDeadlineIsAlsoConverging(t *testing.T) {
-	// A connection refusal thirty seconds into a two-minute boot is normal.
 	g := settle.MustNew(time.Hour)
 	g.Add("tcp", broken)
 
@@ -74,8 +67,6 @@ func TestGate_AProbeErrorInsideTheDeadlineIsAlsoConverging(t *testing.T) {
 		t.Error("the reason should name the probe and the error")
 	}
 }
-
-// --- Serving means SERVING (MIT-1160) ---------------------------------------
 
 func TestGate_ServingOnlyWhenEveryProbePasses(t *testing.T) {
 	g := settle.MustNew(time.Hour)
@@ -96,8 +87,7 @@ func TestGate_OneFailingProbeIsEnoughToWithholdServing(t *testing.T) {
 }
 
 func TestGate_StopsAtTheFirstUnreadyProbeAndNamesIt(t *testing.T) {
-	// A cheap DNS check should guard an expensive TLS handshake, and the reason
-	// must name the step actually blocking rather than the last one tried.
+	// The reason must name the step actually blocking, not the last one tried.
 	var httpCalled bool
 	g := settle.MustNew(time.Hour)
 	g.Add("dns", notYet).Add("http", func(context.Context) (bool, error) {
@@ -115,8 +105,7 @@ func TestGate_StopsAtTheFirstUnreadyProbeAndNamesIt(t *testing.T) {
 }
 
 func TestGate_WithNoProbesIsFailedNotServing(t *testing.T) {
-	// A gate with no probes would report Serving for anything — the vacuous
-	// pass this package exists to prevent.
+	// A gate with no probes would report Serving for anything.
 	g := settle.MustNew(time.Hour)
 
 	if got := g.Check(context.Background()); got.State != settle.Failed {
@@ -125,16 +114,12 @@ func TestGate_WithNoProbesIsFailedNotServing(t *testing.T) {
 }
 
 func TestState_ZeroValueIsConverging(t *testing.T) {
-	// An unset State must be the harmless one. Defaulting to Serving would flip
-	// a subscription active on a forgotten code path; defaulting to Failed would
-	// mark a healthy block dead.
+	// An unset State must be Converging: Serving would flip a subscription active on a forgotten path, and Failed would mark a healthy block dead.
 	var s settle.State
 	if s != settle.Converging {
 		t.Errorf("the zero State = %v, want Converging", s)
 	}
 }
-
-// --- HTTP probe -------------------------------------------------------------
 
 func TestHTTP_ServingOn200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -164,8 +149,6 @@ func TestHTTP_NotReadyOn5xx(t *testing.T) {
 }
 
 func TestHTTP_A404CountsAsServing(t *testing.T) {
-	// The question is whether something is answering, not whether that
-	// particular path exists. An app that 404s a probe path is up.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -178,16 +161,7 @@ func TestHTTP_A404CountsAsServing(t *testing.T) {
 }
 
 func TestHTTP_ToleratesASelfSignedCertificate(t *testing.T) {
-	// T-575: a freshly provisioned edge legitimately serves self-signed TLS,
-	// possibly with no SNI. Treating that as unreachable is the bug that fix
-	// addressed — the trust decision belongs to the consumer's browser, not to a
-	// readiness probe.
-	//
-	// Note the client here is the DEFAULT one: certificate verification is fully
-	// on, and the probe reaches "serving" by CLASSIFYING the resulting cert error
-	// rather than by disabling the check. Disabling it would make the probe
-	// accept a MITM as readiness, which is a real weakening and not merely a
-	// CodeQL finding.
+	// A fresh edge serves self-signed TLS, and the probe must reach "serving" by classifying the cert error, not by disabling verification.
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -200,8 +174,6 @@ func TestHTTP_ToleratesASelfSignedCertificate(t *testing.T) {
 }
 
 func TestIsUntrustedCertificate_DistinguishesCertFailuresFromConnectionFailures(t *testing.T) {
-	// The distinction is the whole mechanism: a cert error proves a TLS peer
-	// completed a handshake, a connection error proves nothing is there.
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
 
@@ -223,8 +195,7 @@ func TestIsUntrustedCertificate_DistinguishesCertFailuresFromConnectionFailures(
 }
 
 func TestHTTP_AConnectionRefusalIsStillNotServing(t *testing.T) {
-	// Guarding the classification from over-reach: the cert carve-out must not
-	// turn "nothing is listening" into "serving".
+	// The cert carve-out must not turn "nothing is listening" into "serving".
 	ok, err := settle.HTTP("https://127.0.0.1:1")(context.Background())
 	if ok {
 		t.Error("a refused connection must never count as serving")
@@ -239,8 +210,6 @@ func TestHTTP_RejectsAnInvalidURL(t *testing.T) {
 		t.Error("an unparseable url must be an error, not a silent 'not yet'")
 	}
 }
-
-// --- DNS --------------------------------------------------------------------
 
 func TestDNS_AnUnresolvableNameIsNeverReady(t *testing.T) {
 	ok, err := settle.DNS("this-host-does-not-exist.invalid")(context.Background())
