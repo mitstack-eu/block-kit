@@ -492,12 +492,15 @@ the render no longer has, as after an upgrade renames or moves a file, the
 same commit removes that path, in whatever directory it stands. Only the
 resource's own ensure writes that record, so it names only paths the resource
 wrote. The ensure removes anything only when the record's app is the render's
-own app, so a record of another app, or no record, removes nothing.
+own app, so a record of another app, or no record, removes nothing. When the
+commit would change nothing, the ensure reports the revision its record names,
+as long as that revision still holds every rendered file, and head otherwise.
 
 A rendered file that carries any of the request's secrets, verbatim or
 base64-encoded on its own, is refused as `secret-in-manifest` before anything
 is written. That check is a backstop. A secret encoded inside a larger value,
-such as the token in a `.dockerconfigjson` auth field, passes it. A block
+such as the token in a `.dockerconfigjson` auth field, passes it. So does a
+secret in raw or URL-safe base64, or in any other encoding. A block
 therefore never renders secret material, and a secret reaches a slice through
 External Secrets instead (platform ADR 0072).
 
@@ -513,6 +516,28 @@ happens, and it has not been observed yet. A revision whose sync reports phase
 `Succeeded` and health `Healthy` is deployed, while the sync status and the
 images are never read.
 
+Observe answers unknown in three more cases. The first is when head holds the
+rendered files only in part, or with other content. The second is when Argo CD
+has reported no deploy of the app yet. The third is when the newest
+notification names a revision that does not yet carry the change at head. A
+resource that was never ensured is therefore absent only in an empty
+repository. In a repository that holds other apps' commits, it stays unknown
+until Argo CD reports on the app. A sync in phase `Error` or `Failed`, or with
+health `Degraded`, makes observe return an error carrying the phase, the
+health and the message.
+
+`gitops.Check` and `gitops.Wait` take the other approach and judge only the
+notification for the exact revision you hand them. Use them when you need the
+outcome of one particular commit, since a notification for any other revision
+leaves them pending. `Wait` polls until the deploy succeeds or fails, and a
+failed deploy is an outcome rather than an error.
+
+Its delete removes the paths the record names, without rendering, and falls
+back to the rendered paths when there is no record. Paths already gone commit
+nothing, so deleting a resource that was never created succeeds.
+`gitops.Revert` restores every path one revision changed to its content at
+that revision's parent.
+
 The platform answers a block only the notifications of the cluster its
 `kubernetes-cluster` requirement binds, within the block's own org. A block
 whose requirement binds no cluster, or several, reads none, so its observe
@@ -527,9 +552,13 @@ like this:
 `gitops.NewGitHubRepository` gives the kit's implementation of
 `gitops.Repository` over GitHub, and it commits to the repository's `main`. It
 takes the API base from the request's `github` instance, resolved through
-`ghapi.BaseFromEnv`, and the token from the request's `github` secret. A
-commit whose parent is no longer the tip lands nothing, so `CommitManifests`
-and `Revert` retry it on a fresh head. In tests, `gitopstest.NewRepository`
+`ghapi.BaseFromEnv`, and the token from the request's `github` secret. Apart from
+the empty revision `""`, every revision it reads at or commits on must be a
+full lowercase hex SHA of 40 or 64 digits, and anything else is refused before
+a request goes out. File content
+must be UTF-8, because the Git Data API carries it as a JSON string. A commit
+whose parent is no longer the tip lands nothing, so `CommitManifests` and
+`Revert` retry it on a fresh head a bounded number of times. In tests, `gitopstest.NewRepository`
 and `gitopstest.NewNotifications` give in-memory fakes of both.
 
 ## Testing

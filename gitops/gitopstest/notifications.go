@@ -7,12 +7,10 @@ import (
 	"github.com/mitstack-eu/operator-kit/gitops"
 )
 
-// appRevision keys what Notifications answers and counts.
 type appRevision struct{ app, revision string }
 
-// Notifications is an in-memory gitops.Notifications that answers what a
-// test seeded and counts its reads. It is safe for concurrent use. Build one
-// with NewNotifications.
+// Notifications is an in-memory gitops.Notifications, safe for concurrent
+// use, that answers what a test seeded and counts its reads.
 type Notifications struct {
 	mu        sync.Mutex
 	sequences map[appRevision][]gitops.Notification
@@ -22,8 +20,7 @@ type Notifications struct {
 	err       error
 }
 
-// NewNotifications returns a Notifications that answers none for every app
-// and revision.
+// NewNotifications returns a Notifications that answers none.
 func NewNotifications() *Notifications {
 	return &Notifications{
 		sequences: map[appRevision][]gitops.Notification{},
@@ -50,10 +47,8 @@ func (s *Notifications) Sequence(app, revision string, notes ...gitops.Notificat
 	s.sequences[appRevision{app, revision}] = append([]gitops.Notification(nil), notes...)
 }
 
-// SucceedCommits makes app answer phase Succeeded and health Healthy for
-// every revision repo holds, now or later, and for revision "" at repo's
-// current head. A notification seeded with Set or Sequence takes
-// precedence.
+// SucceedCommits makes app answer a healthy success for every revision repo
+// holds, and revision "" at its head, unless Set or Sequence seeded one.
 func (s *Notifications) SucceedCommits(app string, repo *Repository) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -74,8 +69,7 @@ func (s *Notifications) Reads(app, revision string) int {
 	return s.reads[appRevision{app, revision}]
 }
 
-// Latest answers app's notification at revision, or app's newest when
-// revision is "", from what the test seeded.
+// Latest answers app's notification at revision from what the test seeded.
 func (s *Notifications) Latest(ctx context.Context, app, revision string) (gitops.Notification, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,8 +94,7 @@ func (s *Notifications) Latest(ctx context.Context, app, revision string) (gitop
 	return gitops.Notification{}, false, nil
 }
 
-// newestFor answers the notification last Set for app, and otherwise the
-// SucceedCommits answer for the repository's head. The caller holds mu.
+// newestFor answers revision "" for app. The caller holds mu.
 func (s *Notifications) newestFor(ctx context.Context, app string) (gitops.Notification, bool, error) {
 	if n, ok := s.newest[app]; ok {
 		return n, true, nil
@@ -117,8 +110,6 @@ func (s *Notifications) newestFor(ctx context.Context, app string) (gitops.Notif
 	return succeeded(app, head), true, nil
 }
 
-// succeeded is the notification Argo CD sends when app synced revision and
-// its resources are healthy.
 func succeeded(app, revision string) gitops.Notification {
 	return gitops.Notification{
 		App: app, Project: app, Sync: "Synced", Revision: revision,

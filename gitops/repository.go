@@ -11,62 +11,42 @@ import (
 	"github.com/mitstack-eu/operator-kit/contract"
 )
 
-// ErrStaleBase is the error a Repository's Commit wraps when the parent it
-// was handed is no longer the tip, because another writer landed a commit
-// first. CommitManifests and Revert re-read head and retry on it.
+// ErrStaleBase is wrapped by a Repository's Commit when parent is no longer
+// the tip.
 var ErrStaleBase = errors.New("gitops: the parent is no longer the tip")
 
-// ErrSecretInManifest is the error CommitManifests wraps when a file it was
-// handed carries a secret value. The wrapping error names the file's path
-// and never the value.
+// ErrSecretInManifest is wrapped by CommitManifests, naming the path but
+// never the value, when a file carries a secret.
 var ErrSecretInManifest = errors.New("gitops: a manifest carries a secret value")
 
-// maxCommitTries bounds how often a commit re-reads head and retries after
-// another writer moved the tip.
 const maxCommitTries = 5
 
-// Repository is the GitOps repository a block commits its manifests to, read
-// and written by revision. A revision is a commit id, and "" names the empty
-// repository, which holds no file.
+// Repository is a GitOps repository read and written by revision, a commit
+// id, where "" names the empty repository.
 type Repository interface {
-	// Head returns the revision at the tip, or "" when the repository holds
-	// no commit yet.
+	// Head returns the tip, or "" when there is no commit yet.
 	Head(ctx context.Context) (string, error)
 
-	// ReadFile returns the content of path at revision and whether the path
-	// exists there. A revision the repository never held is an error.
+	// ReadFile returns path's content at revision and whether it exists.
 	ReadFile(ctx context.Context, revision, path string) ([]byte, bool, error)
 
-	// Commit lands changes on top of parent and returns the new revision. A
-	// nil content deletes its path, and every other path carries over from
-	// parent. When parent is no longer the tip it lands nothing and returns
-	// an error wrapping ErrStaleBase.
+	// Commit lands changes on parent, a nil content deleting its path. When
+	// parent is not the tip it lands nothing and wraps ErrStaleBase.
 	Commit(ctx context.Context, parent string, changes map[string][]byte, message string) (string, error)
 
-	// Changed returns the parent of revision and the sorted paths revision
-	// changed relative to it. The parent of the first commit is "". A
-	// revision the repository never held is an error.
+	// Changed returns revision's parent, "" for the first commit, and the
+	// sorted paths it changed.
 	Changed(ctx context.Context, revision string) (string, []string, error)
 }
 
-// CommitManifests commits files on top of head and returns the revision that
-// holds them and whether it committed anything. A nil content removes its
-// path. When every file already stands at head with that content it commits
-// nothing and returns head.
+// CommitManifests commits the files that differ from head, a nil content
+// removing its path, and returns the resulting revision and whether it
+// committed. It retries a moved tip a bounded number of times.
 //
-// Before anything is read or written it refuses a file that carries any
-// non-empty value of secrets, verbatim or as its standard base64 encoding,
-// with an error wrapping ErrSecretInManifest that names the path. A commit
-// that finds the tip moved is re-read and retried a bounded number of times,
-// after which the error wraps ErrStaleBase.
-//
-// The secret guard is a backstop, not a scanner. It matches each value
-// verbatim, and as the standard base64 encoding of that value on its own,
-// with padding, and nothing else. A secret encoded inside a larger value is
-// missed, such as the token in a .dockerconfigjson auth field that encodes
-// user:token together, and so is a secret in raw, URL-safe or any other
-// encoding. A block must never render secret material at all: a secret
-// reaches a slice through External Secrets (ADR 0072).
+// It first refuses a file carrying any non-empty secret, wrapping
+// ErrSecretInManifest. The guard matches only a value verbatim or as that
+// value's own standard base64, so it misses a secret inside a larger encoded
+// value or in another encoding: a block must never render secret material.
 func CommitManifests(ctx context.Context, repo Repository, files map[string][]byte, message string, secrets []string) (string, bool, error) {
 	if err := refuseSecrets(files, secrets); err != nil {
 		return "", false, err
@@ -74,11 +54,8 @@ func CommitManifests(ctx context.Context, repo Repository, files map[string][]by
 	return commitFiles(ctx, repo, files, message)
 }
 
-// Revert commits, on top of the current head, each path revision changed
-// restored to its content at revision's parent, deleting a path absent
-// there. Every other path is left as head holds it. It returns the revision
-// that holds the result, which is head unchanged when head already matches
-// the parent on every path revision changed.
+// Revert restores, on head, each path revision changed to its content at
+// revision's parent, and returns the revision holding the result.
 func Revert(ctx context.Context, repo Repository, revision, message string) (string, error) {
 	parent, paths, err := repo.Changed(ctx, revision)
 	if err != nil {
@@ -99,11 +76,8 @@ func Revert(ctx context.Context, repo Repository, revision, message string) (str
 	return rev, err
 }
 
-// SecretValues returns every value d carries in SecretInputs, AppSecrets and
-// Secrets, in no particular order, for CommitManifests to refuse. It never
-// returns a param value. The refusal only catches a value written verbatim
-// or base64-encoded on its own, as CommitManifests says, so a block must
-// still never render secret material.
+// SecretValues returns every value in d's SecretInputs, AppSecrets and
+// Secrets, for CommitManifests to refuse.
 func SecretValues(d contract.Desired) []string {
 	var values []string
 	for _, v := range d.SecretInputs {
@@ -120,9 +94,6 @@ func SecretValues(d contract.Desired) []string {
 	return values
 }
 
-// refuseSecrets returns an error wrapping ErrSecretInManifest for the first
-// path, in sorted order, whose content carries a non-empty secret verbatim or
-// standard base64-encoded.
 func refuseSecrets(files map[string][]byte, secrets []string) error {
 	var needles [][]byte
 	for _, s := range secrets {
@@ -141,8 +112,6 @@ func refuseSecrets(files map[string][]byte, secrets []string) error {
 	return nil
 }
 
-// commitFiles commits the files that differ from head, retrying on a moved
-// tip, and returns head unchanged when none differ.
 func commitFiles(ctx context.Context, repo Repository, files map[string][]byte, message string) (string, bool, error) {
 	var err error
 	for range maxCommitTries {
@@ -170,9 +139,6 @@ func commitFiles(ctx context.Context, repo Repository, files map[string][]byte, 
 	return "", false, fmt.Errorf("gitops: the tip moved on each of %d tries: %w", maxCommitTries, err)
 }
 
-// changesAt returns the subset of files that revision does not already hold
-// as given: a content that differs or is missing, or a nil content whose
-// path still exists.
 func changesAt(ctx context.Context, repo Repository, revision string, files map[string][]byte) (map[string][]byte, error) {
 	changes := map[string][]byte{}
 	for path, want := range files {
@@ -190,8 +156,6 @@ func changesAt(ctx context.Context, repo Repository, revision string, files map[
 	return changes, nil
 }
 
-// readAt reads path at revision, answering the empty repository's revision
-// "" without asking the Repository.
 func readAt(ctx context.Context, repo Repository, revision, path string) ([]byte, bool, error) {
 	if revision == "" {
 		return nil, false, nil
@@ -203,7 +167,6 @@ func readAt(ctx context.Context, repo Repository, revision, path string) ([]byte
 	return content, ok, nil
 }
 
-// sortedPaths returns the keys of m in sorted order.
 func sortedPaths[V any](m map[string]V) []string {
 	paths := make([]string, 0, len(m))
 	for path := range m {

@@ -11,9 +11,8 @@ import (
 	"github.com/mitstack-eu/operator-kit/gitops"
 )
 
-// Commit is one commit a Repository landed: its revision, its parent ("" for
-// the first), its message and the changes it was handed, where a nil content
-// deleted its path.
+// Commit is one commit a Repository landed, with the changes it was handed,
+// where a nil content deleted its path.
 type Commit struct {
 	Revision string
 	Parent   string
@@ -21,9 +20,8 @@ type Commit struct {
 	Changes  map[string][]byte
 }
 
-// Repository is an in-memory gitops.Repository that keeps every commit's
-// full tree, so any revision it landed can be read. It is safe for
-// concurrent use. Build one with NewRepository.
+// Repository is an in-memory gitops.Repository, safe for concurrent use,
+// that keeps every commit's tree so any revision it landed can be read.
 type Repository struct {
 	mu      sync.Mutex
 	commits []Commit
@@ -46,8 +44,7 @@ func (r *Repository) Head(context.Context) (string, error) {
 }
 
 // ReadFile returns a copy of path's content at revision and whether it
-// exists there. Revision "" is the empty repository, and a revision the
-// repository never held is an error.
+// exists there. An unknown revision is an error.
 func (r *Repository) ReadFile(_ context.Context, revision, path string) ([]byte, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -65,11 +62,8 @@ func (r *Repository) ReadFile(_ context.Context, revision, path string) ([]byte,
 	return clone(content), true, nil
 }
 
-// Commit lands a copy of changes on top of parent and returns the new
-// revision. A nil content deletes its path. When parent is not the tip it
-// lands nothing and returns an error wrapping gitops.ErrStaleBase. While a
-// MoveTip count remains, another writer's commit lands first, so the commit
-// finds the tip moved.
+// Commit lands a copy of changes on parent as gitops.Repository requires,
+// first landing another writer's commit while a MoveTip count remains.
 func (r *Repository) Commit(_ context.Context, parent string, changes map[string][]byte, message string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -84,7 +78,6 @@ func (r *Repository) Commit(_ context.Context, parent string, changes map[string
 }
 
 // Changed returns revision's parent and the sorted paths its commit changed.
-// A revision the repository never held is an error.
 func (r *Repository) Changed(_ context.Context, revision string) (string, []string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -102,8 +95,7 @@ func (r *Repository) Changed(_ context.Context, revision string) (string, []stri
 	return "", nil, fmt.Errorf("gitopstest: no revision %s", revision)
 }
 
-// Commits returns a copy of every commit landed, in order, another writer's
-// included.
+// Commits returns a copy of every commit landed, another writer's included.
 func (r *Repository) Commits() []Commit {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -116,15 +108,13 @@ func (r *Repository) Commits() []Commit {
 }
 
 // MoveTip makes each of the next n calls to Commit find another writer's
-// commit, carrying changes, landed on the tip just before it, as a
-// concurrent writer would.
+// commit, carrying changes, landed on the tip just before it.
 func (r *Repository) MoveTip(n int, changes map[string][]byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.foreignLeft, r.foreignChanges = n, cloneChanges(changes)
 }
 
-// holds reports whether revision is one the repository landed.
 func (r *Repository) holds(revision string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -140,8 +130,7 @@ func (r *Repository) head() string {
 	return r.commits[len(r.commits)-1].Revision
 }
 
-// land records a commit of changes on parent and returns its revision, a
-// 40-hex-digit id like a git commit's. The caller holds mu.
+// land records a commit with a 40-hex-digit revision. The caller holds mu.
 func (r *Repository) land(parent string, changes map[string][]byte, message string) string {
 	tree := make(map[string][]byte, len(r.trees[parent])+len(changes))
 	for path, content := range r.trees[parent] {
@@ -161,7 +150,6 @@ func (r *Repository) land(parent string, changes map[string][]byte, message stri
 	return revision
 }
 
-// clone copies content, keeping nil as nil.
 func clone(content []byte) []byte {
 	if content == nil {
 		return nil
@@ -169,7 +157,6 @@ func clone(content []byte) []byte {
 	return append([]byte{}, content...)
 }
 
-// cloneChanges copies changes and each content in it.
 func cloneChanges(changes map[string][]byte) map[string][]byte {
 	if changes == nil {
 		return nil

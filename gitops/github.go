@@ -10,17 +10,15 @@ import (
 	"github.com/mitstack-eu/operator-kit/ghapi"
 )
 
-// GitHubRepository is the Repository over GitHub's REST API. It reads and
-// commits the main branch of Repo, an "owner/name" repository, through
-// Client.
+// GitHubRepository is the Repository over the main branch of Repo, an
+// "owner/name" GitHub repository.
 type GitHubRepository struct {
 	Client *ghapi.Client
 	Repo   string
 }
 
-// NewGitHubRepository returns the GitHubRepository for repoFullName, taking
-// the API base from d's github instance through ghapi.BaseFromEnv and the
-// token from d's github secret. No error it returns carries the token.
+// NewGitHubRepository returns the GitHubRepository for repoFullName from d's
+// github instance and secret. No error it returns carries the token.
 func NewGitHubRepository(d contract.Desired, repoFullName string) (*GitHubRepository, error) {
 	repo, err := ghapi.SafeRepo(repoFullName)
 	if err != nil {
@@ -41,17 +39,13 @@ func NewGitHubRepository(d contract.Desired, repoFullName string) (*GitHubReposi
 	return &GitHubRepository{Client: ghapi.NewClient(base.String(), token, nil), Repo: repo}, nil
 }
 
-// Head returns the commit main points at, or "" when the repository has no
-// main yet.
+// Head returns the commit main points at, or "" before main exists.
 func (r *GitHubRepository) Head(ctx context.Context) (string, error) {
 	return r.Client.HeadCommit(ctx, r.Repo)
 }
 
 // ReadFile returns path's content at revision and whether it exists there.
-// GitHub answers an unknown revision and an absent path alike, so an absent
-// path costs one more request to confirm the repository holds revision. A
-// revision of "" reports the path absent with no request, and any other
-// revision must be a full commit SHA, as ghapi.Client.ReadFileAt requires.
+// Revision "" holds nothing, and any other must be a full lowercase hex SHA.
 func (r *GitHubRepository) ReadFile(ctx context.Context, revision, path string) ([]byte, bool, error) {
 	if revision == "" {
 		return nil, false, nil
@@ -66,11 +60,9 @@ func (r *GitHubRepository) ReadFile(ctx context.Context, revision, path string) 
 	return nil, false, nil
 }
 
-// Commit lands changes on parent as one commit on main. A nil content
-// deletes its path and any other, empty included, writes it. Content must be
-// UTF-8, since the Git Data API carries it as a JSON string. A parent of ""
-// creates main, and any other parent must be a full commit SHA. When parent
-// is no longer the tip the error wraps ErrStaleBase.
+// Commit lands changes on parent as one commit on main. Content must be
+// UTF-8, a parent other than "" must be a full lowercase hex SHA, and a
+// parent no longer the tip yields an error wrapping ErrStaleBase.
 func (r *GitHubRepository) Commit(ctx context.Context, parent string, changes map[string][]byte, message string) (string, error) {
 	entries := make(map[string]*string, len(changes))
 	for path, content := range changes {
@@ -92,8 +84,7 @@ func (r *GitHubRepository) Commit(ctx context.Context, parent string, changes ma
 }
 
 // Changed returns revision's first parent and the sorted paths it changed.
-// The revision must be a full commit SHA, as
-// ghapi.Client.CommitParentAndPaths requires.
+// Revision must be a full lowercase hex SHA.
 func (r *GitHubRepository) Changed(ctx context.Context, revision string) (string, []string, error) {
 	return r.Client.CommitParentAndPaths(ctx, r.Repo, revision)
 }

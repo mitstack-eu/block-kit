@@ -49,8 +49,7 @@ func WithEnvelope(ctx context.Context, env Envelope) context.Context {
 }
 
 // EnvelopeFrom returns the envelope WithEnvelope stashed on ctx, and false
-// when ctx carries none. An envelope with no callback is still found, with a
-// nil Callback, so a caller that needs the callback checks it itself.
+// when ctx carries none. A found envelope may still hold a nil Callback.
 func EnvelopeFrom(ctx context.Context) (Envelope, bool) {
 	env, ok := ctx.Value(envelopeKey{}).(*Envelope)
 	if !ok || env == nil {

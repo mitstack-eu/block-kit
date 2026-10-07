@@ -11,49 +11,38 @@ import (
 	"github.com/mitstack-eu/operator-kit/handler"
 )
 
-// The refusal classes EnsureWithReport returns as a *handler.Refused.
 const (
-	// refusedSecretInManifest refuses a rendered file carrying a secret.
-	refusedSecretInManifest = "secret-in-manifest"
-	// refusedInvalidManifestPath refuses a rendered path the identity's
-	// comma-joined paths list cannot carry.
+	refusedSecretInManifest    = "secret-in-manifest"
 	refusedInvalidManifestPath = "invalid-manifest-path"
 )
 
-// The keys of the identity EnsureWithReport reports.
 const (
 	identityApp      = "app"
 	identityRevision = "revision"
 	identityPaths    = "paths"
 )
 
-// Rendered is what a block renders for one declared resource: the Argo CD
-// application its files deploy through, the files keyed by their path in the
-// repository, and the outputs the resource publishes once deployed. Every
-// file has content, and no output may carry a secret.
+// Rendered is one resource's Argo CD app, its files by repository path, each
+// with content, and the outputs it publishes, none of them a secret.
 type Rendered struct {
 	App     string
 	Files   map[string][]byte
 	Outputs map[string]string
 }
 
-// Resource serves one declared resource by committing its rendered
-// manifests to a GitOps repository and judging the deploy from Argo CD's
-// notification. It implements handler.DeclaredResource,
-// handler.ReportingResource, handler.RequestObserver and
-// handler.RequestDeleter, so the Handler drives it per call with that call's
-// own Desired. All three fields are required.
+// Resource serves one declared resource through GitOps, as a
+// handler.DeclaredResource the Handler drives per call. All three fields are
+// required.
 type Resource struct {
 	// Repository returns the GitOps repository the resource for d lives in.
 	Repository func(ctx context.Context, d contract.Desired) (Repository, error)
 
-	// Notifications returns the source of Argo CD's notifications for d,
-	// usually NotificationsFromContext.
+	// Notifications returns d's notification source, usually
+	// NotificationsFromContext.
 	Notifications func(ctx context.Context, d contract.Desired) (Notifications, error)
 
-	// Render renders the resource's files from d. A bare Observe or Delete
-	// hands it a Desired carrying the Identity alone, so whatever it needs
-	// beyond that must come from the inputs and identity a request records.
+	// Render renders d's files. A bare Observe or Delete hands it a Desired
+	// carrying the Identity alone.
 	Render func(d contract.Desired) (Rendered, error)
 }
 
@@ -63,24 +52,12 @@ func (r *Resource) Ensure(ctx context.Context, d contract.Desired) error {
 	return err
 }
 
-// EnsureWithReport renders d and commits the files through CommitManifests,
-// refusing every secret d carries. It reports the identity app, revision and
-// paths, the last being the sorted rendered paths joined by commas, and the
-// rendered outputs.
-//
-// When d.ResourceIdentity records the render's own app, the same commit
-// removes each path that record names and the render no longer has, as when
-// an upgrade drops, renames or moves a file, wherever it stands. Only this
-// resource's own ensure writes that record, so it names only paths the
-// resource wrote. A record of another app, or no record, removes nothing,
-// which keeps a record handed over from another app from removing its
-// files. A removed path is not reported.
-//
-// A rendered file carrying a secret is refused with class
-// secret-in-manifest, and a path holding a comma with class
-// invalid-manifest-path, both before anything is written. When nothing
-// changed it reports the revision d.ResourceIdentity records, provided the
-// files still stand there, and head otherwise.
+// EnsureWithReport commits the rendered files through CommitManifests and
+// reports the app, the revision and the comma-joined sorted paths. When the
+// recorded identity is of the render's own app, the same commit removes each
+// recorded path the render no longer has; another app's record removes
+// nothing. A file carrying a secret is refused as secret-in-manifest, and a
+// path holding a comma as invalid-manifest-path, before anything is written.
 func (r *Resource) EnsureWithReport(ctx context.Context, d contract.Desired) (contract.Ensured, error) {
 	out, err := r.render(d)
 	if err != nil {
@@ -129,29 +106,13 @@ func (r *Resource) Observe(ctx context.Context, id contract.Identity) (contract.
 	return r.ObserveWithRequest(ctx, contract.Desired{Identity: id})
 }
 
-// ObserveWithRequest reports whether the rendered files are deployed.
-//
-// It checks head first. An empty repository is absent with no notification
-// read. Files that stand at head only in part, or with other content, are
-// unknown naming each such path. Otherwise head holds every file, or none,
-// and it reads the app's newest notification, whatever its revision.
-//
-// No notification yet is unknown. A notification whose revision does not
-// hold the files the way head does is unknown, because Argo CD has not yet
-// reported a revision carrying the change. Otherwise the notification judges
-// the resource: succeeded is present with the outputs, or absent; pending is
-// unknown; failed is an error carrying the phase, the health and the
-// message. It never reads the revision d.ResourceIdentity records.
-//
-// A resource never ensured is therefore absent only in an empty repository.
-// In a repository that holds other apps' commits it answers unknown until
-// Argo CD reports on the app.
-//
-// The platform answers a block only the notifications of the cluster its
-// kubernetes-cluster requirement binds, within the block's own org. A block
-// that binds no cluster, or several, reads none, so its resource stays
-// unknown. A cluster that hosts apps of several orgs needs a scoping rule of
-// its own, which the platform does not provide.
+// ObserveWithRequest judges the app's newest notification, whatever its
+// revision, once the files at that revision stand as they do at head, since
+// Argo CD may sync a later revision than the one committed. A live sync on a
+// scratch cluster with two commits inside one poll interval would show
+// whether it does. A block reads only the notifications of the cluster its
+// kubernetes-cluster requirement binds, so binding none or several stays
+// unknown, and a cluster hosting several orgs' apps needs its own rule.
 func (r *Resource) ObserveWithRequest(ctx context.Context, d contract.Desired) (contract.Observation, error) {
 	out, err := r.render(d)
 	if err != nil {
@@ -223,10 +184,8 @@ func (r *Resource) Delete(ctx context.Context, id contract.Identity) error {
 	return r.DeleteWithRequest(ctx, contract.Desired{Identity: id})
 }
 
-// DeleteWithRequest commits the removal of the paths d.ResourceIdentity
-// records, without rendering, or of the rendered paths when none are
-// recorded. Paths already gone commit nothing, so deleting a resource that
-// was never created succeeds.
+// DeleteWithRequest commits the removal of the recorded paths, or of the
+// rendered ones when none are recorded.
 func (r *Resource) DeleteWithRequest(ctx context.Context, d contract.Desired) error {
 	app, paths, err := r.deletePaths(d)
 	if err != nil {
@@ -244,8 +203,6 @@ func (r *Resource) DeleteWithRequest(ctx context.Context, d contract.Desired) er
 	return err
 }
 
-// deletePaths returns the app and the paths a delete removes: those d's
-// recorded identity names, or the rendered ones when it names none.
 func (r *Resource) deletePaths(d contract.Desired) (string, []string, error) {
 	paths := recordedPaths(d)
 	if len(paths) > 0 {
@@ -258,7 +215,6 @@ func (r *Resource) deletePaths(d contract.Desired) (string, []string, error) {
 	return out.App, sortedPaths(out.Files), nil
 }
 
-// recordedPaths returns the non-empty paths d.ResourceIdentity records.
 func recordedPaths(d contract.Desired) []string {
 	var paths []string
 	for _, path := range strings.Split(d.ResourceIdentity[identityPaths], ",") {
@@ -269,8 +225,6 @@ func recordedPaths(d contract.Desired) []string {
 	return paths
 }
 
-// stalePaths returns the paths d's record names that out no longer renders,
-// and none when the record is of another app than out's or is absent.
 func stalePaths(d contract.Desired, out Rendered) []string {
 	if d.ResourceIdentity[identityApp] != out.App {
 		return nil
@@ -284,8 +238,6 @@ func stalePaths(d contract.Desired, out Rendered) []string {
 	return stale
 }
 
-// render calls Render and refuses a render naming no app or no file, or a
-// file with no content.
 func (r *Resource) render(d contract.Desired) (Rendered, error) {
 	out, err := r.Render(d)
 	if err != nil {
@@ -305,7 +257,6 @@ func (r *Resource) render(d contract.Desired) (Rendered, error) {
 	return out, nil
 }
 
-// repository calls Repository, naming what failed.
 func (r *Resource) repository(ctx context.Context, d contract.Desired) (Repository, error) {
 	repo, err := r.Repository(ctx, d)
 	if err != nil {
@@ -314,9 +265,8 @@ func (r *Resource) repository(ctx context.Context, d contract.Desired) (Reposito
 	return repo, nil
 }
 
-// reportedRevision returns recorded when it still holds every file, and head
-// otherwise, including when recorded cannot be read. An unchanged ensure
-// replayed from its record then reports the revision it reported before.
+// reportedRevision keeps an unchanged ensure reporting its recorded revision
+// while that revision still holds every file.
 func reportedRevision(ctx context.Context, repo Repository, recorded, head string, files map[string][]byte) string {
 	if recorded == "" || recorded == head {
 		return head
@@ -328,21 +278,17 @@ func reportedRevision(ctx context.Context, repo Repository, recorded, head strin
 	return recorded
 }
 
-// standing is how a set of files stands at one revision: which paths are
-// missing there and which hold other content.
+// standing is how a set of files stands at one revision.
 type standing struct {
 	total   int
 	missing []string
 	differ  []string
 }
 
-// all reports whether every file stands with its content.
 func (s standing) all() bool { return len(s.missing) == 0 && len(s.differ) == 0 }
 
-// none reports whether every file is missing.
 func (s standing) none() bool { return len(s.missing) == s.total }
 
-// describe names each path that does not stand with its content.
 func (s standing) describe() string {
 	var parts []string
 	for _, path := range s.missing {
@@ -354,7 +300,6 @@ func (s standing) describe() string {
 	return strings.Join(parts, ", ")
 }
 
-// compareAt reports how files stand at revision.
 func compareAt(ctx context.Context, repo Repository, revision string, files map[string][]byte) (standing, error) {
 	s := standing{total: len(files)}
 	for _, path := range sortedPaths(files) {
@@ -372,7 +317,6 @@ func compareAt(ctx context.Context, repo Repository, revision string, files map[
 	return s, nil
 }
 
-// unknown is an Unknown observation with a formatted detail.
 func unknown(format string, args ...any) contract.Observation {
 	return contract.Observation{State: contract.Unknown, StatusDetail: fmt.Sprintf(format, args...)}
 }
