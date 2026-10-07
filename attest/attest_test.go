@@ -44,8 +44,6 @@ func TestSign_ThenVerify(t *testing.T) {
 	}
 }
 
-// --- A partial pass is never signed -----------------------------------------
-
 func TestSign_RefusesAnythingButAFullPass(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-platform", 9)
 
@@ -75,8 +73,6 @@ func TestSign_RefusesIncompleteClaims(t *testing.T) {
 		})
 	}
 }
-
-// --- Verification fails closed ----------------------------------------------
 
 func TestVerify_UnknownKidFailsClosed(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-platform", 9)
@@ -122,8 +118,6 @@ func TestVerify_ForgedSignatureFails(t *testing.T) {
 }
 
 func TestVerify_ManifestChangeMakesItInvalid(t *testing.T) {
-	// An edited manifest is a different block. This is INVALID, not
-	// stale-but-acceptable.
 	s := kittest.NewSigner(t, "kid-platform", 9)
 	a, _ := attest.Sign(s.Private, s.Kid, claims(), "pass")
 
@@ -133,10 +127,7 @@ func TestVerify_ManifestChangeMakesItInvalid(t *testing.T) {
 }
 
 func TestVerify_SignatureIsCheckedBeforeTheDigest(t *testing.T) {
-	// Ordering matters: an attacker controls the digest they present, so
-	// comparing it first would leak whether an otherwise well-formed forgery had
-	// the right shape. A forged attestation must report a SIGNATURE failure, not
-	// a digest mismatch.
+	// A forged attestation must report a signature failure, not a digest mismatch.
 	s := kittest.NewSigner(t, "kid-platform", 9)
 	other := kittest.NewSigner(t, "kid-platform", 55)
 
@@ -148,8 +139,6 @@ func TestVerify_SignatureIsCheckedBeforeTheDigest(t *testing.T) {
 	}
 }
 
-// --- Catalog status ---------------------------------------------------------
-
 func TestEvaluate_NoAttestationIsUnverifiedNotInvalid(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-platform", 9)
 
@@ -160,9 +149,6 @@ func TestEvaluate_NoAttestationIsUnverifiedNotInvalid(t *testing.T) {
 }
 
 func TestEvaluate_BrokenAttestationIsInvalidNotUnverified(t *testing.T) {
-	// The distinction the catalog depends on: a block nobody verified and a
-	// block whose proof STOPPED MATCHING are very different signals, and
-	// collapsing the second into the first hides the louder one.
 	s := kittest.NewSigner(t, "kid-platform", 9)
 	a, _ := attest.Sign(s.Private, s.Kid, claims(), "pass")
 
@@ -186,8 +172,6 @@ func TestEvaluate_ValidAttestationIsVerified(t *testing.T) {
 }
 
 func TestStatus_ZeroValueIsNotVerified(t *testing.T) {
-	// A status that defaults to verified would badge every block the moment a
-	// field was forgotten.
 	var s attest.Status
 	if s == attest.Verified {
 		t.Error("the zero Status must never be Verified")
