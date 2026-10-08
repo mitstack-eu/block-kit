@@ -32,7 +32,6 @@ func TestManifestSchema_IsWhatTheTypesGenerate(t *testing.T) {
 	}
 }
 
-// schemaDoc decodes contract.ManifestSchema.
 func schemaDoc(t *testing.T) map[string]any {
 	t.Helper()
 	var doc map[string]any
@@ -108,8 +107,6 @@ func TestManifestSchema_DeclaresDraft2020_12AndAnID(t *testing.T) {
 	}
 }
 
-// alternatives returns node's oneOf or anyOf alternatives, each with any
-// local $ref followed, or node itself when it has neither.
 func alternatives(t *testing.T, root, node map[string]any) []map[string]any {
 	t.Helper()
 	node = schemaAt(t, root, node)
@@ -128,7 +125,6 @@ func alternatives(t *testing.T, root, node map[string]any) []map[string]any {
 	return out
 }
 
-// alternativeOfType returns the alternative of node whose type is typ.
 func alternativeOfType(t *testing.T, root, node map[string]any, typ string) (map[string]any, bool) {
 	t.Helper()
 	for _, alt := range alternatives(t, root, node) {
@@ -192,6 +188,30 @@ func TestManifestSchema_RequirementAndResourceCarryExactlyTheirKeys(t *testing.T
 		list := schemaAt(t, doc, doc, path...)
 		if list["minItems"] != float64(1) {
 			t.Errorf("%s minItems = %v, want 1", strings.Join(path, "."), list["minItems"])
+		}
+	}
+}
+
+func TestManifestSchema_SpecListsReceivesAppSecretsAsABoolean(t *testing.T) {
+	doc := schemaDoc(t)
+	generated, err := contract.GenerateManifestSchema()
+	if err != nil {
+		t.Fatalf("contract.GenerateManifestSchema(): %v", err)
+	}
+	var gen map[string]any
+	if err := json.Unmarshal(generated, &gen); err != nil {
+		t.Fatalf("generated schema is not a JSON object: %v", err)
+	}
+
+	for label, d := range map[string]map[string]any{"committed": doc, "generated": gen} {
+		props := schemaAt(t, d, d, "properties", "spec", "properties")
+		prop, ok := props["receivesAppSecrets"].(map[string]any)
+		if !ok {
+			t.Errorf("%s schema spec properties = %q, want receivesAppSecrets among them", label, sortedKeys(props))
+			continue
+		}
+		if prop["type"] != "boolean" {
+			t.Errorf("%s schema spec.receivesAppSecrets type = %v, want boolean", label, prop["type"])
 		}
 	}
 }
