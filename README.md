@@ -946,6 +946,45 @@ lifecycle, ok := m.Section("spec.lifecycle")
 description, ok := m.SpecScalar("description")
 ```
 
+### Running a workflow script in a test
+
+A test that matches text in a rendered workflow passes over a shell error
+inside a `run:` block, so `kittest` runs the script instead.
+`kittest.ReadWorkflowScript` takes the rendered YAML, a job key under
+`jobs:` and the `name:` of one entry in that job's list, and returns the
+entry's `run:` body and `env`. `kittest.RunWorkflowScript` runs that body
+under `bash -euo pipefail`, which is stricter than the `bash -e` GitHub uses
+by default, and returns its exit code, stdout and stderr.
+
+The body sees no environment from the test process. Its `PATH` holds only
+the fakes the test writes and the real tools it names, so a command the test
+did not supply exits 127. Its environment is the entry's `env` with the
+test's own `Env` laid over it.
+
+The helper reads no `if:` and evaluates no `${{ }}` expression. A test that
+cares about the output of an entry that was skipped sets that output to the
+empty string itself, and a test substitutes any expression in the body
+before the run. Because the kit is stdlib-only, the reader understands block
+mappings and sequences, single-line plain and quoted scalars, and `|`
+literal blocks. It returns an error naming the line for any other shape,
+such as a folded `>` body, a flow mapping, an alias, a YAML null, a key
+given twice or a `shell:` other than `bash`, rather than guess at it.
+
+```go
+script, err := kittest.ReadWorkflowScript(rendered, "release", "Cut the tag")
+if err != nil {
+	t.Fatal(err)
+}
+res := kittest.RunWorkflowScript(t, script, kittest.ScriptRun{
+	Fakes: map[string]string{"gh": `echo "gh $*"`},
+	Tools: []string{"git"},
+	Env:   map[string]string{"VERSION": "1.2.3"},
+})
+if res.ExitCode != 0 {
+	t.Fatalf("script exited %d: %s", res.ExitCode, res.Stderr)
+}
+```
+
 ### Proving no secret leaks
 
 `kittest.AssertNoSecretLeak` drives an operator's own handler with signed
