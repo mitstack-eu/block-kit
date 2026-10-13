@@ -1,15 +1,12 @@
 package main
 
-// main_test.go pins the manifest-schema command: it prints the JSON Schema
-// contract.GenerateManifestSchema builds from the manifest types, which is
-// what contract/manifest.schema.json must hold. The seam is
-// Run(args, stdout, stderr), so the command is testable without a process.
+// The manifest-schema command prints the JSON Schema contract/manifest.schema.json must hold.
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/contract"
+	"github.com/mitstack-eu/operator-kit/v2/contract"
 )
 
 func TestRun_PrintsTheGeneratedManifestSchema(t *testing.T) {

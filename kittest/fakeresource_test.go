@@ -1,8 +1,4 @@
-// fakeresource_test.go pins kittest.FakeResource, the Resource whose
-// behaviour a test dictates. Its method set matches handler.Resource
-// structurally rather than by declaration, so neither this file nor the
-// FakeResource it exercises imports the handler package, and kittest stays
-// importable from a handler test without a cycle.
+// FakeResource matches handler.Resource structurally, so kittest stays importable from a handler test without a cycle.
 package kittest_test
 
 import (
@@ -10,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/contract"
-	"github.com/mitstack-eu/operator-kit/kittest"
+	"github.com/mitstack-eu/operator-kit/v2/contract"
+	"github.com/mitstack-eu/operator-kit/v2/kittest"
 )
 
 func testIdentity() contract.Identity {
@@ -22,15 +18,11 @@ func testDesired() contract.Desired {
 	return contract.Desired{Identity: testIdentity()}
 }
 
-// TestFakeResource_ObserveReflectsCountByDefault pins the documented
-// default: Observe reports Present when Count > 0 and Absent when
-// Count == 0, driven by Ensure/Delete converging Count, unless
-// ObserveState overrides it.
 func TestFakeResource_ObserveReflectsCountByDefault(t *testing.T) {
 	f := &kittest.FakeResource{}
 	ctx := context.Background()
 
-	obs, err := f.Observe(ctx, testIdentity())
+	obs, err := f.Observe(ctx, testDesired())
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -41,7 +33,7 @@ func TestFakeResource_ObserveReflectsCountByDefault(t *testing.T) {
 	if err := f.Ensure(ctx, testDesired()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	obs, err = f.Observe(ctx, testIdentity())
+	obs, err = f.Observe(ctx, testDesired())
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -49,10 +41,10 @@ func TestFakeResource_ObserveReflectsCountByDefault(t *testing.T) {
 		t.Errorf("State = %v, want Present when Count > 0", obs.State)
 	}
 
-	if err := f.Delete(ctx, testIdentity()); err != nil {
+	if _, err := f.Delete(ctx, testDesired()); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	obs, err = f.Observe(ctx, testIdentity())
+	obs, err = f.Observe(ctx, testDesired())
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -61,13 +53,11 @@ func TestFakeResource_ObserveReflectsCountByDefault(t *testing.T) {
 	}
 }
 
-// TestFakeResource_ObserveStateOverridesCount pins that a set ObserveState
-// is reported regardless of Count.
 func TestFakeResource_ObserveStateOverridesCount(t *testing.T) {
 	unknown := contract.Unknown
 	f := &kittest.FakeResource{Count: 1, ObserveState: &unknown}
 
-	obs, err := f.Observe(context.Background(), testIdentity())
+	obs, err := f.Observe(context.Background(), testDesired())
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -83,7 +73,7 @@ func TestFakeResource_DeadReportedPendingReportsUnknownEvenWithObserveErrSet(t *
 		ObserveErr:          errors.New("this would normally be a permanent failure"),
 	}
 
-	obs, err := f.Observe(context.Background(), testIdentity())
+	obs, err := f.Observe(context.Background(), testDesired())
 	if err != nil {
 		t.Fatalf("Observe: %v, want no error even though ObserveErr is set (DeadReportedPending)", err)
 	}
@@ -92,15 +82,13 @@ func TestFakeResource_DeadReportedPendingReportsUnknownEvenWithObserveErrSet(t *
 	}
 }
 
-// TestFakeResource_ObserveReportsOutputsAndStatusDetail pins that Observe
-// surfaces the fake's own Outputs/StatusDetail fields verbatim.
 func TestFakeResource_ObserveReportsOutputsAndStatusDetail(t *testing.T) {
 	f := &kittest.FakeResource{
 		Outputs:      map[string]string{"url": "https://example.test"},
 		StatusDetail: "all good",
 	}
 
-	obs, err := f.Observe(context.Background(), testIdentity())
+	obs, err := f.Observe(context.Background(), testDesired())
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -112,8 +100,6 @@ func TestFakeResource_ObserveReportsOutputsAndStatusDetail(t *testing.T) {
 	}
 }
 
-// TestFakeResource_EnsureObserveDeleteReturnTheirConfiguredErrors pins that
-// each method returns the matching *Err field when set.
 func TestFakeResource_EnsureObserveDeleteReturnTheirConfiguredErrors(t *testing.T) {
 	ensureErr := errors.New("ensure failed")
 	observeErr := errors.New("observe failed")
@@ -124,17 +110,14 @@ func TestFakeResource_EnsureObserveDeleteReturnTheirConfiguredErrors(t *testing.
 	if err := f.Ensure(ctx, testDesired()); !errors.Is(err, ensureErr) {
 		t.Errorf("Ensure error = %v, want %v", err, ensureErr)
 	}
-	if _, err := f.Observe(ctx, testIdentity()); !errors.Is(err, observeErr) {
+	if _, err := f.Observe(ctx, testDesired()); !errors.Is(err, observeErr) {
 		t.Errorf("Observe error = %v, want %v", err, observeErr)
 	}
-	if err := f.Delete(ctx, testIdentity()); !errors.Is(err, deleteErr) {
+	if _, err := f.Delete(ctx, testDesired()); !errors.Is(err, deleteErr) {
 		t.Errorf("Delete error = %v, want %v", err, deleteErr)
 	}
 }
 
-// TestFakeResource_DuplicateOnEnsureAddsARresourceEveryCall pins the
-// harness-breaking behaviour: with DuplicateOnEnsure, a second Ensure call
-// increases Count again instead of converging.
 func TestFakeResource_DuplicateOnEnsureAddsAResourceEveryCall(t *testing.T) {
 	f := &kittest.FakeResource{DuplicateOnEnsure: true}
 	ctx := context.Background()
@@ -151,8 +134,6 @@ func TestFakeResource_DuplicateOnEnsureAddsAResourceEveryCall(t *testing.T) {
 	}
 }
 
-// TestFakeResource_LeakOnDeleteLeavesOneResourceBehind pins that Delete
-// under LeakOnDelete does not bring Count to zero.
 func TestFakeResource_LeakOnDeleteLeavesOneResourceBehind(t *testing.T) {
 	f := &kittest.FakeResource{LeakOnDelete: true}
 	ctx := context.Background()
@@ -160,7 +141,7 @@ func TestFakeResource_LeakOnDeleteLeavesOneResourceBehind(t *testing.T) {
 	if err := f.Ensure(ctx, testDesired()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if err := f.Delete(ctx, testIdentity()); err != nil {
+	if _, err := f.Delete(ctx, testDesired()); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if f.Count == 0 {
@@ -168,19 +149,14 @@ func TestFakeResource_LeakOnDeleteLeavesOneResourceBehind(t *testing.T) {
 	}
 }
 
-// TestFakeResource_ErrorWhenAlreadyAbsentFailsDeleteOnNothingProvisioned
-// pins that Delete on an already-absent resource errors under this flag.
 func TestFakeResource_ErrorWhenAlreadyAbsentFailsDeleteOnNothingProvisioned(t *testing.T) {
 	f := &kittest.FakeResource{ErrorWhenAlreadyAbsent: true}
 
-	if err := f.Delete(context.Background(), testIdentity()); err == nil {
+	if _, err := f.Delete(context.Background(), testDesired()); err == nil {
 		t.Error("Delete on a never-provisioned resource returned nil, want an error (ErrorWhenAlreadyAbsent)")
 	}
 }
 
-// TestFakeResource_ClobberOnUpgradeDropsPriorOutputsOnASecondEnsure pins
-// the destructive-upgrade fake: a second Ensure call must drop whatever
-// Outputs the first one left in place.
 func TestFakeResource_ClobberOnUpgradeDropsPriorOutputsOnASecondEnsure(t *testing.T) {
 	f := &kittest.FakeResource{
 		Outputs:          map[string]string{"url": "https://example.test"},
@@ -191,7 +167,7 @@ func TestFakeResource_ClobberOnUpgradeDropsPriorOutputsOnASecondEnsure(t *testin
 	if err := f.Ensure(ctx, testDesired()); err != nil {
 		t.Fatalf("first Ensure: %v", err)
 	}
-	obs, err := f.Observe(ctx, testIdentity())
+	obs, err := f.Observe(ctx, testDesired())
 	if err != nil {
 		t.Fatalf("Observe after first Ensure: %v", err)
 	}
@@ -202,7 +178,7 @@ func TestFakeResource_ClobberOnUpgradeDropsPriorOutputsOnASecondEnsure(t *testin
 	if err := f.Ensure(ctx, testDesired()); err != nil {
 		t.Fatalf("second Ensure: %v", err)
 	}
-	obs, err = f.Observe(ctx, testIdentity())
+	obs, err = f.Observe(ctx, testDesired())
 	if err != nil {
 		t.Fatalf("Observe after second Ensure: %v", err)
 	}
@@ -211,18 +187,16 @@ func TestFakeResource_ClobberOnUpgradeDropsPriorOutputsOnASecondEnsure(t *testin
 	}
 }
 
-// TestFakeResource_CallCountersRecordEveryCall pins EnsureCalls/
-// ObserveCalls/DeleteCalls as counts of calls made, not of successes.
 func TestFakeResource_CallCountersRecordEveryCall(t *testing.T) {
 	f := &kittest.FakeResource{EnsureErr: errors.New("boom")}
 	ctx := context.Background()
 
 	_ = f.Ensure(ctx, testDesired())
 	_ = f.Ensure(ctx, testDesired())
-	_, _ = f.Observe(ctx, testIdentity())
-	_, _ = f.Observe(ctx, testIdentity())
-	_, _ = f.Observe(ctx, testIdentity())
-	_ = f.Delete(ctx, testIdentity())
+	_, _ = f.Observe(ctx, testDesired())
+	_, _ = f.Observe(ctx, testDesired())
+	_, _ = f.Observe(ctx, testDesired())
+	_, _ = f.Delete(ctx, testDesired())
 
 	if f.EnsureCalls != 2 {
 		t.Errorf("EnsureCalls = %d, want 2 (counted even though each call errored)", f.EnsureCalls)

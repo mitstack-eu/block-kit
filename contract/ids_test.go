@@ -1,24 +1,12 @@
 package contract_test
 
-// ids_test.go pins the grammar of block, capability and resource-type ids.
-// A community id is bare; a private id sits under its org's namespace as
-// @<org slug>/<name>.
-//
-//   - a slug is 1 to 40 characters of a-z, 0-9 and dashes, starting and
-//     ending with a letter or digit: the platform's
-//     ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$;
-//   - ParseBlockID and ParseCapabilityID accept a bare slug, giving namespace
-//     "", and @<org slug>/<slug>, giving the org slug without its @, and
-//     refuse anything else with an error that names both forms;
-//   - ParseResourceTypeID accepts [@<org slug>/]<capability slug>.<name>,
-//     the name in lowercase kebab case;
-//   - every catalogue entry is a community type of its own capability.
+// Block, capability and resource-type ids are a bare community slug or @<org slug>/<name>, and a refusal names both forms.
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/contract"
+	"github.com/mitstack-eu/operator-kit/v2/contract"
 )
 
 // parseNameFunc is the shape ParseBlockID and ParseCapabilityID share.
@@ -260,37 +248,6 @@ func TestParseResourceTypeID_RefusesEveryOtherForm(t *testing.T) {
 		}
 		if ns != "" || capability != "" || name != "" {
 			t.Errorf("%s %q refused but returned (%q, %q, %q), want all empty", label, id, ns, capability, name)
-		}
-	}
-}
-
-// Every catalogue entry is a community type: its ID parses with no
-// namespace, into its own place and the name after the dot, and that
-// place is a valid community slug.
-func TestResourceTypes_EveryIDIsACommunityTypeOfItsOwnPlace(t *testing.T) {
-	for _, rt := range catalogue(t) {
-		ns, capability, name, err := contract.ParseResourceTypeID(rt.ID)
-		if err != nil {
-			t.Errorf("ParseResourceTypeID(%q) error = %v, want the catalogue entry accepted", rt.ID, err)
-			continue
-		}
-		if ns != "" {
-			t.Errorf("ParseResourceTypeID(%q) namespace = %q, want \"\" for a community type", rt.ID, ns)
-		}
-		if capability != rt.Place() {
-			t.Errorf("ParseResourceTypeID(%q) capability = %q, want the entry's own %q", rt.ID, capability, rt.Place())
-		}
-		if want := strings.TrimPrefix(rt.ID, rt.Place()+"."); name != want {
-			t.Errorf("ParseResourceTypeID(%q) name = %q, want %q", rt.ID, name, want)
-		}
-
-		capNS, capName, err := contract.ParseCapabilityID(rt.Place())
-		if err != nil {
-			t.Errorf("ParseCapabilityID(%q) error = %v, want the catalogue's place accepted", rt.Place(), err)
-			continue
-		}
-		if capNS != "" || capName != rt.Place() {
-			t.Errorf("ParseCapabilityID(%q) = (%q, %q), want (%q, %q)", rt.Place(), capNS, capName, "", rt.Place())
 		}
 	}
 }

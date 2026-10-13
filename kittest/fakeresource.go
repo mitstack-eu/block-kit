@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/mitstack-eu/operator-kit/contract"
+	"github.com/mitstack-eu/operator-kit/v2/contract"
 )
 
 // FakeResource is a Resource whose behaviour a test dictates, where the zero value conforms and each other field turns on one misbehaviour.
@@ -21,8 +21,7 @@ type FakeResource struct {
 	EnsureErr, ObserveErr, DeleteErr error
 
 	DuplicateOnEnsure bool
-	// LeakOnDelete leaves one resource behind on Delete.
-	LeakOnDelete bool
+	LeakOnDelete      bool
 	// ErrorWhenAlreadyAbsent makes Delete fail when nothing is provisioned.
 	ErrorWhenAlreadyAbsent bool
 	// ClobberOnUpgrade drops the pre-existing outputs on a second Ensure.
@@ -34,7 +33,6 @@ type FakeResource struct {
 	EnsureCalls, ObserveCalls, DeleteCalls int
 }
 
-// Ensure converges Count to a provisioned resource, or adds one per call under DuplicateOnEnsure.
 func (f *FakeResource) Ensure(ctx context.Context, d contract.Desired) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -57,7 +55,7 @@ func (f *FakeResource) Ensure(ctx context.Context, d contract.Desired) error {
 }
 
 // Observe checks DeadReportedPending ahead of ObserveErr and every other field.
-func (f *FakeResource) Observe(ctx context.Context, id contract.Identity) (contract.Observation, error) {
+func (f *FakeResource) Observe(ctx context.Context, d contract.Desired) (contract.Observation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ObserveCalls++
@@ -79,30 +77,29 @@ func (f *FakeResource) Observe(ctx context.Context, id contract.Identity) (contr
 	return contract.Observation{State: state, Outputs: f.Outputs, StatusDetail: f.StatusDetail}, nil
 }
 
-// Delete treats absence as success unless ErrorWhenAlreadyAbsent is set.
-func (f *FakeResource) Delete(ctx context.Context, id contract.Identity) error {
+func (f *FakeResource) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.DeleteCalls++
 
 	if f.DeleteErr != nil {
-		return f.DeleteErr
+		return nil, f.DeleteErr
 	}
 
 	if f.Count == 0 {
 		if f.ErrorWhenAlreadyAbsent {
-			return errors.New("kittest: FakeResource.Delete called with nothing provisioned (ErrorWhenAlreadyAbsent)")
+			return nil, errors.New("kittest: FakeResource.Delete called with nothing provisioned (ErrorWhenAlreadyAbsent)")
 		}
-		return nil
+		return nil, nil
 	}
 
 	if f.LeakOnDelete {
 		if f.Count > 1 {
 			f.Count--
 		}
-		return nil
+		return nil, nil
 	}
 
 	f.Count = 0
-	return nil
+	return nil, nil
 }

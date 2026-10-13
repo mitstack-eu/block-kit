@@ -1,19 +1,6 @@
 package main
 
-// lifecycle_contract_test.go pins that blockverify judges a block by the
-// lifecycle contract its manifest declares at spec.lifecycle.contract, the
-// same branch the platform's operator gates (check-operator-kit-pin.sh,
-// check-operator-contract-tests.sh) take:
-//
-//   - no declared contract: the legacy rule, unchanged;
-//   - kit/v1: kitshim.go and the three TestContract_ functions are waived,
-//     and a non-test .go file must import the kit's handler package instead;
-//   - any other value: a failure naming the value;
-//   - a manifest that cannot be opened or walked: a tooling failure naming
-//     the target, never a fall-through to the legacy rule.
-//
-// The kit/v1 fixture below is modelled on mitstack-eu/postgres-db, whose
-// manifest.yaml declares the contract as a nested block mapping under spec.
+// blockverify judges a block by the lifecycle contract its manifest declares at spec.lifecycle.contract, as the platform's operator gates do.
 
 import (
 	"os"
@@ -22,7 +9,7 @@ import (
 	"testing"
 )
 
-const kitHandlerImport = "github.com/mitstack-eu/operator-kit/handler"
+const kitHandlerImport = "github.com/mitstack-eu/operator-kit/v2/handler"
 
 // kitV1ManifestYAML declares the kit/v1 lifecycle contract in the shape
 // postgres-db's manifest uses: a lifecycle mapping nested directly in spec.
@@ -51,7 +38,7 @@ spec:
 // kitV1MainGo binds the block to the kit from production code.
 const kitV1MainGo = `package main
 
-import "github.com/mitstack-eu/operator-kit/handler"
+import "github.com/mitstack-eu/operator-kit/v2/handler"
 
 var _ = handler.New
 
@@ -71,7 +58,7 @@ const kitV1HandlerOnlyInTestGo = `package main
 import (
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/handler"
+	"github.com/mitstack-eu/operator-kit/v2/handler"
 )
 
 func TestHandlerIsReachable(t *testing.T) {
@@ -84,8 +71,8 @@ func TestHandlerIsReachable(t *testing.T) {
 func kitV1FixtureFiles(t *testing.T) map[string]string {
 	t.Helper()
 	goMod := "module fixture\n\ngo 1.25\n\n" +
-		"require github.com/mitstack-eu/operator-kit v0.1.0\n\n" +
-		"replace github.com/mitstack-eu/operator-kit => " + kitModuleDir(t) + "\n"
+		"require github.com/mitstack-eu/operator-kit/v2 v2.0.0\n\n" +
+		"replace github.com/mitstack-eu/operator-kit/v2 => " + kitModuleDir(t) + "\n"
 	return map[string]string{
 		"go.mod":        goMod,
 		"main.go":       kitV1MainGo,
@@ -100,8 +87,6 @@ func newFixtureFrom(t *testing.T, files map[string]string) string {
 	writeFixture(t, dir, files)
 	return dir
 }
-
-// --- kit/v1: the waivers ---------------------------------------------------
 
 func TestTrustPlumbing_KitV1TargetPassesWithoutKitShim(t *testing.T) {
 	dir := newFixtureFrom(t, kitV1FixtureFiles(t))
@@ -150,8 +135,6 @@ func EmitProgress(ctx context.Context, detail string) error { return nil }
 	}
 }
 
-// --- kit/v1: the handler-import binding ------------------------------------
-
 func TestKitV1_FailsWhenNoNonTestFileImportsTheKitHandler(t *testing.T) {
 	files := kitV1FixtureFiles(t)
 	files["main.go"] = kitV1MainNoHandlerGo
@@ -187,8 +170,6 @@ func TestKitV1_FailsWhenTheOnlyHandlerImportIsInATestFile(t *testing.T) {
 	}
 }
 
-// --- kit/v1: a real verdict, never skipped ---------------------------------
-
 func TestRun_KitV1Target_NeitherSuiteSkippedAndEachNamesTheRule(t *testing.T) {
 	bound := kitV1FixtureFiles(t)
 	unbound := kitV1FixtureFiles(t)
@@ -216,8 +197,6 @@ func TestRun_KitV1Target_NeitherSuiteSkippedAndEachNamesTheRule(t *testing.T) {
 		})
 	}
 }
-
-// --- a manifest the runner cannot read -------------------------------------
 
 func TestRun_UnreadableManifest_IsAToolingFailureNamingTheTarget(t *testing.T) {
 	cases := map[string]func(t *testing.T, dir string){
@@ -278,8 +257,6 @@ func TestRun_UnreadableManifest_IsAToolingFailureNamingTheTarget(t *testing.T) {
 	}
 }
 
-// --- a contract value with no rule -----------------------------------------
-
 func TestRun_UnknownContractValue_FailsNamingTheValue(t *testing.T) {
 	files := goldenFixtureFiles(t)
 	files["manifest.yaml"] = manifestYAML + "  lifecycle:\n    contract: kit/v2\n"
@@ -306,8 +283,6 @@ func TestRun_UnknownContractValue_FailsNamingTheValue(t *testing.T) {
 		}
 	}
 }
-
-// --- no declared contract: today's verdict, suite by suite ------------------
 
 // noContractManifestYAML declares no lifecycle contract, while carrying the
 // text "contract: kit/v1" where it is not one: inside a folded description

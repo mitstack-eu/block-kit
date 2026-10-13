@@ -3,15 +3,13 @@ package observe
 import (
 	"context"
 
-	"github.com/mitstack-eu/operator-kit/contract"
+	"github.com/mitstack-eu/operator-kit/v2/contract"
 )
 
 type GitHubRepositoryAPI interface {
 	RepositoryExists(ctx context.Context, d contract.Desired, fullName string) (bool, error)
 }
 
-// GitHubRepository observes a github.repository by its owner/name repo,
-// reporting it as repo.
 type GitHubRepository struct {
 	API GitHubRepositoryAPI
 }

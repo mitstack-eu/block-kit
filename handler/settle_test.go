@@ -9,15 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/contract"
-	"github.com/mitstack-eu/operator-kit/handler"
-	"github.com/mitstack-eu/operator-kit/kittest"
+	"github.com/mitstack-eu/operator-kit/v2/contract"
+	"github.com/mitstack-eu/operator-kit/v2/handler"
+	"github.com/mitstack-eu/operator-kit/v2/kittest"
 )
 
-// TestServe_SubscribePresentWithinBudgetAnswers200AbsentFalse pins the
-// settle happy path: a FakeResource that is Present as soon as Ensure runs
-// answers 200 with the block's own outputs/statusDetail and absent:false —
-// the exact shape Observation.Response() produces for Present.
 func TestServe_SubscribePresentWithinBudgetAnswers200AbsentFalse(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	f := &kittest.FakeResource{Outputs: map[string]string{"url": "https://example.test"}, StatusDetail: "provisioned"}
@@ -79,9 +75,6 @@ func TestServe_SubscribeBudgetExhaustedAnswersPendingNeverError(t *testing.T) {
 	}
 }
 
-// TestServe_UpgradeBudgetExhaustedAnswersPendingNeverError mirrors the
-// subscribe case for upgrade, since the CONTRACT pins the same settle
-// behaviour for both.
 func TestServe_UpgradeBudgetExhaustedAnswersPendingNeverError(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	unknown := contract.Unknown
@@ -100,13 +93,7 @@ func TestServe_UpgradeBudgetExhaustedAnswersPendingNeverError(t *testing.T) {
 
 // The settle loops must stop when the caller has gone, since defaultSleep returns at once on a done context and a cancelled request would fire its whole remaining budget unpaced.
 
-// cancelAfterNObserves cancels its own test's context from inside Observe,
-// once Observe has been called cancelAfter times, and always reports
-// reportState — a state that is never the target the loop is polling for,
-// so the loop can only ever stop for one of two reasons: the budget ran out,
-// or it noticed the context was cancelled. VerbBudget is set far larger than
-// cancelAfter in every test using this fake, so a low final ObserveCalls
-// count can only mean the loop honoured cancellation.
+// cancelAfterNObserves never reports the target state, so with VerbBudget far above cancelAfter a low ObserveCalls count can only mean the loop honoured cancellation.
 type cancelAfterNObserves struct {
 	mu           sync.Mutex
 	observeCalls int
@@ -115,10 +102,12 @@ type cancelAfterNObserves struct {
 	reportState  contract.State
 }
 
-func (c *cancelAfterNObserves) Ensure(context.Context, contract.Desired) error  { return nil }
-func (c *cancelAfterNObserves) Delete(context.Context, contract.Identity) error { return nil }
+func (c *cancelAfterNObserves) Ensure(context.Context, contract.Desired) error { return nil }
+func (c *cancelAfterNObserves) Delete(context.Context, contract.Desired) (map[string]string, error) {
+	return nil, nil
+}
 
-func (c *cancelAfterNObserves) Observe(context.Context, contract.Identity) (contract.Observation, error) {
+func (c *cancelAfterNObserves) Observe(context.Context, contract.Desired) (contract.Observation, error) {
 	c.mu.Lock()
 	c.observeCalls++
 	n := c.observeCalls
@@ -135,10 +124,6 @@ func (c *cancelAfterNObserves) calls() int {
 	return c.observeCalls
 }
 
-// TestServe_SubscribeSettleStopsEarlyWhenContextIsCancelled pins the
-// settlePresent loop: once the request's context is cancelled mid-poll, the
-// handler must return well short of spending its whole VerbBudget on Observe
-// calls nobody will read the answer to.
 func TestServe_SubscribeSettleStopsEarlyWhenContextIsCancelled(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -164,9 +149,6 @@ func TestServe_SubscribeSettleStopsEarlyWhenContextIsCancelled(t *testing.T) {
 	}
 }
 
-// TestServe_UnsubscribeSettleStopsEarlyWhenContextIsCancelled mirrors the
-// above for settleAbsent: the fix document is explicit that both poll loops
-// need the same ctx.Err() check.
 func TestServe_UnsubscribeSettleStopsEarlyWhenContextIsCancelled(t *testing.T) {
 	s := kittest.NewSigner(t, "kid-1", 7)
 	ctx, cancel := context.WithCancel(context.Background())
