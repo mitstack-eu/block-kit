@@ -247,3 +247,14 @@ func TestManifestSchema_LifecycleListsNeedsCredentialRefreshAsAnOptionalBoolean(
 		}
 	}
 }
+
+func TestManifestSchema_LifecycleListsSettleBudgetAsAnOptionalString(t *testing.T) {
+	doc := schemaDoc(t)
+
+	lifecycle := schemaAt(t, doc, doc, "properties", "spec", "properties", "lifecycle")
+	budget := schemaAt(t, doc, lifecycle, "properties", "settleBudget")
+
+	if budget["type"] != "string" || slices.Contains(sortedStrings(lifecycle["required"]), "settleBudget") {
+		t.Errorf("schema spec.lifecycle.settleBudget = %v with required %v, want an optional string", budget, lifecycle["required"])
+	}
+}

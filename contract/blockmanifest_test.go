@@ -9,10 +9,13 @@ package contract_test
 // field.
 
 import (
+	"encoding/json"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/operator-kit/contract"
 )
@@ -877,5 +880,58 @@ func TestManifestLifecycle_NeedsCredentialRefreshMarshalsUnderItsOptionalKey(t *
 
 	if got, want := f.Tag.Get("json"), "needsCredentialRefresh,omitempty"; got != want {
 		t.Errorf("ManifestLifecycle.NeedsCredentialRefresh json tag = %q, want %q", got, want)
+	}
+}
+
+func TestParseManifest_SettleBudget(t *testing.T) {
+	beta := func(line string) []byte {
+		return editBeta(t, "    contract: kit/v1\n", "    contract: kit/v1\n"+line)
+	}
+	for _, tc := range []struct {
+		label   string
+		raw     []byte
+		want    time.Duration
+		refusal []string
+	}{
+		{"absent under v1beta reads zero", beta(""), 0, nil},
+		{"75m under v1beta reads 75 minutes", beta("    settleBudget: 75m\n"), 75 * time.Minute, nil},
+		{"0s is refused", beta("    settleBudget: 0s\n"), 0, []string{"spec.lifecycle.settleBudget", "positive duration"}},
+		{"-5m is refused", beta("    settleBudget: -5m\n"), 0, []string{"spec.lifecycle.settleBudget", "positive duration"}},
+		{"soon is refused", beta("    settleBudget: soon\n"), 0, []string{"spec.lifecycle.settleBudget", "positive duration"}},
+		{"30 is refused", beta("    settleBudget: 30\n"), 0, []string{"spec.lifecycle.settleBudget", "positive duration"}},
+		{"v1alpha refuses the key", []byte(alphaHead + "  lifecycle:\n    endpoint: https://fixture.example.test/hook\n" +
+			"    settleBudget: 75m\n"), 0, []string{"spec.lifecycle.settleBudget"}},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			if tc.refusal != nil {
+				requireRefusedNaming(t, tc.raw, tc.refusal...)
+				return
+			}
+
+			lc := parseBeta(t, tc.raw).Spec.Lifecycle
+			raw, err := json.Marshal(lc)
+			var back contract.ManifestLifecycle
+			var fields map[string]any
+			if err == nil {
+				err = errors.Join(json.Unmarshal(raw, &back), json.Unmarshal(raw, &fields))
+			}
+
+			if err != nil {
+				t.Fatalf("JSON round trip of %+v: %v", lc, err)
+			}
+			if lc.SettleBudget != tc.want {
+				t.Errorf("spec.lifecycle.settleBudget = %v, want %v", lc.SettleBudget, tc.want)
+			}
+			if !reflect.DeepEqual(back, lc) {
+				t.Errorf("ManifestLifecycle after a JSON round trip through %s = %+v, want %+v", raw, back, lc)
+			}
+			written, _ := fields["settleBudget"].(string)
+			if tc.want == 0 {
+				return
+			}
+			if again := parseBeta(t, beta("    settleBudget: "+written+"\n")).Spec.Lifecycle.SettleBudget; again != tc.want {
+				t.Errorf("JSON settleBudget %#v re-parses as %v, want %v (%s)", fields["settleBudget"], again, tc.want, raw)
+			}
+		})
 	}
 }
