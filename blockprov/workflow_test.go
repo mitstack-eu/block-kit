@@ -440,9 +440,7 @@ func runProbeWithSha(t *testing.T, version, imageMode, recordMode, shaMode strin
 		}
 	}
 
-	cmd := exec.Command("bash", "--noprofile", "--norc", "-e", "-o", "pipefail", scriptPath)
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(),
+	res := runBash(t, scriptPath, workDir,
 		"PATH="+stubDir+":"+os.Getenv("PATH"),
 		"GITHUB_OUTPUT="+outputFile,
 		"GITHUB_ENV="+envFile,
@@ -456,33 +454,35 @@ func runProbeWithSha(t *testing.T, version, imageMode, recordMode, shaMode strin
 		"AWS_ARGV_FILE="+argvFile,
 	)
 
+	outputBytes, _ := os.ReadFile(outputFile)
+	envBytes, _ := os.ReadFile(envFile)
+	argvBytes, _ := os.ReadFile(argvFile)
+	res.githubOutput = string(outputBytes)
+	res.githubEnv = string(envBytes)
+	res.awsArgv = string(argvBytes)
+	return res
+}
+
+// runBash runs the script at scriptPath in dir under the runner's bash flags, with env added to the process environment.
+func runBash(t *testing.T, scriptPath, dir string, env ...string) guardResult {
+	t.Helper()
+	cmd := exec.Command("bash", "--noprofile", "--norc", "-e", "-o", "pipefail", scriptPath)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
 	var stdout, stderr, combined strings.Builder
 	cmd.Stdout = io.MultiWriter(&stdout, &combined)
 	cmd.Stderr = io.MultiWriter(&stderr, &combined)
 
-	err := cmd.Run()
 	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			t.Fatalf("running guard script: %v", err)
+	if err := cmd.Run(); err != nil {
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("running %s: %v", scriptPath, err)
 		}
+		exitCode = exitErr.ExitCode()
 	}
 
-	outputBytes, _ := os.ReadFile(outputFile)
-	envBytes, _ := os.ReadFile(envFile)
-	argvBytes, _ := os.ReadFile(argvFile)
-
-	return guardResult{
-		stdout:       stdout.String(),
-		stderr:       stderr.String(),
-		combined:     combined.String(),
-		exitCode:     exitCode,
-		githubOutput: string(outputBytes),
-		githubEnv:    string(envBytes),
-		awsArgv:      string(argvBytes),
-	}
+	return guardResult{stdout: stdout.String(), stderr: stderr.String(), combined: combined.String(), exitCode: exitCode}
 }
 
 // testRecordDigest differs from the image's digest so a test can tell the two apart.
@@ -990,6 +990,109 @@ func TestWorkflow_TheKitCheckoutLeavesTheBlockTreeBeforeItIsJudged(t *testing.T)
 			}
 			if _, err := os.Stat(filepath.Join(tmp, "main.go")); err != nil {
 				t.Errorf("the block's own main.go is gone: %v", err)
+			}
+		})
+	}
+}
+
+const kitVersionStep = "Determine the kit version pinned in go.mod"
+
+// runKitVersionStep runs the kit version step's own script in a directory whose go.mod holds goMod.
+func runKitVersionStep(t *testing.T, goMod string) guardResult {
+	t.Helper()
+	blocks := publishStepBlocks(t)
+	idx := indexOfStepByName(blocks, kitVersionStep)
+	if idx < 0 {
+		t.Fatalf("publish job has no step named %q", kitVersionStep)
+	}
+	script := runScript(blocks[idx])
+	if strings.TrimSpace(script) == "" || strings.Contains(script, "${{") {
+		t.Fatalf("step %q has no plain run: script to execute:\n%s", kitVersionStep, script)
+	}
+
+	tmp := t.TempDir()
+	scriptPath := filepath.Join(tmp, "step.sh")
+	envFile := filepath.Join(tmp, "github-env")
+	workDir := filepath.Join(tmp, "block")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{scriptPath: script, envFile: "", filepath.Join(workDir, "go.mod"): goMod} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+	}
+
+	res := runBash(t, scriptPath, workDir, "GITHUB_ENV="+envFile)
+
+	envBytes, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("reading GITHUB_ENV: %v", err)
+	}
+	res.githubEnv = string(envBytes)
+	return res
+}
+
+func TestWorkflow_KitVersionStepReadsEveryKitModulePath(t *testing.T) {
+	for _, tc := range []struct {
+		name, goMod, want string
+	}{
+		{
+			name:  "a block on kit v2 requires the major-version path",
+			goMod: "module github.com/mitstack-eu/kube-app-deploy\n\ngo 1.26\n\nrequire github.com/mitstack-eu/operator-kit/v2 v2.2.0\n",
+			want:  "v2.2.0",
+		},
+		{
+			name:  "a block on kit v2 lists it inside a require block",
+			goMod: "module github.com/mitstack-eu/kube-app-deploy\n\ngo 1.26\n\nrequire (\n\tgithub.com/google/uuid v1.6.0\n\tgithub.com/mitstack-eu/operator-kit/v2 v2.2.0\n)\n",
+			want:  "v2.2.0",
+		},
+		{
+			name:  "a block on kit v1 requires the root module path",
+			goMod: "module github.com/mitstack-eu/postgres-db\n\ngo 1.26\n\nrequire github.com/mitstack-eu/operator-kit v1.32.0\n",
+			want:  "v1.32.0",
+		},
+		{
+			name:  "a block still on the legacy monorepo path",
+			goMod: "module github.com/mitstack-eu/redis-cache\n\ngo 1.26\n\nrequire github.com/mitstack-eu/mitstack/examples/operator-kit v0.5.1\n",
+			want:  "v0.5.1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := runKitVersionStep(t, tc.goMod)
+
+			if res.exitCode != 0 {
+				t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.combined)
+			}
+			if got := keyValues(res.githubEnv)["KIT_VERSION"]; got != tc.want {
+				t.Errorf("KIT_VERSION = %q, want %q; GITHUB_ENV:\n%s", got, tc.want, res.githubEnv)
+			}
+		})
+	}
+}
+
+func TestWorkflow_KitVersionStepFailsWhenGoModRequiresNoKit(t *testing.T) {
+	for _, tc := range []struct{ name, goMod string }{
+		{
+			name:  "go.mod requires no operator-kit module",
+			goMod: "module github.com/mitstack-eu/stray\n\ngo 1.26\n\nrequire github.com/google/uuid v1.6.0\n",
+		},
+		{
+			name:  "go.mod requires only a sibling module whose path starts with operator-kit",
+			goMod: "module github.com/mitstack-eu/stray\n\ngo 1.26\n\nrequire github.com/mitstack-eu/operator-kit-extras v1.0.0\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := runKitVersionStep(t, tc.goMod)
+
+			if res.exitCode != 1 {
+				t.Fatalf("exit code = %d, want 1; output:\n%s", res.exitCode, res.combined)
+			}
+			if !strings.Contains(res.stderr, "no operator-kit version pin found in go.mod") {
+				t.Errorf("stderr = %q, want the step's failure message", res.stderr)
+			}
+			if _, ok := keyValues(res.githubEnv)["KIT_VERSION"]; ok {
+				t.Errorf("GITHUB_ENV = %q, want no KIT_VERSION", res.githubEnv)
 			}
 		})
 	}

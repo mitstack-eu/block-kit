@@ -457,13 +457,10 @@ jobs:
           IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}" | cut -d@ -f2)
           echo "IMAGE_DIGEST=$IMAGE_DIGEST" >> "$GITHUB_ENV"
 
-      # The kit-ref input names which kit BUILT the tools above; it says
-      # nothing about which kit THIS BLOCK compiles against. The record's
-      # kitVersion must be the second fact, read the same way
-      # check-operator-kit-pin.sh reads it — accepting either the current
-      # module path or the legacy one it also still accepts while the fleet
-      # migrates — and this fails loudly rather than handing Build an empty
-      # value it would refuse anyway with a less useful error.
+      # kit-ref names the kit that BUILT the tools above, not the one this
+      # block compiles against, so the record's kitVersion comes from go.mod:
+      # operator-kit, its operator-kit/vN path from v2 on, or the legacy
+      # mitstack/examples/operator-kit.
       - name: Determine the kit version pinned in go.mod
         if: steps.existing.outputs.record == 'false'
         run: |
@@ -472,9 +469,9 @@ jobs:
           # `pipefail` before the check below ever runs — the failure is
           # still reported, just by that explicit check and its message
           # rather than a bare, undiagnosed pipeline abort.
-          KIT_VERSION=$(grep -oE 'github\.com/mitstack-eu/(operator-kit|mitstack/examples/operator-kit) v[0-9]+\.[0-9]+\.[0-9]+' go.mod | head -1 | awk '{print $2}' || true)
+          KIT_VERSION=$(grep -oE 'github\.com/mitstack-eu/(operator-kit(/v[0-9]+)?|mitstack/examples/operator-kit) v[0-9]+\.[0-9]+\.[0-9]+' go.mod | head -1 | awk '{print $2}' || true)
           if [ -z "$KIT_VERSION" ]; then
-            echo "no operator-kit version pin found in go.mod (checked both the current and legacy module paths)" >&2
+            echo "no operator-kit version pin found in go.mod (checked github.com/mitstack-eu/operator-kit, github.com/mitstack-eu/operator-kit/vN and the legacy github.com/mitstack-eu/mitstack/examples/operator-kit)" >&2
             exit 1
           fi
           echo "KIT_VERSION=$KIT_VERSION" >> "$GITHUB_ENV"
