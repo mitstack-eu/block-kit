@@ -1177,6 +1177,10 @@
         {
           "class": "permanent",
           "cause": "the branch is protected against direct pushes"
+        },
+        {
+          "class": "permanent",
+          "cause": "the repository deletes head branches on merge, which removes the branch that carried the commit"
         }
       ],
       "version": 1
@@ -1242,8 +1246,8 @@
           "required": true
         }
       ],
-      "observe": "the pulls API returns the pull request open from its head to its base",
-      "absence": "the pulls API returns the pull request closed",
+      "observe": "the pulls API returns the pull request from its head to its base, open or merged",
+      "absence": "the pulls API returns the pull request closed unmerged, and a merged pull request ends with its subscription and is never observed gone, because a merge is permanent",
       "timeBudgets": {
         "delete": "1m",
         "ensure": "1m",
