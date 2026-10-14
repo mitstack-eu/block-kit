@@ -163,7 +163,7 @@ type GitHubTagAPI interface {
 	Commits(ctx context.Context, d contract.Desired, repo string) ([]GitHubCommitPaths, error)
 }
 
-// GitHubTagged lists what a subscription holds on the repositories carrying its topic and on the one its github.repository requirement binds, where a webhook counts only when it points at ProcessorURL.
+// GitHubTagged lists what a subscription holds on the repositories carrying its topic and on those its github.repository or github.gitops-repository requirements bind, where a webhook counts only when it points at ProcessorURL.
 type GitHubTagged struct {
 	API GitHubTagAPI
 	// RepositoryType defaults to github.repository.
@@ -172,7 +172,7 @@ type GitHubTagged struct {
 	// Secrets and Variables are the fixed names the block writes, so another block's secret on the same repository is not counted.
 	Secrets   []string
 	Variables []string
-	// CommitType, when set, counts a repository's trailer commits once as that type; otherwise each path they wrote counts as a github.workflow-file.
+	// CommitType, when set, counts a repository's trailer commits once as that type while the branch holds a path they wrote; otherwise each path they wrote counts as a github.workflow-file.
 	CommitType string
 }
 
@@ -255,15 +255,13 @@ func fixedNames(typ, repo string, present, fixed []string) []Tagged {
 
 func (l GitHubTagged) committed(repo string, commits []GitHubCommitPaths, trailer string) []Tagged {
 	var paths []string
-	trailed := false
 	for _, c := range commits {
 		if carriesTrailer(c.Message, trailer) {
-			trailed = true
 			paths = append(paths, c.Paths...)
 		}
 	}
 	if l.CommitType != "" {
-		if trailed {
+		if len(paths) > 0 {
 			return []Tagged{{Type: l.CommitType, ID: repo}}
 		}
 		return nil
@@ -291,11 +289,14 @@ func carriesTrailer(message, trailer string) bool {
 	return false
 }
 
-// boundRepositories are the repos the requirements met by a github.repository bind, in reference order.
+// boundRepositoryTypes are the requirement types whose bound repository a block may write to without having created it.
+var boundRepositoryTypes = []string{"github.repository", "github.gitops-repository"}
+
+// boundRepositories are the repos the requirements of a boundRepositoryTypes type bind, in reference order.
 func boundRepositories(d contract.Desired) []string {
 	var refs []string
 	for ref, typ := range d.RequirementTypes {
-		if typ == "github.repository" {
+		if slices.Contains(boundRepositoryTypes, typ) {
 			refs = append(refs, ref)
 		}
 	}

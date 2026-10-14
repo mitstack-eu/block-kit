@@ -201,12 +201,13 @@ func (f *fakeGitHub) Commits(_ context.Context, _ contract.Desired, repo string)
 func ghWorld() *fakeGitHub {
 	return &fakeGitHub{
 		topics: map[string][]string{
-			"acme/app-ci":    {"team-ci", "mitstack-sub-3e304e324312"},
-			"acme/app":       {"production"},
-			"acme/untagged":  nil,
-			"acme/other-ci":  {"mitstack-sub-9f9f9f9f9f9f"},
-			"acme/longer-ci": {"mitstack-sub-3e304e3243129"},
-			"acme/elsewhere": nil,
+			"acme/app-ci":     {"team-ci", "mitstack-sub-3e304e324312"},
+			"acme/app":        {"production"},
+			"acme/untagged":   nil,
+			"acme/other-ci":   {"mitstack-sub-9f9f9f9f9f9f"},
+			"acme/longer-ci":  {"mitstack-sub-3e304e3243129"},
+			"acme/elsewhere":  nil,
+			"acme/app-gitops": {"mitstack-sub-5a5a5a5a5a5a"},
 		},
 		hooks: map[string][]observe.GitHubWebhook{
 			"acme/app-ci":    {{ID: "11", URL: "https://example.com/any-hook"}},
@@ -238,17 +239,25 @@ func ghWorld() *fakeGitHub {
 			"acme/untagged": {
 				{Message: "mitstack: seed" + ghTrailer, Paths: []string{"stray.yml"}},
 			},
+			"acme/app-gitops":         {{Message: "shop: deploy" + ghTrailer, Paths: []string{"deployment.json"}}},
+			"acme/app-gitops-removed": {{Message: "shop: deploy" + ghTrailer}, {Message: "shop: remove the app" + ghTrailer}},
 		},
 	}
 }
 
+// ghDesired binds the app repository, a runner, and two GitOps repositories another subscription created and marked.
 func ghDesired() contract.Desired {
 	return contract.Desired{
-		Identity:         contract.Identity{SubscriptionID: ghSub},
-		RequirementTypes: map[string]string{"app-repo": "github.repository", "runner": "github.self-hosted-runner"},
+		Identity: contract.Identity{SubscriptionID: ghSub},
+		RequirementTypes: map[string]string{
+			"app-repo": "github.repository", "runner": "github.self-hosted-runner",
+			"gitops": "github.gitops-repository", "gitops-removed": "github.gitops-repository",
+		},
 		Bindings: map[string]map[string]string{
-			"app-repo": {"repo": "acme/app"},
-			"runner":   {"repo": "acme/elsewhere"},
+			"app-repo":       {"repo": "acme/app"},
+			"runner":         {"repo": "acme/elsewhere"},
+			"gitops":         {"repo": "acme/app-gitops"},
+			"gitops-removed": {"repo": "acme/app-gitops-removed"},
 		},
 	}
 }
@@ -313,6 +322,8 @@ func TestGitHubTagged_ListsWhatCountsAsTheSubscriptions(t *testing.T) {
 				{"a file committed under the trailer of an id this one prefixes", observe.Tagged{Type: "github.workflow-file", ID: "acme/app-ci/longer.yml"}, false},
 				{"a file whose commit names the trailer in its subject, not its closing trailer block", observe.Tagged{Type: "github.workflow-file", ID: "acme/app-ci/subject.yml"}, false},
 				{"a file committed under the trailer on a repository neither tagged nor bound", observe.Tagged{Type: "github.workflow-file", ID: "acme/untagged/stray.yml"}, false},
+				{"a file a trailer commit wrote on the bound GitOps repository", observe.Tagged{Type: "github.workflow-file", ID: "acme/app-gitops/deployment.json"}, true},
+				{"the bound GitOps repository, which another subscription created", observe.Tagged{Type: "github.repository", ID: "acme/app-gitops"}, false},
 			},
 		},
 		{
@@ -331,6 +342,8 @@ func TestGitHubTagged_ListsWhatCountsAsTheSubscriptions(t *testing.T) {
 				{"a file a trailer commit wrote, which the commit type stands for", observe.Tagged{Type: "github.workflow-file", ID: "acme/app-ci/.github/workflows/build.yml"}, false},
 				{"a trailer commit on a repository neither tagged nor bound", observe.Tagged{Type: "github.scaffold-commit", ID: "acme/untagged"}, false},
 				{"a commit on another subscription's repository", observe.Tagged{Type: "github.scaffold-commit", ID: "acme/other-ci"}, false},
+				{"the trailer commit on the bound GitOps repository", observe.Tagged{Type: "github.scaffold-commit", ID: "acme/app-gitops"}, true},
+				{"trailer commits whose every file the branch no longer holds", observe.Tagged{Type: "github.scaffold-commit", ID: "acme/app-gitops-removed"}, false},
 			},
 		},
 	}
