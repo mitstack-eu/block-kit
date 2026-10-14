@@ -1,11 +1,6 @@
 package main
 
-// workflow_test.go is a structural guard over ../../.github/workflows/ci.yml:
-// a Go test, not a shell script, following blockprov/workflow_test.go's
-// idiom — indentation-based parsing with plain string handling, no YAML
-// library, since the kit is stdlib-only. Duplicated here rather than shared
-// because blockprov's helpers live inside its own package main and cannot be
-// imported.
+// The record-delivery job in ci.yml is read by indentation, since the kit takes no YAML library.
 
 import (
 	"os"
@@ -16,16 +11,13 @@ import (
 
 const ciWorkflowPath = "../../.github/workflows/ci.yml"
 
-// recordDeliveryJob is the job key this guard requires. Chosen to name the
-// outcome (recording a delivery), not the binary that performs it.
 const recordDeliveryJob = "record-delivery"
 
 func ciIndentOf(line string) int {
 	return len(line) - len(strings.TrimLeft(line, " "))
 }
 
-// ciBlock returns the lines nested under "<key>:" inside text, mirroring
-// blockprov/workflow_test.go's block().
+// ciBlock returns the lines nested under "<key>:" inside text.
 func ciBlock(text, key string) string {
 	lines := strings.Split(text, "\n")
 	var out []string
@@ -80,20 +72,18 @@ func TestWorkflow_RecordDeliveryJobExists(t *testing.T) {
 	recordDeliveryBlock(t, text)
 }
 
-func TestWorkflow_RecordDeliveryRunsOnlyOnPushToMain(t *testing.T) {
+// A dispatch on another ref would record keys for commits main never took.
+func TestWorkflow_RecordDeliveryRunsOnlyOnMainByPushOrDispatch(t *testing.T) {
+	const want = "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
 	text := readCIWorkflow(t)
-	job := recordDeliveryBlock(t, text)
-	ifPattern := regexp.MustCompile(`(?m)^\s*if:\s*(.+)$`)
-	m := ifPattern.FindStringSubmatch(job)
+
+	m := regexp.MustCompile(`(?m)^\s*if:\s*(.+)$`).FindStringSubmatch(recordDeliveryBlock(t, text))
+
 	if m == nil {
-		t.Fatalf("%s job has no if: gate — it must run only on a push to main, never on a pull_request", recordDeliveryJob)
+		t.Fatalf("%s job has no if: gate; want %q", recordDeliveryJob, want)
 	}
-	cond := m[1]
-	if !strings.Contains(cond, "push") {
-		t.Errorf("%s job's if: = %q, want it to require the push event", recordDeliveryJob, cond)
-	}
-	if !strings.Contains(cond, "refs/heads/main") {
-		t.Errorf("%s job's if: = %q, want it to require github.ref == refs/heads/main", recordDeliveryJob, cond)
+	if got := strings.TrimSpace(m[1]); got != want {
+		t.Errorf("%s job's if: = %q; want %q", recordDeliveryJob, got, want)
 	}
 }
 
@@ -114,12 +104,7 @@ func TestWorkflow_RecordDeliveryNeedsTestAndRelease(t *testing.T) {
 	}
 }
 
-// TestWorkflow_RecordDeliveryDoesNotGateOnReleaseHavingCutATag guards the
-// case release reports released=false (a docs-only push that changed
-// nothing tag-worthy): needs: [test, release] only requires release to have
-// SUCCEEDED, not to have cut a tag, so this run must still record its keys.
-// A job whose if: additionally inspects needs.release.outputs.released
-// would wrongly skip that case.
+// A push that cuts no tag still delivers its keys, so the job must not read release's outputs.
 func TestWorkflow_RecordDeliveryDoesNotGateOnReleaseHavingCutATag(t *testing.T) {
 	text := readCIWorkflow(t)
 	job := recordDeliveryBlock(t, text)
@@ -233,17 +218,8 @@ func TestWorkflow_RecordDeliveryHasNoContinueOnError(t *testing.T) {
 	}
 }
 
-// TestWorkflow_RecordDeliveryHasConcurrencyGroupThatDoesNotCancel guards
-// against two overlapping pushes to main running record-delivery at once:
-// both would read the board-synced anchor tag before either advances it,
-// both would derive overlapping ranges and re-post already-delivered keys to
-// the board, and both would then race to push the anchor tag, so whichever
-// push loses the race can leave the anchor behind the repository's real
-// position. cancel-in-progress must be false specifically, not merely
-// present: a run that has already posted to the board but not yet advanced
-// the anchor must run to completion rather than be cancelled mid-way, since
-// a cancelled run leaves the anchor further behind than a serialized one
-// ever would — the opposite of what the concurrency group is for.
+// Overlapping runs would race the anchor tag, and a run cancelled between the
+// board write and the tag advance leaves the anchor further behind.
 func TestWorkflow_RecordDeliveryHasConcurrencyGroupThatDoesNotCancel(t *testing.T) {
 	text := readCIWorkflow(t)
 	job := recordDeliveryBlock(t, text)

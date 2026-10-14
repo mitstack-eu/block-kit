@@ -1,11 +1,13 @@
 name: ci
 
 # Every pull request, and every push to main so the release job below has
-# something to run after.
+# something to run after. A dispatch on main cuts a release a lost push run
+# left owed, with no new commit.
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -71,7 +73,8 @@ jobs:
   release:
     name: kit release
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # The ref check keeps a dispatch on another branch from tagging an unmerged commit.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
     # The job's own grant. A workflow-level default is a ceiling rather than a
     # floor, so a job that never re-grants runs with metadata read alone and
@@ -93,7 +96,7 @@ jobs:
         shell: bash
         # No --base: the script resolves the base from the newest kit tag, so
         # a run that was skipped or red does not lose its release. The next
-        # push picks it up, even when that push touched nothing itself.
+        # push or a dispatch on main picks it up, with no change of its own.
         run: bash scripts/release-operator-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"
 
   # This repository has no other mechanism that reaches the board, so a
@@ -103,7 +106,8 @@ jobs:
   record-delivery:
     name: record delivery
     needs: [test, release]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # The ref check keeps a dispatch on another branch from recording its commits.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
     # The job's own grant. A workflow-level default is a ceiling rather than a
     # floor, so a job that never re-grants runs with metadata read alone and

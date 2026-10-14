@@ -10,7 +10,7 @@
 # CONTRACT this file assumes of .github/workflows/ci.yml (written by
 # code-author, not this file):
 #
-#   on: pull_request (against main) and push to main.
+#   on: pull_request (against main), push to main and workflow_dispatch.
 #
 #   jobs.test runs on every pull_request and every push to main, on
 #   ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}, with
@@ -20,8 +20,8 @@
 #   454303e, go-version '1.26.8'), and runs `go vet ./...` and
 #   `go test ./...`.
 #
-#   jobs.release runs only on push to main, only after jobs.test (needs:
-#   test, and an `if:` naming both refs/heads/main and the push event), with
+#   jobs.release runs only on main, by a push or a dispatch, only after
+#   jobs.test (needs: test, and the `if:` in RELEASE_IF below), with
 #   permissions: contents: write, a checkout step with fetch-depth: 0, a
 #   shell: bash default, a job-level concurrency block (group: kit-release,
 #   cancel-in-progress: false), and a step running exactly
@@ -97,6 +97,12 @@ else
   bad "on: is missing a push trigger scoped to main"
 fi
 
+if grep -qE '^\s*workflow_dispatch:' <<<"$on_block"; then
+  ok "on: includes workflow_dispatch"
+else
+  bad "on: is missing workflow_dispatch"
+fi
+
 # --- jobs.test -----------------------------------------------------------
 
 test_block="$(block "$jobs_block" test)"
@@ -157,11 +163,13 @@ else
   bad "jobs.release does not declare needs: test"
 fi
 
-if_line="$(grep -E '^\s*if:' <<<"$release_block" | head -1)"
-if grep -qF "refs/heads/main" <<<"$if_line" && grep -qF "github.event_name == 'push'" <<<"$if_line"; then
-  ok "jobs.release runs only on push to main"
+# A dispatch on another ref would tag an unmerged commit as a kit version.
+RELEASE_IF="(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
+if_cond="$(grep -E '^\s*if:' <<<"$release_block" | head -1 | sed -E 's/^\s*if:\s*//')"
+if [ "$if_cond" = "$RELEASE_IF" ]; then
+  ok "jobs.release runs only on main, by a push or a dispatch"
 else
-  bad "jobs.release's if: does not gate on both refs/heads/main and github.event_name == 'push' (got: ${if_line:-<none>})"
+  bad "jobs.release's if: is not $RELEASE_IF (got: ${if_cond:-<none>})"
 fi
 
 perm_block="$(block "$release_block" permissions)"
