@@ -1,17 +1,12 @@
 package contract_test
 
-// manifest_unknown_field_test.go pins that contract.ParseManifest is strict
-// under both manifest versions: a key no field of the version names is
-// refused, at the top level and at every depth below it, and the error
-// names the key's path.
+// contract.ParseManifest refuses a key no field of the manifest's version names, at any depth, naming its path.
 
 import (
 	"strings"
 	"testing"
 )
 
-// alphaWith returns alphaHead with each old, new pair of replacements
-// applied once, failing the test when an old text is not in it.
 func alphaWith(t *testing.T, pairs ...string) []byte {
 	t.Helper()
 	out := alphaHead
@@ -24,8 +19,6 @@ func alphaWith(t *testing.T, pairs ...string) []byte {
 	return []byte(out)
 }
 
-// v1alphaUnknownFields are manifests that are valid v1alpha but for one key
-// no v1alpha field names, by the path the refusal must name.
 func v1alphaUnknownFields(t *testing.T) map[string][]byte {
 	spec := func(lines string) []byte { return []byte(alphaHead + lines) }
 	return map[string][]byte{
@@ -66,10 +59,7 @@ func v1alphaUnknownFields(t *testing.T) map[string][]byte {
 	}
 }
 
-// v1betaUnknownFields are betaManifest with one key no v1beta field names,
-// by the path the refusal must name. ADR 0083 takes lifecycle hooks,
-// retainsOnUnsubscribe and spec.naming out of v1beta, so each is unknown
-// there.
+// ADR 0083 takes lifecycle hooks, retainsOnUnsubscribe and spec.naming out of v1beta, so each is unknown there.
 func v1betaUnknownFields(t *testing.T) map[string][]byte {
 	return map[string][]byte{
 		"bogus":                   editBeta(t, "metadata:\n", "bogus: 1\nmetadata:\n"),
@@ -92,6 +82,12 @@ func v1betaUnknownFields(t *testing.T) map[string][]byte {
 				"            bogus: 1\n  lifecycle:\n"),
 		"spec.observability.cost.bogus": editBeta(t, "  lifecycle:\n",
 			"  observability:\n    cost:\n      groupBy: [app]\n      bogus: 1\n  lifecycle:\n"),
+		"kind":       editBeta(t, "metadata:\n", "kind: Block\nmetadata:\n"),
+		"spec.layer": editBeta(t, "  version: 1.0.0\n", "  version: 1.0.0\n  layer: backend\n"),
+		"spec.providedContracts": editBeta(t, "  version: 1.0.0\n",
+			"  version: 1.0.0\n  providedContracts:\n    - capability: app-host\n      kind: http\n"),
+		"spec.continuity": editBeta(t, "  version: 1.0.0\n",
+			"  version: 1.0.0\n  continuity:\n    - name: app-data\n      kind: postgres\n"),
 	}
 }
 
@@ -103,7 +99,7 @@ func TestParseManifest_RefusesAnUnknownFieldNamingItsPathUnderBothVersions(t *te
 		t.Run(version, func(t *testing.T) {
 			for path, raw := range cases {
 				t.Run(path, func(t *testing.T) {
-					requireRefusedNaming(t, raw, path)
+					requireRefusedNaming(t, raw, path+" is not a field of a "+version+" manifest")
 				})
 			}
 		})

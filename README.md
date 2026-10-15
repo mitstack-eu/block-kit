@@ -82,8 +82,10 @@ manifest without it reads as zero.
 An unnamed resource is named by its type id, and an unnamed requirement is
 referenced by it. An entry that lists more than one type needs a name, and
 two entries that would share a name or a reference are refused. The parser
-refuses the retired `kind`, `in`, `on` and `inputs` keys, naming the key and
-the entry. It judges the type id grammar only, so it needs no type snapshot.
+refuses a key that is not a field of a `mitstack/v1beta` manifest, such as a
+top-level `kind`, `spec.layer`, or `kind`, `in`, `on` or `inputs` on an
+entry, naming its path. It judges the type id grammar only, so it needs no
+type snapshot.
 
 Whether the platform holds a type is a question for the type snapshot the
 platform serves at `GET /v1/resource-types/snapshots/{version}`.

@@ -294,7 +294,7 @@ func TestParseManifest_V1BetaNeedsNoSnapshotToReadATypeTheCatalogueLacks(t *test
 
 // retiredKeyManifest requires a named host at spec.requires[1] and declares
 // a named container at spec.resources[1], so a retired key added to either
-// is refused naming that index.
+// is refused naming its path under that index.
 const retiredKeyManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
@@ -328,7 +328,7 @@ func editRetired(t *testing.T, old, new string) []byte {
 	return []byte(strings.Replace(retiredKeyManifest, old, new, 1))
 }
 
-func TestParseManifest_V1BetaRefusesARetiredKeyNamingTheFieldAndTheEntry(t *testing.T) {
+func TestParseManifest_V1BetaRefusesARetiredEntryKeyAsAFieldItDoesNotHave(t *testing.T) {
 	parseBeta(t, []byte(retiredKeyManifest))
 	const hostType = "      type: aws.ec2-instance\n"
 	const containerType = "      type: aws.ec2-container\n"
@@ -349,7 +349,8 @@ func TestParseManifest_V1BetaRefusesARetiredKeyNamingTheFieldAndTheEntry(t *test
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			requireRefusedNaming(t, editRetired(t, tc.old, tc.new), `"`+tc.field+`"`, tc.entry)
+			requireRefusedNaming(t, editRetired(t, tc.old, tc.new),
+				tc.entry+"."+tc.field+" is not a field of a mitstack/v1beta manifest")
 		})
 	}
 }

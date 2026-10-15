@@ -64,7 +64,7 @@ func TestRun_FailsTheManifestSuiteOnANamespacePlacedWithOn(t *testing.T) {
 	if m.Status != "fail" {
 		t.Fatalf("manifest status = %q, want %q; detail: %s", m.Status, "fail", m.Detail)
 	}
-	for _, part := range []string{manifestFile, "spec.resources[0]", `"on"`} {
+	for _, part := range []string{manifestFile, "spec.resources[0].on is not a field of a mitstack/v1beta manifest"} {
 		if !strings.Contains(m.Detail, part) {
 			t.Errorf("manifest detail = %q, want it to name %q", m.Detail, part)
 		}

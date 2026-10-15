@@ -25,7 +25,7 @@ var bindingFixtures = []struct {
 			"  requires: [github.repository]\n",
 			"  requires:\n    - { type: github.repository, kind: git-repository }\n",
 		},
-		wants: []string{"spec.requires[0]", `"kind"`},
+		wants: []string{"spec.requires[0].kind is not a field of a mitstack/v1beta manifest"},
 	},
 	{
 		dir: "manifest-resource-carries-inputs",
@@ -33,7 +33,7 @@ var bindingFixtures = []struct {
 			"    - aws.security-group\n",
 			"    - { type: aws.security-group, inputs: { network: resources.aws.vpc } }\n",
 		},
-		wants: []string{"spec.resources[2]", `"inputs"`},
+		wants: []string{"spec.resources[2].inputs is not a field of a mitstack/v1beta manifest"},
 	},
 	{
 		dir: "manifest-alternatives-without-a-name",

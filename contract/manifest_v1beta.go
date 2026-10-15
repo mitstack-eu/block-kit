@@ -21,8 +21,6 @@ var v1betaDecoder = manifestDecoder{version: ManifestAPIVersion, tag: "json"}
 
 var typeIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*\.[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
-var retiredEntryKeys = []string{"kind", "in", "on", "inputs"}
-
 // decodeBlockManifest also holds what the types cannot say: type is block or capability, names and references are unique, and every provides entry names a resource.
 func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 	b := &BlockManifest{}
@@ -86,7 +84,7 @@ func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, e
 	return r, nil
 }
 
-// entry refuses a retired key by name and an entry listing several types without a name.
+// entry refuses a key that is not a field of an entry, and an entry listing several types without a name.
 func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (manifestEntry, error) {
 	if n.kind == yamlScalar {
 		id, err := typeID(n, path)
@@ -105,8 +103,6 @@ func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (mani
 		val := n.vals[i]
 		var err error
 		switch {
-		case slices.Contains(retiredEntryKeys, key):
-			err = fmt.Errorf("%s: %q is retired: an entry names its exact type under type, and a block creates and orders its own resources", path, key)
 		case key == "type":
 			hasType = true
 			e.types, err = typeList(val, keyPath)
