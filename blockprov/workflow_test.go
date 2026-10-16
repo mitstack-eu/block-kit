@@ -893,15 +893,86 @@ func TestWorkflow_ASilentProbeRunsNoWriteStep(t *testing.T) {
 	}
 }
 
-func TestWorkflow_CleanUpKitTokenStepStillRunsAlways(t *testing.T) {
-	blocks := publishStepBlocks(t)
-	idx := indexOfStepByName(blocks, "Clean up the kit token file")
-	if idx < 0 {
-		t.Fatal(`publish job has no "Clean up the kit token file" step`)
+// The kit is a public module, so each job fetches it with no credential: no step mints a token, and the kit checkout uses the run's default token.
+func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
+	jobs := block(readWorkflow(t), "jobs")
+	for _, tc := range []struct {
+		job     string
+		idToken bool
+		want    []string
+	}{
+		{"conformance", false, []string{
+			"actions/checkout",
+			"actions/setup-go",
+			"go vet",
+			"go test",
+			"Checkout operator-kit",
+			"Build blockverify",
+			"Build commentcheck",
+			"Remove the kit checkout from the block tree",
+			"Write the base commit's manifest",
+			"Judge the comments this pull request adds",
+			"blockverify (standalone contract check)",
+			"Upload blockverify report",
+		}},
+		{"publish", true, []string{
+			"actions/checkout",
+			"actions/setup-go",
+			"Configure AWS credentials",
+			"Checkout operator-kit",
+			"Build blockverify and blockprov",
+			"Remove the kit checkout from the block tree",
+			"Log in to ECR",
+			"Probe the version tag and its provenance record",
+			"Build and push image",
+			"Determine the kit version pinned in go.mod",
+			"blockverify (standalone, for blockprov build's report)",
+			"blockprov build",
+			"Fetch ECR password",
+			"blockprov push",
+		}},
+	} {
+		t.Run(tc.job, func(t *testing.T) {
+			jobBlock := block(jobs, tc.job)
+			blocks := stepBlocks(jobBlock)
+
+			got := stepLabels(blocks)
+			checkout := indexOfStepByName(blocks, "Checkout operator-kit")
+			permissions := block(jobBlock, "permissions")
+			build := indexOfStepByName(blocks, "Build and push image")
+
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Errorf("%s steps =\n  %s\nwant\n  %s", tc.job, strings.Join(got, "\n  "), strings.Join(tc.want, "\n  "))
+			}
+			if checkout < 0 {
+				t.Fatalf("%s job has no step %q", tc.job, "Checkout operator-kit")
+			}
+			if with := block(blocks[checkout], "with"); regexp.MustCompile(`(?m)^\s*token:`).MatchString(with) {
+				t.Errorf("%s kit checkout with: =\n%s\nwant no token key, so the public kit is read with the run's default token", tc.job, with)
+			}
+			if hasIDToken := strings.Contains(permissions, "id-token: write"); hasIDToken != tc.idToken {
+				t.Errorf("%s permissions =\n%s\nid-token: write granted = %v, want %v, since only the publish job assumes an AWS role and mints the record's OIDC token", tc.job, permissions, hasIDToken, tc.idToken)
+			}
+			if build >= 0 && strings.Contains(runScript(blocks[build]), "--secret") {
+				t.Errorf("%s image build run =\n%s\nwant no --secret, so the image fetches the public kit with no credential", tc.job, runScript(blocks[build]))
+			}
+		})
 	}
-	if got := ifOf(blocks[idx]); got != "always()" {
-		t.Errorf(`step "Clean up the kit token file" has if: %q, want "always()" — it must clean up the secret file whether or not the tag was already published`, got)
+}
+
+// stepLabels names each step by its name, or by its action without the pinned ref when it has none.
+func stepLabels(blocks []string) []string {
+	namePattern := regexp.MustCompile(`(?m)^\s*-?\s*name:\s*"?(.+?)"?\s*$`)
+	usesPattern := regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*([^@\s]+)`)
+	var labels []string
+	for _, b := range blocks {
+		if m := namePattern.FindStringSubmatch(b); m != nil {
+			labels = append(labels, m[1])
+		} else if m := usesPattern.FindStringSubmatch(b); m != nil {
+			labels = append(labels, m[1])
+		}
 	}
+	return labels
 }
 
 // A record signs this run's commit, so it is completed only for an image this commit built.

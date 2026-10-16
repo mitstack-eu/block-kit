@@ -45,18 +45,10 @@ never fails a block that has not picked it up yet.
 
 ## Run it locally
 
-The kit is a private module, so Go needs a GitHub credential that can read
-`mitstack-eu/operator-kit`. Put a token with that read access in
-`GITHUB_TOKEN`, then set this once, in the shell you run the checks from:
-
-```sh
-export GOPRIVATE=github.com/mitstack-eu
-git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-```
-
-Then run the suites from your block's directory, naming the kit release to
-run. `--standalone` tells `blockverify` to judge that one directory on its
-own, and it is the only mode the command has:
+The kit is a public module, so Go fetches it with no credential. Run the
+suites from your block's directory, naming the kit release to run.
+`--standalone` tells `blockverify` to judge that one directory on its own,
+and it is the only mode the command has:
 
 ```sh
 go run github.com/mitstack-eu/operator-kit/v2/blockverify@v2.1.0 --standalone .
