@@ -8,9 +8,9 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/mitstack-eu/operator-kit/v2/contract"
-	"github.com/mitstack-eu/operator-kit/v2/events"
-	"github.com/mitstack-eu/operator-kit/v2/safe"
+	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/operator-kit/v3/events"
+	"github.com/mitstack-eu/operator-kit/v3/safe"
 )
 
 // dispatchRequest runs the verb through the idempotency cache, storing only a settled answer.
@@ -57,9 +57,7 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	_, _ = w.Write(raw)
 }
 
-// dispatchVerbRecovering recovers inside the single-flight call because a recover further out would leave a waiter on the same key holding a zero status.
-//
-// The response error is a fixed message that carries nothing from the panic value, since the platform stores the response body.
+// dispatchVerbRecovering recovers inside the single-flight call because a recover further out would leave a waiter on the same key holding a zero status, and its fixed error carries nothing from the panic value since the platform stores the response body.
 func (h *Handler) dispatchVerbRecovering(ctx context.Context, req contract.Request, secrets []string) (status int, resp contract.Response) {
 	defer func() {
 		p := recover()
@@ -162,55 +160,17 @@ func refuseSecretOutputs(outputs map[string]string, secrets map[string]map[strin
 }
 
 func (h *Handler) ensureAndSettle(ctx context.Context, d contract.Desired, secrets []string) (int, contract.Response) {
-	if hook, ok := h.hooks[HookBeforeEnsure]; ok {
-		if err := hook(ctx, d); err != nil {
-			return h.errorResponse(err, secrets)
-		}
-	}
 	if err := h.resource.Ensure(ctx, d); err != nil {
 		return h.errorResponse(err, secrets)
-	}
-	if hook, ok := h.hooks[HookAfterEnsure]; ok {
-		if err := hook(ctx, d); err != nil {
-			return h.errorResponse(err, secrets)
-		}
 	}
 	return h.settlePresent(ctx, d, secrets)
 }
 
-// deleteAndSettle answers a manifest declaring retainsOnUnsubscribe absent:true without polling Observe, since the block keeps the resource by design and Observe would keep reporting Present.
 func (h *Handler) deleteAndSettle(ctx context.Context, desired contract.Desired, secrets []string) (int, contract.Response) {
-	if hook, ok := h.hooks[HookBeforeDelete]; ok {
-		if err := hook(ctx, desired); err != nil {
-			return h.errorResponse(err, secrets)
-		}
-	}
-
 	handoverOutputs, err := h.resource.Delete(ctx, desired)
 	if err != nil {
 		return h.errorResponse(err, secrets)
 	}
-
-	if hook, ok := h.hooks[HookAfterDelete]; ok {
-		if err := hook(ctx, desired); err != nil {
-			return h.errorResponse(err, secrets)
-		}
-	}
-
-	if h.retainsOnUnsubscribe {
-		if err := refuseSecretOutputs(handoverOutputs, desired.Secrets); err != nil {
-			return h.errorResponse(err, secrets)
-		}
-		absent := true
-		return http.StatusOK, contract.Response{
-			Absent:  &absent,
-			Outputs: handoverOutputs,
-			StatusDetail: safe.Scrub(
-				"the block declares it retains its resource on unsubscribe, so absence was not observed",
-				secrets...),
-		}
-	}
-
 	return h.settleAbsent(ctx, desired, secrets, handoverOutputs)
 }
 
@@ -285,7 +245,6 @@ func (h *Handler) settleAbsent(ctx context.Context, d contract.Desired, secrets 
 	}
 }
 
-// mergeOutputs lets overlay win on a key both carry.
 func mergeOutputs(base, overlay map[string]string) map[string]string {
 	if len(overlay) == 0 {
 		return base
