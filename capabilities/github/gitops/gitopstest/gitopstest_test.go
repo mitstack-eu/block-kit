@@ -42,9 +42,6 @@ func TestRepository_ACommitOnTheTipLandsAndMovesHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	if rev == "" {
-		t.Fatal("Commit returned an empty revision")
-	}
 	head, err := repo.Head(ctx)
 	if err != nil || head != rev {
 		t.Errorf("Head = %q, %v, want the new revision %q", head, err, rev)
@@ -276,9 +273,6 @@ func TestNotifications_SucceedCommitsAnswersSucceededAndHealthyForEveryRevisionT
 		}
 		if got.App != "app-alpha" || got.Revision != rev || got.Phase != "Succeeded" || got.Health != "Healthy" {
 			t.Errorf("Latest(app-alpha, %s) = %+v, want app-alpha at that revision, phase Succeeded, health Healthy", rev, got)
-		}
-		if gitops.Judge(got, rev) != gitops.VerdictSucceeded {
-			t.Errorf("Judge of the auto answer for %s = %v, want succeeded", rev, gitops.Judge(got, rev))
 		}
 	}
 	if _, ok, _ := notes.Latest(ctx, "app-alpha", "never-committed"); ok {

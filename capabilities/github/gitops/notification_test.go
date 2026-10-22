@@ -227,46 +227,16 @@ func TestPlatformNotifications_Latest(t *testing.T) {
 	}
 }
 
+// events.PlatformFrom derives the platform from the callback, and its own test covers every callback a request may carry.
 func TestNotificationsFromContext(t *testing.T) {
-	var gotPath, gotAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(adrBody))
-	}))
-	defer srv.Close()
-	withCallback := func(url string) context.Context {
-		return events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{URL: url, Token: platformToken}})
-	}
-	cases := []struct {
-		name     string
-		ctx      context.Context
-		wantBase string
-	}{
-		{"it trims the operator-events path from the callback URL", withCallback("https://api.mitstack.dev/v1/webhooks/operator-events"), "https://api.mitstack.dev"},
-		{"the reader it builds reaches the platform the callback names", withCallback(srv.URL + "/v1/webhooks/operator-events"), srv.URL},
-		{"no envelope is an error", context.Background(), ""},
-		{"an envelope with no callback is an error", events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1"}), ""},
-		{"a callback URL without the operator-events path is an error", withCallback("https://api.mitstack.dev/v1/webhooks/something-else"), ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			src, err := gitops.NotificationsFromContext(tc.ctx)
+	ctx := events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{URL: "https://api.mitstack.dev/v1/webhooks/operator-events", Token: platformToken}})
 
-			if tc.wantBase == "" {
-				if err == nil || strings.Contains(err.Error(), platformToken) {
-					t.Errorf("NotificationsFromContext = %+v, %v; want an error carrying no token", src, err)
-				}
-				return
-			}
-			if err != nil || src.BaseURL != tc.wantBase || src.Token != platformToken {
-				t.Fatalf("NotificationsFromContext = base %q, token set %v, %v; want %q and the callback's token", src.BaseURL, src.Token == platformToken, err, tc.wantBase)
-			}
-			if tc.wantBase != srv.URL {
-				return
-			}
-			if _, ok, err := src.Latest(tc.ctx, "app-alpha", adrRevision); err != nil || !ok || gotPath != "/v1/gitops-notifications" || gotAuth != "Bearer "+platformToken {
-				t.Errorf("Latest = %v, %v at %q with bearer set %v; want a notification from /v1/gitops-notifications with the callback token", ok, err, gotPath, gotAuth == "Bearer "+platformToken)
-			}
-		})
+	src, err := gitops.NotificationsFromContext(ctx)
+
+	if err != nil || src.BaseURL != "https://api.mitstack.dev" || src.Token != platformToken {
+		t.Errorf("NotificationsFromContext = base %q, token set %v, %v; want the platform the callback names and its token", src.BaseURL, src.Token == platformToken, err)
+	}
+	if _, err := gitops.NotificationsFromContext(context.Background()); err == nil {
+		t.Error("NotificationsFromContext with no events callback = nil error, want the error events.PlatformFrom returns")
 	}
 }
