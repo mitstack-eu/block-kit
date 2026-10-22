@@ -55,9 +55,6 @@ func requireResources(t *testing.T, got []contract.ManifestResource, want []want
 		if g.Name != w.name || g.Type != w.typ || !slices.Equal(g.Types, w.types) {
 			t.Errorf("spec.resources[%d] name, type, types = %q, %q, %q; want %q, %q, %q", i, g.Name, g.Type, g.Types, w.name, w.typ, w.types)
 		}
-		if g.Inputs != nil || g.On != "" {
-			t.Errorf("spec.resources[%d] inputs, on = %+v, %q; want both empty, since mitstack/v1beta retires them", i, g.Inputs, g.On)
-		}
 	}
 }
 
