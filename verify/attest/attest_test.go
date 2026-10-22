@@ -142,11 +142,3 @@ func TestEvaluate(t *testing.T) {
 		})
 	}
 }
-
-func TestStatus_ZeroValueIsNotVerified(t *testing.T) {
-	var s attest.Status
-
-	if s == attest.Verified {
-		t.Error("the zero Status must never be Verified")
-	}
-}

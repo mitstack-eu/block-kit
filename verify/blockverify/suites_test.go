@@ -18,10 +18,6 @@ func appendTo(name, text string) option {
 	return func(_ *testing.T, files map[string]string) { files[name] += text }
 }
 
-func editGoMod(old, new string) option {
-	return func(t *testing.T, files map[string]string) { files["go.mod"] = replaced(t, files["go.mod"], old, new) }
-}
-
 func githubBlock(file, src string) dirFunc {
 	opts := []option{withSource("creds.go", "github-creds.go")}
 	if file != "" {
@@ -32,26 +28,20 @@ func githubBlock(file, src string) dirFunc {
 
 func TestTrustPlumbingSuite(t *testing.T) {
 	runSuites(t, []string{"trust-plumbing"}, []suiteCase{
-		{name: "a kit/v1 block passes, naming the kit/v1 rule", dir: kitV1Block(),
-			status: "pass", detail: []string{"kit/v1"}},
-		{name: "a block that requires block-kit v0.4.0 passes, naming the floor", dir: kitV1Block(),
-			status: "pass", detail: []string{"github.com/mitstack-eu/block-kit at or above the floor v0.4.0"}},
-		{name: "a block that requires block-kit below the floor fails, naming its version and the floor",
-			dir: kitV1Block(editGoMod("block-kit v0.4.0", "block-kit v0.3.9")), status: "fail", detail: []string{"v0.3.9", "below the floor v0.4.0"}},
-		{name: "a block that also requires operator-kit's root module fails, naming operator-kit",
-			dir:    kitV1Block(appendTo("go.mod", "\nrequire github.com/mitstack-eu/operator-kit v1.32.3\n")),
+		{name: "a kit/v1 block that requires block-kit v0.4.0 passes, naming the kit/v1 rule and the floor", dir: kitV1Block(),
+			status: "pass", detail: []string{"kit/v1", "github.com/mitstack-eu/block-kit at or above the floor v0.4.0"}},
+		{name: "a block that requires block-kit below the floor fails, naming its version and the floor", dir: kitV1Block(func(t *testing.T, files map[string]string) {
+			files["go.mod"] = replaced(t, files["go.mod"], "block-kit v0.4.0", "block-kit v0.3.9")
+		}), status: "fail", detail: []string{"v0.3.9", "below the floor v0.4.0"}},
+		{name: "a block that also requires operator-kit's root module fails, naming operator-kit", dir: kitV1Block(appendTo("go.mod", "\nrequire github.com/mitstack-eu/operator-kit v1.32.3\n")),
 			status: "fail", detail: []string{"github.com/mitstack-eu/operator-kit"}},
-		{name: "a block that also requires operator-kit's v2 module fails, naming operator-kit",
-			dir:    kitV1Block(appendTo("go.mod", "\nrequire github.com/mitstack-eu/operator-kit/v2 v2.9.0\n")),
+		{name: "a block that also requires operator-kit's v2 module fails, naming operator-kit", dir: kitV1Block(appendTo("go.mod", "\nrequire github.com/mitstack-eu/operator-kit/v2 v2.9.0\n")),
 			status: "fail", detail: []string{"github.com/mitstack-eu/operator-kit"}},
-		{name: "a block that requires operator-kit's v3 module indirectly in a require block fails, naming operator-kit",
-			dir:    kitV1Block(appendTo("go.mod", "\nrequire (\n\tgithub.com/mitstack-eu/operator-kit/v3 v3.2.1 // indirect\n)\n")),
+		{name: "a block that requires operator-kit's v3 module indirectly fails, naming operator-kit", dir: kitV1Block(appendTo("go.mod", "\nrequire (\n\tgithub.com/mitstack-eu/operator-kit/v3 v3.2.1 // indirect\n)\n")),
 			status: "fail", detail: []string{"github.com/mitstack-eu/operator-kit"}},
-		{name: "a block that requires only operator-kit fails, naming operator-kit",
-			dir:    kitV1Block(with("go.mod", "module fixture\n\ngo 1.25\n\nrequire github.com/mitstack-eu/operator-kit/v3 v3.2.1\n")),
+		{name: "a block that requires only operator-kit fails, naming operator-kit", dir: kitV1Block(with("go.mod", "module fixture\n\ngo 1.25\n\nrequire github.com/mitstack-eu/operator-kit/v3 v3.2.1\n")),
 			status: "fail", detail: []string{"github.com/mitstack-eu/operator-kit"}},
-		{name: "a go.mod that names operator-kit only in a comment passes",
-			dir:    kitV1Block(appendTo("go.mod", "\n// The operator moved here from github.com/mitstack-eu/operator-kit/v3.\n")),
+		{name: "a go.mod that names operator-kit only in a comment passes", dir: kitV1Block(appendTo("go.mod", "\n// The operator moved here from github.com/mitstack-eu/operator-kit/v3.\n")),
 			status: "pass", detail: []string{"at or above the floor"}},
 		{name: "a block whose manifest declares another contract fails, naming it",
 			dir: kitV1Block(with(manifestFile, replaced(t, fullManifest(t), "contract: kit/v1", "contract: kit/v2"))), status: "fail", detail: []string{"kit/v2"}},

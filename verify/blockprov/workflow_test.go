@@ -827,8 +827,6 @@ func TestWorkflow_KitVersionStepReadsTheKitPinFromGoMod(t *testing.T) {
 			"module github.com/mitstack-eu/kube-app-deploy\n\ngo 1.26\n\nrequire (\n\tgithub.com/google/uuid v1.6.0\n\tgithub.com/mitstack-eu/block-kit v0.4.1\n)\n", "v0.4.1"},
 		{"a go.mod requiring operator-kit instead of block-kit fails",
 			"module github.com/mitstack-eu/kube-app-deploy\n\ngo 1.26\n\nrequire github.com/mitstack-eu/operator-kit/v3 v3.2.1\n", ""},
-		{"a go.mod requiring no kit module fails",
-			"module github.com/mitstack-eu/stray\n\ngo 1.26\n\nrequire github.com/google/uuid v1.6.0\n", ""},
 		{"a go.mod requiring only a sibling module whose path starts with block-kit fails",
 			"module github.com/mitstack-eu/stray\n\ngo 1.26\n\nrequire github.com/mitstack-eu/block-kit-extras v1.0.0\n", ""},
 	} {

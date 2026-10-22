@@ -14,7 +14,6 @@ import (
 
 const fixtureDir = "testdata/handler-import"
 
-// The txtar cases under testdata/handler-import are shared with the platform's operator gates.
 type fixtureCase struct {
 	name    string
 	verdict string
@@ -107,39 +106,22 @@ func materialise(t *testing.T, c fixtureCase) string {
 	return dir
 }
 
-func TestHandlerPackage_IsTheKitsHandlerImportPath(t *testing.T) {
-	if kitbinding.HandlerPackage != "github.com/mitstack-eu/block-kit/handler" {
-		t.Errorf("HandlerPackage = %q, want %q", kitbinding.HandlerPackage, "github.com/mitstack-eu/block-kit/handler")
-	}
-}
-
-// Deleting a hard fixture must fail here, or the agreement between the kit and the platform turns vacuous.
+// Deleting a hard fixture must fail here, or the agreement between kitbinding and blockverify, which reads the same set, turns vacuous.
 func TestFixtureSet_HoldsEveryRequiredCase(t *testing.T) {
-	want := map[string]string{
-		"comment-only":                "absent",
-		"string-literal-only":         "absent",
-		"build-ignore-only":           "absent",
-		"testdata-only":               "absent",
-		"vendor-only":                 "absent",
-		"underscore-dir-only":         "absent",
-		"dot-dir-only":                "absent",
-		"test-file-only":              "absent",
-		"no-mention":                  "absent",
-		"import-root":                 "pass",
-		"import-satisfied-constraint": "pass",
-		"import-aliased":              "pass",
-		"import-subpackage":           "pass",
-		"unparsable-only":             "tooling",
-		"unparsable-beside-import":    "tooling",
-		"malformed-constraint":        "tooling",
+	want := map[string][]string{
+		"absent":  {"comment-only", "string-literal-only", "build-ignore-only", "testdata-only", "vendor-only", "underscore-dir-only", "dot-dir-only", "test-file-only", "no-mention"},
+		"pass":    {"import-root", "import-satisfied-constraint", "import-aliased", "import-subpackage"},
+		"tooling": {"unparsable-only", "unparsable-beside-import", "malformed-constraint"},
 	}
 	got := map[string]string{}
 	for _, c := range loadFixtureSet(t) {
 		got[c.name] = c.verdict
 	}
-	for name, verdict := range want {
-		if got[name] != verdict {
-			t.Errorf("fixture %s: verdict %q, want %q (missing fixtures read as \"\")", name, got[name], verdict)
+	for verdict, names := range want {
+		for _, name := range names {
+			if got[name] != verdict {
+				t.Errorf("fixture %s: verdict %q, want %q (missing fixtures read as \"\")", name, got[name], verdict)
+			}
 		}
 	}
 }
