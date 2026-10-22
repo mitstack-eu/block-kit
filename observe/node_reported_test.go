@@ -1,15 +1,19 @@
 package observe_test
 
-// A report counts only when its madeAt, else its receivedAt, is after the verb, and an object is absent only when a report made after the verb marks its list complete.
+// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete, and the client reads the reports with the events callback's token.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/events"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/observe"
 )
@@ -195,5 +199,72 @@ func TestNodeReported_ReturnsTheAPIsError(t *testing.T) {
 	_, err := observe.NodeReported{API: &fakeReports{err: boom}}.ObserveResource(context.Background(), namespaceRef())
 	if !errors.Is(err, boom) {
 		t.Errorf("error = %v, want the API's error", err)
+	}
+}
+
+var _ observe.NodeReportsAPI = observe.NodeReportsClient{}
+
+const callbackToken = "callback-token-7f3a"
+
+// platformServing answers a cluster subscription's node reports only to the callback's token, as the platform does.
+func platformServing(t *testing.T, cluster string, reports ...observe.NodeReport) *httptest.Server {
+	t.Helper()
+	listed := make([]map[string]any, 0, len(reports))
+	for _, r := range reports {
+		listed = append(listed, map[string]any{"receivedAt": r.ReceivedAt.Format(time.RFC3339Nano), "body": r.Body})
+	}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Header.Get("Authorization") != "Bearer "+callbackToken:
+			w.WriteHeader(http.StatusUnauthorized)
+		case r.Method != http.MethodGet || r.URL.Path != "/v1/subscriptions/"+cluster+"/node-reports":
+			http.NotFound(w, r)
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"reports": listed})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func withCallback(url, token string) context.Context {
+	return events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{URL: url, Token: token}})
+}
+
+func TestNodeReportsClient_ReadsTheReportsWithTheCallbacksToken(t *testing.T) {
+	want := nodeReport{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: list(appNamespace)}.build(t)
+	platform := platformServing(t, "sub-cluster", want)
+	client := observe.NodeReportsClient{HTTPClient: platform.Client()}
+
+	got, err := client.NodeReports(withCallback(platform.URL+"/v1/webhooks/operator-events", callbackToken), contract.Desired{}, "sub-cluster")
+
+	if err != nil {
+		t.Fatalf("NodeReports error = %v, want the reports the platform serves", err)
+	}
+	if len(got) != 1 || !got[0].ReceivedAt.Equal(want.ReceivedAt) || string(got[0].Body) != string(want.Body) {
+		t.Errorf("NodeReports = %+v, want [%+v]", got, want)
+	}
+}
+
+func TestNodeReportsClient_IsAnErrorCarryingNoTokenWhenThePlatformCannotAnswer(t *testing.T) {
+	platform := platformServing(t, "sub-cluster")
+	client := observe.NodeReportsClient{HTTPClient: platform.Client()}
+	callback := platform.URL + "/v1/webhooks/operator-events"
+	cases := []struct {
+		name, subscription string
+		ctx                context.Context
+	}{
+		{"a request carrying no events callback", "sub-cluster", context.Background()},
+		{"a subscription the platform serves no reports for", "sub-other", withCallback(callback, callbackToken)},
+		{"a token the platform refuses", "sub-cluster", withCallback(callback, "stale-token-0c1d")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := client.NodeReports(tc.ctx, contract.Desired{}, tc.subscription)
+
+			if err == nil || strings.Contains(err.Error(), callbackToken) || strings.Contains(err.Error(), "stale-token-0c1d") {
+				t.Errorf("NodeReports = %+v, %v; want an error carrying no token", got, err)
+			}
+		})
 	}
 }
