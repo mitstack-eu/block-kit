@@ -18,8 +18,9 @@
 #   --dry-run        decide and report, create and push nothing.
 #   --verify-only    assert head is released, cut nothing.
 #
-#   exit 0  the kit is unchanged, head already carries a kit tag, a tag was cut
-#           and verified, or a plan was reported
+#   exit 0  the kit is unchanged, head already carries a kit tag, the
+#           repository holds no kit tag yet, a tag was cut and verified, or a
+#           plan was reported
 #   exit 1  head is unreachable from any kit tag after the cut, a --verify-only
 #           assertion did not hold, or the computed tag is already published
 #           elsewhere
@@ -145,6 +146,14 @@ if [ "$verify_only" -eq 1 ]; then
   echo "::error::the repository changed in $range and no $TAG_PREFIX* tag contains $head_sha, so a consumer cannot resolve the module at this commit." >&2
   emit_output "released=false"
   exit 1
+fi
+
+# The first tag names the module's first release, which a person chooses, so
+# a repository with no kit tag yet cuts nothing.
+if [ -z "$newest_tag" ]; then
+  echo "the repository changed in $range, and it holds no kit tag yet, so no tag is cut: its first release is tagged by hand."
+  emit_output "released=false"
+  exit 0
 fi
 
 # The raise level. A whole line in any commit message in the range asks for one;
