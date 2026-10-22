@@ -100,8 +100,6 @@ func Wait(ctx context.Context, src Notifications, app, revision string, poll tim
 
 const notificationsPath = "/v1/gitops-notifications"
 
-const operatorEventsPath = "/v1/webhooks/operator-events"
-
 const maxNotificationBody = 64 << 10
 
 var notificationsClient = &http.Client{Timeout: 10 * time.Second}
@@ -160,15 +158,11 @@ func (p PlatformNotifications) scrub(text string) string {
 	return strings.ReplaceAll(text, p.Token, "[REDACTED]")
 }
 
-// The events callback URL on ctx must end in /v1/webhooks/operator-events.
+// NotificationsFromContext reads the platform the request's events callback names, with the callback's token.
 func NotificationsFromContext(ctx context.Context) (PlatformNotifications, error) {
-	env, ok := events.EnvelopeFrom(ctx)
-	if !ok || env.Callback == nil {
-		return PlatformNotifications{}, errors.New("gitops: the request carries no events callback to reach the platform through")
+	base, token, err := events.PlatformFrom(ctx)
+	if err != nil {
+		return PlatformNotifications{}, fmt.Errorf("gitops: %w", err)
 	}
-	base, found := strings.CutSuffix(env.Callback.URL, operatorEventsPath)
-	if !found {
-		return PlatformNotifications{}, fmt.Errorf("gitops: the events callback URL does not end in %s", operatorEventsPath)
-	}
-	return PlatformNotifications{BaseURL: base, Token: env.Callback.Token}, nil
+	return PlatformNotifications{BaseURL: base, Token: token}, nil
 }
