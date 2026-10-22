@@ -75,7 +75,7 @@ publish and record blocks, and no block imports them. Your CI runs
 | `verify/blockprov` | Builds, verifies and pushes a block's provenance record from its publish workflow |
 | `verify/provenance` | Holds the signed record of where a block's image and manifest came from |
 | `verify/attest` | Holds the signed attestation that a block passed its conformance checks |
-| `kitbinding` | Defines what counts as a block importing the handler, for `blockverify` and the platform alike |
+| `kitbinding` | Defines what counts as a block importing the handler, the rule `blockverify` judges by |
 | `boardkeys` | Derives which board keys a commit delivers, and which it only references |
 | `cmd/board-delivery` | Records the keys a push to main delivered on mitstack's board |
 | `cmd/pr-keys` | Fails a pull request whose commits and title carry no board key |

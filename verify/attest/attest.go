@@ -98,7 +98,7 @@ func Verify(a Attestation, resolve KeyResolver, manifestDigest string) error {
 type Status string
 
 const (
-	// Unverified is the zero value: no attestation, which must never be mistaken for proof.
+	// Unverified means no attestation, which must never be mistaken for proof.
 	Unverified Status = "unverified"
 	Verified   Status = "verified"
 	// Invalid is an attestation that exists but does not check out, kept distinct from Unverified because it is a louder signal.
