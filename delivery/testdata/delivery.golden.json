@@ -1,1 +1,0 @@
-{"appId":"app_delivery_1","sha":"ffffffffffffffffffffffffffffffffffffffff","repo":"acme/delivery-app","verdict":{"repo":"acme/delivery-app","sha":"ffffffffffffffffffffffffffffffffffffffff","gates":"pass"},"deployState":"healthy","buildResult":{"conclusion":"success","runUrl":"https://github.com/acme/delivery-app-ci/actions/runs/1"},"phase":"healthy"}

@@ -104,7 +104,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOK(w)
 	case "unsubscribe":
 		h.Store.Delete(req.SubscriptionID)
-		if h.survived(r.Context(), req.SubscriptionID) {
+		if h.Store.Exists(req.SubscriptionID) {
 			writeError(w, http.StatusConflict, "unsubscribe reported success but the resource is still present")
 			return
 		}
@@ -273,21 +273,4 @@ func envelopeFor(t *testing.T, req request) []byte {
 		t.Fatalf("remarshal envelope: %v", err)
 	}
 	return out
-}
--- verify.go --
-package main
-
-import (
-	"context"
-
-	"github.com/mitstack-eu/operator-kit/v3/teardown"
-)
-
-func (h *Handler) survived(ctx context.Context, id string) bool {
-	return teardown.Verify(ctx, teardown.Options{}, teardown.Check{
-		Kind: "fixture resource",
-		Present: func(context.Context) (bool, error) {
-			return h.Store.Exists(id), nil
-		},
-	})
 }
