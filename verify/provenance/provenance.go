@@ -1,3 +1,4 @@
+// Package provenance, part of mitstack's own tooling, is the publisher-signed record of where a block's published image and manifest came from, signed with a GitHub Actions OIDC token.
 package provenance
 
 import (
@@ -16,28 +17,20 @@ import (
 	"time"
 )
 
-// SchemaVersion is the version of the record shape this package reads and writes.
 const SchemaVersion = "1.0.0"
 
 // Issuer is the only token issuer a record may carry.
 const Issuer = "https://token.actions.githubusercontent.com"
 
-// AudiencePrefix namespaces the content-bound audience requested from GitHub's OIDC token endpoint.
 const AudiencePrefix = "mitstack-provenance:"
 
-// ArtifactType is the OCI artifactType a pushed record manifest carries.
 const ArtifactType = "application/vnd.mitstack.block-provenance.v1+json"
 
-// Schema is the embedded JSON Schema for a record.
-//
 //go:embed record.schema.json
 var Schema []byte
 
-// GoldensDir is the directory inside Goldens holding the committed record fixtures.
 const GoldensDir = "goldens"
 
-// Goldens embeds the committed record fixtures, including the records prefixed InvalidPrefix that Verify must reject.
-//
 //go:embed goldens/*.json
 var Goldens embed.FS
 
@@ -49,14 +42,11 @@ const jwksSuffix = ".jwks.json"
 var (
 	// ErrNotConformant is returned by Build for anything but a full pass, and by Verify for a record whose verdict is not "pass".
 	ErrNotConformant = errors.New("provenance: conformance verdict is not \"pass\"")
-	// ErrIncomplete is returned when a required payload field is empty.
-	ErrIncomplete = errors.New("provenance: a required payload field is empty")
+	ErrIncomplete    = errors.New("provenance: a required payload field is empty")
 	// ErrMalformedToken is returned for a token that is not three base64url segments, has an undecodable header, an alg other than RS256, an empty kid, or an iat more than five minutes ahead.
 	ErrMalformedToken = errors.New("provenance: token is malformed")
-	// ErrUnknownKid is returned when the resolver has no key for the token's kid.
-	ErrUnknownKid = errors.New("provenance: unknown signing key id")
-	// ErrBadSignature is returned when the RS256 signature does not verify.
-	ErrBadSignature = errors.New("provenance: signature does not verify")
+	ErrUnknownKid     = errors.New("provenance: unknown signing key id")
+	ErrBadSignature   = errors.New("provenance: signature does not verify")
 	// ErrUntrustedIssuer is returned when the token's iss claim is not Issuer.
 	ErrUntrustedIssuer = errors.New("provenance: untrusted token issuer")
 	// ErrRecordTampered is returned when the token's aud claim does not equal Audience(payload).
@@ -65,11 +55,9 @@ var (
 	ErrWrongIdentity = errors.New("provenance: token identity does not match the expected repository")
 	// ErrManifestChanged is returned when manifestSha256 does not match the sha256 of the decoded manifest bytes.
 	ErrManifestChanged = errors.New("provenance: manifest sha256 does not match the decoded manifest bytes")
-	// ErrUnknownField is returned by Decode for a field the record's shape does not declare.
-	ErrUnknownField = errors.New("provenance: record contains a field its shape does not declare")
+	ErrUnknownField    = errors.New("provenance: record contains a field its shape does not declare")
 )
 
-// Conformance is the block-verify result a record attests.
 type Conformance struct {
 	SuiteVersion  string `json:"suiteVersion"`
 	Verdict       string `json:"verdict"`

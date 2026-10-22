@@ -1,3 +1,4 @@
+// Command blockverify, part of mitstack's own tooling, runs the conformance suites over one block's directory, in --standalone mode only.
 package main
 
 import (

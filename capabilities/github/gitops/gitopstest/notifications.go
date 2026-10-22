@@ -1,3 +1,4 @@
+// Package gitopstest, an optional helper, provides in-memory fakes of a GitOps repository and of Argo CD's deploy notifications, for testing a block built on gitops.
 package gitopstest
 
 import (
@@ -27,8 +28,7 @@ func NewNotifications() *Notifications {
 	}
 }
 
-// Set makes n the answer for n.App at n.Revision and the app's newest
-// notification, which is what revision "" answers.
+// Set makes n the answer for n.App at n.Revision and for revision "", which reads the app's newest notification.
 func (s *Notifications) Set(n gitops.Notification) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

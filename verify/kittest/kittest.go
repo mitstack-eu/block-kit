@@ -32,7 +32,6 @@ func NewSigner(t *testing.T, kid string, seed byte) *Signer {
 	return &Signer{Kid: kid, Public: priv.Public().(ed25519.PublicKey), Private: priv}
 }
 
-// JWKS returns the signer's public key as a JWKS document.
 func (s *Signer) JWKS() []byte {
 	doc := map[string]any{"keys": []map[string]string{{
 		"kty": "OKP",
@@ -44,8 +43,7 @@ func (s *Signer) JWKS() []byte {
 	return raw
 }
 
-// JWKSServer starts an httptest server serving this signer's JWKS and returns
-// its URL. It is shut down when the test ends.
+// JWKSServer serves the signer's JWKS until the test ends and returns its URL.
 func (s *Signer) JWKSServer(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -56,12 +54,10 @@ func (s *Signer) JWKSServer(t *testing.T) string {
 	return srv.URL
 }
 
-// SignBody returns the detached signature header value for a webhook body.
 func (s *Signer) SignBody(body []byte) string {
 	return "ed25519=" + base64.StdEncoding.EncodeToString(ed25519.Sign(s.Private, body))
 }
 
-// HookRequest builds a correctly-signed POST /hook request for body.
 func (s *Signer) HookRequest(t *testing.T, path string, body []byte) *http.Request {
 	t.Helper()
 	return s.hookRequest(path, body)
@@ -90,8 +86,7 @@ func (s *Signer) logsRequest(path string, at time.Time) *http.Request {
 	return r
 }
 
-// Envelope builds a minimal signed-webhook body with a fresh nonce and
-// createdAt, merged with any extra top-level fields the operator needs.
+// Envelope builds a minimal webhook body from nonce and createdAt, merged with the extra top-level fields the operator needs.
 func Envelope(nonce string, at time.Time, extra map[string]any) []byte {
 	body := map[string]any{"nonce": nonce, "createdAt": at.UTC().Format(time.RFC3339Nano)}
 	for k, v := range extra {
@@ -101,7 +96,6 @@ func Envelope(nonce string, at time.Time, extra map[string]any) []byte {
 	return raw
 }
 
-// AssertNoSecret fails the test if any of secrets appears anywhere in haystack.
 func AssertNoSecret(t *testing.T, what string, haystack string, secrets ...string) {
 	t.Helper()
 	for _, s := range secrets {

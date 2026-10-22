@@ -21,7 +21,6 @@ var containerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 const containerProbe = `out=$(docker inspect --format '{{.State.Status}}' %[1]s 2>&1) && { printf '%%s\n' "$out"; exit 0; }
 case "$out" in *"No such object"*|*"No such container"*) echo absent ;; *) printf '%%s\n' "$out" >&2; exit 1 ;; esac`
 
-// Running is present, absent is absent, anything else is unknown, and a failed probe is an error.
 type EC2Container struct {
 	API HostCommander
 }

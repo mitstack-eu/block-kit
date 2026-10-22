@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// BlockDeploy is a block's whole desired state for one app.
 type BlockDeploy struct {
 	App     string
 	Files   map[string][]byte
@@ -14,16 +13,13 @@ type BlockDeploy struct {
 	Poll    time.Duration
 }
 
-// Deployed is the revision Deploy waited on and Argo CD's verdict on it.
 type Deployed struct {
 	Revision string
 	Changed  bool
 	Outcome  Outcome
 }
 
-// Deploy commits every file once through CommitManifests, then waits for
-// Argo CD's verdict on that revision, or on head when nothing changed. A
-// failed verdict comes back in Deployed.Outcome, not as an error.
+// Deploy waits for Argo CD's verdict on the revision it committed, or on head when nothing changed, and returns a failed verdict in Outcome rather than as an error.
 func Deploy(ctx context.Context, repo Repository, src Notifications, b BlockDeploy) (Deployed, error) {
 	revision, changed, err := CommitManifests(ctx, repo, b.Files, b.Message, b.Secrets)
 	if err != nil {

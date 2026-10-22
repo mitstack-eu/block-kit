@@ -70,13 +70,10 @@ type operatorEvent struct {
 	IdempotencyKey string `json:"idempotencyKey"`
 }
 
-// EmitProgress reports a "progress" event with the given detail.
 func EmitProgress(ctx context.Context, detail string) error { return emit(ctx, "progress", detail) }
 
-// EmitCompleted reports a "completed" event with no detail.
 func EmitCompleted(ctx context.Context) error { return emit(ctx, "completed", "") }
 
-// EmitFailed reports a "failed" event carrying the given failure detail.
 func EmitFailed(ctx context.Context, detail string) error { return emit(ctx, "failed", detail) }
 
 func emit(ctx context.Context, status, detail string) error {

@@ -8,7 +8,6 @@ import (
 
 var safeRepoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-// safeVariableNameRE mirrors GitHub's naming rule and keeps "/", ".." and an encoded slash out of the PATCH fallback's URL path.
 var safeVariableNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // SafeVariableName validates name against GitHub's Actions-variable naming rule so it cannot smuggle a path segment into a URL.

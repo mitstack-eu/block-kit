@@ -30,11 +30,9 @@ type Attestation struct {
 }
 
 var (
-	// ErrPartialPass is returned by Sign when asked to attest anything short of a full pass.
-	ErrPartialPass  = errors.New("attest: refusing to sign — a partial pass is not a pass, and a caveated signature is one nobody reads")
-	ErrUnknownKid   = errors.New("attest: unknown signing key id")
-	ErrBadSignature = errors.New("attest: signature does not verify")
-	// ErrManifestChanged is returned when the manifest digest no longer matches.
+	ErrPartialPass     = errors.New("attest: refusing to sign — a partial pass is not a pass, and a caveated signature is one nobody reads")
+	ErrUnknownKid      = errors.New("attest: unknown signing key id")
+	ErrBadSignature    = errors.New("attest: signature does not verify")
 	ErrManifestChanged = errors.New("attest: manifest digest does not match — this attestation describes a different block")
 	ErrIncomplete      = errors.New("attest: incomplete claims")
 )
@@ -66,7 +64,6 @@ func Sign(priv ed25519.PrivateKey, kid string, c Claims, verdict string) (Attest
 	}, nil
 }
 
-// KeyResolver returns the public key for a kid, typically from a fetched JWKS.
 type KeyResolver func(kid string) (ed25519.PublicKey, bool)
 
 // Verify checks an attestation against the manifest in hand and fails closed on every uncertainty.
@@ -98,19 +95,16 @@ func Verify(a Attestation, resolve KeyResolver, manifestDigest string) error {
 	return nil
 }
 
-// Status is what a catalog shows for a block.
 type Status string
 
 const (
 	// Unverified is the zero value: no attestation, which must never be mistaken for proof.
 	Unverified Status = "unverified"
-	// Verified is a valid attestation matching the manifest in hand.
-	Verified Status = "verified"
+	Verified   Status = "verified"
 	// Invalid is an attestation that exists but does not check out, kept distinct from Unverified because it is a louder signal.
 	Invalid Status = "invalid"
 )
 
-// Evaluate resolves the catalog status for a block.
 func Evaluate(a *Attestation, resolve KeyResolver, manifestDigest string) (Status, error) {
 	if a == nil {
 		return Unverified, nil
