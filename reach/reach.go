@@ -428,18 +428,3 @@ func BoolString(b bool) string {
 	}
 	return "false"
 }
-
-// safeProbeURL rebuilds a URL from checked parts and accepts only http and https, since file: or gopher: would read whatever the process can reach.
-func safeProbeURL(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", err
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", errors.New("app URL must be http or https")
-	}
-	if u.Host == "" {
-		return "", errors.New("app URL has no host")
-	}
-	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path, RawQuery: u.RawQuery}).String(), nil
-}
