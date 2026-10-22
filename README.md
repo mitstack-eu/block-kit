@@ -2,26 +2,35 @@
 
 This module is the contract every mitstack block imports to talk to the
 engine. It covers the webhook trust boundary a block's handler sits behind,
-the events a block emits as it works, and `kittest`, the conformance harness
-a block's own tests run against the same fixtures the engine is tested
-against. The `contract` package owns the wire contract itself: the envelope
+the events a block emits as it works, and `verify/kittest`, the conformance
+harness a block's own tests run against the same fixtures the engine is
+tested against. The `contract` package owns the wire contract itself: the envelope
 and response JSON schemas, the golden request and response fixtures both
 sides are checked against, and the block manifest parser.
 
 ## Which packages a block needs
 
-The kit's packages fall into three groups, so you can tell which to learn
-first. Learn the core before you write a block. Reach for an optional helper
-only when your block's provider or domain calls for it. You can leave
-mitstack's own tooling alone, because it runs on a block rather than inside
-it. Each package's `go doc` opens by naming its group, and no package's
-import path depends on its group.
+The kit's folders follow mitstack's data model, in which a capability, such
+as `aws` or `github`, holds the resource types that live in it. A package's
+folder tells you whether your block needs it:
+
+| Folder | What it holds | Who imports it |
+|---|---|---|
+| The root | The core every block needs and the lifecycle helpers tied to no capability | Every block's code |
+| `capabilities/<slug>` | The helpers for the resource types of one capability | A block whose resources live in that capability |
+| `verify/` | The tooling that checks, attests and publishes a block, and the harness a block's tests run | A block's tests and CI |
+| `cmd/` | mitstack's own commands for the kit's CI | No block |
+
+Each slug under `capabilities/` is a capability the platform's catalogue
+holds, in the `capability` field of its `blocks/types/*.yaml` files. Learn
+the core before you write a block, and open a capability's folder only when
+your block's resources live in that capability. Each package's `go doc` opens
+by naming its group.
 
 ### The core every block needs
 
 Every block's code imports `contract`, `handler` and `webhook`, and most
-blocks also import `observe` and `safe`. Every block's tests import
-`kittest`.
+blocks also import `observe` and `safe`.
 
 | Package | What a block uses it for |
 |---|---|
@@ -30,50 +39,42 @@ blocks also import `observe` and `safe`. Every block's tests import
 | `webhook` | Verifying mitstack's signature on every lifecycle call |
 | `observe` | Asking the provider what stands now |
 | `safe` | Choosing the API host, sanitising logs and scrubbing secrets |
-| `kittest` | The block's own tests: a signing identity, envelopes and the conformance checks |
 
-### Optional helpers
+### Lifecycle helpers tied to no capability
 
-Each helper serves one provider or one task, and a block imports it only for
-that.
+Each helper serves one task, and a block imports it only for that.
 
 | Package | What it does |
 |---|---|
-| `adopt` | Lets a retried subscribe converge without adopting another app's resources |
-| `appsdns` | Writes, retires and observes an app's A record in the apps zone |
-| `awsnames` | Names the account-unique AWS resources every app-infra engine creates |
-| `cfnstack` | Drives CloudFormation stacks |
-| `cloudid` | Turns the cloud identity in a lifecycle call into short-lived AWS credentials |
 | `credrefresh` | Caches a short-lived credential and renews it before it expires |
-| `customdomain` | Checks that a consumer's custom hostname is a bare hostname |
-| `delivery` | Fetches the dispatcher's delivery record |
-| `events` | Sends advisory lifecycle events back to mitstack |
-| `ghapi` | Calls the GitHub REST API on a host the operator chooses |
-| `gitops` | Commits a block's rendered manifests to its GitOps repository and judges the deploy |
-| `gitops/gitopstest` | Fakes a GitOps repository and Argo CD's notifications in a test |
-| `handover` | Carries a block's durable data across a replacement through EC2 snapshots |
-| `health` | Lets `validate` repair an unhealthy resource within a bound |
+| `events` | Sends advisory lifecycle events back to mitstack, and names the platform an operator reads |
 | `hostexec` | Runs one shell script on a host over SSM or SSH |
-| `progress` | Reports a long provision's progress on the advisory event channel |
 | `reach` | Judges whether an app is serving and records the verdict |
-| `registryauth` | Logs a container-registry CLI in with the credential on stdin |
-| `settle` | Decides whether a consumer's resource is serving, with every wait bounded |
-| `stackitid` | Exchanges mitstack's OIDC assertion for a short-lived STACKIT token |
-| `teardown` | Reclaims what the IaC engine never tracked, scoped to one app |
-| `tftpl` | Renders the subset of OpenTofu's `templatefile` syntax the kit accepts |
 
-### mitstack's own tooling
-
-These packages check, publish and record blocks, and no block imports them.
-Your CI runs `blockverify` on your block, as
-[Running the block checks on your block](docs/block-checks.md) describes.
+### The capability folders
 
 | Package | What it does |
 |---|---|
-| `blockverify` | Runs the conformance checks on a block's source tree |
-| `blockprov` | Builds, verifies and pushes a block's provenance record from its publish workflow |
-| `provenance` | Holds the signed record of where a block's image and manifest came from |
-| `attest` | Holds the signed attestation that a block passed its conformance checks |
+| `capabilities/aws/cloudid` | Turns the cloud identity in a lifecycle call into short-lived AWS credentials |
+| `capabilities/github/ghapi` | Calls the GitHub REST API on a host the operator chooses |
+| `capabilities/github/gitops` | Commits a block's rendered manifests to its GitOps repository and judges the deploy |
+| `capabilities/github/gitops/gitopstest` | Fakes a GitOps repository and Argo CD's notifications in a test |
+
+### Verification and mitstack's own tooling
+
+Every block's tests import `verify/kittest`. The other packages below check,
+publish and record blocks, and no block imports them. Your CI runs
+`verify/blockverify` on your block, as
+[Running the block checks on your block](docs/block-checks.md) describes.
+`kitbinding` and `boardkeys` sit at the root, beside the core.
+
+| Package | What it does |
+|---|---|
+| `verify/kittest` | The block's own tests: a signing identity, envelopes and the conformance checks |
+| `verify/blockverify` | Runs the conformance checks on a block's source tree |
+| `verify/blockprov` | Builds, verifies and pushes a block's provenance record from its publish workflow |
+| `verify/provenance` | Holds the signed record of where a block's image and manifest came from |
+| `verify/attest` | Holds the signed attestation that a block passed its conformance checks |
 | `kitbinding` | Defines what counts as a block importing the handler, for `blockverify` and the platform alike |
 | `boardkeys` | Derives which board keys a commit delivers, and which it only references |
 | `cmd/board-delivery` | Records the keys a push to main delivered on mitstack's board |
