@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/operator-kit/v3/reach"
 )
@@ -429,5 +430,39 @@ func TestVerifiedCustomDomain_WidensTrustedAppURLByItselfAlone(t *testing.T) {
 				t.Errorf("TrustedAppURL(%q, %q) error = %v, want trusted %v", tc.raw, tc.extra, err, tc.trusted)
 			}
 		})
+	}
+}
+
+func TestIsUntrustedCertificate_DistinguishesCertFailuresFromConnectionFailures(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	_, err := client.Get(srv.URL)
+	if err == nil {
+		t.Fatal("expected a certificate error from a self-signed test server")
+	}
+	if !reach.IsUntrustedCertificate(err) {
+		t.Errorf("IsUntrustedCertificate(%v) = false, want true", err)
+	}
+
+	if reach.IsUntrustedCertificate(errors.New("dial tcp 127.0.0.1:1: connect: connection refused")) {
+		t.Error("a connection refusal is not a certificate failure — nothing answered at all")
+	}
+	if reach.IsUntrustedCertificate(nil) {
+		t.Error("IsUntrustedCertificate(nil) must be false")
+	}
+}
+
+func TestIsDNSFailure(t *testing.T) {
+	_, err := net.DefaultResolver.LookupHost(context.Background(), "this-host-does-not-exist.invalid")
+	if !reach.IsDNSFailure(err) {
+		t.Errorf("IsDNSFailure(%v) = false, want true", err)
+	}
+	if reach.IsDNSFailure(errors.New("connection refused")) {
+		t.Error("a connection refusal is not a DNS failure — they narrate differently")
+	}
+	if reach.IsDNSFailure(nil) {
+		t.Error("IsDNSFailure(nil) must be false")
 	}
 }
