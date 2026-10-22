@@ -269,13 +269,17 @@ assert_tag "the well-shaped tag is still the base" "$W" "v0.5.1"
 assert_no_tag "a bare v1 tag is not raised" "$W" "v2"
 assert_kit_tag_count "one new tag (the two malformed tags do not count)" "$W" 2
 
-# 8. No release tag exists at all: the implied base is v0.0.0, so a patch raise gives v0.0.1.
+# 8. No release tag exists at all: the first release is tagged by hand, so a change cuts nothing and the run says why.
 setup_repo
-commit_change "feat: the first change ever tagged"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "first tag exits 0" 0 "$RC"
-assert_tag "an untagged repo starts at v0.0.1" "$W" "v0.0.1"
-assert_tag "the first tag reaches the remote" "$R" "v0.0.1"
+commit_change "feat: a change before the first release"
+GH_OUT="$W/../gh-output-untagged"
+: >"$GH_OUT"
+run_with_gh_output "$GH_OUT" --repo "$W" --base "$SEED" --head "$(head_sha)"
+check "an untagged repo exits 0" 0 "$RC"
+assert_out_contains "an untagged repo says its first release is tagged by hand" "no kit tag yet"
+assert_kit_tag_count "an untagged repo cuts no tag" "$W" 0
+assert_kit_tag_count "an untagged repo pushes no tag" "$R" 0
+assert_file_contains "an untagged repo reports released=false" "$GH_OUT" "released=false"
 
 # 9. One tag per push: a re-run over the same range cuts nothing more.
 setup_repo
@@ -305,11 +309,12 @@ check "empty base, repo unchanged, exits 0" 0 "$RC"
 assert_out_contains "empty base still reports unchanged" "unchanged"
 assert_kit_tag_count "empty base cuts nothing when unchanged" "$W" 1
 
-# 10c. No tag and head has no parent either, so the repo counts as changed.
+# 10c. No tag and head has no parent either, so the repo counts as changed, and it still cuts nothing before its first release.
 setup_repo
 run --repo "$W" --base "" --head "$SEED"
 check "rootless head exits 0" 0 "$RC"
-assert_tag "a head with no parent counts as a change" "$W" "v0.0.1"
+assert_out_contains "a head with no parent counts as a change" "changed"
+assert_kit_tag_count "a rootless head cuts no tag before the first release" "$W" 0
 
 # 11. The all-zero sha means unknown in exactly the same way, and it resolves to the newest tag's commit rather than to <head>^.
 ZERO="0000000000000000000000000000000000000000"
@@ -447,13 +452,14 @@ check "head sitting on the newest tag exits 0" 0 "$RC"
 assert_kit_tag_count "head at the newest tag cuts nothing" "$W" 2
 assert_no_tag "no second tag for an already released repo" "$W" "v0.5.2"
 
-# 22. No --base and no tag anywhere: the base falls back to <head>^.
+# 22. No --base and no tag anywhere: the base falls back to <head>^, and a change there cuts nothing before the first release.
 setup_repo
-commit_change "feat: the first change ever tagged"
+commit_change "feat: a change before the first release"
 run --repo "$W" --head "$(head_sha)"
 check "no base and no tag exits 0" 0 "$RC"
-assert_tag "with no tag the head^ range cuts v0.0.1" "$W" "v0.0.1"
-assert_tag "the first tag reaches the remote" "$R" "v0.0.1"
+assert_out_contains "with no tag the head^ range is the one judged" "$SEED..$(head_sha)"
+assert_kit_tag_count "with no tag the head^ range cuts nothing" "$W" 0
+assert_kit_tag_count "with no tag nothing reaches the remote" "$R" 0
 
 setup_repo
 commit_empty "chore: an empty commit"
