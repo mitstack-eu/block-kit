@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
 func TestDecodeRequest_DecodesEveryValidGoldenViaKittest(t *testing.T) {

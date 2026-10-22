@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
 func validResponseGoldens(t *testing.T) map[string][]byte {

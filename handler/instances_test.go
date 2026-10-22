@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
 // provisioned replays the bookkeeping a region-scoped block keeps: each Ensure adds the region its request names and each Delete removes it.

@@ -260,7 +260,7 @@ spec:
 `
 
 func TestParseManifest_V1BetaReadsEachFieldAsWritten(t *testing.T) {
-	cluster, err := os.ReadFile("../blockverify/testdata/capability-without-issue-handler/manifest.yaml")
+	cluster, err := os.ReadFile("../verify/blockverify/testdata/capability-without-issue-handler/manifest.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -89,7 +89,7 @@ jobs:
 
       - name: Build blockverify
         working-directory: block-kit
-        run: go build -o ../blockverify ./blockverify
+        run: go build -o ../blockverify ./verify/blockverify
 
       - name: Build commentcheck
         working-directory: block-kit
@@ -192,8 +192,8 @@ jobs:
       - name: Build blockverify and blockprov
         working-directory: block-kit
         run: |
-          go build -o ../blockverify ./blockverify
-          go build -o ../blockprov ./blockprov
+          go build -o ../blockverify ./verify/blockverify
+          go build -o ../blockprov ./verify/blockprov
 
       # blockverify judges `.` and the image builds from `.`, so the kit
       # checked out inside the block's tree must be gone before either reads

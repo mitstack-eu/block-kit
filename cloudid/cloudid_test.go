@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/cloudid"
-	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
 const (

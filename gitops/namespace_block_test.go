@@ -17,7 +17,7 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/gitops"
 	"github.com/mitstack-eu/block-kit/handler"
-	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 

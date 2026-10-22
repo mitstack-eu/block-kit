@@ -10,7 +10,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
-	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
 // delivery is one webhook delivery of a row: between runs first, replays names the earlier delivery whose exact answer it must get, or -1, and calls are the Resource's totals after it.

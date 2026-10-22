@@ -14,7 +14,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
-	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
 // v1betaManifest builds a block-level manifest declaring resources, each a type id or a { name, type } entry, and providing provides.
