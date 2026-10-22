@@ -13,7 +13,10 @@ import (
 const kitModulePath = "github.com/mitstack-eu/block-kit"
 
 // kitVersionFloor is held textually equal to scaffold.KitVersionFloor by a test, because this module cannot import that package; bump it only on a deliberate floor raise.
-const kitVersionFloor = "v0.1.0"
+const kitVersionFloor = "v0.4.0"
+
+// operatorKitModulePath names a kit module outside the supported window, so a block requiring it at any version is refused.
+const operatorKitModulePath = "github.com/mitstack-eu/operator-kit"
 
 // kitOwnedFuncs are the trust-boundary functions only the kit may declare, so a block's local copy cannot diverge from the contract.
 var kitOwnedFuncs = []string{
@@ -69,12 +72,19 @@ func trustPlumbingSuite(target string) SuiteResult {
 
 var kitVersionRe = regexp.MustCompile(regexp.QuoteMeta(kitModulePath) + ` v(\d+\.\d+\.\d+)`)
 
+// operatorKitRequireRe matches a require line naming operator-kit at its root or a /vN path, alone or inside a require block, and never a comment.
+var operatorKitRequireRe = regexp.MustCompile(`(?m)^\s*(require\s+)?` + regexp.QuoteMeta(operatorKitModulePath) + `(/v\d+)?\s+v\d`)
+
 func checkKitDependency(target string) (detail string, ok bool) {
 	raw, err := os.ReadFile(filepath.Join(target, "go.mod"))
 	if err != nil {
 		return fmt.Sprintf("%s has no go.mod to depend on the shared block-kit module", target), false
 	}
 	content := string(raw)
+	if operatorKitRequireRe.MatchString(content) {
+		return fmt.Sprintf("%s/go.mod requires %s, which blockverify refuses at any version (want require %s at or above %s)",
+			target, operatorKitModulePath, kitModulePath, kitVersionFloor), false
+	}
 	if !strings.Contains(content, kitModulePath) {
 		return fmt.Sprintf("%s/go.mod does not depend on the shared block-kit module (want require %s)", target, kitModulePath), false
 	}
