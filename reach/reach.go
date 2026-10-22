@@ -3,6 +3,8 @@ package reach
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -11,8 +13,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/mitstack-eu/operator-kit/v3/settle"
 )
 
 const ProbeTimeout = 5 * time.Second
@@ -255,10 +255,10 @@ func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuff
 
 	resp, err := client.Do(req)
 	if err != nil {
-		if settle.IsUntrustedCertificate(err) {
+		if IsUntrustedCertificate(err) {
 			return Result{Reachable: true, CertTrusted: false, EdgeUp: true, ServingURL: dialURL}
 		}
-		if settle.IsDNSFailure(err) {
+		if IsDNSFailure(err) {
 			return Result{
 				DNSFailure: true,
 				Reason:     "app hostname does not resolve: " + err.Error(),
@@ -275,6 +275,35 @@ func probeURL(ctx context.Context, client *http.Client, appURL string, extraSuff
 		}
 	}
 	return Result{Reachable: true, CertTrusted: true, EdgeUp: true, ServingURL: dialURL}
+}
+
+// IsUntrustedCertificate reports whether err is a certificate-trust failure, which proves a TLS peer is up where a connection failure proves nothing.
+func IsUntrustedCertificate(err error) bool {
+	if err == nil {
+		return false
+	}
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var verification *tls.CertificateVerificationError
+	if errors.As(err, &unknownAuthority) || errors.As(err, &hostname) ||
+		errors.As(err, &invalid) || errors.As(err, &verification) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "x509:") || strings.Contains(msg, "certificate is not trusted")
+}
+
+// IsDNSFailure reports whether err is a name-resolution failure, which callers narrate differently from a connection refusal.
+func IsDNSFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	return strings.Contains(err.Error(), "no such host")
 }
 
 // resolveDialURL returns the string ProbeURL may dial, which comes only from the regexp-guarded barrier; no match is default-deny.
