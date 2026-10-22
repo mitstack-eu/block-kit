@@ -821,18 +821,16 @@ func TestWorkflow_KitVersionStepReadsTheKitPinFromGoMod(t *testing.T) {
 	for _, tc := range []struct {
 		name, goMod, want string
 	}{
-		{"a block on kit v2 requires the major-version path",
-			"module github.com/mitstack-eu/kube-app-deploy\n\ngo 1.26\n\nrequire github.com/mitstack-eu/operator-kit/v2 v2.2.0\n", "v2.2.0"},
-		{"a block on kit v2 lists it inside a require block",
-			"module github.com/mitstack-eu/kube-app-deploy\n\ngo 1.26\n\nrequire (\n\tgithub.com/google/uuid v1.6.0\n\tgithub.com/mitstack-eu/operator-kit/v2 v2.2.0\n)\n", "v2.2.0"},
-		{"a block on kit v1 requires the root module path",
-			"module github.com/mitstack-eu/postgres-db\n\ngo 1.26\n\nrequire github.com/mitstack-eu/operator-kit v1.32.0\n", "v1.32.0"},
-		{"a block still on the legacy monorepo path",
-			"module github.com/mitstack-eu/redis-cache\n\ngo 1.26\n\nrequire github.com/mitstack-eu/mitstack/examples/operator-kit v0.5.1\n", "v0.5.1"},
-		{"a go.mod requiring no operator-kit module fails",
+		{"a block requires block-kit's module path",
+			"module github.com/mitstack-eu/postgres-db\n\ngo 1.26\n\nrequire github.com/mitstack-eu/block-kit v0.4.0\n", "v0.4.0"},
+		{"a block lists block-kit inside a require block",
+			"module github.com/mitstack-eu/kube-app-deploy\n\ngo 1.26\n\nrequire (\n\tgithub.com/google/uuid v1.6.0\n\tgithub.com/mitstack-eu/block-kit v0.4.1\n)\n", "v0.4.1"},
+		{"a go.mod requiring operator-kit instead of block-kit fails",
+			"module github.com/mitstack-eu/kube-app-deploy\n\ngo 1.26\n\nrequire github.com/mitstack-eu/operator-kit/v3 v3.2.1\n", ""},
+		{"a go.mod requiring no kit module fails",
 			"module github.com/mitstack-eu/stray\n\ngo 1.26\n\nrequire github.com/google/uuid v1.6.0\n", ""},
-		{"a go.mod requiring only a sibling module whose path starts with operator-kit fails",
-			"module github.com/mitstack-eu/stray\n\ngo 1.26\n\nrequire github.com/mitstack-eu/operator-kit-extras v1.0.0\n", ""},
+		{"a go.mod requiring only a sibling module whose path starts with block-kit fails",
+			"module github.com/mitstack-eu/stray\n\ngo 1.26\n\nrequire github.com/mitstack-eu/block-kit-extras v1.0.0\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := script(t, "publish", name).Run
@@ -855,7 +853,7 @@ func TestWorkflow_KitVersionStepReadsTheKitPinFromGoMod(t *testing.T) {
 			switch {
 			case tc.want != "" && (res.exitCode != 0 || got != tc.want):
 				t.Errorf("exit %d, KIT_VERSION = %q; want 0 and %q; output:\n%s", res.exitCode, got, tc.want, res.combined)
-			case tc.want == "" && (res.exitCode != 1 || set || !strings.Contains(res.stderr, "no operator-kit version pin found in go.mod")):
+			case tc.want == "" && (res.exitCode != 1 || set || !strings.Contains(res.stderr, "no block-kit version pin found in go.mod")):
 				t.Errorf("exit %d, KIT_VERSION set %v, stderr %q; want exit 1, no KIT_VERSION and the step's failure message", res.exitCode, set, res.stderr)
 			}
 		})
