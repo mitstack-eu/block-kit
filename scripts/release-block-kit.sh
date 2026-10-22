@@ -81,7 +81,7 @@ emit_output() {
 # vX.Y.Z is ignored.
 kit_versions() {
   in_repo tag --list "$TAG_PREFIX*" 2> /dev/null \
-    | grep -E "^$TAG_PREFIX[0-9]+\.[0-9]+\.[0-9]+$" \
+    | grep -E "^${TAG_PREFIX}[0-9]+\.[0-9]+\.[0-9]+$" \
     | sed "s|^$TAG_PREFIX||"
 }
 
