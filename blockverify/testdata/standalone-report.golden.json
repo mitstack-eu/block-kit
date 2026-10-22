@@ -1,6 +1,6 @@
 {
   "suiteVersion": "2.0.0",
-  "kitVersion": "v0.1.0",
+  "kitVersion": "v0.4.0",
   "mode": "standalone",
   "manifestDigest": "sha256:436f01667f7c9869674b2caa4af4253dbb27d732378601d4c67144aeb41b0f5d",
   "verdict": "pass",
@@ -9,7 +9,7 @@
     {
       "name": "trust-plumbing",
       "status": "pass",
-      "detail": "kit/v1 rule: depends on github.com/mitstack-eu/block-kit at or above the floor v0.1.0, operator.go imports github.com/mitstack-eu/block-kit/handler, no kit-owned symbol redeclared, manifest.yaml present"
+      "detail": "kit/v1 rule: depends on github.com/mitstack-eu/block-kit at or above the floor v0.4.0, operator.go imports github.com/mitstack-eu/block-kit/handler, no kit-owned symbol redeclared, manifest.yaml present"
     },
     {
       "name": "contract",
