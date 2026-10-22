@@ -11,8 +11,8 @@ House terms are defined in
 The ones this page leans on are these. A block is a managed service defined by
 its `manifest.yaml`, and its operator is the Go program in the block's
 repository that serves the lifecycle calls. The kit is this module,
-`github.com/mitstack-eu/operator-kit/v3`, which every operator imports for
-the webhook contract and the checks below. An attestation is the platform's
+`github.com/mitstack-eu/block-kit`, which every operator imports for the
+webhook contract and the checks below. An attestation is the platform's
 signed record that a block passed every suite, which the catalog shows as a
 verified badge.
 
@@ -25,7 +25,7 @@ reason.
 
 | Suite | What it checks |
 |---|---|
-| `trust-plumbing` | `manifest.yaml` is present and declares `contract: kit/v1`, your `go.mod` requires the kit at or above the floor, a non-test file imports the kit's `handler` package, and no kit-owned function is redeclared. A block that reads the GitHub API must resolve a request-supplied base through an allowlist it owns, either `ghapi.Base` or `ghapi.BaseFromEnv`, or a `urlguard.go` with `allowedGitHubHosts()`. It must also never concatenate a raw `apiBase` into a URL |
+| `trust-plumbing` | `manifest.yaml` is present and declares `contract: kit/v1`, your `go.mod` requires block-kit at or above the floor and no release of operator-kit, a non-test file imports the kit's `handler` package, and no kit-owned function is redeclared. A block that reads the GitHub API must resolve a request-supplied base through an allowlist it owns, either `ghapi.Base` or `ghapi.BaseFromEnv`, or a `urlguard.go` with `allowedGitHubHosts()`. It must also never concatenate a raw `apiBase` into a URL |
 | `contract` | The block passes once a non-test file imports the kit's `handler` package, which serves the webhook contract whose goldens the kit owns |
 | `secret-safety` | `TestNoSecretLeak` exists and passes, plus its `/logs` variant when the block serves `/logs`. A test file that declares one must not build `kittest.FakeResource`, because a test over the kit's fake judges the fake rather than your block |
 | `teardown` | `TestUnsubscribeDeletes*` exists and passes, and its file builds no `kittest.FakeResource`. The kit's handler observes absence after every delete, so the block need not ask its provider again itself |
@@ -40,8 +40,10 @@ serves the block's lifecycle route. A manifest in the retired
 refuses it.
 
 The floor is the oldest kit release your `go.mod` may require, and today it
-is `v0.1.0`. It moves only by a deliberate decision, so a new kit release
-never fails a block that has not picked it up yet.
+is `v0.4.0`, block-kit's first release. It moves only by a deliberate
+decision, so a new kit release never fails a block that has not picked it up
+yet. A `go.mod` that requires `github.com/mitstack-eu/operator-kit` at any
+version fails, because block-kit is the one kit module the platform supports.
 
 ## Run it locally
 
@@ -51,19 +53,18 @@ suites from your block's directory, naming the kit release to run.
 and it is the only mode the command has:
 
 ```sh
-go run github.com/mitstack-eu/operator-kit/v3/blockverify@v3.0.0 --standalone .
+go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
 The version is required because `go run` with `@` builds the command outside
-your block's module, so your own `go.mod` cannot choose it. `v3.0.0` is the
-first release under the `/v3` module path, and a later tag works the same
-way. A block still on kit v2 runs `github.com/mitstack-eu/operator-kit/v2/blockverify`
-at its own v2 release. The run takes about a minute, mostly spent compiling and running your
-tests. A passing block ends with a line like this, where `kit v0.1.0` is the
-floor the suites held your `go.mod` to, not the release you ran:
+your block's module, so your own `go.mod` cannot choose it. `v0.4.0` is
+block-kit's first release, and a later tag works the same way. The run takes
+about a minute, mostly spent compiling and running your tests. A passing block
+ends with a line like this, where `kit v0.4.0` is the floor the suites held
+your `go.mod` to, not the release you ran:
 
 ```text
-VERDICT: PASS — 7 suite(s), kit v0.1.0, standalone mode
+VERDICT: PASS — 7 suite(s), kit v0.4.0, standalone mode
 ```
 
 A failing suite prints its reason on its own line, such as the missing test or
