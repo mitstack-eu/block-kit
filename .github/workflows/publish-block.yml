@@ -80,19 +80,19 @@ jobs:
       # blockverify is built from a checkout of kit-ref rather than a `go run`
       # of a released tag, so the reusable workflow works whether or not a
       # given kit-ref has been tagged yet.
-      - name: Checkout operator-kit
+      - name: Checkout block-kit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: mitstack-eu/operator-kit
+          repository: mitstack-eu/block-kit
           ref: ${{ inputs.kit-ref }}
-          path: operator-kit
+          path: block-kit
 
       - name: Build blockverify
-        working-directory: operator-kit
+        working-directory: block-kit
         run: go build -o ../blockverify ./blockverify
 
       - name: Build commentcheck
-        working-directory: operator-kit
+        working-directory: block-kit
         run: go build -o ../commentcheck ./cmd/commentcheck
 
       # blockverify judges `.` and the image builds from `.`, so the kit
@@ -100,7 +100,7 @@ jobs:
       # it, or the block is judged by the kit's own source.
       - name: Remove the kit checkout from the block tree
         run: |
-          rm -rf operator-kit
+          rm -rf block-kit
 
       # On a pull request blockverify compares spec.version with the base
       # commit's manifest.yaml. The checkout is shallow, so the base commit is
@@ -182,15 +182,15 @@ jobs:
           role-to-assume: ${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Checkout operator-kit
+      - name: Checkout block-kit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: mitstack-eu/operator-kit
+          repository: mitstack-eu/block-kit
           ref: ${{ inputs.kit-ref }}
-          path: operator-kit
+          path: block-kit
 
       - name: Build blockverify and blockprov
-        working-directory: operator-kit
+        working-directory: block-kit
         run: |
           go build -o ../blockverify ./blockverify
           go build -o ../blockprov ./blockprov
@@ -200,7 +200,7 @@ jobs:
       # it, or the block is judged by the kit's own source.
       - name: Remove the kit checkout from the block tree
         run: |
-          rm -rf operator-kit
+          rm -rf block-kit
 
       - name: Log in to ECR
         run: |

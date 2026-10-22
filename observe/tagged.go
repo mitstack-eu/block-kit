@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 // AWSSubscriptionTag is the tag key the platform's operator trust boundary requires on every object a subscription creates.

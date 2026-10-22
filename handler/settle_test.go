@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 // cancelAfterNObserves never reports the target state, so with a budget far above cancelAfter a low call count can only mean the loop honoured cancellation.

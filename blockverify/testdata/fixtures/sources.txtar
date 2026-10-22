@@ -21,7 +21,7 @@ func repoOwner(c githubCreds) string { return c.Secrets["github"]["owner"] }
 -- github-raw-apibase-concatenated.go --
 package main
 
-import "github.com/mitstack-eu/operator-kit/v3/ghapi"
+import "github.com/mitstack-eu/block-kit/ghapi"
 
 func repoURL(c githubCreds, apiBase string) string {
 	_, _ = ghapi.Base(c.Secrets["github"]["endpoint"])
@@ -30,7 +30,7 @@ func repoURL(c githubCreds, apiBase string) string {
 -- github-raw-apibase-in-a-comment.go --
 package main
 
-import "github.com/mitstack-eu/operator-kit/v3/ghapi"
+import "github.com/mitstack-eu/block-kit/ghapi"
 
 func repoURL(c githubCreds) error {
 	// Never build a URL as apiBase + "/repos": the request would choose the host.
@@ -40,7 +40,7 @@ func repoURL(c githubCreds) error {
 -- github-through-ghapi-base-from-env.go --
 package main
 
-import "github.com/mitstack-eu/operator-kit/v3/ghapi"
+import "github.com/mitstack-eu/block-kit/ghapi"
 
 func githubBase(c githubCreds) error {
 	_, err := ghapi.BaseFromEnv(c.Secrets["github"]["endpoint"])
@@ -49,7 +49,7 @@ func githubBase(c githubCreds) error {
 -- github-through-ghapi-base.go --
 package main
 
-import "github.com/mitstack-eu/operator-kit/v3/ghapi"
+import "github.com/mitstack-eu/block-kit/ghapi"
 
 func githubBase(c githubCreds) error {
 	_, err := ghapi.Base(c.Secrets["github"]["endpoint"])
@@ -73,7 +73,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/handler"
+	"github.com/mitstack-eu/block-kit/handler"
 )
 
 func TestHandlerIsReachable(t *testing.T) {
@@ -85,7 +85,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
+	"github.com/mitstack-eu/block-kit/kittest"
 )
 
 func TestTheKitFakeBuilds(t *testing.T) {
@@ -97,7 +97,7 @@ package main
 import (
 	"testing"
 
-	kt "github.com/mitstack-eu/operator-kit/v3/kittest"
+	kt "github.com/mitstack-eu/block-kit/kittest"
 )
 
 func TestNoSecretLeakThroughTheFake(t *testing.T) {
@@ -109,7 +109,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
+	"github.com/mitstack-eu/block-kit/kittest"
 )
 
 func TestNoSecretLeakThroughTheFake(t *testing.T) {
@@ -153,10 +153,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
-	"github.com/mitstack-eu/operator-kit/v3/handler"
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
-	"github.com/mitstack-eu/operator-kit/v3/observe"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/observe"
 )
 
 type misbehave struct {
@@ -424,7 +424,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
+	"github.com/mitstack-eu/block-kit/kittest"
 )
 
 func TestUnsubscribeDeletesThroughTheFake(t *testing.T) {

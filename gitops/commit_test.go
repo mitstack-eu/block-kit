@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
-	"github.com/mitstack-eu/operator-kit/v3/gitops"
-	"github.com/mitstack-eu/operator-kit/v3/gitops/gitopstest"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/gitops"
+	"github.com/mitstack-eu/block-kit/gitops/gitopstest"
 )
 
 const (

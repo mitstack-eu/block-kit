@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# release-operator-kit_test.sh runs scripts/release-operator-kit.sh against scratch repositories, each with a bare remote, and asserts the tags it cuts.
-# Usage: bash scripts/release-operator-kit_test.sh
+# release-block-kit_test.sh runs scripts/release-block-kit.sh against scratch repositories, each with a bare remote, and asserts the tags it cuts.
+# Usage: bash scripts/release-block-kit_test.sh
 # It exists because every block resolves the kit by these tags, so a wrong or moved tag reaches every consumer.
 set -uo pipefail
 
@@ -9,7 +9,7 @@ set -uo pipefail
 hermetic_git_env
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="$HERE/release-operator-kit.sh"
+SCRIPT="$HERE/release-block-kit.sh"
 
 pass=0
 fail=0
@@ -94,7 +94,7 @@ setup_repo() {
   git init -q -b main "$W"
   git -C "$W" remote add origin "$R"
   mkdir -p "$W/health"
-  printf 'module github.com/mitstack-eu/operator-kit\n' >"$W/go.mod"
+  printf 'module github.com/mitstack-eu/block-kit\n' >"$W/go.mod"
   printf 'package kit\n' >"$W/kit.go"
   printf 'package health\n' >"$W/health/health.go"
   git -C "$W" add -A
@@ -482,20 +482,20 @@ assert_out_contains "head is reachable from a tag afterwards" "v0.5.1"
 if [ -f "$SCRIPT" ]; then
   header="$(sed -n '1,60p' "$SCRIPT")"
   if grep -q "examples/operator-kit" <<<"$header"; then
-    bad "release-operator-kit.sh header/usage still mentions the retired examples/operator-kit subdirectory layout"
+    bad "release-block-kit.sh header/usage still mentions the retired examples/operator-kit subdirectory layout"
   else
     ok
   fi
   if grep -qE 'v[0-9]+\.[0-9]+\.[0-9]+' <<<"$header"; then
     ok
   else
-    bad "release-operator-kit.sh header/usage does not show a plain vX.Y.Z tag shape"
+    bad "release-block-kit.sh header/usage does not show a plain vX.Y.Z tag shape"
   fi
 else
-  bad "release-operator-kit.sh does not exist yet — its header cannot describe the present"
-  bad "release-operator-kit.sh does not exist yet — its usage cannot show a plain vX.Y.Z tag shape"
+  bad "release-block-kit.sh does not exist yet — its header cannot describe the present"
+  bad "release-block-kit.sh does not exist yet — its usage cannot show a plain vX.Y.Z tag shape"
 fi
 
 echo "----"
-echo "release-operator-kit: $pass passed, $fail failed"
+echo "release-block-kit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

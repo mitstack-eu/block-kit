@@ -11,7 +11,7 @@ ENTRYPOINT ["/usr/local/bin/fixture"]
 -- main.go --
 package main
 
-import "github.com/mitstack-eu/operator-kit/v3/handler"
+import "github.com/mitstack-eu/block-kit/handler"
 
 var _ = handler.New
 

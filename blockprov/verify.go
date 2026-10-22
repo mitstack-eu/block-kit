@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/mitstack-eu/operator-kit/v3/provenance"
+	"github.com/mitstack-eu/block-kit/provenance"
 )
 
 func runVerify(args []string, stdout io.Writer) int {

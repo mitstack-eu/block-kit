@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 // FakeBuilder is a Resource and an Observer whose first Ensure starts a builder that runs until FinishBuild, and whose next Ensure turns the finished build into the image; the zero value conforms and each bool turns on one misbehaviour.

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
+	"github.com/mitstack-eu/block-kit/kittest"
 )
 
 const workflowPath = "../.github/workflows/publish-block.yml"
@@ -733,12 +733,12 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		want    []string
 	}{
 		{"conformance", "<absent>", []string{
-			"actions/checkout", "actions/setup-go", "go vet", "go test", "Checkout operator-kit", "Build blockverify", "Build commentcheck",
+			"actions/checkout", "actions/setup-go", "go vet", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck",
 			"Remove the kit checkout from the block tree", "Write the base commit's manifest", "Judge the comments this pull request adds",
 			"blockverify (standalone contract check)", "Upload blockverify report",
 		}},
 		{"publish", "write", []string{
-			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Configure AWS credentials", "Checkout operator-kit",
+			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Configure AWS credentials", "Checkout block-kit",
 			"Build blockverify and blockprov", "Remove the kit checkout from the block tree", "Log in to ECR", "Probe the version tag and its provenance record",
 			"Install Trivy", "Build and push image", "Determine the kit version pinned in go.mod", "blockverify (standalone, for blockprov build's report)",
 			"blockprov build", "Fetch ECR password", "blockprov push",
@@ -751,13 +751,13 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 				idToken = "<absent>"
 			}
 
-			checkout := indexOf(steps, "Checkout operator-kit")
+			checkout := indexOf(steps, "Checkout block-kit")
 
 			if got := labels(steps); !slices.Equal(got, tc.want) {
 				t.Errorf("%s steps =\n  %s\nwant\n  %s", tc.job, strings.Join(got, "\n  "), strings.Join(tc.want, "\n  "))
 			}
 			if checkout < 0 {
-				t.Fatalf("%s job has no step %q", tc.job, "Checkout operator-kit")
+				t.Fatalf("%s job has no step %q", tc.job, "Checkout block-kit")
 			}
 			if token, ok := steps[checkout]["with.token"]; ok {
 				t.Errorf("%s kit checkout passes token %q, want none, so the public kit is read with the run's default token", tc.job, token)
@@ -787,10 +787,10 @@ func TestWorkflow_TheKitCheckoutLeavesTheBlockTreeBeforeItIsJudged(t *testing.T)
 				t.Fatalf("%s job has no step %q", tc.job, name)
 			}
 			tree := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(tree, "operator-kit", "events"), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(tree, "block-kit", "events"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			writeExecutable(t, filepath.Join(tree, "operator-kit", "events", "events.go"), "package events\n")
+			writeExecutable(t, filepath.Join(tree, "block-kit", "events", "events.go"), "package events\n")
 			writeExecutable(t, filepath.Join(tree, "main.go"), "package main\n")
 			rmScript := filepath.Join(t.TempDir(), "rm.sh")
 			writeExecutable(t, rmScript, script(t, tc.job, name).Run)
@@ -806,8 +806,8 @@ func TestWorkflow_TheKitCheckoutLeavesTheBlockTreeBeforeItIsJudged(t *testing.T)
 			if res.exitCode != 0 {
 				t.Fatalf("step failed: exit %d\n%s", res.exitCode, res.combined)
 			}
-			if _, err := os.Stat(filepath.Join(tree, "operator-kit")); !os.IsNotExist(err) {
-				t.Errorf("operator-kit/ still exists after the step (stat err %v)", err)
+			if _, err := os.Stat(filepath.Join(tree, "block-kit")); !os.IsNotExist(err) {
+				t.Errorf("block-kit/ still exists after the step (stat err %v)", err)
 			}
 			if _, err := os.Stat(filepath.Join(tree, "main.go")); err != nil {
 				t.Errorf("the block's own main.go is gone: %v", err)

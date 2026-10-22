@@ -15,7 +15,7 @@ import (
 
 const kitFakeType = "FakeResource"
 
-var kittestImportRe = regexp.MustCompile(`^github\.com/mitstack-eu/operator-kit(/v[0-9]+)?/kittest$`)
+var kittestImportRe = regexp.MustCompile(`^github\.com/mitstack-eu/block-kit/kittest$`)
 
 // refuseKitFake fails a block whose mandatory test, named by testPrefix, sits in a file that builds the kit's FakeResource, since such a test exercises the kit's fake instead of the block.
 func refuseKitFake(target, testPrefix string) (detail string, ok bool) {

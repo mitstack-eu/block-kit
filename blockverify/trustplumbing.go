@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const kitModulePath = "github.com/mitstack-eu/operator-kit"
+const kitModulePath = "github.com/mitstack-eu/block-kit"
 
 // kitVersionFloor is held textually equal to scaffold.KitVersionFloor by a test, because this module cannot import that package; bump it only on a deliberate floor raise.
 const kitVersionFloor = "v0.1.0"
@@ -72,11 +72,11 @@ var kitVersionRe = regexp.MustCompile(regexp.QuoteMeta(kitModulePath) + ` v(\d+\
 func checkKitDependency(target string) (detail string, ok bool) {
 	raw, err := os.ReadFile(filepath.Join(target, "go.mod"))
 	if err != nil {
-		return fmt.Sprintf("%s has no go.mod to depend on the shared operator-kit module", target), false
+		return fmt.Sprintf("%s has no go.mod to depend on the shared block-kit module", target), false
 	}
 	content := string(raw)
 	if !strings.Contains(content, kitModulePath) {
-		return fmt.Sprintf("%s/go.mod does not depend on the shared operator-kit module (want require %s)", target, kitModulePath), false
+		return fmt.Sprintf("%s/go.mod does not depend on the shared block-kit module (want require %s)", target, kitModulePath), false
 	}
 
 	m := kitVersionRe.FindStringSubmatch(content)

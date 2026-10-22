@@ -9,12 +9,12 @@
     {
       "name": "trust-plumbing",
       "status": "pass",
-      "detail": "kit/v1 rule: depends on github.com/mitstack-eu/operator-kit at or above the floor v0.1.0, operator.go imports github.com/mitstack-eu/operator-kit/v3/handler, no kit-owned symbol redeclared, manifest.yaml present"
+      "detail": "kit/v1 rule: depends on github.com/mitstack-eu/block-kit at or above the floor v0.1.0, operator.go imports github.com/mitstack-eu/block-kit/handler, no kit-owned symbol redeclared, manifest.yaml present"
     },
     {
       "name": "contract",
       "status": "pass",
-      "detail": "kit/v1 rule: the kit owns the webhook-contract goldens; operator.go imports github.com/mitstack-eu/operator-kit/v3/handler"
+      "detail": "kit/v1 rule: the kit owns the webhook-contract goldens; operator.go imports github.com/mitstack-eu/block-kit/handler"
     },
     {
       "name": "secret-safety",

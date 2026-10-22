@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 // exitNotJudged marks a case that pins a suite's verdict without the run's exit code.

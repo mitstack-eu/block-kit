@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/credrefresh"
+	"github.com/mitstack-eu/block-kit/credrefresh"
 )
 
 type Identity struct {

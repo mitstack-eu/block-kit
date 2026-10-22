@@ -117,7 +117,7 @@ func TestWorkflow_CommentCheckRunsOnEveryPullRequest(t *testing.T) {
 	ci := job(t, "ci.yml", "comment-check")
 	ciRun := entry(ci, find(ci, 0, `cmd/commentcheck`))
 	conformance := job(t, "publish-block.yml", "conformance")
-	removal := find(conformance, 0, `rm -rf operator-kit`)
+	removal := find(conformance, 0, `rm -rf block-kit`)
 	buildAt := find(conformance, 0, `\./cmd/commentcheck`)
 	build := entry(conformance, buildAt)
 	check := entry(conformance, find(conformance, find(conformance, 0, `git fetch .*"\$BASE_SHA"`)+1, `\./commentcheck\b`))
@@ -127,7 +127,7 @@ func TestWorkflow_CommentCheckRunsOnEveryPullRequest(t *testing.T) {
 		{"ci.yml comment-check runs the command against the base", ciRun["run"], `go run ./cmd/commentcheck -base "$BASE_SHA" .`},
 		{"ci.yml comment-check takes the base sha through env", ciRun["env.BASE_SHA"], baseSHA},
 		{"publish-block builds commentcheck before removing the kit checkout", strconv.FormatBool(buildAt >= 0 && buildAt < removal), "true"},
-		{"publish-block builds commentcheck in the kit checkout", build["working-directory"], "operator-kit"},
+		{"publish-block builds commentcheck in the kit checkout", build["working-directory"], "block-kit"},
 		{"publish-block builds commentcheck beside blockverify", build["run"], "go build -o ../commentcheck ./cmd/commentcheck"},
 		{"publish-block runs commentcheck after the base fetch only on a pull request", check["if"], onPullRequest},
 		{"publish-block runs commentcheck against the base on the block tree", check["run"], `./commentcheck -base "$BASE_SHA" .`},

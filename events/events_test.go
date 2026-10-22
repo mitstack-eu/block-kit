@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/events"
+	"github.com/mitstack-eu/block-kit/events"
 )
 
 func TestEmit(t *testing.T) {

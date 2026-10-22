@@ -4,6 +4,6 @@ main.go imports the handler package of the kit's v3 major release.
 -- main.go --
 package main
 
-import "github.com/mitstack-eu/operator-kit/v3/handler"
+import "github.com/mitstack-eu/block-kit/handler"
 
 func main() { _ = handler.New }

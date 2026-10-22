@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/mitstack-eu/operator-kit/v3/webhook"
+	"github.com/mitstack-eu/block-kit/webhook"
 )
 
 // request mirrors the subset of the mitstack lifecycle webhook payload this
@@ -137,7 +137,7 @@ import (
 	"os"
 	"time"
 
-	kithandler "github.com/mitstack-eu/operator-kit/v3/handler"
+	kithandler "github.com/mitstack-eu/block-kit/handler"
 )
 
 var _ = kithandler.New
@@ -181,7 +181,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
+	"github.com/mitstack-eu/block-kit/kittest"
 )
 
 // TestNoSecretLeak proves the fixture operator never echoes a received
@@ -237,7 +237,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
+	"github.com/mitstack-eu/block-kit/kittest"
 )
 
 func newHandler(t *testing.T) (*Handler, *kittest.Signer) {

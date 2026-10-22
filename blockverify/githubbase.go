@@ -19,7 +19,7 @@ var (
 	githubConsumingRe   = regexp.MustCompile(`Secrets\["github"\](\["[^"]*"\])?|Instances\["github"\]|api\.github\.com`)
 	requestHostReturnRe = regexp.MustCompile(`return\s+"https?://"\s*\+\s*u\.(Host|Hostname\(\))`)
 	allowlistFuncRe     = regexp.MustCompile(`func allowedGitHubHosts\(\)`)
-	ghapiImportRe       = regexp.MustCompile(`operator-kit/(v[0-9]+/)?ghapi`)
+	ghapiImportRe       = regexp.MustCompile(`block-kit/ghapi`)
 	ghapiBaseCallRe     = regexp.MustCompile(`ghapi\.(Base|BaseFromEnv)\(`)
 	rawAPIBaseConcatRe  = regexp.MustCompile(`\bapiBase\s*\+`)
 	wholeLineCommentRe  = regexp.MustCompile(`^\s*//`)

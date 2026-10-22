@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 const fixturesDir = "testdata/fixtures"
@@ -32,8 +32,8 @@ func kitModuleDir(t *testing.T) string {
 
 func kitGoMod(t *testing.T) string {
 	t.Helper()
-	return "module fixture\n\ngo 1.25\n\nrequire github.com/mitstack-eu/operator-kit/v3 v3.0.0\n\n" +
-		"replace github.com/mitstack-eu/operator-kit/v3 => " + kitModuleDir(t) + "\n"
+	return "module fixture\n\ngo 1.25\n\nrequire github.com/mitstack-eu/block-kit v0.4.0\n\n" +
+		"replace github.com/mitstack-eu/block-kit => " + kitModuleDir(t) + "\n"
 }
 
 // readTxtar returns an archive's leading comment and its files by name.

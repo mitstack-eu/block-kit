@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/hostexec"
+	"github.com/mitstack-eu/block-kit/hostexec"
 )
 
 const (

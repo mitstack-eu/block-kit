@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
-	"github.com/mitstack-eu/operator-kit/v3/webhook"
+	"github.com/mitstack-eu/block-kit/kittest"
+	"github.com/mitstack-eu/block-kit/webhook"
 )
 
 func TestLogBuffer_KeepsOnlyTheMostRecentLines(t *testing.T) {

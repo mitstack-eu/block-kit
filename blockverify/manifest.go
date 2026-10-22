@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 // manifestSuite fails a manifest the kit's parser refuses, a metadata.id that is no block id, and a changed spec.version without a release class and note.

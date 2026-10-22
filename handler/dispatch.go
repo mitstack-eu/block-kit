@@ -8,9 +8,9 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
-	"github.com/mitstack-eu/operator-kit/v3/events"
-	"github.com/mitstack-eu/operator-kit/v3/safe"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/events"
+	"github.com/mitstack-eu/block-kit/safe"
 )
 
 // dispatchRequest runs the verb through the idempotency cache, storing only a settled answer.

@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	kitContractPath = "github.com/mitstack-eu/operator-kit/v3/contract"
-	kitHandlerPath  = "github.com/mitstack-eu/operator-kit/v3/handler"
-	kitBlockverify  = "github.com/mitstack-eu/operator-kit/v3/blockverify"
+	kitContractPath = "github.com/mitstack-eu/block-kit/contract"
+	kitHandlerPath  = "github.com/mitstack-eu/block-kit/handler"
+	kitBlockverify  = "github.com/mitstack-eu/block-kit/blockverify"
 )
 
 type guardPackage struct {

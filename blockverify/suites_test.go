@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-const kitHandlerImport = "github.com/mitstack-eu/operator-kit/v3/handler"
+const kitHandlerImport = "github.com/mitstack-eu/block-kit/handler"
 
 // scanFailureMarker is the phrase a scan that could not run carries and an absent import does not.
 const scanFailureMarker = "could not scan"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# release-operator-kit.sh — decide whether a pushed commit range changed this
+# release-block-kit.sh — decide whether a pushed commit range changed this
 # repository, and cut the next kit tag at head when it did.
 #
 # Explained in the root README.md, "Release".
 #
 # Usage:
-#   scripts/release-operator-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>]
+#   scripts/release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>]
 #                                   [--remote <name>] [--dry-run] [--verify-only]
 #
 #   --base <sha>     the push's "before" commit. An empty value, the all-zero
@@ -25,7 +25,7 @@
 #           elsewhere
 #   exit 2  an unknown flag
 #
-# Why this exists. This repository IS the kit: github.com/mitstack-eu/operator-kit
+# Why this exists. This repository IS the kit: github.com/mitstack-eu/block-kit
 # is a root Go module, and a Go consumer resolves it only through a plain
 # vX.Y.Z tag such as v0.5.1. A change that reaches main without such a tag is
 # unreachable to every block repository importing the kit, however green its
@@ -56,8 +56,8 @@ while [ "$#" -gt 0 ]; do
     --dry-run)     dry_run=1;     shift ;;
     --verify-only) verify_only=1; shift ;;
     *)
-      echo "release-operator-kit: unknown flag: $1" >&2
-      echo "usage: release-operator-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>] [--remote <name>] [--dry-run] [--verify-only]" >&2
+      echo "release-block-kit: unknown flag: $1" >&2
+      echo "usage: release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>] [--remote <name>] [--dry-run] [--verify-only]" >&2
       exit 2
       ;;
   esac
@@ -92,7 +92,7 @@ newest_kit_version() {
 
 head_sha="$(in_repo rev-parse --verify --quiet "${head_ref}^{commit}" 2> /dev/null)"
 if [ -z "$head_sha" ]; then
-  echo "release-operator-kit: cannot resolve --head '$head_ref' in $repo" >&2
+  echo "release-block-kit: cannot resolve --head '$head_ref' in $repo" >&2
   emit_output "released=false"
   exit 1
 fi
@@ -124,7 +124,7 @@ else
   range="$head_sha"
 fi
 
-echo "release-operator-kit: range $range (base ${resolved_base:-<none>}, head $head_sha)"
+echo "release-block-kit: range $range (base ${resolved_base:-<none>}, head $head_sha)"
 
 if [ -z "$touched" ]; then
   echo "the repository is unchanged in this range, so no kit tag is cut."
