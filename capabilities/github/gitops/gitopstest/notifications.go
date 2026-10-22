@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/mitstack-eu/block-kit/gitops"
+	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
 )
 
 type appRevision struct{ app, revision string }

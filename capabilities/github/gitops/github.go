@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"unicode/utf8"
 
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/ghapi"
 )
 
 type GitHubRepository struct {

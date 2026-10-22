@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/block-kit/gitops"
-	"github.com/mitstack-eu/block-kit/gitops/gitopstest"
+	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
+	"github.com/mitstack-eu/block-kit/capabilities/github/gitops/gitopstest"
 )
 
 // failingNotes answers a failed sync for any revision, since gitopstest seeds a verdict by a revision a test cannot know before Deploy commits.

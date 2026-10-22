@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/block-kit/cloudid"
+	"github.com/mitstack-eu/block-kit/capabilities/aws/cloudid"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 

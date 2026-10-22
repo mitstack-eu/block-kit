@@ -21,7 +21,7 @@ func repoOwner(c githubCreds) string { return c.Secrets["github"]["owner"] }
 -- github-raw-apibase-concatenated.go --
 package main
 
-import "github.com/mitstack-eu/block-kit/ghapi"
+import "github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 
 func repoURL(c githubCreds, apiBase string) string {
 	_, _ = ghapi.Base(c.Secrets["github"]["endpoint"])
@@ -30,7 +30,7 @@ func repoURL(c githubCreds, apiBase string) string {
 -- github-raw-apibase-in-a-comment.go --
 package main
 
-import "github.com/mitstack-eu/block-kit/ghapi"
+import "github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 
 func repoURL(c githubCreds) error {
 	// Never build a URL as apiBase + "/repos": the request would choose the host.
@@ -40,7 +40,7 @@ func repoURL(c githubCreds) error {
 -- github-through-ghapi-base-from-env.go --
 package main
 
-import "github.com/mitstack-eu/block-kit/ghapi"
+import "github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 
 func githubBase(c githubCreds) error {
 	_, err := ghapi.BaseFromEnv(c.Secrets["github"]["endpoint"])
@@ -49,7 +49,7 @@ func githubBase(c githubCreds) error {
 -- github-through-ghapi-base.go --
 package main
 
-import "github.com/mitstack-eu/block-kit/ghapi"
+import "github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 
 func githubBase(c githubCreds) error {
 	_, err := ghapi.Base(c.Secrets["github"]["endpoint"])

@@ -3,7 +3,7 @@ package ghapi_test
 import (
 	"testing"
 
-	"github.com/mitstack-eu/block-kit/ghapi"
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 )
 
 // SafeRepo keeps an operator-supplied owner/name from smuggling a host, path traversal or extra segments into a GitHub API URL.

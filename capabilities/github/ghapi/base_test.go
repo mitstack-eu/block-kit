@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mitstack-eu/block-kit/ghapi"
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 )
 
 func TestBase(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/block-kit/ghapi"
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 )
 
 const (

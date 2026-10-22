@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/mitstack-eu/block-kit/gitops"
-	"github.com/mitstack-eu/block-kit/gitops/gitopstest"
+	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
+	"github.com/mitstack-eu/block-kit/capabilities/github/gitops/gitopstest"
 )
 
 var (
