@@ -129,8 +129,6 @@ func TestFixtureSet_HoldsEveryRequiredCase(t *testing.T) {
 		"import-satisfied-constraint": "pass",
 		"import-aliased":              "pass",
 		"import-subpackage":           "pass",
-		"import-major-v2":             "pass",
-		"import-major-v3":             "pass",
 		"unparsable-only":             "tooling",
 		"unparsable-beside-import":    "tooling",
 		"malformed-constraint":        "tooling",

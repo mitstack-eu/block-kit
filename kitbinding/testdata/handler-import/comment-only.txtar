@@ -3,6 +3,6 @@ The quoted handler path appears only in a comment.
 -- main.go --
 package main
 
-// This block serves its lifecycle route through "github.com/mitstack-eu/operator-kit/handler".
+// This block serves its lifecycle route through "github.com/mitstack-eu/block-kit/handler".
 
 func main() {}

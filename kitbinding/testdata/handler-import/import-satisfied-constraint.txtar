@@ -13,7 +13,7 @@ package main
 import (
 	"net/http"
 
-	"github.com/mitstack-eu/operator-kit/handler"
+	"github.com/mitstack-eu/block-kit/handler"
 )
 
 var _ = handler.New
