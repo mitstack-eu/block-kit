@@ -137,8 +137,8 @@ elif grep -qiE '^[[:space:]]*kit-release:[[:space:]]*minor[[:space:]]*$' <<< "$m
   level="minor"
 fi
 
-# Go never reuses a published version, and v1.0.0 is kept for the commercial launch.
-# Refusing before the unchanged check fails a pull request carrying the line, whatever it touches.
+# Refused before the unchanged check, so a range carrying the line fails
+# whatever it touches.
 if [ "$level" = "major" ] && [[ "$newest_version" == 0.* ]]; then
   echo "::error::a kit-release: major line in $range asks for v1.0.0 from $newest_tag, and v1.0.0 is cut by hand at the commercial launch, so no tag is cut. A breaking change takes kit-release: minor." >&2
   emit_output "released=false"
