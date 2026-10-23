@@ -125,7 +125,9 @@ tests and `blockverify --standalone`, and on a pull request it also runs
 the kit](maintainers.md#judging-the-comments-in-a-pull-request) explains. A
 red verdict stops the `publish` job, which on a push to your default branch
 builds the image, scans it and pushes it to the ECR repository you name, so
-no image ships without a pass.
+no image ships without a pass. The job then runs `blockprov`, which builds a
+provenance record naming your repository, commit and CI run, signs it with
+the run's GitHub Actions identity token and pushes it beside the image.
 
 When the platform creates a block's repository from its templates, which it
 calls scaffolding, the repository also carries

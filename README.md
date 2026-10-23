@@ -110,13 +110,14 @@ ships, runs your tests' kittest checks. Everything else is optional, in
 
 [`examples/hetzner-firewall`](examples/hetzner-firewall) is a complete block
 that keeps one empty Hetzner Cloud firewall for each subscription, the
-simplest resource a provider offers for free. Each call carries the
-subscriber's credentials for the providers the block uses. A `subscribe` and
-an `upgrade` always carry them. The manifest's `verbConnections` (a verb is a
-lifecycle call, a connection a provider account) asks for the Hetzner ones on
-`validate` and `unsubscribe` too, since the observer and `Delete` need them.
-[Writing the manifest](docs/manifest.md) explains every key. The manifest,
-from
+simplest resource a provider offers for free. Every call carries the
+credentials of each connection the block uses (a connection is an account the
+subscriber connected at a provider, such as a Hetzner Cloud project). The
+manifest's `verbConnections` (a verb is a lifecycle call) names the
+connections a `validate` and an `unsubscribe` need, so the platform can leave
+the others out of those calls. The example names its Hetzner connection for
+both, since the observer and `Delete` use it. [Writing the
+manifest](docs/manifest.md) explains every key. The manifest, from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
 ```yaml
@@ -216,9 +217,15 @@ blockverify runs seven suites, groups of checks, on the directory
 
 ## The rest of the repository
 
-`verify` also holds `blockverify` and tools that sign a published image's
-origin, `examples` the example, `cmd` and `scripts` the kit's own commands,
-and `board` mitstack's work-tracker tooling, a Go module no block uses. `docs` holds these pages:
+`verify` also holds `blockverify` and three packages no block imports.
+`blockprov` and `provenance` build and sign a record of the repository,
+commit and CI run that built a block's image. Your block's CI never runs them
+itself. It calls the kit's publish workflow, as [Running the block
+checks](docs/block-checks.md) shows, and that workflow runs them once it has
+built and pushed the image. `attest` checks the platform's signed record that
+a block passed blockverify. `examples` holds the example, `cmd` and `scripts` the
+kit's own commands, and `board` mitstack's work-tracker tooling, a Go module
+no block uses. `docs` holds these pages:
 
 | Page | What it covers |
 |---|---|
