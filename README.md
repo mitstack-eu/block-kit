@@ -467,8 +467,10 @@ Each observer is handed the identity and type reported for its resource.
 When nothing was reported, it gets what the engine recorded under the
 request's `recordedResources`, and failing that, no identity and the one
 type its entry lists. A recorded type reaches the observer even when the
-entry no longer lists it, since the resource was created as that type. A
-reported resource the manifest does not declare, or of a type its entry does
+entry no longer lists it, since the resource was created as that type. The
+answer carries each reported type and identity as that resource's `ensure`
+outcome, so the engine records them even when the answer stops pending before
+it observes that resource. A reported resource the manifest does not declare, or of a type its entry does
 not list, answers 400 quoting it. A handler that implements
 `handler.ReplacementPlanner` names on validate the resources an upgrade would
 replace, and the answer carries them under `replaces`.

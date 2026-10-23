@@ -91,7 +91,7 @@ func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 		if ctx.Err() != nil {
 			return http.StatusOK, contract.Response{Pending: true, StatusDetail: r.notReached(nr.name), Resources: r.outcomes, SecretOutputs: secretOutputs, ResourceSecretOutputs: r.resourceSecretOutputs}
 		}
-		var entry contract.ResourceOutcome
+		entry := r.outcomes[nr.name]
 		obs, attempts, err := r.settle(ctx, nr, contract.Present, &entry)
 		if err != nil {
 			return r.fail(nr.name, &entry, &entry.Observe, err)
