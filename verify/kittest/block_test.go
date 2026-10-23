@@ -69,7 +69,7 @@ type fakeProvider struct {
 	mu    sync.Mutex
 	items map[string]observe.Tagged
 	tags  map[string]string
-	// listPrefix opens each id it lists, as a lister does that names an object by no value of the identity its block reports.
+	// listPrefix prefixes every id it lists, like a lister that names an object by none of its identity's values.
 	listPrefix string
 }
 
