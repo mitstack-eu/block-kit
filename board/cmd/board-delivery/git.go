@@ -1,11 +1,5 @@
 package main
 
-// git.go wraps the one git operation Run needs: reading every commit's
-// subject and body in a base..head range. Mirrors
-// cmd/board-delivery/git.go's idiom, minus the anchor-tag machinery this
-// command has no use for — pr-keys only ever reads a range, and never
-// writes to the repository.
-
 import (
 	"bytes"
 	"fmt"
@@ -13,15 +7,15 @@ import (
 	"strings"
 )
 
-// commitFieldSep separates a commit's subject from its body in git log's
-// custom format. commitRecordSep separates one commit's record from the
-// next. Neither byte appears in ordinary commit text.
+// anchorTag marks the last commit whose keys reached the board.
+const anchorTag = "board-synced"
+
+// Neither separator byte appears in ordinary commit text.
 const (
 	commitFieldSep  = "\x1f"
 	commitRecordSep = "\x1e"
 )
 
-// gitOutput runs git in repo and returns its trimmed combined output.
 func gitOutput(repo string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repo
@@ -34,7 +28,20 @@ func gitOutput(repo string, args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
-// commitsInRange reads every commit's subject and body in rng.
+// readAnchorTag returns "" for an absent tag, which is a first run rather than an error.
+func readAnchorTag(repo string) string {
+	sha, err := gitOutput(repo, "rev-parse", "-q", "--verify", "refs/tags/"+anchorTag+"^{commit}")
+	if err != nil {
+		return ""
+	}
+	return sha
+}
+
+type commit struct {
+	Subject string
+	Body    string
+}
+
 func commitsInRange(repo, rng string) ([]commit, error) {
 	format := "%s" + commitFieldSep + "%b" + commitRecordSep
 	out, err := gitOutput(repo, "log", "--format="+format, rng, "--")
@@ -58,4 +65,15 @@ func commitsInRange(repo, rng string) ([]commit, error) {
 		commits = append(commits, c)
 	}
 	return commits, nil
+}
+
+// advanceAnchorTag runs only after a successful board write, since a tag moved past unrecorded commits would strand their keys.
+func advanceAnchorTag(repo, remote, sha string) error {
+	if _, err := gitOutput(repo, "tag", "-f", anchorTag, sha); err != nil {
+		return err
+	}
+	if _, err := gitOutput(repo, "push", "-f", remote, "refs/tags/"+anchorTag); err != nil {
+		return err
+	}
+	return nil
 }

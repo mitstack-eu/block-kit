@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/block-kit/boardkeys"
+	"github.com/mitstack-eu/block-kit/board/boardkeys"
 )
 
 // k writes each "#" in s as the board's key prefix, so "#12: fix" is a subject delivering key 12.

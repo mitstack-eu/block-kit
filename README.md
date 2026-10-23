@@ -26,6 +26,7 @@ describes. A package's folder tells you whether your block needs it:
 | `capabilities/<slug>` | The helpers for the resource types of one capability | A block whose resources live in that capability |
 | `verify/` | The tooling that checks, attests and publishes a block, and the harness a block's tests run | A block's tests and CI |
 | `cmd/` | mitstack's own commands for the kit's CI | No block |
+| `board/` | The tooling for mitstack's work tracker, the board, in a separate Go module the kit's module leaves out | No block |
 
 Each slug under `capabilities/` is a capability the platform's catalogue
 holds, in the `capability` field of the platform repository's
@@ -73,7 +74,7 @@ Every block's tests import `verify/kittest`. The other packages below check,
 publish and record blocks, and no block imports them. Your CI runs
 `verify/blockverify` on your block, as
 [Running the block checks on your block](docs/block-checks.md) describes.
-`kitbinding` and `boardkeys` sit at the root, beside the core.
+`kitbinding` sits at the root, beside the core.
 
 | Package | What it does |
 |---|---|
@@ -83,9 +84,6 @@ publish and record blocks, and no block imports them. Your CI runs
 | `verify/provenance` | Holds the signed record of where a block's image and manifest came from |
 | `verify/attest` | Holds the signed attestation that a block passed its conformance checks |
 | `kitbinding` | Defines what counts as a block importing the handler, the rule `blockverify` judges by |
-| `boardkeys` | Derives which board keys a commit delivers, and which it only references |
-| `cmd/board-delivery` | Records the keys a push to main delivered on mitstack's board |
-| `cmd/pr-keys` | Fails a pull request whose commits and title carry no board key |
 | `cmd/commentcheck` | Judges the comments a pull request adds |
 | `cmd/manifest-schema` | Prints the manifest JSON Schema the kit ships |
 
@@ -1166,8 +1164,8 @@ The release script cuts no tag in a repository that holds no kit tag yet, so
 block-kit's first release, v0.4.0, is tagged by hand. The version a module
 starts at is a choice rather than arithmetic.
 
-After the first tag, every push to main that changes the tree cuts the next
-patch tag (`scripts/release-block-kit.sh`, run from CI). A commit message carrying a
+After the first tag, every push to main that changes the tree outside
+`board/` cuts the next patch tag (`scripts/release-block-kit.sh`, run from CI). A commit message carrying a
 `kit-release: minor` or `kit-release: major` line raises that level instead,
 and each raise zeroes the levels below it. A skipped or failed release run is
 not lost: the next push resolves the base from the newest tag and cuts the
@@ -1180,9 +1178,25 @@ the commercial launch, because that raise cuts v1.0.0, which the launch keeps.
 ## Recording a delivery on the board
 
 Every push to main also records which board issues it delivered, through
-`cmd/board-delivery`. The `boardkeys` package derives the keys a commit
-delivers: a key counts only when it sits in a leading key list in the
-commit's subject, terminated by a colon, or in a whole-line `Jira:` trailer
+`board/cmd/board-delivery`. That command, `board/cmd/pr-keys` and the
+`board/boardkeys` package they share form the board module,
+`github.com/mitstack-eu/block-kit/board`. It has its own `go.mod`, so the
+kit's module leaves it out, and a change to it cuts no kit tag.
+
+The board module has no tag of its own, so another repository installs it at
+a commit of this repository's main, which Go names by a pseudo-version. The
+CI of board-automation, plain-block and talos-cluster-kit does this. A
+pseudo-version names one commit forever, so a consumer moves to newer board
+code only by editing its own pin. This install pins the commit `f55d2df16fa9`
+as an example:
+
+```sh
+go install github.com/mitstack-eu/block-kit/board/cmd/board-delivery@v0.0.0-20261023050337-f55d2df16fa9
+```
+
+The `boardkeys` package derives the keys a commit delivers: a key counts only
+when it sits in a leading key list in the commit's subject, terminated by a
+colon, or in a whole-line `Jira:` trailer
 in the body. A key anywhere else in a subject, or in an ordinary body line,
 is prose and delivers nothing. So is a reference, a key in a `(refs MIT-123)`
 group that closes the subject or on a `Jira-refs:` trailer line, which names
@@ -1201,7 +1215,7 @@ that reached it.
 
 ## Gating a pull request on a board key
 
-Every pull request also runs `cmd/pr-keys`, which fails the `pr-key-gate`
+Every pull request also runs `board/cmd/pr-keys`, which fails the `pr-key-gate`
 check when its commits or its own title carry no board key. Both halves are
 checked because either can be the one that reaches main: a merge commit or a
 rebase delivers the range's commits, while a squash delivers only the pull

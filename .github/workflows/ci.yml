@@ -20,6 +20,8 @@ jobs:
           go-version: '1.26.8'
       - run: go vet ./...
       - run: go test ./...
+      - run: go -C board vet ./...
+      - run: go -C board test ./...
 
   # A pull request's own delivery intent has to reach the board somehow: a
   # merge commit or a rebase carries it in the commits, a squash carries it
@@ -45,8 +47,8 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          go run ./cmd/pr-keys \
-            --repo . \
+          go -C board run ./cmd/pr-keys \
+            --repo "$GITHUB_WORKSPACE" \
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}"
 
@@ -139,7 +141,7 @@ jobs:
           TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}
           TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
         run: |
-          go run ./cmd/board-delivery \
-            --repo . \
+          go -C board run ./cmd/board-delivery \
+            --repo "$GITHUB_WORKSPACE" \
             --before "${{ github.event.before }}" \
             --after "${{ github.sha }}"

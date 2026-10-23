@@ -37,12 +37,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 
 // tagSHA returns what the board-synced tag points at in dir, or "" when it is unset.
 func tagSHA(dir string) string {
-	cmd := exec.Command("git", "rev-parse", "-q", "--verify", "refs/tags/"+anchorTag+"^{commit}")
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return ""
-	}
+	out, _ := exec.Command("git", "-C", dir, "rev-parse", "-q", "--verify", "refs/tags/"+anchorTag+"^{commit}").Output()
 	return strings.TrimSpace(string(out))
 }
 
@@ -83,31 +78,26 @@ type capturedRequest struct {
 }
 
 type outcome struct {
-	repo *testRepo
-	reqs []capturedRequest
-	out  string
-	tip  string
+	repo     *testRepo
+	reqs     []capturedRequest
+	out, tip string
 }
 
-const (
-	noBoard     = 0
-	unreachable = -1
-)
+const noBoard, unreachable = 0, -1
 
 func TestRun(t *testing.T) {
 	const token = "super-secret-value-xyz"
 	cases := []struct {
-		name      string
-		messages  []string
-		tagAt     int
-		before    func(r *testRepo) string
-		status    int
-		body      string
-		token     string
-		wantCode  int
-		wantKeys  []string
-		wantInOut string
-		check     func(t *testing.T, o outcome)
+		name        string
+		messages    []string
+		tagAt       int
+		before      func(r *testRepo) string
+		status      int
+		body, token string
+		wantCode    int
+		wantKeys    []string
+		wantInOut   string
+		check       func(t *testing.T, o outcome)
 	}{
 		{"it posts exactly one JSON delivery of the tip with the bearer token", []string{"#42: fix the thing"}, 0, nil, 200, "ok", token, 0, keys(42), "",
 			func(t *testing.T, o outcome) {
@@ -206,12 +196,8 @@ func TestRun(t *testing.T) {
 			if code != tc.wantCode || !strings.Contains(o.out, tc.wantInOut) {
 				t.Fatalf("Run(%q) = %d, output %q; want %d, output carrying %q", args, code, o.out, tc.wantCode, tc.wantInOut)
 			}
-			wantReqs := 0
-			if tc.wantKeys != nil {
-				wantReqs = 1
-			}
-			if len(o.reqs) != wantReqs {
-				t.Fatalf("server received %d requests, want %d", len(o.reqs), wantReqs)
+			if want := min(len(tc.wantKeys), 1); len(o.reqs) != want {
+				t.Fatalf("server received %d requests, want %d", len(o.reqs), want)
 			}
 			if tc.wantKeys != nil {
 				if got := delivered(t, o.reqs[0].body).Keys; !slices.Equal(got, tc.wantKeys) {
