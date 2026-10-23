@@ -91,6 +91,20 @@ newest_kit_version() {
   kit_versions | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1
 }
 
+# raise_level <range> prints the level a whole kit-release line in the range's
+# commit messages asks for, major winning over minor, or patch when none does.
+raise_level() {
+  local messages
+  messages="$(in_repo log --format=%B "$1" 2> /dev/null)"
+  if grep -qiE '^[[:space:]]*kit-release:[[:space:]]*major[[:space:]]*$' <<< "$messages"; then
+    echo "major"
+  elif grep -qiE '^[[:space:]]*kit-release:[[:space:]]*minor[[:space:]]*$' <<< "$messages"; then
+    echo "minor"
+  else
+    echo "patch"
+  fi
+}
+
 head_sha="$(in_repo rev-parse --verify --quiet "${head_ref}^{commit}" 2> /dev/null)"
 if [ -z "$head_sha" ]; then
   echo "release-block-kit: cannot resolve --head '$head_ref' in $repo" >&2
@@ -127,15 +141,7 @@ fi
 
 echo "release-block-kit: range $range (base ${resolved_base:-<none>}, head $head_sha)"
 
-# The raise level. A whole line in any commit message in the range asks for one;
-# major wins over minor, and each zeroes the levels below it.
-level="patch"
-messages="$(in_repo log --format=%B "$range" 2> /dev/null)"
-if grep -qiE '^[[:space:]]*kit-release:[[:space:]]*major[[:space:]]*$' <<< "$messages"; then
-  level="major"
-elif grep -qiE '^[[:space:]]*kit-release:[[:space:]]*minor[[:space:]]*$' <<< "$messages"; then
-  level="minor"
-fi
+level="$(raise_level "$range")"
 
 # Refused before the unchanged check, so a range carrying the line fails
 # whatever it touches.
