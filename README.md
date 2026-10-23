@@ -14,7 +14,10 @@ manifest names the block, its version and the resources it creates. A resource
 is one object at a provider, such as a firewall in a Hetzner Cloud project.
 Each resource has a resource type (the exact sort of object it is, written
 `<capability>.<name>`, where the capability names the provider, as in
-`hetzner.firewall`).
+`hetzner.firewall`), and a name in the manifest, which is its type unless the
+manifest gives another. Once created, a resource has an identity, the values
+such as an id that find it at the provider, and outputs, the values such as an
+address that other blocks of the app may read.
 
 An app uses a block through a subscription, and the block marks everything it
 creates with the subscription's id, as a tag or a label, so mitstack can always
@@ -29,20 +32,21 @@ to answer those calls, a small HTTP server shipped as a container image.
 
 Your block's code implements `handler.Resource`, an interface of three
 methods: `Ensure` creates what is missing, `Delete` deletes and returns any
-outputs it hands over, and `Observe` reports. Each resource also has an
-observer, whose one method, `ObserveResource(ctx, ref)`, gets the resource's
-name, type and identity in a `contract.ResourceRef` and asks the provider
-about it. It returns a `contract.Observation`: `contract.Present`,
-`contract.Absent` or `contract.Unknown`, and the resource's outputs. The kit's
-`observe` package has observers for common resource types, and you write one
-for any other type. `handler.New` takes your code and the observers and
-returns the HTTP handler your operator serves at your manifest's endpoint:
+outputs it hands over, and `Observe`, which the handler never calls once
+observers answer in its place. Each resource has an observer, whose one
+method, `ObserveResource(ctx, ref)`, gets the resource's name, type and
+identity in a `contract.ResourceRef` and asks the provider about it. It
+returns a `contract.Observation`: `contract.Present`, `contract.Absent` or
+`contract.Unknown`, and the resource's outputs. The kit's `observe` package
+has observers for common resource types, and you write one for any other
+type. `handler.New` takes your code and the observers and returns the HTTP
+handler your operator serves at your manifest's endpoint:
 
 ```mermaid
 sequenceDiagram
     participant E as mitstack engine
     participant H as the handler in your operator
-    participant B as your block code
+    participant B as your block code and its observers
     E->>H: POST /hook with a signed subscribe call
     Note over H: webhook checks the signature, then handler checks the call
     H->>B: EnsureResources(ctx, desired), which returns each identity
@@ -57,30 +61,25 @@ sequenceDiagram
    with a key the operator can verify, the call is under five minutes old, and
    it is not a replay. A call that fails any of them answers 401 and never
    reaches your code.
-2. The handler decodes the call and checks that a second signed token in it
-   names your block and the call's subscription. It hands your code the call
-   as a `contract.Desired`: the subscription, its settings, the provider
-   credentials it carries and the resources mitstack has recorded for it.
+2. The handler decodes the call and checks a second token mitstack signs into
+   it, which names the block and subscription the call is for, so a call cannot
+   be replayed to another block. A mismatch answers 401 too. The handler hands
+   your code the call as a `contract.Desired`: the subscription, its settings,
+   the provider credentials it carries and the resources mitstack recorded.
 3. On `subscribe` and `upgrade`, the handler calls your `Ensure`, or
    `EnsureResources` when your code has it, as the example below does.
-   `EnsureResources` does the same work and also returns each resource's
-   identity, the values such as an id that find it at the provider.
+   `EnsureResources` does the same work and also returns each identity.
 4. The handler then waits for the call to settle, which means it asks each
    resource's observer until the provider shows the state the call asked for,
    20 times at most by default. An observer answers present, absent, or unknown
    when the provider cannot tell yet, such as while a server boots.
-5. The handler answers with each resource's state and its outputs, the values
-   such as an address that other blocks of the app may read. A call that has
-   not settled answers that it is still in progress, and the engine asks again.
+5. The handler answers with each resource's state and outputs. A call that
+   has not settled answers that it is still in progress, and the engine sends
+   it again later or asks with `validate`, so `Ensure` and `Delete` must be
+   safe to repeat.
 
-| Call | What the handler calls on your code once the checks pass |
-|---|---|
-| `subscribe`, `upgrade` | `EnsureResources` or `Ensure`, then each resource's observer until it reports present |
-| `unsubscribe` | `Delete`, then each resource's observer until it reports absent |
-| `validate` | Each resource's observer, once |
-
-The handler asks the observers in place of `Observe`, which your code keeps
-only because the interface requires it.
+On `unsubscribe` the handler calls `Delete` and then waits until each resource
+reports absent, and on `validate` it asks each observer once.
 
 ## What a block imports
 
@@ -97,7 +96,7 @@ when tied to no provider and in `capabilities` per provider:
 | `webhook` | Every block | The signature checks the handler runs, and `webhook.LogBuffer`, which holds the recent log lines mitstack reads from your operator |
 | `verify/kittest` | Every block's tests | The checks blockverify requires your tests to run |
 | `helpers/safe` | A block that logs values from a call, or calls an API at an address a call supplies | Secret scrubbing for logs, and an allowlist of the hosts the operator trusts, so a call cannot redirect it |
-| `helpers/events` | A block that reports its own progress during long work | Events of its own to mitstack, beside the one the handler sends as each call ends |
+| `helpers/events` | A block that reports its own progress during long work | Progress reports to mitstack while a long call runs |
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
@@ -192,14 +191,15 @@ func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) 
 }
 ```
 
-`EnsureResources` reports the firewall, and `newConfig` files its observer,
-under the name the manifest gives it, which for an entry written as a bare type
-is the type itself. The identity it reports, `firewallId`, is what
-`observe.HetznerFirewall` asks Hetzner about, and `Delete` hands over no
-outputs. The other files complete the block:
+`EnsureResources` reports the firewall under its name, which is its type,
+`hetzner.firewall`, and `newConfig` keys its observer by the same name. The
+identity it reports, `firewallId`, is what `observe.HetznerFirewall` asks
+Hetzner about, and `Delete` hands over no outputs. The other files complete
+the block:
 
-- `main.go` calls `handler.New` with this config and the address of mitstack's
-  public keys, and serves the handler on port 8080.
+- `main.go` embeds `manifest.yaml` and `type-snapshot.json` as the `manifest`
+  and `typeSnapshot` values above, calls `handler.New` with the config and the
+  address of mitstack's public keys, and serves the handler on port 8080.
 - `hetzner.go` makes the Hetzner Cloud calls and labels each firewall with the
   subscription's id.
 - `type-snapshot.json` describes `hetzner.firewall` as mitstack's type catalogue
