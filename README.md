@@ -52,11 +52,10 @@ sequenceDiagram
    URL you configure. They answer 401, before your code runs, to a bad
    signature, a reused nonce or a request over five minutes from your clock.
 2. The handler decodes the body into a `contract.Request` and checks its OBO
-   (on-behalf-of) token, which mitstack signs with the same keys and which
-   must name your manifest's `metadata.id` and the request's org, app and
-   subscription. Your code receives the request as a `contract.Desired`: the
-   subscription, its settings, the provider credentials the request carries,
-   and each resource the engine recorded with the identity it was created with.
+   (on-behalf-of) token, signed with the same keys, which must name your
+   manifest's `metadata.id` and the request's org, app and subscription. It
+   hands your code a `contract.Desired`: the subscription, its settings, the
+   provider credentials and each recorded resource with its identity.
 3. On `subscribe` and `upgrade`, the handler calls your `Ensure`, which creates
    whatever is missing. When your code also has `EnsureResources`, as the
    example below does, the handler calls that instead, since it also returns
@@ -89,7 +88,7 @@ and you add a package when your block needs what it does:
 |---|---|---|
 | `contract` | Every block | The request and answer types, such as `contract.Desired` and `contract.Observation`, and the manifest parser |
 | `handler` | Every block | `handler.New`, which serves the lifecycle calls over your code |
-| `observe` | Every block | Observers for common resource types, such as `observe.HetznerFirewall`, and `observe.Tagged`, the type in which your tests list what the block created, found by the subscription's id that the block puts on everything it creates as a tag or label |
+| `observe` | Every block | Observers for common resource types, such as `observe.HetznerFirewall`. Listers your tests use to find what the block created by the subscription's id, which a block puts on everything it creates as a tag or label |
 | `webhook` | Every block | The signature checks the handler runs, and `webhook.LogBuffer`, the recent log lines the platform reads at your operator's `/logs` route |
 | `verify/kittest` | Every block's tests | The checks blockverify requires your tests to run |
 | `helpers/safe` | A block that logs a request's values, or calls an API at an address a request supplies | Secret scrubbing for logs, and an allowlist of the hosts the operator trusts, so a request cannot redirect a call |
@@ -193,23 +192,24 @@ func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) 
 `EnsureResources` reports each resource, and `newConfig` files its observer,
 under the resource's manifest name, which for an unnamed entry is its type.
 The identity is what the observer reads, here the `firewallId` that
-`observe.HetznerFirewall` asks Hetzner about, and `hetzner.go` labels each
-firewall with the subscription's id. `Delete` returns no outputs, since a
-firewall leaves nothing to hand over. `main.go` embeds the manifest and
-`type-snapshot.json`, the `hetzner.firewall` entry of mitstack's type
-catalogue of every resource type and its outputs, which an authenticated
-`GET https://api.mitstack.dev/v1/resource-types/snapshots/latest` returns whole.
-It passes the config to `handler.New` with the JWKS URL, in production
-`https://api.mitstack.dev/.well-known/jwks.json`, and serves on port 8080.
-`hetzner.go` makes the Hetzner Cloud calls, and `block_test.go` runs the block
-against a fake Hetzner API in the three tests blockverify requires by name:
+`observe.HetznerFirewall` asks Hetzner about. `Delete` returns no outputs,
+since a firewall leaves nothing to hand over. `hetzner.go` makes the Hetzner
+Cloud calls and labels each firewall with the subscription's id, and
+`block_test.go` runs the three tests blockverify requires by name,
 `TestDeclaredResources` and tests whose names start `TestUnsubscribeDeletes`
-and `TestNoSecretLeak`.
+and `TestNoSecretLeak`, against a fake Hetzner API. `main.go` serves the
+handler on port 8080 with the JWKS URL, in production
+`https://api.mitstack.dev/.well-known/jwks.json`. It embeds the manifest and
+`type-snapshot.json`, the `hetzner.firewall` entry of mitstack's type catalogue,
+from which `handler.New` and the kittest checks read each type's outputs. The
+platform returns the whole catalogue to a request carrying your org's API token
+at `GET https://api.mitstack.dev/v1/resource-types/snapshots/latest`.
 
 To start your own block, copy the folder into a new repository, delete the
 `replace` line from its `go.mod` and run `go mod tidy`. Change the module
 path, `metadata.id` and `spec.lifecycle.endpoint`, replace the firewall with
-your resource, and run your tests and blockverify from the copy:
+your resource there and in `type-snapshot.json`, and run your tests and
+blockverify from the copy:
 
 ```sh
 go test ./...
@@ -217,9 +217,9 @@ go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
 `--standalone` judges the one directory on its own. blockverify runs seven
-suites, each a group of checks such as the one that runs your three tests, and
-a passing block ends with `VERDICT: PASS — 7 suite(s)`.
-[Running the block checks](docs/block-checks.md) explains each suite.
+suites, groups of checks such as the one that runs your three tests, and a
+passing block ends with `VERDICT: PASS — 7 suite(s)`, as
+[Running the block checks](docs/block-checks.md) explains.
 
 ## The rest of the repository
 
