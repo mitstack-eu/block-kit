@@ -30,11 +30,10 @@ to answer those calls, a small HTTP server shipped as a container image.
 
 ## How one lifecycle call reaches your code
 
-Your block's code implements `handler.Resource`, an interface of three methods.
+Your block's code implements `handler.Resource`, an interface of two methods.
 `Ensure` creates what is missing. `Delete` deletes, and returns any outputs the
-answer should still carry once the resources are gone, usually none. `Observe`
-only completes the interface, since observers answer in its place, so a
-one-line stub will do. Each resource has an observer, whose one method,
+answer should still carry once the resources are gone, usually none. Each
+resource has an observer, whose one method,
 `ObserveResource(ctx, ref)`, gets the resource's name, type and identity and
 the call's `contract.Desired` in a `contract.ResourceRef`, and asks the
 provider about it. It returns a `contract.Observation`: `contract.Present`,
@@ -170,14 +169,10 @@ func (b block) Delete(ctx context.Context, d contract.Desired) (map[string]strin
 	return nil, b.cloud.deleteFirewalls(ctx, d)
 }
 
-// Ensure and Observe complete handler.Resource, and the handler calls EnsureResources and the observer in their place.
+// Ensure completes handler.Resource, and the handler calls EnsureResources in its place.
 func (b block) Ensure(ctx context.Context, d contract.Desired) error {
 	_, err := b.EnsureResources(ctx, d)
 	return err
-}
-
-func (b block) Observe(context.Context, contract.Desired) (contract.Observation, error) {
-	return contract.Observation{State: contract.Unknown}, nil
 }
 ```
 

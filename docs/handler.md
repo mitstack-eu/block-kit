@@ -41,8 +41,11 @@ server := &http.Server{Addr: listenAddr, Handler: h, ReadHeaderTimeout: readHead
 | `PublicKey`, `Replay`, `Sleep`, `Now` | No | Replacements a test supplies for the key lookup, the nonce store, the wait and the clock |
 
 `handler.New` returns an error for a configuration it cannot serve safely: no
-`Resource`, no `JWKSURL`, a manifest the parser refuses, a declared resource
-with no observer, and an observer under a name the manifest does not declare.
+`Resource`, no `Manifest`, no `JWKSURL`, a manifest the parser refuses, a
+declared resource with no observer, and an observer under a name the manifest
+does not declare. A `Config` without a `Manifest` is refused naming
+`Config.Manifest`, because the manifest's `metadata.id` is the block every
+call's token must name.
 It also refuses a `TypeObservers` key that is not a type id, and a nil
 observer under any key. Nothing in `Config` turns a trust check off.
 
@@ -91,8 +94,8 @@ and `d.Instances` read the same on every call.
 | `SubscriptionID`, `BlockID`, `BlockVersion`, `OrgID`, `AppID` | Which subscription, block version, org and app the call is for |
 | `Instances` | Each connection's settings and endpoint, keyed by the connection's name, such as the AWS region a block works in |
 | `Secrets` | Each connection's secrets, keyed by the connection's name, as in `d.Secrets["hetzner"]["api_token"]` |
-| `SecretInputs`, `AppSecrets` | Other secret values the platform resolved for the subscription, and every secret the app holds when the manifest sets `receivesAppSecrets` |
-| `Params` | The subscription's parameter values |
+| `SecretInputs`, `AppSecrets` | The values of the secret inputs the block's types declare, and every secret the app holds when the manifest sets `receivesAppSecrets` |
+| `Params` | The subscription's values for the inputs the block's types declare, keyed by input name, as in `d.Params["location"]` and as [Writing the manifest](manifest.md) explains |
 | `Bindings`, `BindingsAll`, `RequirementTypes` | The outputs of the resources that met the block's requirements, and which type met each, as [Writing the manifest](manifest.md) explains |
 | `RecordedResources` | What the engine recorded for each resource: its type, its identity and, on an unsubscribe, `absent` when the engine already knows it is gone |
 | `PriorOutputs`, `CloudIdentity` | The outputs the last call recorded, and the short-lived AWS web identity of the org's cloud account, nil when it has none |
@@ -112,14 +115,13 @@ including a request without the field, reads as `false`.
 
 ## What the handler calls for each call
 
-Your block's code is a `handler.Resource`. A block that declares its resources
-also implements `handler.ResourceReporter`, and the kit's checks need it,
-because it reports each resource's identity:
+Your block's code is a `handler.Resource`. It also implements
+`handler.ResourceReporter`, and the kit's checks need it, because it reports
+each resource's identity:
 
 ```go
 type Resource interface {
 	Ensure(ctx context.Context, d contract.Desired) error
-	Observe(ctx context.Context, d contract.Desired) (contract.Observation, error)
 	Delete(ctx context.Context, d contract.Desired) (outputs map[string]string, err error)
 }
 
@@ -132,14 +134,13 @@ type Observer interface {
 }
 ```
 
-Because your manifest declares its resources, the handler calls
-`EnsureResources` in place of `Ensure` and asks each resource's observer in
-place of `Observe`. A block keeps those two methods only to complete the
-interface, as the example does. An observer asks the provider what stands
-right now, and never answers from what an ensure remembered. Its
-`contract.ResourceRef` carries the resource's name, the type it was created
-as, the identity that addresses it, such as `{"firewallId": "38"}`, and the
-call's `Desired`.
+The handler calls `EnsureResources` in place of `Ensure`, so a block keeps
+`Ensure` only to complete the interface, as the example does. It observes each
+resource your manifest declares through that resource's observer. An observer
+asks the provider what stands right now, and never answers from what an ensure
+remembered. Its `contract.ResourceRef` carries the resource's name, the type it
+was created as, the identity that addresses it, such as
+`{"firewallId": "38"}`, and the call's `Desired`.
 
 | Call | What the handler does |
 |---|---|
@@ -261,7 +262,8 @@ the provider shows the work done, such as the builder having powered itself
 off, the observation also sets `Redrive`, and the validate answers:
 
 ```json
-{"outputs": null, "pending": true, "redrive": true}
+{"outputs": null, "pending": true, "statusDetail": "resources observed \"image-builder\" unknown", "redrive": true,
+ "resources": {"image-builder": {"observe": {"state": "unknown", "type": "hetzner.server"}}}}
 ```
 
 The engine then sends a fresh subscribe, which reaches your `EnsureResources`

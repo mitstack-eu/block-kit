@@ -152,8 +152,18 @@ parse time instead of being ignored. It also refuses any other `apiVersion`.
 The retired version, `mitstack/v1alpha`, had keys such as a requirement's
 `optional` and `spec.dependsOn`. A v1beta manifest that carries them is
 refused like any other unknown key. So is a top-level `kind`, a
-`spec.layer`, and `kind`, `in`, `on` or `inputs` on an entry. The parser
-judges the grammar of type ids only, so it needs no type snapshot.
+`spec.layer`, a `spec.params`, and `kind`, `in`, `on` or `inputs` on an entry.
+The parser judges the grammar of type ids only, so it needs no type snapshot.
+
+A manifest declares no inputs of its own. An input is a setting a resource
+type declares in the platform's catalogue, such as the `location` and
+`serverType` of `hetzner.server`. When someone subscribes an app to your
+block, the platform asks them for the inputs of each type the block creates,
+and `GET https://api.mitstack.dev/v1/resource-types` lists each type with its
+inputs. Your block reads a value under the input's name, as in
+`d.Params["location"]`, or a secret one from `Desired.SecretInputs`. A
+setting none of your types declares belongs in a type's file in the
+catalogue, as a new input.
 
 The kit ships the JSON Schema for `mitstack/v1beta` as
 `contract/manifest.schema.json`, generated from the same Go types, and an

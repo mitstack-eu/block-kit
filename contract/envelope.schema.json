@@ -27,7 +27,7 @@
     },
     "resource": {
       "type": "string",
-      "description": "The name of the one resource the block's manifest declares that a validate observes. Omitted, the verb runs on every declared resource, in creation order and in reverse for a teardown. A block refuses a name on any verb but validate, and a block served as one resource refuses any name."
+      "description": "The name of the one resource the block's manifest declares that a validate observes. Omitted, the verb runs on every declared resource, in creation order and in reverse for a teardown. A block refuses a name on any verb but validate."
     },
     "resourceIdentity": {
       "type": "object",
