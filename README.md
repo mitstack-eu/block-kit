@@ -31,9 +31,10 @@ to answer those calls, a small HTTP server shipped as a container image.
 ## How one lifecycle call reaches your code
 
 Your block's code implements `handler.Resource`, an interface of three
-methods: `Ensure` creates what is missing, `Delete` deletes and returns any
-outputs it hands over, and `Observe`, which the handler never calls once
-observers answer in its place. Each resource has an observer, whose one
+methods. `Ensure` creates what is missing. `Delete` deletes, and may return
+values to hand over, which the handler adds to its answer. `Observe` only
+completes the interface, since observers answer in its place, so a one-line
+stub like the example's will do. Each resource has an observer, whose one
 method, `ObserveResource(ctx, ref)`, gets the resource's name, type and
 identity in a `contract.ResourceRef` and asks the provider about it. It
 returns a `contract.Observation`: `contract.Present`, `contract.Absent` or
@@ -61,32 +62,31 @@ sequenceDiagram
    with a key the operator can verify, the call is under five minutes old, and
    it is not a replay. A call that fails any of them answers 401 and never
    reaches your code.
-2. The handler decodes the call and checks a second token mitstack signs into
-   it, which names the block and subscription the call is for, so a call cannot
-   be replayed to another block. A mismatch answers 401 too. The handler hands
+2. The handler decodes the call and checks a token mitstack signs into it,
+   which names the block and subscription the call is for, so a call cannot be
+   replayed to another block. A mismatch answers 401 too. The handler hands
    your code the call as a `contract.Desired`: the subscription, its settings,
    the provider credentials it carries and the resources mitstack recorded.
 3. On `subscribe` and `upgrade`, the handler calls your `Ensure`, or
    `EnsureResources` when your code has it, as the example below does.
-   `EnsureResources` does the same work and also returns each identity.
+   `EnsureResources` does the same work and also returns each identity. On
+   `unsubscribe` it calls `Delete`, and on `validate` neither.
 4. The handler then waits for the call to settle, which means it asks each
    resource's observer until the provider shows the state the call asked for,
-   20 times at most by default. An observer answers present, absent, or unknown
-   when the provider cannot tell yet, such as while a server boots.
+   20 times at most by default, where unknown means the provider cannot tell
+   yet. A `validate` asks each observer once.
 5. The handler answers with each resource's state and outputs. A call that
    has not settled answers that it is still in progress, and the engine sends
    it again later or asks with `validate`, so `Ensure` and `Delete` must be
    safe to repeat.
 
-On `unsubscribe` the handler calls `Delete` and then waits until each resource
-reports absent, and on `validate` it asks each observer once.
-
 ## What a block imports
 
 Every block imports the four packages at the root of this repository, and its
-tests import `verify/kittest`, since blockverify, the check every block must
-pass before its image ships, needs both. The rest is optional, in `helpers`
-when tied to no provider and in `capabilities` per provider:
+tests import `verify/kittest`. blockverify, the check every block must pass
+before its image ships, requires an import of `handler` and a test that calls
+`kittest.AssertBlock`. The rest is optional, in `helpers` when tied to no
+provider and in `capabilities` per provider:
 
 | Package | Who imports it | What it gives you |
 |---|---|---|
@@ -110,8 +110,7 @@ when tied to no provider and in `capabilities` per provider:
 that keeps one empty Hetzner Cloud firewall for each subscription, the
 simplest resource a provider offers for free. Its manifest declares the one
 resource and, under `verbConnections`, the Hetzner credentials a `validate`
-and an `unsubscribe` need, which [Writing the manifest](docs/manifest.md)
-explains. The manifest, from
+and an `unsubscribe` need. The manifest, from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
 ```yaml
@@ -191,19 +190,20 @@ func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) 
 }
 ```
 
-`EnsureResources` reports the firewall under its name, which is its type,
+`EnsureResources` reports the firewall under its name, its type
 `hetzner.firewall`, and `newConfig` keys its observer by the same name. The
 identity it reports, `firewallId`, is what `observe.HetznerFirewall` asks
-Hetzner about, and `Delete` hands over no outputs. The other files complete
-the block:
+Hetzner about, and `Delete` hands over nothing. The other files:
 
 - `main.go` embeds `manifest.yaml` and `type-snapshot.json` as the `manifest`
   and `typeSnapshot` values above, calls `handler.New` with the config and the
   address of mitstack's public keys, and serves the handler on port 8080.
 - `hetzner.go` makes the Hetzner Cloud calls and labels each firewall with the
   subscription's id.
-- `type-snapshot.json` describes `hetzner.firewall` as mitstack's type catalogue
-  does, and [Writing the manifest](docs/manifest.md) says where to read yours.
+- `type-snapshot.json` is the `hetzner.firewall` entry of mitstack's type
+  catalogue, its list of every resource type and its outputs, which the kit's
+  checks hold the block to, and [Writing the manifest](docs/manifest.md) says
+  where to read yours.
 - `block_test.go` runs the three tests blockverify requires against a fake
   Hetzner API: `TestDeclaredResources`, and two whose names start
   `TestUnsubscribeDeletes` and `TestNoSecretLeak`.
@@ -225,10 +225,10 @@ with `VERDICT: PASS — 7 suite(s)`.
 ## The rest of the repository
 
 Besides the packages above, `verify` holds `blockverify` and the tools that
-sign where a published block's image came from, and `examples` the example
-block, which CI tests and checks on every change. `cmd` and `scripts` hold the
-kit's own commands and release script, `board` mitstack's work-tracker
-tooling, a Go module no block uses, and `docs` these pages:
+sign where a published image came from, `examples` the example block, which CI
+tests on every change, `cmd` and `scripts` the kit's own commands and release
+script, `board` mitstack's work-tracker tooling, a Go module no block uses,
+and `docs` these pages:
 
 | Page | What it covers |
 |---|---|
@@ -246,5 +246,5 @@ tooling, a Go module no block uses, and `docs` these pages:
 block-kit is licensed under the Business Source License 1.1, whose full text
 is in [the LICENSE file](LICENSE). You may read, copy and change the kit, and
 use it in production only to build, run or operate what the mitstack platform
-manages. Each release becomes Apache-2.0 four years after it is published.
-`v0.4.0`, block-kit's first release, and every later one carry this licence.
+manages. `v0.4.0`, block-kit's first release, and every later one carry this
+licence, and each becomes Apache-2.0 four years after it is published.
