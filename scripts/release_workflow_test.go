@@ -1,4 +1,4 @@
-// Package scripts_test pins the ci.yml jobs that test the kit, cut its release tag with scripts/release-block-kit.sh, and run the board module's commands.
+// Package scripts_test pins the ci.yml jobs that test the kit, cut its release tag with scripts/release-block-kit.sh, and run plain-delivery's commands at a release tag.
 package scripts_test
 
 import (
@@ -111,16 +111,14 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the release job checks out the tags the version scan reads", strconv.FormatBool(stepWith(all, "release", "with.fetch-depth", "0")), "true"},
 		{"the release job runs its script under bash, so pipefail fails a red release", strconv.FormatBool(stepWith(all, "release", "shell", "bash")), "true"},
 		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
-		{"the test job vets the board module", strconv.FormatBool(stepWith(all, "test", "run", "go -C board vet ./...")), "true"},
-		{"the test job tests the board module", strconv.FormatBool(stepWith(all, "test", "run", "go -C board test ./...")), "true"},
 		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
 		{"the pr key gate runs only on a pull request, never on a push", field("jobs.pr-key-gate.if"), "github.event_name == 'pull_request'"},
 		{"the pr key gate checks out the full history the base..head range needs", strconv.FormatBool(stepWith(all, "pr-key-gate", "with.fetch-depth", "0")), "true"},
 		{"the pr key gate pins checkout to the platform's sha", strconv.FormatBool(stepWith(all, "pr-key-gate", "uses", checkout)), "true"},
 		{"the pr key gate pins setup-go to the platform's sha", strconv.FormatBool(stepWith(all, "pr-key-gate", "uses", setupGo)), "true"},
 		{"the pr key gate reads the title from the pull request event, never from a commit", strconv.FormatBool(stepWith(all, "pr-key-gate", "env.PR_TITLE", "${{ github.event.pull_request.title }}")), "true"},
-		{"the pr key gate runs the board module's pr-keys on the pull request's base and head", strconv.FormatBool(stepWith(all, "pr-key-gate", "run",
-			"go -C board run ./cmd/pr-keys \\\n--repo \"$GITHUB_WORKSPACE\" \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\"")), "true"},
+		{"the pr key gate runs plain-delivery's pr-keys at v0.1.0 on the pull request's base and head", strconv.FormatBool(stepWith(all, "pr-key-gate", "run",
+			"go run github.com/mitstack-eu/plain-delivery/cmd/pr-keys@v0.1.0 \\\n--repo . \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\"")), "true"},
 		{"record delivery runs only on main, by a push or a dispatch, so no other ref records keys main never took", field("jobs.record-delivery.if"),
 			"(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"},
 		{"record delivery needs a green test suite and the release job to have run", field("jobs.record-delivery.needs"), "[test, release]"},
@@ -129,8 +127,8 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"record delivery pins setup-go to the platform's sha", strconv.FormatBool(stepWith(all, "record-delivery", "uses", setupGo)), "true"},
 		{"record delivery passes the tracker URL from vars", strconv.FormatBool(stepWith(all, "record-delivery", "env.TRACKER_BASE_URL", "${{ vars.TRACKER_BASE_URL }}")), "true"},
 		{"record delivery passes the tracker token from secrets", strconv.FormatBool(stepWith(all, "record-delivery", "env.TRACKER_API_TOKEN", "${{ secrets.TRACKER_API_TOKEN }}")), "true"},
-		{"record delivery runs the board module's recorder on the push's before sha and the current sha", strconv.FormatBool(stepWith(all, "record-delivery", "run",
-			"go -C board run ./cmd/board-delivery \\\n--repo \"$GITHUB_WORKSPACE\" \\\n--before \"${{ github.event.before }}\" \\\n--after \"${{ github.sha }}\"")), "true"},
+		{"record delivery runs plain-delivery's recorder at v0.1.0 on the push's before sha and the current sha", strconv.FormatBool(stepWith(all, "record-delivery", "run",
+			"go run github.com/mitstack-eu/plain-delivery/cmd/board-delivery@v0.1.0 \\\n--repo . \\\n--before \"${{ github.event.before }}\" \\\n--after \"${{ github.sha }}\"")), "true"},
 		{"record delivery grants contents: write to advance the board-synced tag", field("jobs.record-delivery.permissions.contents"), "write"},
 		{"record delivery serialises its runs in one concurrency group", field("jobs.record-delivery.concurrency.group"), "record-delivery"},
 		{"record delivery never cancels a run between the board write and the tag advance", field("jobs.record-delivery.concurrency.cancel-in-progress"), "false"},
