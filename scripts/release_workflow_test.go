@@ -65,21 +65,26 @@ func workflowFields(workflow string) map[string]string {
 	return fields
 }
 
-// stepWith reports whether one of job's steps sets key to value.
-func stepWith(all map[string]string, job, key, value string) bool {
+// stepOf returns the path prefix of job's first step setting key to value, or "" when none does.
+func stepOf(all map[string]string, job, key, value string) string {
 	for i := 0; ; i++ {
 		prefix := "jobs." + job + ".steps." + strconv.Itoa(i) + "."
 		if _, ok := all[strings.TrimSuffix(prefix, ".")]; !ok {
-			return false
+			return ""
 		}
 		if v, ok := all[prefix+key]; ok && v == value {
-			return true
+			return prefix
 		}
 	}
 }
 
+func stepWith(all map[string]string, job, key, value string) bool {
+	return stepOf(all, job, key, value) != ""
+}
+
 func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const checkout, setupGo = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+	const releaseDryRun = "bash scripts/release-block-kit.sh --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
 	raw, err := os.ReadFile("../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatalf("reading ci.yml: %v", err)
@@ -112,6 +117,11 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the release job runs its script under bash, so pipefail fails a red release", strconv.FormatBool(stepWith(all, "release", "shell", "bash")), "true"},
 		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
 		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
+		{"the test job reports as test, the context branch protection requires", field("jobs.test.name"), "test"},
+		{"the test job checks out the tags and history the release dry run reads", strconv.FormatBool(stepWith(all, "test", "with.fetch-depth", "0")), "true"},
+		{"the test job runs the release script's tests", strconv.FormatBool(stepWith(all, "test", "run", "bash scripts/release-block-kit_test.sh")), "true"},
+		{"the test job dry-runs the release over a pull request's base and head, on a pull request alone",
+			field(stepOf(all, "test", "run", releaseDryRun) + "if"), "github.event_name == 'pull_request'"},
 		{"the pr key gate runs only on a pull request, never on a push", field("jobs.pr-key-gate.if"), "github.event_name == 'pull_request'"},
 		{"the pr key gate checks out the full history the base..head range needs", strconv.FormatBool(stepWith(all, "pr-key-gate", "with.fetch-depth", "0")), "true"},
 		{"the pr key gate pins checkout to the platform's sha", strconv.FormatBool(stepWith(all, "pr-key-gate", "uses", checkout)), "true"},
