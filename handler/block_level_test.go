@@ -249,6 +249,13 @@ func wantEveryResourceObserved(t *testing.T, resp contract.Response, state contr
 	}
 }
 
+func wantOK(t *testing.T, status int, resp contract.Response) {
+	t.Helper()
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; response %+v", status, resp)
+	}
+}
+
 func wantAbsent(t *testing.T, resp contract.Response, want bool) {
 	t.Helper()
 	if resp.Absent == nil || *resp.Absent != want {
@@ -348,9 +355,7 @@ func TestBlockLevel_EachObserveIsHandedTheIdentityAndTypeOfItsResource(t *testin
 
 			status, resp := serveBlock(t, blockCall{r: tc.block(cloud), obs: asObservers(obs), op: "upgrade", fields: tc.fields})
 
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200; response %+v", status, resp)
-			}
+			wantOK(t, status, resp)
 			refs := obs["b"].calls()
 			if len(refs) == 0 {
 				t.Fatal("b was never observed")
@@ -444,9 +449,7 @@ func TestBlockLevel_UnsubscribeRunsOneDeleteThenProvesEachResourceAbsentWithItsR
 
 	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: "unsubscribe", fields: recordedAll()})
 
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200; response %+v", status, resp)
-	}
+	wantOK(t, status, resp)
 	if got := block.calls(); got != [3]int{0, 0, 1} {
 		t.Errorf("block Ensure, Observe, Delete calls = %v, want one Delete for the whole block", got)
 	}
@@ -469,9 +472,7 @@ func TestBlockLevel_UnsubscribeLeavesAResourceRecordedAbsentUnobservedAndHandsTh
 
 	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: "unsubscribe", fields: fields})
 
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200; response %+v", status, resp)
-	}
+	wantOK(t, status, resp)
 	wantAbsent(t, resp, true)
 	if calls := obs["aws.ec2-instance"].calls(); len(calls) != 0 {
 		t.Errorf("the observer of the resource recorded absent was called %d times, want none", len(calls))
@@ -515,9 +516,7 @@ func TestBlockLevel_AnUnsubscribeLeavingAResourceStandingAnswersAbsentFalse(t *t
 
 			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: "unsubscribe", fields: recordedAll()})
 
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200; response %+v", status, resp)
-			}
+			wantOK(t, status, resp)
 			wantAbsent(t, resp, false)
 			tc.check(t, resp)
 		})
@@ -533,9 +532,7 @@ func TestBlockLevel_UnsubscribeHandsTheBlocksDeleteTheRequestAndMergesItsOutputs
 
 	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: "unsubscribe", fields: fields})
 
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200; response %+v", status, resp)
-	}
+	wantOK(t, status, resp)
 	wantAbsent(t, resp, true)
 	if got := resp.Outputs["dataSnapshotId"]; got != "snap-0abc" {
 		t.Errorf(`outputs["dataSnapshotId"] = %q, want the snap-0abc the block's Delete returned; outputs %v`, got, resp.Outputs)
@@ -552,9 +549,7 @@ func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBl
 
 	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: "validate", fields: recordedAll()})
 
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200; response %+v", status, resp)
-	}
+	wantOK(t, status, resp)
 	for name, o := range obs {
 		if got := len(o.calls()); got != 1 {
 			t.Errorf("resource %q observed %d times, want once", name, got)
@@ -595,9 +590,7 @@ func TestBlockLevel_ObservesOneResourceByTheTypeAndIdentityTheRequestOrRecordNam
 
 			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: tc.op, fields: tc.fields})
 
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200; response %+v", status, resp)
-			}
+			wantOK(t, status, resp)
 			refs := obs["b"].calls()
 			if len(refs) == 0 || refs[0].Name != "b" || refs[0].Type != tc.typ || !reflect.DeepEqual(refs[0].Identity, tc.identity) {
 				t.Errorf("b observer handed %+v, want b as %s with identity %v", refs, tc.typ, tc.identity)
@@ -659,9 +652,7 @@ func TestBlockLevel_ObservesAreHandedTheTimeOfTheVerbTheySettle(t *testing.T) {
 			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: op, fields: fields,
 				config: []func(*handler.Config){func(c *handler.Config) { c.Now = clock.Now }}})
 
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200; response %+v", status, resp)
-			}
+			wantOK(t, status, resp)
 			want := map[string]time.Time{"subscribe": block.ensuredAt, "upgrade": block.ensuredAt, "unsubscribe": block.deletedAt, "validate": settles}[op]
 			if want.IsZero() {
 				t.Fatalf("the block-level call for %s never ran", op)
@@ -716,9 +707,7 @@ func TestTypeObservers_ServeOnlyAValidateNamingAResourceTheManifestNoLongerDecla
 				}
 				return
 			}
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200; response %+v", status, resp)
-			}
+			wantOK(t, status, resp)
 			refs := vpc.calls()
 			if len(refs) != 1 || refs[0].Name != "b" || refs[0].Type != "aws.vpc" || !reflect.DeepEqual(refs[0].Identity, map[string]string{"vpcId": "vpc-0abc"}) {
 				t.Errorf("aws.vpc observer handed %+v, want one ref to b as aws.vpc with identity vpcId vpc-0abc", refs)
@@ -799,9 +788,7 @@ func TestBlockLevel_AnswerKeysEachProvidedResourcesSecretOutputsByResourceName(t
 		t.Run(tc.label, func(t *testing.T) {
 			status, resp := serveRoleBlock(t, context.Background(), tc.op, roleObservers(tc.arns))
 
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200; response %+v", status, resp)
-			}
+			wantOK(t, status, resp)
 			if !reflect.DeepEqual(resp.ResourceSecretOutputs, tc.want) {
 				t.Errorf("ResourceSecretOutputs = %v, want %v: provided resources only, none for audit-role", resp.ResourceSecretOutputs, tc.want)
 			}
@@ -936,9 +923,7 @@ func TestBlockLevel_UnsubscribeStillAnswersAbsentFalseNamingAnUnmarkedResourceOb
 
 	status, resp := unsubscribeContribution(t, &blockResource{cloud: newFakeCloud()}, contributionSnapshot(t), obs, "aws.ec2-instance", contributionType)
 
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200; response %+v", status, resp)
-	}
+	wantOK(t, status, resp)
 	wantAbsent(t, resp, false)
 	if want := `resource "aws.ec2-instance" observed present after 3 attempts`; resp.StatusDetail != want {
 		t.Errorf("statusDetail = %q, want %q", resp.StatusDetail, want)
@@ -1069,9 +1054,7 @@ func TestBlockLevel_StopsBeforeTheNextResourceOnceTheContextIsDone(t *testing.T)
 
 			status, resp := serveBlock(t, blockCall{ctx: ctx, r: &blockResource{cloud: cloud}, obs: obs, op: tc.op, fields: recordedAll()})
 
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200; response %+v", status, resp)
-			}
+			wantOK(t, status, resp)
 			if want := `resource "` + tc.notReached + `" not reached: the request ended before the verb got to it`; resp.StatusDetail != want {
 				t.Errorf("statusDetail = %q, want %q", resp.StatusDetail, want)
 			}
