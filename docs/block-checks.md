@@ -35,10 +35,12 @@ reason.
 
 The `trust-plumbing` suite holds a block that calls the GitHub API to one
 more rule, so that a forged request cannot send the block's GitHub token to
-another host. The suite counts a block as calling the API when a non-test
-file reads `Secrets["github"]` for anything but its `owner`, reads
-`Instances["github"]`, or names `api.github.com`. Such a block passes only
-when both of these hold:
+another host. A lifecycle request hands the operator two maps keyed by
+capability: `Secrets`, the credentials the org connected, and `Instances`,
+each connected tool's name, endpoint and settings. The suite counts a block as
+calling the API when a non-test file reads `Secrets["github"]` for anything
+but its `owner`, reads `Instances["github"]`, or names `api.github.com`. Such
+a block passes only when both of these hold:
 
 - It resolves the API base a request supplies through the kit's `ghapi.Base`
   or `ghapi.BaseFromEnv`, or through a `urlguard.go` of its own whose
