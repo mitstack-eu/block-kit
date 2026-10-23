@@ -28,9 +28,11 @@ describes. A package's folder tells you whether your block needs it:
 | `cmd/` | mitstack's own commands for the kit's CI | No block |
 
 Each slug under `capabilities/` is a capability the platform's catalogue
-holds, in the `capability` field of its `blocks/types/*.yaml` files. Learn
-the core before you write a block, and open a capability's folder only when
-your block's resources live in that capability.
+holds, in the `capability` field of the platform repository's
+`blocks/types/*.yaml` files. A first block starts from the core below and
+from [The Handler and Resource](#the-handler-and-resource), which shows how a
+block serves its lifecycle calls. Open a capability's folder only when your
+block's resources live in that capability.
 
 ### The core every block needs
 
@@ -579,9 +581,11 @@ over a small API interface the operator implements. They include
 `EC2Instance`, `EgressProxy`, `S3Bucket`, `VPC`, `SecurityGroup`, `EBSVolume`,
 `ECRRepository`, `IAMRole`, `Route53Record`, `SSMAssociation`, `EC2Container`,
 `HetznerServer`, `HetznerPrimaryIP`, `HetznerFirewall`, `HetznerNetwork`,
-`GitHubRepository`, `GitHubCommit`, and `NodeReported`. A host probe never
-reads a failed probe as absence: `HostCommander` returns a nonzero exit as an
-error, and empty output is unknown. `NodeReported` reports presence and
+`GitHubRepository`, `GitHubCommit`, and `NodeReported`. `EC2Container` asks
+the instance's Docker through a `HostCommander`, which returns a script's
+nonzero exit as an error. It reports a container absent only when Docker
+answers that no such container exists, and empty output is unknown.
+`NodeReported` reports presence and
 identity only, so a block that provides such a resource reports the type's
 other required outputs from its own observer.
 
