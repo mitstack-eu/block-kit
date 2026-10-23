@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/block-kit/hostexec"
+	"github.com/mitstack-eu/block-kit/helpers/hostexec"
 )
 
 // Target values come from manifests and subscription inputs, and neither ssh nor the aws CLI has an end-of-options marker, so validation before any spawn is the only defence.

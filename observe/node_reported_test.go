@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/events"
 	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/helpers/events"
 	"github.com/mitstack-eu/block-kit/observe"
 )
 

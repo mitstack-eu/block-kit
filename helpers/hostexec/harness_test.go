@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/block-kit/hostexec"
+	"github.com/mitstack-eu/block-kit/helpers/hostexec"
 )
 
 const (

@@ -15,7 +15,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops/gitopstest"
-	"github.com/mitstack-eu/block-kit/events"
+	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
 // adrBody is the notification body ADR 0072 quotes, verbatim.

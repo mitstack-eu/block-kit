@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mitstack-eu/block-kit/safe"
+	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
 // ErrNotFastForward is wrapped by CommitChanges when GitHub refuses to move main because the parent is no longer the tip or main already exists for a parent of "".

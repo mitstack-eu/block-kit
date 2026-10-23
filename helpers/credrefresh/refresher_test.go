@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/block-kit/credrefresh"
+	"github.com/mitstack-eu/block-kit/helpers/credrefresh"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 

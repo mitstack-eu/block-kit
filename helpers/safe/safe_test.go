@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/block-kit/safe"
+	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
 func allow() safe.Allowlist { return safe.NewAllowlist("api.github.com", "ghe.corp.example") }

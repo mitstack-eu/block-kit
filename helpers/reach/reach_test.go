@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/block-kit/reach"
+	"github.com/mitstack-eu/block-kit/helpers/reach"
 )
 
 const (

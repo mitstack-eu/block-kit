@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/safe"
+	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
 const classUndeclaredResource = "undeclared-resource"

@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mitstack-eu/block-kit/safe"
+	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
 // Client is a GitHub REST API client whose Base is already resolved, so it carries no host-trust logic and a test can supply an httptest URL.
