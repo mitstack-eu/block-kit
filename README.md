@@ -64,10 +64,10 @@ sequenceDiagram
    each resource's identity, such as its id at the provider.
 4. The handler then waits for the call to settle, which means it asks each
    resource's observer until the provider shows the state the call asked for,
-   at most `VerbBudget` times, 20 by default. An observer implements
-   `handler.Observer` and answers in place of your `Observe`. Its
-   `ObserveResource(ctx, ref)` reads the resource's name, type and identity
-   from `ref` and answers present, absent, or unknown to be asked again.
+   at most `VerbBudget` times, a `handler.Config` field that defaults to 20.
+   An observer implements `handler.Observer` and answers in place of your
+   `Observe`. Its `ObserveResource(ctx, ref)` reads the resource's name, type
+   and identity from `ref` and answers present, absent or unknown.
 5. The handler answers with each resource's state and its outputs, the values
    such as an address that the rest of the app may read. An unsettled call
    answers that it is still pending, and the engine asks again later. The
@@ -83,8 +83,9 @@ sequenceDiagram
 
 Every block imports the four packages at the root of this repository, and its
 tests import `verify/kittest`. blockverify, the check every block must pass
-before its image ships, needs both. Everything else is optional, and you add
-it when your block needs what it does:
+before its image ships, needs both. Everything else is optional: `helpers`
+holds helpers tied to no provider and `capabilities` one folder per provider,
+and you add a package when your block needs what it does:
 
 | Package | Who imports it | What it gives you |
 |---|---|---|
@@ -108,8 +109,8 @@ it when your block needs what it does:
 that keeps one empty Hetzner Cloud firewall for each subscription, the
 simplest resource a provider offers for free. Each request carries the org's
 credentials for the providers it connected, such as its Hetzner API token, in
-`Desired.Secrets`, and `verbConnections` names the ones a `validate` and an
-`unsubscribe` need. The manifest, from
+`Desired.Secrets`. `verbConnections` names the ones a `validate` and an
+`unsubscribe` need, so those two calls can be sent no more. The manifest, from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
 ```yaml
