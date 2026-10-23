@@ -177,7 +177,7 @@ func (s *blockServer) send(operation string, d contract.Desired) (int, contract.
 		Params: d.Params, Instances: d.Instances, Secrets: d.Secrets, OBO: obo,
 		SecretInputs: d.SecretInputs, AppSecrets: d.AppSecrets, Bindings: d.Bindings, BindingsAll: d.BindingsAll,
 		CloudIdentity: d.CloudIdentity, CreatedAt: now, Nonce: freshToken(), PriorOutputs: d.PriorOutputs,
-		BuildRequest: d.BuildRequest, RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
+		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
 	})
 	if err != nil {
 		return 0, contract.Response{}, err

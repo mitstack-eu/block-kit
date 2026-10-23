@@ -36,15 +36,6 @@ type EventsCallback struct {
 	Token string `json:"token"`
 }
 
-// BuildRequest is the app's newest done build request, present only on
-// subscribe/upgrade for a block that provides generated-source.
-type BuildRequest struct {
-	ID           string          `json:"id"`
-	SourceBranch string          `json:"sourceBranch"`
-	SourceSha    string          `json:"sourceSha"`
-	Summary      json.RawMessage `json:"summary,omitempty"`
-}
-
 // Request's JSON tags mirror the engine's request struct field for field, and a request naming no resource leaves Resource, ResourceIdentity and ResourceType empty and runs the verb on every declared resource.
 type Request struct {
 	Operation        string                         `json:"operation"`
@@ -67,7 +58,6 @@ type Request struct {
 	CreatedAt        time.Time                      `json:"createdAt"`
 	Nonce            string                         `json:"nonce"`
 	PriorOutputs     map[string]string              `json:"priorOutputs,omitempty"`
-	BuildRequest     *BuildRequest                  `json:"buildRequest,omitempty"`
 	Resource         string                         `json:"resource,omitempty"`
 	ResourceIdentity map[string]string              `json:"resourceIdentity,omitempty"`
 
@@ -168,7 +158,6 @@ type Desired struct {
 	Secrets      map[string]map[string]string
 	Bindings     map[string]map[string]string
 	BindingsAll  map[string][]map[string]string
-	BuildRequest *BuildRequest
 
 	Resource         string
 	ResourceIdentity map[string]string
@@ -215,14 +204,6 @@ func requiredRequestFields(r Request) []requiredField {
 
 	if r.Operation == OperationIssue {
 		fields = append(fields, requiredField{"issueAppId", r.IssueAppID != ""})
-	}
-
-	if br := r.BuildRequest; br != nil {
-		fields = append(fields,
-			requiredField{"buildRequest.id", br.ID != ""},
-			requiredField{"buildRequest.sourceBranch", br.SourceBranch != ""},
-			requiredField{"buildRequest.sourceSha", br.SourceSha != ""},
-		)
 	}
 
 	return fields
@@ -335,7 +316,6 @@ func (r Request) Desired() Desired {
 		Secrets:           r.Secrets,
 		Bindings:          r.Bindings,
 		BindingsAll:       r.BindingsAll,
-		BuildRequest:      r.BuildRequest,
 		Resource:          r.Resource,
 		ResourceIdentity:  r.ResourceIdentity,
 		ResourceType:      r.ResourceType,
