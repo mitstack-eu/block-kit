@@ -378,6 +378,36 @@ func (c *blockCheck) taggedMatchDeclared() {
 			room[t.Type]--
 		}
 	}
+	for _, name := range untagged(c.desired.RecordedResources, tagged) {
+		c.resourceProblem(name, "untagged: the provider lists no %s carrying the subscription's id for it, so the platform can neither find it nor tear it down; tag it where Ensure creates it", c.desired.RecordedResources[name].Type)
+	}
+}
+
+// untagged names, in name order, each recorded resource that no tagged object of its type is left for, giving a resource the object its identity names before any other of its type.
+func untagged(recorded map[string]contract.RecordedResource, tagged []observe.Tagged) []string {
+	taken := make([]bool, len(tagged))
+	take := func(r contract.RecordedResource, fits func(observe.Tagged) bool) bool {
+		for i, t := range tagged {
+			if !taken[i] && t.Type == r.Type && fits(t) {
+				taken[i] = true
+				return true
+			}
+		}
+		return false
+	}
+	var unnamed, missing []string
+	for _, name := range sortedKeys(recorded) {
+		identity := slices.Collect(maps.Values(recorded[name].Identity))
+		if !take(recorded[name], func(t observe.Tagged) bool { return slices.Contains(identity, t.ID) }) {
+			unnamed = append(unnamed, name)
+		}
+	}
+	for _, name := range unnamed {
+		if !take(recorded[name], func(observe.Tagged) bool { return true }) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 // taggedRoom counts, per type, how many tagged objects the recorded resources account for: each resource itself, and the parts its type lists.

@@ -697,26 +697,44 @@ guards run at the block's `VerbBudget`, the most times a verb observes one
 resource while it waits for that resource to settle. A block that needs more
 observes than its budget allows fails here, as it would in production.
 
-After subscribe, every declared resource must
-observe present with an identity, and every provided one with the outputs
-its type marks required. Everything the provider lists under the
-subscription's id must match, by type and count, a declared resource or a
-part that a declared resource's type lists in the snapshot. The check pools
-the room per part type: it adds up the parts of one type across every
-recorded resource, including two entries naming that type in one list, and
-does not tie a part to the resource that owns it. A resource the provider
-loses must then observe not present. With `Upgrade` set, a resource the
-upgrade replaces must be named in the `replaces` of the validate before it, and
-the problem says so when its type is stateful.
-`Upgrade` nil while a declared type is stateful is a problem. After
-unsubscribe every declared resource must observe absent, except one whose
-type the snapshot marks `endsWithSubscription`, since the check serves the
-handler with `Config.Types` set to that snapshot. A requirement
-listing more than one type runs the check once per listed type, with
-`Requirements` giving each type's outputs, and each problem names the type.
-`AssertBlock` logs which guards ran. blockverify's resources suite requires
-a `TestDeclaredResources` test that calls `kittest.AssertBlock`, runs it, and
-names in its pass detail the guards that ran.
+After subscribe, every declared resource must observe present with an
+identity, the values that address it. Each guard then holds the block to one
+rule, and `AssertBlock` logs the name of every guard that ran:
+
+| Guard | What the block must do |
+|---|---|
+| `required-outputs` | After subscribe and after an upgrade, each resource `spec.provides` names observes present with every output its type marks required |
+| `tagging` | What the provider lists under the subscription's id and the recorded resources account for each other, as the next paragraph sets out |
+| `replacement` | With `Upgrade` set, a resource the upgrade replaces is named in the `replaces` of the validate before it, and the problem says so when its type is stateful. `Upgrade` nil while a declared type is stateful is itself a problem |
+| `observe-asks-the-provider` | Each resource the check loses through the provider then observes not present, since an observer asks the provider instead of remembering what the ensure created |
+| `absence-after-unsubscribe` | After unsubscribe every declared resource observes absent, except one whose type `Config.Types` marks `endsWithSubscription` |
+
+The tagging guard checks both directions. Everything the provider lists under
+the subscription's id must match, by type and count, a recorded resource or a
+part, an object the snapshot lists as serving one resource of a type. The
+check pools the room per part type: it adds up the parts of one type across
+every recorded resource, including two entries naming that type in one list,
+and does not tie a part to the resource that owns it.
+
+In the other direction, each recorded resource needs a listed object of its
+type, so a resource its ensure left untagged fails, named as `untagged`. A
+resource takes the listed object whose ID is one of its identity values
+first, and any other object of its type after that. When the provider names
+an object by such a value, as `observe.GitHubTagged` names a repository by
+its full name, the guard names the very resource left untagged, even beside
+a tagged one of the same type.
+
+A resource whose type carries no tag of its own still needs a listed object,
+so the provider lists it by whatever stands in for the tag. The platform's
+type catalogue says so of `mitstack.app-hostname`: a Route 53 record carries
+no tag, so the platform finds the record by its name, which no other app
+holds.
+
+A requirement listing more than one type runs the check once per listed
+type, with `Requirements` giving each type's outputs, and each problem names
+the type. blockverify's resources suite requires a `TestDeclaredResources`
+test that calls `kittest.AssertBlock`, runs it, and names in its pass detail
+the guards that ran.
 
 ### Serving a capability and issuing an app's credential
 
