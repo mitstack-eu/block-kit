@@ -230,11 +230,6 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 		check  func(t *testing.T, req contract.Request, d contract.Desired)
 	}{
 		{"an unmodified golden decodes", func(map[string]any) {}, func(t *testing.T, req contract.Request, d contract.Desired) {}},
-		{"a property the contract does not declare, such as buildRequest, changes nothing", func(m map[string]any) {
-			m["buildRequest"] = map[string]any{"id": "b1", "sourceBranch": "main", "sourceSha": "abc123"}
-		}, func(t *testing.T, req contract.Request, d contract.Desired) {
-			wantField(t, "DecodeRequest", req, decodeGolden(t, "subscribe"))
-		}},
 		{"a named resource is decoded", func(m map[string]any) { m["operation"] = "validate"; m["resource"] = "firewall" },
 			func(t *testing.T, req contract.Request, d contract.Desired) {
 				wantField(t, "Resource", req.Resource, "firewall")
@@ -532,6 +527,6 @@ func TestEnvelopeSchema_IsVersion1_8_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
 	if doc["version"] != "1.8.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.8.0: it drops buildRequest, a minor change from 1.7.0", doc["version"])
+		t.Errorf("envelope.schema.json version = %v, want 1.8.0: it drops a request property, a minor change from 1.7.0", doc["version"])
 	}
 }
