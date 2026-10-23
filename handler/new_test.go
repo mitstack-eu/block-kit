@@ -41,10 +41,7 @@ func then(steps ...func(*handler.Config)) func(*handler.Config) {
 
 func TestNew(t *testing.T) {
 	unchanged := func(map[string]handler.Observer) {}
-	plainObserved := func(c *handler.Config) {
-		c.Manifest = plainV1Beta(t)
-		c.Observers = map[string]handler.Observer{"aws.ec2-container": &observer{name: "aws.ec2-container", cloud: newFakeCloud()}}
-	}
+	plainObserved := servesBlock(plainV1Beta(t))
 	type newCase struct {
 		name    string
 		config  func(*handler.Config)

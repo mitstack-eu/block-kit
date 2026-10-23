@@ -21,6 +21,7 @@ var errEmptyJWKSURL = errors.New("handler: Config.JWKSURL is required")
 
 // manifestDeclarations holds what New reads of a manifest, and is empty when Config.Manifest is.
 type manifestDeclarations struct {
+	id         string
 	apiVersion string
 	resources  []contract.ManifestResource
 	provided   map[string]bool
@@ -41,6 +42,7 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 		provided[name] = true
 	}
 	return manifestDeclarations{
+		id:         m.ID(),
 		apiVersion: m.APIVersion,
 		resources:  m.Block.Spec.Resources,
 		provided:   provided,

@@ -46,13 +46,13 @@ func TestServe_AnswersBeforeTheResourceIsConsulted(t *testing.T) {
 			return r
 		}, status: http.StatusUnauthorized},
 		{name: "a forged signature is a 401", request: func(x *harness) *http.Request {
-			body := envelope(t, x.s, nil)
+			body := x.envelope(nil)
 			r := x.s.HookRequest(t, "/hook", body)
 			r.Header.Set("X-Mitstack-Signature-Ed25519", kittest.NewSigner(t, "kid-1", 99).SignBody(body))
 			return r
 		}, status: http.StatusUnauthorized},
 		{name: "a body tampered after signing is a 401", request: func(x *harness) *http.Request {
-			original := envelope(t, x.s, map[string]any{"operation": "subscribe"})
+			original := x.envelope(map[string]any{"operation": "subscribe"})
 			r := x.s.HookRequest(t, "/hook", original)
 			r.Body = io.NopCloser(strings.NewReader(strings.Replace(string(original), "subscribe", "unsubscrib", 1)))
 			return r
@@ -88,6 +88,15 @@ func TestServe_AnswersBeforeTheResourceIsConsulted(t *testing.T) {
 				}
 			}})
 	}
+	for name, claims := range map[string]webhook.OBOClaims{
+		"another org":          {Audience: "plain", OrgID: "org-2", AppID: "app-1", SubscriptionID: "sub-1"},
+		"another app":          {Audience: "plain", OrgID: "org-1", AppID: "app-2", SubscriptionID: "sub-1"},
+		"another subscription": {Audience: "plain", OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-2"},
+		"no block":             {OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-1"},
+	} {
+		cases = append(cases, untrusted{name: "a token naming " + name + " is a 401", config: []func(*handler.Config){servesBlock(plainV1Beta(t))},
+			request: func(x *harness) *http.Request { return x.request(plainRequest(t, x.s, claims)) }, status: http.StatusUnauthorized})
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &kittest.FakeResource{}
@@ -109,7 +118,7 @@ func TestServe_AnswersBeforeTheResourceIsConsulted(t *testing.T) {
 func TestServe_ReplayedNonceIs401AndNeverReachesTheResource(t *testing.T) {
 	f := &kittest.FakeResource{}
 	x := newHarness(t, f)
-	body := envelope(t, x.s, nil)
+	body := x.envelope(nil)
 
 	first, _ := x.serve(x.s.HookRequest(t, "/hook", body))
 	replay, _ := x.serve(x.s.HookRequest(t, "/hook", body))
@@ -119,5 +128,37 @@ func TestServe_ReplayedNonceIs401AndNeverReachesTheResource(t *testing.T) {
 	}
 	if f.EnsureCalls != 1 {
 		t.Errorf("EnsureCalls = %d, want 1: the replay never reaches the Resource", f.EnsureCalls)
+	}
+}
+
+// servesBlock serves manifest, which declares plain's one container, with an observer for it.
+func servesBlock(manifest []byte) func(*handler.Config) {
+	return func(c *handler.Config) {
+		c.Manifest = manifest
+		c.Observers = map[string]handler.Observer{"aws.ec2-container": &observer{name: "aws.ec2-container", cloud: newFakeCloud()}}
+	}
+}
+
+func plainRequest(t *testing.T, s *kittest.Signer, claims webhook.OBOClaims) map[string]any {
+	return map[string]any{"blockId": "plain", "orgId": "org-1", "appId": "app-1", "subscriptionId": "sub-1", "obo": mintOBO(t, s, claims)}
+}
+
+func TestServe_ARequestMintedForOneBlockIsRefusedOnAnotherBlocksRoute(t *testing.T) {
+	x := newHarness(t, &kittest.FakeResource{}, servesBlock(plainV1Beta(t)))
+	other := newHarness(t, &kittest.FakeResource{}, servesBlock(withManifestEdit(t, plainV1Beta(t), "  id: plain\n", "  id: other\n")))
+	operator := http.NewServeMux()
+	operator.Handle("/plain/", http.StripPrefix("/plain", x.h))
+	operator.Handle("/other/", http.StripPrefix("/other", other.h))
+	body := x.envelope(plainRequest(t, x.s, webhook.OBOClaims{Audience: "plain", OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-1"}))
+
+	var got []int
+	for _, route := range []string{"/plain/hook", "/other/hook"} {
+		w := httptest.NewRecorder()
+		operator.ServeHTTP(w, x.s.HookRequest(t, route, body))
+		got = append(got, w.Code)
+	}
+
+	if !slices.Equal(got, []int{http.StatusOK, http.StatusUnauthorized}) {
+		t.Errorf("one request signed for plain answered %v on the plain and other routes, want [200 401]", got)
 	}
 }

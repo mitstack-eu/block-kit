@@ -84,11 +84,7 @@ func serveRecovering(h http.Handler, req *http.Request) (res servedResult) {
 
 func panicRequest(x *harness, extra map[string]any) *http.Request {
 	x.t.Helper()
-	fields := map[string]any{"blockId": "block-panicky", "subscriptionId": "sub-panicky", "secrets": map[string]any{"db": map[string]any{"password": panicSecret}}}
-	for k, v := range extra {
-		fields[k] = v
-	}
-	return x.request(fields)
+	return x.request(map[string]any{"blockId": "block-panicky", "subscriptionId": "sub-panicky", "secrets": map[string]any{"db": map[string]any{"password": panicSecret}}}, extra)
 }
 
 func assertPanicAnswer(t *testing.T, who string, res servedResult) contract.Response {

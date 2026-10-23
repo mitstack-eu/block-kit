@@ -210,14 +210,10 @@ func serveBlock(t *testing.T, c blockCall) (int, contract.Response) {
 	t.Helper()
 	config := append([]func(*handler.Config){withManifest(blockLevelManifest), func(cfg *handler.Config) { cfg.Observers = c.obs }}, c.config...)
 	x := newHarness(t, c.r, config...)
-	fields := map[string]any{"operation": c.op}
-	for k, v := range c.fields {
-		fields[k] = v
-	}
 	if c.ctx == nil {
 		c.ctx = context.Background()
 	}
-	status, raw := x.postContext(c.ctx, fields)
+	status, raw := x.postContext(c.ctx, map[string]any{"operation": c.op}, c.fields)
 	assertConforms(t, raw)
 	return status, decodeResponse(t, raw)
 }

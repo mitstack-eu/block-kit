@@ -3,9 +3,12 @@ package webhook_test
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +20,7 @@ func depsFor(s *kittest.Signer, jwksURL string) webhook.Deps {
 	cache := webhook.NewKeyCache()
 	return webhook.Deps{
 		JWKSURL:   jwksURL,
-		PublicKey: func(kid string) (ed25519.PublicKey, error) { return cache.PublicKey(jwksURL, nil, kid) },
+		PublicKey: func(kid string) (ed25519.PublicKey, error) { return cache.PublicKey(jwksURL, nil, kid, time.Now()) },
 		Replay:    webhook.NewReplay(),
 	}
 }
@@ -237,23 +240,110 @@ func TestPublicKeyFromJWKS_RejectsWrongLengthKey(t *testing.T) {
 	}
 }
 
-func TestKeyCache_FetchesOncePerKid(t *testing.T) {
-	s := kittest.NewSigner(t, "kid-1", 7)
-	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		_, _ = w.Write(s.JWKS())
-	}))
-	defer srv.Close()
+// jwks serves the keys of whichever signers it holds at each fetch, or a 503 with an empty key set while down, and counts the fetches.
+type jwks struct {
+	mu      sync.Mutex
+	signers []*kittest.Signer
+	down    bool
+	fetches int
+	url     string
+}
 
-	cache := webhook.NewKeyCache()
-	for range 3 {
-		if _, err := cache.PublicKey(srv.URL, nil, "kid-1"); err != nil {
-			t.Fatalf("unexpected error: %v", err)
+func newJWKS(t *testing.T, signers ...*kittest.Signer) *jwks {
+	j := &jwks{signers: signers}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		j.fetches++
+		if j.down {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"keys":[]}`))
+			return
 		}
+		keys := []map[string]string{}
+		for _, s := range j.signers {
+			keys = append(keys, map[string]string{"kty": "OKP", "crv": "Ed25519", "kid": s.Kid, "x": base64.RawURLEncoding.EncodeToString(s.Public)})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+	}))
+	t.Cleanup(srv.Close)
+	j.url = srv.URL
+	return j
+}
+
+func (j *jwks) serve(signers ...*kittest.Signer) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.signers = signers
+}
+
+func (j *jwks) setDown(down bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.down = down
+}
+
+func TestKeyCache_AnEmptyCacheRetriesAFailedFetchAndAWarmOneKeepsItsKeys(t *testing.T) {
+	j := newJWKS(t, kittest.NewSigner(t, "kid-1", 7))
+	cache, t0 := webhook.NewKeyCache(), time.Now()
+	lookup := func(after time.Duration) error {
+		_, err := cache.PublicKey(j.url, nil, "kid-1", t0.Add(after))
+		return err
 	}
-	if hits != 1 {
-		t.Errorf("JWKS fetched %d times, want 1 (memoised per kid)", hits)
+
+	j.setDown(true)
+	cold, coldAgain := lookup(0), lookup(time.Second)
+	j.setDown(false)
+	recovered := lookup(2 * time.Second)
+	j.setDown(true)
+	duringOutage := lookup(2*time.Second + webhook.JWKSRefreshInterval)
+
+	if cold == nil || coldAgain == nil || recovered != nil || duringOutage != nil {
+		t.Errorf("lookups = %v, %v, %v, %v; want two refusals while the JWKS is down, the key once it is back, and the key kept through a later outage",
+			cold, coldAgain, recovered, duringOutage)
+	}
+}
+
+func (j *jwks) count() int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.fetches
+}
+
+func TestKeyCache_AKeyRemovedFromTheJWKSStopsVerifyingAfterOneRefreshInterval(t *testing.T) {
+	j := newJWKS(t, kittest.NewSigner(t, "kid-1", 7))
+	cache, t0 := webhook.NewKeyCache(), time.Now()
+	lookup := func(after time.Duration) error {
+		_, err := cache.PublicKey(j.url, nil, "kid-1", t0.Add(after))
+		return err
+	}
+
+	first, cached := lookup(0), lookup(time.Second)
+	j.serve()
+	beforeRefresh, afterRefresh := lookup(webhook.JWKSRefreshInterval-time.Second), lookup(webhook.JWKSRefreshInterval)
+
+	if first != nil || cached != nil || beforeRefresh != nil || afterRefresh == nil || j.count() != 2 {
+		t.Errorf("lookups = %v, %v, %v, %v after %d fetches; want the key served from one fetch, then refused at the refresh one interval later",
+			first, cached, beforeRefresh, afterRefresh, j.count())
+	}
+}
+
+func TestKeyCache_UnknownKeyIdsFetchAtMostOncePerInterval(t *testing.T) {
+	signer, rotated := kittest.NewSigner(t, "kid-1", 7), kittest.NewSigner(t, "kid-2", 8)
+	j := newJWKS(t, signer)
+	cache, t0 := webhook.NewKeyCache(), time.Now()
+	if _, err := cache.PublicKey(j.url, nil, "kid-1", t0); err != nil {
+		t.Fatalf("warming the cache: %v", err)
+	}
+	j.serve(signer, rotated)
+
+	_, rotatedErr := cache.PublicKey(j.url, nil, "kid-2", t0.Add(time.Second))
+	for i := range 20 {
+		_, _ = cache.PublicKey(j.url, nil, fmt.Sprintf("kid-unknown-%d", i), t0.Add(2*time.Second))
+	}
+
+	if rotatedErr != nil || j.count() != 2 {
+		t.Errorf("rotated key error %v after %d fetches; want the rotated key found by the one fetch an unknown kid may make in the interval", rotatedErr, j.count())
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"time"
 )
@@ -21,8 +20,7 @@ type OBOClaims struct {
 	OrgID          string `json:"org_id"`
 	AppID          string `json:"app_id"`
 	SubscriptionID string `json:"sub_id"`
-	// Audience binds the token to one block and is enforced only when MITSTACK_OBO_AUDIENCE is set.
-	Audience string `json:"aud,omitempty"`
+	Audience       string `json:"aud,omitempty"`
 }
 
 type oboPayload struct {
@@ -43,7 +41,7 @@ func MintOBO(priv ed25519.PrivateKey, kid string, claims OBOClaims, ttl time.Dur
 	return payloadEnc + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-// VerifyOBO verifies an Ed25519-signed OBO token against pub, returning ErrOBOInvalid for structural or signature failures and ErrOBOExpired past expiry.
+// VerifyOBO verifies an Ed25519-signed OBO token against pub, returning ErrOBOInvalid for structural or signature failures and ErrOBOExpired past expiry, and leaves comparing the claims to the request to its caller.
 func VerifyOBO(pub ed25519.PublicKey, token string, now time.Time) (OBOClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
@@ -69,10 +67,6 @@ func VerifyOBO(pub ed25519.PublicKey, token string, now time.Time) (OBOClaims, e
 	}
 	if now.After(p.ExpiresAt) {
 		return OBOClaims{}, ErrOBOExpired
-	}
-	// A token minted for a different operator must not be accepted here.
-	if aud := os.Getenv("MITSTACK_OBO_AUDIENCE"); aud != "" && p.OBOClaims.Audience != aud {
-		return OBOClaims{}, ErrOBOInvalid
 	}
 	return p.OBOClaims, nil
 }

@@ -77,7 +77,7 @@ func TestEC2Instance_ServedThroughTheHandlerObservesTheInstanceTheBlockReported(
 	if err != nil {
 		t.Fatalf("handler.New: %v", err)
 	}
-	obo, err := webhook.MintOBO(s.Private, s.Kid, webhook.OBOClaims{OrgID: "org-1", SubscriptionID: "sub-1"}, time.Hour, time.Now())
+	obo, err := webhook.MintOBO(s.Private, s.Kid, webhook.OBOClaims{Audience: "host-block", OrgID: "org-1", SubscriptionID: "sub-1"}, time.Hour, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

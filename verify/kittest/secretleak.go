@@ -32,7 +32,7 @@ type SecretLeak struct {
 // LeakRequest is one webhook body the harness signs and posts to /hook.
 type LeakRequest struct {
 	Name string
-	// Body holds the envelope fields; the harness adds nonce, createdAt, an idempotencyKey when absent, and an OBO token for the body's orgId and subscriptionId.
+	// Body holds the envelope fields; the harness adds nonce, createdAt, an idempotencyKey when absent, and an OBO token minted for the body's blockId, orgId, appId and subscriptionId.
 	Body map[string]any
 	// Fails says the verb must answer 4xx or 5xx, so its error path is driven.
 	Fails bool
@@ -147,10 +147,12 @@ func envelope(fields map[string]any, signer *Signer, now time.Time) ([]byte, str
 	for k, v := range fields {
 		body[k] = v
 	}
-	orgID, _ := fields["orgId"].(string)
-	subscriptionID, _ := fields["subscriptionId"].(string)
-	obo, err := webhook.MintOBO(signer.Private, signer.Kid,
-		webhook.OBOClaims{OrgID: orgID, SubscriptionID: subscriptionID}, 5*time.Minute, now)
+	claim := func(field string) string {
+		value, _ := fields[field].(string)
+		return value
+	}
+	obo, err := webhook.MintOBO(signer.Private, signer.Kid, webhook.OBOClaims{Audience: claim("blockId"),
+		OrgID: claim("orgId"), AppID: claim("appId"), SubscriptionID: claim("subscriptionId")}, 5*time.Minute, now)
 	if err != nil {
 		return nil, "", err
 	}

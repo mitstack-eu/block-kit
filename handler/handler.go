@@ -63,6 +63,7 @@ type Config struct {
 	// TypeObservers is keyed by resource-type id and serves a validate naming a resource the manifest no longer declares; refused without a mitstack/v1beta manifest.
 	TypeObservers map[string]Observer
 
+	// Manifest's metadata.id is the block every request's OBO token must name.
 	Manifest []byte
 
 	// Types is the type snapshot the manifest names its types from, and a declared resource of a type it marks EndsWithSubscription is counted absent once the unsubscribe's delete succeeds, unobserved.
@@ -70,7 +71,7 @@ type Config struct {
 
 	JWKSURL string
 
-	// PublicKey defaults to a kit KeyCache over JWKSURL and is no alternative to it, since webhook.AuthenticateHook rejects every request when JWKSURL is empty.
+	// PublicKey defaults to a kit KeyCache over JWKSURL, read at Now, and is no alternative to it, since webhook.AuthenticateHook rejects every request when JWKSURL is empty.
 	PublicKey func(kid string) (ed25519.PublicKey, error)
 
 	Replay *webhook.Replay
@@ -97,6 +98,8 @@ type Handler struct {
 	types      contract.TypeSnapshot
 	capability bool
 
+	// audience is the manifest's metadata.id; without a manifest it is empty, and no token the engine mints matches it.
+	audience  string
 	jwksURL   string
 	publicKey func(kid string) (ed25519.PublicKey, error)
 	replay    *webhook.Replay
@@ -145,6 +148,7 @@ func New(cfg Config) (*Handler, error) {
 		provided:      declared.provided,
 		types:         cfg.Types,
 		capability:    declared.capability,
+		audience:      declared.id,
 		jwksURL:       cfg.JWKSURL,
 		publicKey:     cfg.PublicKey,
 		replay:        cfg.Replay,
@@ -173,9 +177,8 @@ func New(cfg Config) (*Handler, error) {
 	}
 	if h.publicKey == nil {
 		cache := webhook.NewKeyCache()
-		jwksURL := h.jwksURL
 		h.publicKey = func(kid string) (ed25519.PublicKey, error) {
-			return cache.PublicKey(jwksURL, nil, kid)
+			return cache.PublicKey(h.jwksURL, nil, kid, h.now())
 		}
 	}
 
@@ -256,8 +259,13 @@ func (h *Handler) serveHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := webhook.VerifyOBO(pub, req.OBO, h.now()); err != nil {
+	claims, err := webhook.VerifyOBO(pub, req.OBO, h.now())
+	if err != nil {
 		h.writeError(w, http.StatusUnauthorized, "invalid OBO token: "+err.Error())
+		return
+	}
+	if claims != (webhook.OBOClaims{Audience: h.audience, OrgID: req.OrgID, AppID: req.AppID, SubscriptionID: req.SubscriptionID}) {
+		h.writeError(w, http.StatusUnauthorized, "the OBO token was minted for another block, org, app or subscription")
 		return
 	}
 

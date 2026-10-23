@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
@@ -235,12 +234,8 @@ func TestServe_AnswersEachVerbOverOneResource(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			logged := captureLog(t)
 			x := newHarness(t, tc.r, tc.config...)
-			fields := map[string]any{"operation": tc.op, "secrets": guardSecrets()}
-			for k, v := range tc.fields {
-				fields[k] = v
-			}
 
-			status, raw := x.post(fields)
+			status, raw := x.post(map[string]any{"operation": tc.op, "secrets": guardSecrets()}, tc.fields)
 
 			if status != tc.status || string(raw) != tc.body {
 				t.Errorf("%s answered %d %s\nwant %d %s", tc.op, status, raw, tc.status, tc.body)
@@ -298,12 +293,10 @@ func TestServe_NeverLeaksAnySecretTheRequestCarries(t *testing.T) {
 	const secret, input, appSecret, eventsToken = "top-secret-db-password-value", "top-secret-input-value-here", "top-secret-app-secret-value", "top-secret-events-callback-token"
 	logged := captureLog(t)
 	x := newHarness(t, &kittest.FakeResource{EnsureErr: fmt.Errorf("upstream rejected credential %s", secret)})
-	obo, err := webhook.MintOBO(x.s.Private, x.s.Kid, webhook.OBOClaims{OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-1"}, time.Hour, time.Now())
-	if err != nil {
-		t.Fatalf("minting a test OBO token: %v", err)
-	}
+	obo := mintOBO(t, x.s, webhook.OBOClaims{OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-1"})
 
 	status, raw := x.post(map[string]any{
+		"appId":          "app-1",
 		"obo":            obo,
 		"secrets":        map[string]any{"db": map[string]any{"password": secret}},
 		"secretInputs":   map[string]any{"apiKey": input},

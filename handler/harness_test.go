@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,11 +28,12 @@ func baseConfig(t *testing.T, r handler.Resource, s *kittest.Signer) handler.Con
 	return handler.Config{Resource: r, JWKSURL: s.JWKSServer(t), VerbBudget: 3, PollInterval: time.Millisecond, Sleep: noopSleep}
 }
 
-// harness serves signed requests to one Handler, each with a fresh nonce, as a genuine retry carries.
+// harness serves signed requests to one Handler, each with a fresh nonce, as a genuine retry carries, and mints each OBO token for the block its manifest names; every harness signs with the same key.
 type harness struct {
-	t *testing.T
-	s *kittest.Signer
-	h *handler.Handler
+	t        *testing.T
+	s        *kittest.Signer
+	h        *handler.Handler
+	audience string
 }
 
 func newHarness(t *testing.T, r handler.Resource, mutate ...func(*handler.Config)) *harness {
@@ -45,34 +47,40 @@ func newHarness(t *testing.T, r handler.Resource, mutate ...func(*handler.Config
 	if err != nil {
 		t.Fatalf("handler.New: %v", err)
 	}
-	return &harness{t: t, s: s, h: h}
+	m, _ := contract.ParseManifest(cfg.Manifest)
+	return &harness{t: t, s: s, h: h, audience: m.ID()}
 }
 
 var nonces atomic.Int64
 
-// envelope attaches a valid OBO token unless fields sets one, so a test that wants no obo field builds its body with kittest.Envelope directly.
-func envelope(t *testing.T, s *kittest.Signer, fields map[string]any) []byte {
-	t.Helper()
+// envelope lays each of fields over the defaults in turn and attaches an OBO token naming the request unless they set one, so a test that wants no obo field builds its body with kittest.Envelope directly.
+func (x *harness) envelope(fields ...map[string]any) []byte {
+	x.t.Helper()
 	all := map[string]any{"operation": "subscribe", "subscriptionId": "sub-1", "blockId": "block-1", "orgId": "org-1"}
-	for k, v := range fields {
-		all[k] = v
+	for _, f := range fields {
+		maps.Copy(all, f)
 	}
 	if _, ok := all["obo"]; !ok {
 		subID, _ := all["subscriptionId"].(string)
 		orgID, _ := all["orgId"].(string)
 		appID, _ := all["appId"].(string)
-		tok, err := webhook.MintOBO(s.Private, s.Kid, webhook.OBOClaims{OrgID: orgID, AppID: appID, SubscriptionID: subID}, time.Hour, time.Now())
-		if err != nil {
-			t.Fatalf("minting a default OBO token: %v", err)
-		}
-		all["obo"] = tok
+		all["obo"] = mintOBO(x.t, x.s, webhook.OBOClaims{Audience: x.audience, OrgID: orgID, AppID: appID, SubscriptionID: subID})
 	}
 	return kittest.Envelope(fmt.Sprintf("nonce-%d", nonces.Add(1)), time.Now(), all)
 }
 
-func (x *harness) request(fields map[string]any) *http.Request {
+func mintOBO(t *testing.T, s *kittest.Signer, claims webhook.OBOClaims) string {
+	t.Helper()
+	tok, err := webhook.MintOBO(s.Private, s.Kid, claims, time.Hour, time.Now())
+	if err != nil {
+		t.Fatalf("minting an OBO token: %v", err)
+	}
+	return tok
+}
+
+func (x *harness) request(fields ...map[string]any) *http.Request {
 	x.t.Helper()
-	return x.s.HookRequest(x.t, "/hook", envelope(x.t, x.s, fields))
+	return x.s.HookRequest(x.t, "/hook", x.envelope(fields...))
 }
 
 func (x *harness) serve(r *http.Request) (int, []byte) {
@@ -81,14 +89,14 @@ func (x *harness) serve(r *http.Request) (int, []byte) {
 	return w.Code, w.Body.Bytes()
 }
 
-func (x *harness) post(fields map[string]any) (int, []byte) {
+func (x *harness) post(fields ...map[string]any) (int, []byte) {
 	x.t.Helper()
-	return x.serve(x.request(fields))
+	return x.serve(x.request(fields...))
 }
 
-func (x *harness) postContext(ctx context.Context, fields map[string]any) (int, []byte) {
+func (x *harness) postContext(ctx context.Context, fields ...map[string]any) (int, []byte) {
 	x.t.Helper()
-	return x.serve(x.request(fields).WithContext(ctx))
+	return x.serve(x.request(fields...).WithContext(ctx))
 }
 
 // answer posts fields and returns the response once it conforms to the lifecycle webhook response contract.

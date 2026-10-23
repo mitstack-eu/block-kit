@@ -145,8 +145,9 @@ func blockSpec(in Block) (contract.ManifestSpec, []string) {
 }
 
 type blockServer struct {
-	h      http.Handler
-	signer *Signer
+	h        http.Handler
+	signer   *Signer
+	audience string
 }
 
 func newBlockServer(in Block) (*blockServer, error) {
@@ -169,13 +170,14 @@ func newBlockServer(in Block) (*blockServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the block cannot be served: %v", err)
 	}
-	return &blockServer{h: h, signer: signer}, nil
+	m, _ := contract.ParseManifest(in.Manifest)
+	return &blockServer{h: h, signer: signer, audience: m.ID()}, nil
 }
 
 func (s *blockServer) send(operation string, d contract.Desired) (int, contract.Response, error) {
 	now := time.Now()
 	obo, err := webhook.MintOBO(s.signer.Private, s.signer.Kid,
-		webhook.OBOClaims{OrgID: d.OrgID, AppID: d.AppID, SubscriptionID: d.SubscriptionID}, 5*time.Minute, now)
+		webhook.OBOClaims{Audience: s.audience, OrgID: d.OrgID, AppID: d.AppID, SubscriptionID: d.SubscriptionID}, 5*time.Minute, now)
 	if err != nil {
 		return 0, contract.Response{}, err
 	}
