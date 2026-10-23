@@ -166,7 +166,7 @@ elif grep -qiE '^[[:space:]]*kit-release:[[:space:]]*minor[[:space:]]*$' <<< "$m
   level="minor"
 fi
 
-IFS=. read -r cur_major cur_minor cur_patch <<< "${newest_version:-0.0.0}"
+IFS=. read -r cur_major cur_minor cur_patch <<< "$newest_version"
 case "$level" in
   major) next_version="$(( cur_major + 1 )).0.0" ;;
   minor) next_version="$cur_major.$(( cur_minor + 1 )).0" ;;
@@ -174,7 +174,7 @@ case "$level" in
 esac
 next_tag="$TAG_PREFIX$next_version"
 
-echo "the repository changed in $range: a $level raise from ${newest_tag:-<no kit tag>} gives $next_tag."
+echo "the repository changed in $range: a $level raise from $newest_tag gives $next_tag."
 
 if [ "$dry_run" -eq 1 ]; then
   echo "dry run: would cut $next_tag at $head_sha and push it to $remote."

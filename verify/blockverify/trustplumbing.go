@@ -12,7 +12,7 @@ import (
 
 const kitModulePath = "github.com/mitstack-eu/block-kit"
 
-// kitVersionFloor is held textually equal to scaffold.KitVersionFloor by a test, because this module cannot import that package; bump it only on a deliberate floor raise.
+// kitVersionFloor is the oldest block-kit release a block may require, and it rises only by a deliberate decision.
 const kitVersionFloor = "v0.4.0"
 
 // operatorKitModulePath names a kit module outside the supported window, so a block requiring it at any version is refused.
