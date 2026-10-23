@@ -124,7 +124,8 @@ func post(t *testing.T, h http.Handler, s *kittest.Signer, fields map[string]any
 	subID, _ := fields["subscriptionId"].(string)
 	orgID, _ := fields["orgId"].(string)
 	appID, _ := fields["appId"].(string)
-	obo, err := webhook.MintOBO(s.Private, s.Kid, webhook.OBOClaims{OrgID: orgID, AppID: appID, SubscriptionID: subID}, time.Hour, time.Now())
+	blockID, _ := fields["blockId"].(string)
+	obo, err := webhook.MintOBO(s.Private, s.Kid, webhook.OBOClaims{Audience: blockID, OrgID: orgID, AppID: appID, SubscriptionID: subID}, time.Hour, time.Now())
 	if err != nil {
 		t.Fatalf("minting an OBO token: %v", err)
 	}

@@ -28,8 +28,27 @@ func (sampleResource) Delete(context.Context, contract.Desired) (map[string]stri
 	return nil, nil
 }
 
+func (sampleResource) ObserveResource(context.Context, contract.ResourceRef) (contract.Observation, error) {
+	return contract.Observation{State: contract.Absent}, nil
+}
+
+const manifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: secretleak-sample
+  name: Secret Leak Sample
+spec:
+  version: 1.0.0
+  resources: [aws.ec2-container]
+  lifecycle:
+    endpoint: https://secretleak-sample.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
 func newHandler(jwksURL string, logs *webhook.LogBuffer) (http.Handler, error) {
-	h, err := handler.New(handler.Config{Resource: sampleResource{}, JWKSURL: jwksURL, Logs: logs})
+	h, err := handler.New(handler.Config{Resource: sampleResource{}, Manifest: []byte(manifest),
+		Observers: map[string]handler.Observer{"aws.ec2-container": sampleResource{}}, JWKSURL: jwksURL, Logs: logs})
 	if err != nil {
 		return nil, err
 	}

@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/webhook"
 )
@@ -84,7 +85,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	deps := webhook.Deps{
 		JWKSURL:    h.JWKSURL,
-		PublicKey:  func(kid string) (ed25519.PublicKey, error) { return keys.PublicKey(h.JWKSURL, h.Client, kid) },
+		PublicKey:  func(kid string) (ed25519.PublicKey, error) { return keys.PublicKey(h.JWKSURL, h.Client, kid, time.Now()) },
 		Replay:     replay,
 		WriteError: writeError,
 	}
