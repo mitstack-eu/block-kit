@@ -1184,11 +1184,20 @@ Every push to main also records which board issues it delivered, through
 kit's module leaves it out, and a change to it cuts no kit tag.
 
 The board module has no tag of its own, so another repository installs it at
-a commit of this repository's main, which Go names by a pseudo-version. The
-CI of board-automation, plain-block and talos-cluster-kit does this. A
-pseudo-version names one commit forever, so a consumer moves to newer board
-code only by editing its own pin. This install pins `6dbf4157af66`, the first
-commit of main that holds the board module, as an example:
+a commit of this repository's main. Go writes that commit as a pseudo-version:
+`v0.0.0-`, the commit's UTC time as `yyyymmddhhmmss`, a hyphen, and the first
+12 characters of its sha. The CI of board-automation, plain-block and
+talos-cluster-kit installs the board module this way. A pseudo-version names
+one commit forever, so such a repository runs newer board code only after it
+edits the version it names. This command prints the pseudo-version of any
+commit that holds the board module:
+
+```sh
+go list -m github.com/mitstack-eu/block-kit/board@<commit sha>
+```
+
+This install names `6dbf4157af66`, the first commit of main that holds the
+board module, as an example:
 
 ```sh
 go install github.com/mitstack-eu/block-kit/board/cmd/board-delivery@v0.0.0-20261023064823-6dbf4157af66
