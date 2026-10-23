@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"net/http"
-	"os"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/contract"
@@ -14,20 +13,12 @@ import (
 var desired = contract.Desired{Identity: contract.Identity{SubscriptionID: "sub-cluster", BlockID: "hcloud-k3s-cluster", OrgID: "org-fixture"}}
 
 func TestDeclaredResources(t *testing.T) {
-	raw, err := os.ReadFile("type-snapshot.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	snap, err := contract.ParseTypeSnapshot(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	op, observers, err := newOperator(nil)
+	op, config, err := newOperator(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	kittest.AssertBlock(t, kittest.Block{Manifest: manifest, Types: snap, Handler: op, Observers: observers, Provider: op.cloud, Desired: desired, Upgrade: &desired})
+	kittest.AssertBlock(t, kittest.Block{Config: config, Provider: op.cloud, Desired: desired, Upgrade: &desired})
 }
 
 func TestUnsubscribeDeletesEveryObjectSubscribeCreated(t *testing.T) {
