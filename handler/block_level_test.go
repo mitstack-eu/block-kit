@@ -365,6 +365,34 @@ func TestBlockLevel_EachObserveIsHandedTheIdentityAndTypeOfItsResource(t *testin
 	}
 }
 
+func TestBlockLevel_APendingSubscribeOrUpgradeCarriesEveryReportedIdentityAsItsEnsure(t *testing.T) {
+	reported := []contract.CreatedResource{
+		{Name: "aws.vpc", Type: "aws.vpc", Identity: map[string]string{"vpcId": "vpc-new"}},
+		{Name: "b", Type: "aws.iam-role", Identity: map[string]string{"roleName": "b-new"}},
+	}
+	for _, op := range []string{"subscribe", "upgrade"} {
+		t.Run(op, func(t *testing.T) {
+			cloud := newFakeCloud()
+			cloud.neverPresent["aws.vpc"] = true
+			block := reportingBlock{blockResource: &blockResource{cloud: cloud}, report: reported}
+
+			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: op})
+
+			if status != http.StatusOK || !resp.Pending {
+				t.Fatalf("status, pending = %d, %v; want 200 and pending at aws.vpc; response %+v", status, resp.Pending, resp)
+			}
+			for _, c := range reported {
+				if got, want := resp.Resources[c.Name].Ensure, (&contract.CallOutcome{Type: c.Type, Identity: c.Identity}); !reflect.DeepEqual(got, want) {
+					t.Errorf("resource %q ensure = %+v, want %+v", c.Name, got, want)
+				}
+			}
+			if vpc, b := resp.Resources["aws.vpc"].Observe, resp.Resources["b"].Observe; vpc == nil || vpc.State != contract.Absent || b != nil {
+				t.Errorf("observe of aws.vpc, b = %+v, %+v; want aws.vpc absent and b unreached", vpc, b)
+			}
+		})
+	}
+}
+
 func TestBlockLevel_RefusesWhatTheManifestDoesNotDeclare(t *testing.T) {
 	report := func(c contract.CreatedResource) func(*fakeCloud) handler.Resource {
 		return func(cloud *fakeCloud) handler.Resource {
