@@ -1,98 +1,134 @@
 # Running the block checks on your block
 
 This page is for a block author who wants the conformance verdict before
-pushing. It covers what `blockverify` judges, how you run it from your block's
-own repository, and where CI runs it for you. Every check the platform holds a
-block to lives in this kit, so the verdict you get locally is the verdict the
-platform reads.
+pushing. blockverify is the kit's command that runs every check the platform
+holds a block to, so the verdict it prints on your machine is the one your
+block's CI reports to the platform. The page covers what each check judges,
+how you run it from your block's repository, and where CI runs it for you.
 
-House terms are defined in
-[the workspace glossary](https://github.com/mitstack-eu/mitstack-workspace/blob/main/docs/glossary.md).
-The ones this page leans on are these. A block is a managed service defined by
-its `manifest.yaml`, and its operator is the Go program in the block's
-repository that serves the lifecycle calls. The kit is this module,
-`github.com/mitstack-eu/block-kit`, which every operator imports for the
-webhook contract and the checks below. An attestation is the platform's
-signed record that a block passed every suite, which the catalog shows as a
-verified badge.
+A block is a managed service defined by its `manifest.yaml`, and its operator
+is the Go program in the block's repository that answers the platform's
+lifecycle calls. An attestation is the platform's signed record that a block
+passed every check, which the catalog shows as a verified badge.
 
 ## What blockverify judges
 
-`blockverify` runs seven suites over one block's directory, in this order. A
+blockverify runs seven suites over one block's directory, in this order. A
 suite that fails turns the verdict to `fail`, and a partial pass is never
 signed. A suite that does not apply to your block reports `skipped` with the
 reason.
 
 | Suite | What it checks |
 |---|---|
-| `trust-plumbing` | `manifest.yaml` is present and declares `contract: kit/v1`, your `go.mod` requires block-kit at or above the floor and no release of operator-kit, and a non-test file imports the kit's `handler` package. No file redeclares a function the kit owns, such as the webhook's `verifyEd25519Sig` or the event emitter `EmitProgress`, because a local copy drifts from the contract. A block that calls the GitHub API also meets the rule below the table |
-| `contract` | The block passes once a non-test file imports the kit's `handler` package, which serves the webhook contract whose goldens the kit owns |
-| `secret-safety` | `TestNoSecretLeak` exists and passes, plus its `/logs` variant when the block serves `/logs`. A test file that declares one must not build `kittest.FakeResource`, because a test over the kit's fake judges the fake rather than your block |
-| `teardown` | `TestUnsubscribeDeletes*` exists and passes, and its file builds no `kittest.FakeResource`. The kit's handler observes absence after every delete, so the block need not ask its provider again itself |
-| `resources` | `TestDeclaredResources` exists and passes, driving each resource the manifest declares through `kittest.AssertBlock` at your block's own verb budget. Each resource must carry the subscription's tag, observe what the provider holds, and be proven absent after unsubscribe |
-| `deliverable` | The block has its own `Dockerfile`, and it copies nothing from the retired `examples/operator-kit` path |
-| `manifest` | The manifest parses strictly as `mitstack/v1beta`, its `metadata.id` is a block id, and a changed `spec.version` carries a release class and note |
+| `trust-plumbing` | `manifest.yaml` exists and declares `contract: kit/v1`, your `go.mod` requires block-kit at or above the floor and no release of operator-kit, and a non-test file imports the kit's `handler`. No non-test file declares a function the kit owns, and a block that calls the GitHub API meets the rule in the next section |
+| `contract` | A non-test file imports `handler`, which serves the wire contract. The kit's own tests check the handler against its goldens, the sample request and answer bodies in `contract/goldens` and `contract/response-goldens`, so the suite proves your block answers through that tested code and reports it as the contract verdict |
+| `secret-safety` | A test whose name starts `TestNoSecretLeak` exists and passes. When a non-test file names the route `"/logs"`, a test named `TestNoSecretLeak_LogsEndpoint` must also exist and pass |
+| `teardown` | A test whose name starts `TestUnsubscribeDeletes` exists and passes. It proves that an unsubscribe deletes what a subscribe made, by checking that your fake provider holds nothing for the subscription afterwards |
+| `resources` | `TestDeclaredResources` exists, calls `kittest.AssertBlock` and passes, and the pass names the guards that ran |
+| `deliverable` | The block has its own `Dockerfile`, and it copies nothing from `examples/operator-kit`, the folder of the platform's repository where the kit once lived, which a block's own build cannot reach |
+| `manifest` | The manifest parses strictly as `mitstack/v1beta` and its `metadata.id` is a block id. On a pull request, a `spec.version` that differs from the base branch's manifest needs both `spec.releaseClass` and `spec.releaseNote` |
 
-The `trust-plumbing` suite holds a block that calls the GitHub API to one
-more rule, so that a forged request cannot send the block's GitHub token to
-another host. A lifecycle request hands the operator two maps keyed by
-capability: `Secrets`, the credentials the org connected, and `Instances`,
-each connected tool's name, endpoint and settings. The suite counts a block as
-calling the API when a non-test file reads `Secrets["github"]` for anything
-but its `owner`, reads `Instances["github"]`, or names `api.github.com`. Such
-a block passes only when both of these hold:
+A file holding a `TestNoSecretLeak` or `TestUnsubscribeDeletes` test must not
+build `kittest.FakeResource`, the kit's own stand-in block, because a test over
+the kit's fake judges the fake instead of your block. [Testing a
+block](testing.md) shows each of the three tests, and the guards
+`kittest.AssertBlock` checks.
 
-- It resolves the API base a request supplies through the kit's `ghapi.Base`
-  or `ghapi.BaseFromEnv`, or through a `urlguard.go` of its own whose
-  `allowedGitHubHosts()` lists the hosts it trusts.
-- It never builds a URL by appending to a raw `apiBase` variable, the name
-  the suite looks for.
+The functions the kit owns are the trust and event functions it implements
+once for every block, such as `verifyEd25519Sig` and `EmitProgress`, which
+`kitOwnedFuncs` in `verify/blockverify/trustplumbing.go` lists. A local copy
+in your block would drift from the contract, so the suite refuses one by name.
+
+The platform reads a release class as `correctness-fix`, `feature` or
+`breaking`, and the release note says in one paragraph what the version
+changes. In CI the reusable workflow passes the base branch's manifest to
+blockverify, and on your machine `--base-manifest <path>` does.
+
+## The GitHub API rule
+
+The `trust-plumbing` suite holds a block that calls the GitHub API to one more
+rule, so that a forged request cannot send the block's GitHub token to another
+host. A request hands the operator each connection's secrets in `Secrets` and
+its settings, such as its API endpoint, in `Instances`. The suite counts a
+block as calling the API when a non-test file reads `Secrets["github"]` for
+anything but its `owner`, reads `Instances["github"]`, or names
+`api.github.com`. Such a block passes only when both of these hold:
+
+- It resolves the API host a request supplies through the kit's `ghapi.Base`
+  or `ghapi.BaseFromEnv`, which check it against an allowlist of hosts, or
+  through a `urlguard.go` of its own whose `allowedGitHubHosts()` lists the
+  hosts it trusts.
+- It never builds a URL by appending to a variable named `apiBase`, the name
+  the suite looks for as an unchecked host.
+
+## The floor and operator-kit
+
+The floor is the oldest kit release your `go.mod` may require, and today it is
+`v0.4.0`, block-kit's first release. blockverify accepts any release at or
+above it, `v0.5.0` and later included. The floor moves only by a deliberate
+decision, so a new kit release never fails a block that has not picked it up
+yet.
+
+operator-kit, `github.com/mitstack-eu/operator-kit`, is the module the kit was
+published under before block-kit. A block that still requires it, at any
+version, fails, because block-kit is the one kit module the platform
+supports. The wire contract is the same, so a block on operator-kit moves by
+switching its `go.mod` requirement and its import paths once.
 
 Every suite that reads the lifecycle contract requires `contract: kit/v1`,
-the one contract this kit judges, under which the kit's `handler` package
-serves the block's lifecycle route. A manifest in the retired
-`mitstack/v1alpha` version fails every one of them, because the parser
-refuses it.
-
-The floor is the oldest kit release your `go.mod` may require, and today it
-is `v0.4.0`, block-kit's first release. It moves only by a deliberate
-decision, so a new kit release never fails a block that has not picked it up
-yet. A `go.mod` that requires `github.com/mitstack-eu/operator-kit` at any
-version fails, because block-kit is the one kit module the platform supports.
+the one contract this kit judges. A manifest in the retired `mitstack/v1alpha`
+version fails every one of them, because the parser refuses it.
 
 ## Run it locally
 
 The kit is a public module, so Go fetches it with no credential. Run the
 suites from your block's directory, naming the kit release to run.
-`--standalone` tells `blockverify` to judge that one directory on its own,
-and it is the only mode the command has:
+`--standalone` tells blockverify to judge that one directory on its own, and
+it is the only mode the command has:
 
 ```sh
 go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
 The version is required because `go run` with `@` builds the command outside
-your block's module, so your own `go.mod` cannot choose it. `v0.4.0` is
-block-kit's first release, and a later tag works the same way. The run takes
-about a minute, mostly spent compiling and running your tests. A passing block
-ends with a line like this, where `kit v0.4.0` is the floor the suites held
-your `go.mod` to, not the release you ran:
+your block's module, so your own `go.mod` cannot choose it. A later tag works
+the same way. The run takes about a minute, mostly spent compiling and
+running your tests. A passing block ends with a line like this, where
+`kit v0.4.0` is the floor the suites held your `go.mod` to:
 
 ```text
 VERDICT: PASS — 7 suite(s), kit v0.4.0, standalone mode
 ```
 
 A failing suite prints its reason on its own line, such as the missing test or
-the manifest key the parser refused. Add `--json` for the
-machine-readable report the attestation binds to.
+the manifest key the parser refused. Add `--json` for the machine-readable
+report the attestation binds to.
 
 ## Where CI runs it
 
-The kit's reusable workflow, `.github/workflows/publish-block.yml`, runs
-`blockverify --standalone` in its `conformance` job on every event your block's
-CI calls it for. A red verdict there stops the `publish` job, so no image ships
-without a pass.
+Your block's CI calls the kit's reusable workflow,
+`.github/workflows/publish-block.yml`, with `uses:` and the block's id:
 
-A block the platform scaffolds also carries `.github/workflows/block-verify.yml`.
-That workflow runs the same command on each push to `main` and submits the
-report to the platform, which signs it as the block's attestation.
+```yaml
+jobs:
+  block:
+    uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@v0.4.0
+    with:
+      block-id: hetzner-firewall
+      ecr-repository: mitstack-hetzner-firewall
+      kit-ref: v0.4.0
+```
+
+Its `conformance` job runs on every event your CI calls it for. It runs your
+tests and `blockverify --standalone`, and on a pull request it also runs
+`commentcheck`, which judges the comments the change adds, as [Maintaining
+the kit](maintainers.md#judging-the-comments-in-a-pull-request) explains. A
+red verdict stops the `publish` job, which on a push to your default branch
+builds the image, scans it and pushes it to the ECR repository you name, so
+no image ships without a pass.
+
+When the platform creates a block's repository from its templates, which it
+calls scaffolding, the repository also carries
+`.github/workflows/block-verify.yml`. That workflow runs blockverify on each
+push to `main` and submits the report to the platform, which signs it as the
+block's attestation.
