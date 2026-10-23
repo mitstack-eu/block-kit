@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mitstack-eu/block-kit/boardkeys"
+	"github.com/mitstack-eu/block-kit/board/boardkeys"
 	"github.com/mitstack-eu/block-kit/safe"
 )
 

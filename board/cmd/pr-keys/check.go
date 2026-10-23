@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mitstack-eu/block-kit/boardkeys"
+	"github.com/mitstack-eu/block-kit/board/boardkeys"
 )
 
 type commit struct {
