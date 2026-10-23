@@ -375,25 +375,13 @@ run --repo "$W" --base "$SEED" --head "$(head_sha)"
 check "a colliding tag fails the run" 1 "$RC"
 assert_tag_at "the published tag is not clobbered" "$R" "v0.5.1" "$UNRELATED"
 
-# 20. A change under any path outside board/ counts as a kit change.
+# 20. A change under any path in the repository counts as a kit change.
 setup_repo
 tag_at "v0.5.0"
 commit_nested_change "chore: touch a deeply nested unrelated-looking path"
 run --repo "$W" --base "$SEED" --head "$(head_sha)"
 check "a deeply nested path change exits 0" 0 "$RC"
 assert_tag "a change anywhere in the repo cuts v0.5.1" "$W" "v0.5.1"
-
-# 20b. A change only under board/, the separate module of mitstack's board tooling, is no kit change.
-setup_repo
-tag_at "v0.5.0"
-mkdir -p "$W/board/cmd/pr-keys"
-printf 'package main // rev %s\n' "$RANDOM" >"$W/board/cmd/pr-keys/run.go"
-git -C "$W" add -A
-git -C "$W" commit -q -m "fix: a board tooling change"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "a board-only change exits 0" 0 "$RC"
-assert_out_contains "a board-only change reads as unchanged" "unchanged"
-assert_kit_tag_count "a board-only change cuts no kit tag" "$W" 1
 
 # 21. The steady state is quiet: with no --base and nothing changed since the newest tag, the run cuts nothing.
 setup_repo
