@@ -52,9 +52,9 @@ func TestServe_IdempotencyCache(t *testing.T) {
 		config     []func(*handler.Config)
 		deliveries []delivery
 	}{
-		{name: "the same key replays the first answer without calling the Resource", f: &kittest.FakeResource{},
+		{name: "the same key replays a settled answer without calling the Resource", f: &kittest.FakeResource{Outputs: map[string]string{"endpoint": "https://ready"}},
 			deliveries: []delivery{
-				{fields: key("subscribe", "idem-1", "sub-1"), replays: -1, status: http.StatusOK, calls: [3]int{1, 1, 0}},
+				{fields: key("subscribe", "idem-1", "sub-1"), replays: -1, status: http.StatusOK, calls: [3]int{1, 1, 0}, check: settled},
 				{fields: key("subscribe", "idem-1", "sub-1"), replays: 0, status: http.StatusOK, calls: [3]int{1, 1, 0}},
 			}},
 		{name: "a different key is a distinct request", f: &kittest.FakeResource{},
@@ -82,11 +82,6 @@ func TestServe_IdempotencyCache(t *testing.T) {
 							t.Errorf("retry error = %q, want the second attempt's own success", resp.Error)
 						}
 					}},
-			}},
-		{name: "a settled subscribe is replayed", f: &kittest.FakeResource{Outputs: map[string]string{"endpoint": "https://ready"}},
-			deliveries: []delivery{
-				{fields: key("subscribe", "idem-settled", "sub-1"), replays: -1, status: http.StatusOK, calls: [3]int{1, 1, 0}, check: settled},
-				{fields: key("subscribe", "idem-settled", "sub-1"), replays: 0, status: http.StatusOK, calls: [3]int{1, 1, 0}},
 			}},
 		{name: "a refusal is deterministic, so it is replayed", f: &kittest.FakeResource{EnsureErr: handler.Refuse("quota-exceeded", "org quota exhausted")},
 			deliveries: []delivery{

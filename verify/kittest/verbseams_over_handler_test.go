@@ -1,16 +1,27 @@
-// Only this test file imports handler, which keeps kittest and handler importable in either direction.
+// CheckVerbSemantics over VerbSeamsOverHandler names each FakeResource misbehaviour, driven through a real handler serving a block's manifest.
 package kittest_test
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
+
+const verbSeamManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: verbseam-block
+  name: Verb Seam Block
+spec:
+  version: 1.0.0
+  resources: [aws.vpc, aws.security-group]
+  lifecycle:
+    endpoint: https://verbseam-block.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
 
 func TestVerbSeamsOverHandler(t *testing.T) {
 	cases := []struct {
@@ -18,7 +29,7 @@ func TestVerbSeamsOverHandler(t *testing.T) {
 		fake      *kittest.FakeResource
 		wantNamed string
 	}{
-		{"a conforming FakeResource passes cleanly through a real handler", &kittest.FakeResource{}, ""},
+		{"a conforming FakeResource passes cleanly through a real handler serving the block's manifest", &kittest.FakeResource{}, ""},
 		{"DuplicateOnEnsure fails the idempotent subscribe", &kittest.FakeResource{DuplicateOnEnsure: true}, "must CONVERGE, not duplicate"},
 		{"LeakOnDelete fails teardown", &kittest.FakeResource{LeakOnDelete: true}, "survived unsubscribe"},
 		{"ErrorWhenAlreadyAbsent fails absence-is-success", &kittest.FakeResource{ErrorWhenAlreadyAbsent: true}, "endless retry"},
@@ -28,44 +39,11 @@ func TestVerbSeamsOverHandler(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := kittest.NewSigner(t, "kid-1", 7)
-
-			problems := kittest.CheckVerbSemantics(kittest.VerbSeamsOverHandler(t, newHandler(t, s, tc.fake), s, tc.fake))
+			problems := kittest.CheckVerbSemantics(kittest.VerbSeamsOverHandler(t, []byte(verbSeamManifest), tc.fake))
 
 			wantProblem(t, problems, tc.wantNamed)
 		})
 	}
-}
-
-func TestRedriveOverHandler(t *testing.T) {
-	cases := []struct {
-		name      string
-		fake      *kittest.FakeBuilder
-		wantNamed string
-	}{
-		{"a conforming FakeBuilder passes cleanly through a real handler", &kittest.FakeBuilder{}, ""},
-		{"HideFinish fails the step signal", &kittest.FakeBuilder{HideFinish: true}, "redrive"},
-		{"RebuildOnRedrive fails the resumed re-drive", &kittest.FakeBuilder{RebuildOnRedrive: true}, "changed 1 resource"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s := kittest.NewSigner(t, "kid-1", 7)
-			plain := &kittest.FakeResource{}
-			seams := kittest.VerbSeamsOverHandler(t, newHandler(t, s, plain), s, plain)
-			seams.Redrive = kittest.RedriveOverHandler(t, newHandler(t, s, tc.fake), s, tc.fake)
-
-			wantProblem(t, kittest.CheckVerbSemantics(seams), tc.wantNamed)
-		})
-	}
-}
-
-func newHandler(t *testing.T, s *kittest.Signer, r handler.Resource) *handler.Handler {
-	t.Helper()
-	h, err := handler.New(handler.Config{Resource: r, JWKSURL: s.JWKSServer(t), VerbBudget: 2, PollInterval: time.Millisecond, Sleep: func(context.Context, time.Duration) {}})
-	if err != nil {
-		t.Fatalf("handler.New: %v", err)
-	}
-	return h
 }
 
 func wantProblem(t *testing.T, problems []string, wantNamed string) {

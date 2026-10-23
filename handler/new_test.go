@@ -14,9 +14,8 @@ import (
 
 func withTypeObservers(edit func(map[string]handler.Observer)) func(*handler.Config) {
 	return func(c *handler.Config) {
-		cloud := newFakeCloud()
 		c.Manifest = []byte(onlyAManifest)
-		c.Observers = map[string]handler.Observer{"a": &observer{name: "a", cloud: cloud}}
+		c.Observers = map[string]handler.Observer{"a": &observer{name: "a", cloud: newFakeCloud()}}
 		c.TypeObservers = map[string]handler.Observer{"aws.vpc": &observer{}}
 		edit(c.TypeObservers)
 	}
@@ -24,9 +23,8 @@ func withTypeObservers(edit func(map[string]handler.Observer)) func(*handler.Con
 
 func withBlockLevelObservers(edit func(map[string]handler.Observer)) func(*handler.Config) {
 	return func(c *handler.Config) {
-		cloud := newFakeCloud()
 		c.Manifest = []byte(blockLevelManifest)
-		c.Observers = asObservers(blockObservers(cloud))
+		c.Observers = asObservers(blockObservers(newFakeCloud()))
 		edit(c.Observers)
 	}
 }
@@ -51,6 +49,8 @@ func TestNew(t *testing.T) {
 	}
 	cases := []newCase{
 		{name: "a nil Resource is refused", config: func(c *handler.Config) { c.Resource = nil }, refused: true},
+		{name: "a Config with no Manifest is refused naming Config.Manifest", config: func(c *handler.Config) { c.Manifest, c.Observers = nil, nil },
+			refused: true, naming: []string{"Config.Manifest", "mitstack/v1beta"}},
 		{name: "an empty JWKSURL is refused", config: func(c *handler.Config) { c.JWKSURL = "" }, refused: true, naming: []string{"JWKSURL"}},
 		{name: "an empty JWKSURL is refused even with a PublicKey override", config: func(c *handler.Config) {
 			c.JWKSURL = ""
@@ -68,14 +68,11 @@ func TestNew(t *testing.T) {
 			refused: true, naming: []string{`"b"`, "observe"}},
 		{name: "an observer for an undeclared resource is refused naming it", config: withBlockLevelObservers(func(o map[string]handler.Observer) { o["c"] = &observer{} }),
 			refused: true, naming: []string{`"c"`}},
-		{name: "observers with no manifest are refused", config: then(withBlockLevelObservers(unchanged), withManifest("")), refused: true},
 		{name: "a type observer for a parsable type on a block-level block is accepted", config: withTypeObservers(func(map[string]handler.Observer) {})},
 		{name: "a type observer under a key that is not a resource type id is refused", config: withTypeObservers(func(o map[string]handler.Observer) { o["Not A Type"] = &observer{} }),
 			refused: true, naming: []string{`"Not A Type"`, "Config.TypeObservers"}},
 		{name: "a nil type observer is refused", config: withTypeObservers(func(o map[string]handler.Observer) { o["aws.vpc"] = nil }),
 			refused: true, naming: []string{`"aws.vpc"`, "Config.TypeObservers"}},
-		{name: "type observers with no manifest are refused", config: then(withTypeObservers(unchanged), func(c *handler.Config) { c.Observers, c.Manifest = nil, nil }),
-			refused: true, naming: []string{"Config.TypeObservers", "Config.Manifest"}},
 	}
 	for _, edit := range []struct{ path, old, new string }{
 		{"bogus", "metadata:\n", "bogus: 1\nmetadata:\n"},
