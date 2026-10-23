@@ -62,11 +62,9 @@ type desiredLister interface {
 
 // Block is what a block served through one block-level handler supplies to have its guards checked.
 type Block struct {
-	Manifest  []byte
-	Types     contract.TypeSnapshot
-	Handler   handler.Resource
-	Observers map[string]handler.Observer
-	Provider  Provider
+	// Config is the handler.Config the block serves, of which the check replaces only the signing key, the JWKS address and the sleep, so the guards run at the block's own VerbBudget.
+	Config   handler.Config
+	Provider Provider
 	// Desired needs its SubscriptionID, BlockID and OrgID.
 	Desired contract.Desired
 	// Upgrade is required when a declared type is stateful.
@@ -83,7 +81,7 @@ const (
 	guardOutputs     = "required-outputs"
 )
 
-// CheckBlock serves the block through handler.New as the engine reaches it and returns one problem per violation.
+// CheckBlock serves the block through handler.New from its Config, as the engine reaches it, and returns one problem per violation.
 func CheckBlock(in Block) []string {
 	problems, _ := checkBlock(in)
 	return problems
@@ -104,7 +102,7 @@ func checkBlock(in Block) ([]string, []string) {
 	if len(problems) > 0 {
 		return problems, nil
 	}
-	server, err := newBlockServer(in)
+	server, err := newBlockServer(in.Config)
 	if err != nil {
 		return []string{err.Error()}, nil
 	}
@@ -124,19 +122,19 @@ func checkBlock(in Block) ([]string, []string) {
 }
 
 func blockSpec(in Block) (contract.ManifestSpec, []string) {
-	m, err := contract.ParseManifest(in.Manifest)
+	m, err := contract.ParseManifest(in.Config.Manifest)
 	if err != nil {
 		return contract.ManifestSpec{}, []string{fmt.Sprintf("the manifest is not one the kit's parser accepts, so its resources are unknown: %v", err)}
 	}
 	if m.Block == nil {
 		return contract.ManifestSpec{}, []string{fmt.Sprintf("the manifest is %s, but only a %s manifest declares resources", m.APIVersion, contract.ManifestAPIVersion)}
 	}
-	if err := contract.CheckManifestTypes(m.Block.Spec, in.Types); err != nil {
+	if err := contract.CheckManifestTypes(m.Block.Spec, in.Config.Types); err != nil {
 		return contract.ManifestSpec{}, []string{err.Error()}
 	}
 	var problems []string
-	if in.Handler == nil || in.Provider == nil {
-		problems = append(problems, "Handler and Provider are both required, so the guards cannot run")
+	if in.Provider == nil {
+		problems = append(problems, "Provider is required, so the guards cannot run")
 	}
 	if in.Desired.SubscriptionID == "" || in.Desired.BlockID == "" || in.Desired.OrgID == "" {
 		problems = append(problems, "Desired needs a SubscriptionID, a BlockID and an OrgID, which every request the engine sends carries")
@@ -150,28 +148,20 @@ type blockServer struct {
 	audience string
 }
 
-func newBlockServer(in Block) (*blockServer, error) {
+func newBlockServer(cfg handler.Config) (*blockServer, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generating the check's signing key: %w", err)
 	}
-	signer := &Signer{Kid: "kittest-block", Public: pub, Private: priv}
-	h, err := handler.New(handler.Config{
-		Resource:     in.Handler,
-		Manifest:     in.Manifest,
-		Observers:    in.Observers,
-		Types:        in.Types,
-		JWKSURL:      "https://kittest.invalid/jwks",
-		PublicKey:    func(string) (ed25519.PublicKey, error) { return pub, nil },
-		VerbBudget:   3,
-		PollInterval: time.Millisecond,
-		Sleep:        func(context.Context, time.Duration) {},
-	})
+	cfg.JWKSURL = "https://kittest.invalid/jwks"
+	cfg.PublicKey = func(string) (ed25519.PublicKey, error) { return pub, nil }
+	cfg.Sleep = func(context.Context, time.Duration) {}
+	h, err := handler.New(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("the block cannot be served: %v", err)
 	}
-	m, _ := contract.ParseManifest(in.Manifest)
-	return &blockServer{h: h, signer: signer, audience: m.ID()}, nil
+	m, _ := contract.ParseManifest(cfg.Manifest)
+	return &blockServer{h: h, signer: &Signer{Kid: "kittest-block", Public: pub, Private: priv}, audience: m.ID()}, nil
 }
 
 func (s *blockServer) send(operation string, d contract.Desired) (int, contract.Response, error) {
@@ -346,7 +336,7 @@ func (c *blockCheck) requiredOutputs(resp contract.Response, operation string) {
 		if o == nil || o.State != contract.Present {
 			continue
 		}
-		t, ok := c.in.Types.Lookup(o.Type)
+		t, ok := c.in.Config.Types.Lookup(o.Type)
 		if !ok {
 			continue
 		}
@@ -395,7 +385,7 @@ func (c *blockCheck) taggedRoom() map[string]int {
 	room := map[string]int{}
 	for _, r := range c.desired.RecordedResources {
 		room[r.Type]++
-		t, ok := c.in.Types.Lookup(r.Type)
+		t, ok := c.in.Config.Types.Lookup(r.Type)
 		if !ok {
 			continue
 		}
@@ -411,7 +401,7 @@ func (c *blockCheck) upgrade() bool {
 	if c.in.Upgrade == nil {
 		for _, entry := range c.spec.Resources {
 			typ := c.desired.RecordedResources[entry.Name].Type
-			if t, ok := c.in.Types.Lookup(typ); ok && t.Stateful {
+			if t, ok := c.in.Config.Types.Lookup(typ); ok && t.Stateful {
 				c.resourceProblem(entry.Name, "its type %s is stateful, but Upgrade is nil, so the check cannot prove an upgrade names its replacement", typ)
 			}
 		}
@@ -435,7 +425,7 @@ func (c *blockCheck) upgrade() bool {
 		if len(was.Identity) == 0 || maps.Equal(was.Identity, is.Identity) || slices.Contains(validated.Replaces, entry.Name) {
 			continue
 		}
-		if t, ok := c.in.Types.Lookup(is.Type); ok && t.Stateful {
+		if t, ok := c.in.Config.Types.Lookup(is.Type); ok && t.Stateful {
 			c.resourceProblem(entry.Name, "the upgrade replaced it, but the validate before it did not name it in replaces; its type %s is stateful, so the replacement loses its data unannounced", is.Type)
 		} else {
 			c.resourceProblem(entry.Name, "the upgrade replaced it, but the validate before it did not name it in replaces")

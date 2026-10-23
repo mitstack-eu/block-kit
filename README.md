@@ -672,10 +672,32 @@ tagging guard then hands the lister the `contract.Desired` it holds, which
 carries the requirement bindings, and `Provider` itself does not change.
 
 A block proves its guards in its own tests with `kittest.AssertBlock`. It
-takes a `kittest.Block`: the manifest, the type snapshot, the block-level
-handler, the observers, a `kittest.Provider` and the subscription. It serves
-the block through `handler.New` and signed requests, so it holds the block
-to the Handler's own rules. After subscribe, every declared resource must
+takes a `kittest.Block`, which holds the `handler.Config` the block serves, a
+`kittest.Provider` and the subscription:
+
+```go
+func TestDeclaredResources(t *testing.T) {
+	fake := newFakeGitHub(t) // the block's fake GitHub, serving observe.GitHubTagAPI and Lose
+	desired := contract.Desired{Identity: contract.Identity{SubscriptionID: "sub_1", BlockID: "docs-repo", OrgID: "org_1"}}
+	upgrade := desired
+	kittest.AssertBlock(t, kittest.Block{
+		Config:   handlerConfig(), // the same handler.Config the block's main hands handler.New
+		Provider: kittest.ListerProvider{Lister: observe.GitHubTagged{API: fake}, Loser: fake},
+		Desired:  desired,
+		Upgrade:  &upgrade,
+	})
+}
+```
+
+`AssertBlock` serves the block through `handler.New` from that config, with
+signed requests, so it holds the block to the Handler's own rules. It
+replaces only what a test must own: the signing key, the JWKS address and the
+sleep between two observes. Every other field stays the block's own, so the
+guards run at the block's `VerbBudget`, the most times a verb observes one
+resource while it waits for that resource to settle. A block that needs more
+observes than its budget allows fails here, as it would in production.
+
+After subscribe, every declared resource must
 observe present with an identity, and every provided one with the outputs
 its type marks required. Everything the provider lists under the
 subscription's id must match, by type and count, a declared resource or a
