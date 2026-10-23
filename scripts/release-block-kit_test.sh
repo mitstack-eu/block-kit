@@ -163,47 +163,20 @@ assert_tag "the cut tag is pushed to the remote" "$R" "v0.5.1"
 assert_tag_at "the pushed tag points at head" "$R" "v0.5.1" "$H"
 assert_kit_tag_count "exactly one new tag" "$W" 2
 
-# 3. `kit-release: minor` in a range commit raises the minor level.
-setup_repo
-tag_at "v0.5.0"
-commit_change "feat: add a capability" -m "kit-release: minor"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "minor raise exits 0" 0 "$RC"
-assert_tag "minor raise cuts v0.6.0" "$W" "v0.6.0"
-assert_no_tag "minor raise does not cut a patch" "$W" "v0.5.1"
-assert_tag "minor raise reaches the remote" "$R" "v0.6.0"
-
-# 3b. Key and level are each matched case-insensitively, in any mixture of cases.
-for trailer in "kit-release: MINOR" "KIT-RELEASE: minor" "Kit-Release: MINOR"; do
+# 3. A whole `kit-release:` line raises its level, key and level in any mixture of cases, and zeroes the levels below it; prose around the key declares nothing, so the raise is the patch.
+for row in "kit-release: minor|v0.6.0|v0.5.1" "kit-release: MINOR|v0.6.0|v0.5.1" "KIT-RELEASE: minor|v0.6.0|v0.5.1" \
+  "Kit-Release: MINOR|v0.6.0|v0.5.1" "kit-release: major|v1.0.0|v0.6.0" "see kit-release: minor|v0.5.1|v0.6.0" \
+  "kit-release: minor is what we should have used here|v0.5.1|v0.6.0" "see kit-release: minor for the convention|v0.5.1|v0.6.0"; do
+  IFS='|' read -r trailer want not <<<"$row"
   setup_repo
   tag_at "v0.5.0"
-  commit_change "feat: add a capability" -m "$trailer"
+  commit_change "feat: a change" -m "$trailer"
   run --repo "$W" --base "$SEED" --head "$(head_sha)"
   check "'$trailer' exits 0" 0 "$RC"
-  assert_tag "'$trailer' still cuts v0.6.0" "$W" "v0.6.0"
-  assert_no_tag "'$trailer' does not fall back to a patch" "$W" "v0.5.1"
+  assert_tag "'$trailer' cuts $want" "$W" "$want"
+  assert_tag "'$trailer' pushes $want to the remote" "$R" "$want"
+  assert_no_tag "'$trailer' cuts no $not" "$W" "$not"
 done
-
-# 3c. Prose after the level, a key mentioned mid-sentence, or leading prose alone declares nothing, so the raise is the patch.
-for trailer in "kit-release: minor is what we should have used here" "see kit-release: minor for the convention" "see kit-release: minor"; do
-  setup_repo
-  tag_at "v0.5.0"
-  commit_change "feat: add a capability" -m "$trailer"
-  run --repo "$W" --base "$SEED" --head "$(head_sha)"
-  check "'$trailer' exits 0" 0 "$RC"
-  assert_tag "'$trailer' leaves the ordinary patch raise" "$W" "v0.5.1"
-  assert_no_tag "'$trailer' raises no minor" "$W" "v0.6.0"
-done
-
-# 4. `kit-release: major` in a range commit raises the major level and zeroes the levels below it.
-setup_repo
-tag_at "v0.5.0"
-commit_change "feat!: break the webhook signature" -m "kit-release: major"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "major raise exits 0" 0 "$RC"
-assert_tag "major raise cuts v1.0.0" "$W" "v1.0.0"
-assert_no_tag "major raise does not cut a minor" "$W" "v0.6.0"
-assert_tag "major raise reaches the remote" "$R" "v1.0.0"
 
 # 5. Both levels declared in one range: major wins.
 setup_repo
