@@ -23,8 +23,9 @@ changes the tree cuts the next patch tag, and a
 `kit-release: minor` line in a commit message raises the minor level instead
 (`scripts/release-block-kit.sh`).
 A breaking change takes the minor raise. No commit carries
-`kit-release: major`, because that raise cuts v1.0.0, which is kept for the
-commercial launch.
+`kit-release: major`: while the newest tag is a v0 version the script refuses
+it and cuts no tag, and the pull request's `test` check fails, because v1.0.0
+is cut by hand at the commercial launch.
 
 Commit subjects carry the `MIT-###:` key of the ticket they deliver.
 

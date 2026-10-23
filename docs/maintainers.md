@@ -36,14 +36,28 @@ module starts at is a choice, not arithmetic.
 After the first tag, every push to `main` that changes the tree cuts the next
 patch tag, through `scripts/release-block-kit.sh`, which CI runs. A commit
 message carrying a `kit-release: minor` line raises the minor level instead
-and zeroes the patch level. A skipped or failed
-release run is not lost: the next push resolves its base from the newest tag
-and cuts the release the earlier push owed.
+and zeroes the patch level, so v0.4.3 is followed by v0.5.0. A skipped or
+failed release run is not lost: the next push resolves its base from the
+newest tag and cuts the release the earlier push owed.
 
 A change that breaks the Go API, such as a package move, takes
-`kit-release: minor`, which opens the next v0 line, such as v0.5.0. No commit
-carries `kit-release: major` before the commercial launch, because that raise
-cuts v1.0.0, a version kept for the launch.
+`kit-release: minor`, which opens the next v0 line, such as v0.5.0. A
+`kit-release: major` line would raise a v0 tag to v1.0.0, which is cut by hand
+at the commercial launch. So while the newest tag is a v0 version, the script
+refuses that line, cuts no tag and fails. Go never reuses a published version,
+so a v1.0.0 cut by mistake would stay on the Go module proxy as the kit's
+newest release.
+
+The release job runs only after a merge, so a pull request carrying the line
+has to fail before it merges. The required `test` job in
+`.github/workflows/ci.yml` runs `scripts/release-block-kit_test.sh` on every
+run. On a pull request it also runs the script's dry run over the pull
+request's own commits. To check a branch before you open its pull request, run
+the same dry run:
+
+```sh
+bash scripts/release-block-kit.sh --dry-run --base origin/main --head HEAD
+```
 
 ## Gating and recording a pull request's board keys
 
