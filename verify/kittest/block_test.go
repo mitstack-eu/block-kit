@@ -69,6 +69,8 @@ type fakeProvider struct {
 	mu    sync.Mutex
 	items map[string]observe.Tagged
 	tags  map[string]string
+	// listPrefix opens each id it lists, as a lister does that names an object by no value of the identity its block reports.
+	listPrefix string
 }
 
 func newFakeProvider() *fakeProvider {
@@ -102,7 +104,7 @@ func (p *fakeProvider) ListTagged(_ context.Context, subscriptionID string) ([]o
 	var out []observe.Tagged
 	for id, item := range p.items {
 		if p.tags[id] == subscriptionID {
-			out = append(out, item)
+			out = append(out, observe.Tagged{Type: item.Type, ID: p.listPrefix + item.ID})
 		}
 	}
 	return out, nil
@@ -132,6 +134,8 @@ type fakeBlock struct {
 	leaveOnDelete   string
 	hideReplacement bool
 	failOnHostType  string
+	// untagged names the resource its ensure creates without the subscription's tag.
+	untagged string
 
 	counts *observeCounts
 }
@@ -201,7 +205,11 @@ func (b *fakeBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]
 		r := prior
 		if !keep {
 			r = contract.CreatedResource{Name: name, Type: typ, Identity: map[string]string{"id": b.newID(typ)}}
-			b.p.put(r.Identity["id"], typ, d.SubscriptionID)
+			sub := d.SubscriptionID
+			if name == b.untagged {
+				sub = ""
+			}
+			b.p.put(r.Identity["id"], typ, sub)
 		}
 		b.created[name] = r
 		out = append(out, r)
@@ -721,6 +729,41 @@ func TestListerProvider_RefusesAListingWithoutTheGuardsDesired(t *testing.T) {
 	}
 }
 
+const githubBlockManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: github-block
+  name: GitHub Block
+spec:
+  version: 1.0.0
+  resources:
+    - github.repository
+    - { name: docs, type: github.repository }
+  lifecycle:
+    endpoint: https://github-block.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
+// githubBlock creates an app repository and a docs repository, and leaves the one named untagged without the subscription's tag.
+func githubBlock(t *testing.T, untagged string) kittest.Block {
+	t.Helper()
+	p := newFakeProvider()
+	b := &fakeBlock{p: p, untagged: untagged, resources: map[string]string{"github.repository": "github.repository", "docs": "github.repository"}}
+	upgrade := blockDesired("")
+	return kittest.Block{
+		Config: handler.Config{
+			Resource:  b,
+			Manifest:  []byte(githubBlockManifest),
+			Types:     typeSnapshot(t),
+			Observers: map[string]handler.Observer{"github.repository": providerObserver{p: p}, "docs": providerObserver{p: p}},
+		},
+		Provider: p,
+		Desired:  blockDesired(""),
+		Upgrade:  &upgrade,
+	}
+}
+
 func TestCheckBlock(t *testing.T) {
 	type mutation func(b *fakeBlock, in *kittest.Block)
 	host := func(m mutation) func(t *testing.T) kittest.Block {
@@ -747,6 +790,9 @@ func TestCheckBlock(t *testing.T) {
 			m(b, &in)
 			return in
 		}
+	}
+	github := func(untagged string) func(t *testing.T) kittest.Block {
+		return func(t *testing.T) kittest.Block { return githubBlock(t, untagged) }
 	}
 	remembering := func(b *fakeBlock, in *kittest.Block) {
 		in.Config.Observers["aws.ec2-instance"] = rememberingObserver{b: b, name: "aws.ec2-instance"}
@@ -802,6 +848,10 @@ func TestCheckBlock(t *testing.T) {
 		{"through the adapted lister, a tagged resource the manifest does not declare fails", listed(func(b *fakeBlock, _ *kittest.Block) { b.extraTagged = true }),
 			[][]string{{`resource "state-bucket"`, "aws.s3-bucket"}}, false},
 		{"through the adapted lister, each resource is lost through the loser", listed(remembering), [][]string{{`resource "aws.ec2-instance"`, "provider"}}, false},
+		{"a github block that tags each repository it creates passes", github(""), nil, true},
+		{"a github block whose Ensure never tags its app repository fails, naming it untagged", github("github.repository"), [][]string{{`resource "github.repository"`, "untagged"}}, true},
+		{"a docs repository left untagged beside a tagged app repository fails, naming docs", github("docs"), [][]string{{`resource "docs"`, "untagged"}}, true},
+		{"tagged resources the provider lists by no value of their identity pass, each matched by its type", host(func(b *fakeBlock, _ *kittest.Block) { b.p.listPrefix = "arn:" }), nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
