@@ -8,7 +8,7 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-// FakeResource is a Resource whose behaviour a test dictates, where the zero value conforms and each other field turns on one misbehaviour.
+// FakeResource is a Resource, and the Observer of every resource it stands in for, whose behaviour a test dictates, where the zero value conforms and each other field turns on one misbehaviour.
 type FakeResource struct {
 	mu sync.Mutex
 
@@ -76,6 +76,10 @@ func (f *FakeResource) Observe(ctx context.Context, d contract.Desired) (contrac
 		state = *f.ObserveState
 	}
 	return contract.Observation{State: state, Outputs: f.Outputs, StatusDetail: f.StatusDetail, Redrive: f.Redrive}, nil
+}
+
+func (f *FakeResource) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	return f.Observe(ctx, r.Desired)
 }
 
 func (f *FakeResource) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {

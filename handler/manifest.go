@@ -12,27 +12,19 @@ import (
 
 var errNilResource = errors.New("handler: Config.Resource is required")
 
-var errObserversWithoutManifest = fmt.Errorf("handler: Config.Observers is set but Config.Manifest is not a %s manifest; an observer can only serve a resource the manifest declares under spec.resources", contract.ManifestAPIVersion)
-
-var errTypeObserversWithoutManifest = fmt.Errorf("handler: Config.TypeObservers is set but Config.Manifest is not a %s manifest; a type observer serves a resource a block-level block's earlier manifest declared", contract.ManifestAPIVersion)
+var errNoManifest = fmt.Errorf("handler: Config.Manifest is required: pass the bytes of the block's %s manifest", contract.ManifestAPIVersion)
 
 // errEmptyJWKSURL stands because webhook.AuthenticateHook rejects every request on an empty JWKSURL before consulting PublicKey.
 var errEmptyJWKSURL = errors.New("handler: Config.JWKSURL is required")
 
-// manifestDeclarations holds what New reads of a manifest, and is empty when Config.Manifest is.
 type manifestDeclarations struct {
 	id         string
-	apiVersion string
 	resources  []contract.ManifestResource
 	provided   map[string]bool
 	capability bool
 }
 
-// readManifestDeclarations errors on a manifest the parser refuses, since a declaration nobody can read must not be mistaken for an absent one.
 func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
-	if len(manifest) == 0 {
-		return manifestDeclarations{}, nil
-	}
 	m, err := contract.ParseManifest(manifest)
 	if err != nil {
 		return manifestDeclarations{}, fmt.Errorf("handler: Config.Manifest is not a manifest the kit's parser accepts: %w", err)
@@ -43,7 +35,6 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 	}
 	return manifestDeclarations{
 		id:         m.ID(),
-		apiVersion: m.APIVersion,
 		resources:  m.Block.Spec.Resources,
 		provided:   provided,
 		capability: m.Block.Type == contract.ManifestTypeCapability,
