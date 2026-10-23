@@ -55,7 +55,8 @@ through `board/cmd/board-delivery`. That command, `board/cmd/pr-keys` and the
 `github.com/mitstack-eu/block-kit/board`. It has its own `go.mod`, so the
 kit's module leaves it out, and a change to it cuts no kit tag. Its `go.mod`
 pins the kit at a commit of `main`, so bump that pin by hand when the board
-module needs newer kit code.
+module needs newer kit code. The pinned commit still holds `safe` at the root,
+so a bump past it also changes `board-delivery`'s import to `helpers/safe`.
 
 The board module has no tag of its own, so another repository installs it at
 a commit of this repository's `main`, which Go names by a pseudo-version. A

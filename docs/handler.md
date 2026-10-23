@@ -30,7 +30,7 @@ server := &http.Server{Addr: listenAddr, Handler: h, ReadHeaderTimeout: readHead
 | Field | Required | What it holds |
 |---|---|---|
 | `Resource` | Yes | Your block's code, a `handler.Resource` |
-| `Manifest` | Yes | The bytes of your `manifest.yaml`, whose `metadata.id` every call's OBO token must name |
+| `Manifest` | Yes | The bytes of your `manifest.yaml`, whose `metadata.id` every call's OBO token must name. Without it `handler.New` refuses a config that sets any observer, and `kittest.AssertBlock`, which blockverify requires, fails |
 | `JWKSURL` | Yes | Where mitstack publishes its public keys, `https://api.mitstack.dev/.well-known/jwks.json` in production |
 | `Observers` | One per declared resource | A `handler.Observer` for each resource your manifest declares, keyed by the resource's name |
 | `Types` | Yes, for the checks | The type snapshot your manifest names its types from, which `kittest.AssertBlock` and the unsubscribe of an `endsWithSubscription` type read |
