@@ -1,4 +1,4 @@
-// Package safe, an optional helper, holds the security invariants an operator must honour when it logs a request's values or calls a host a request names: the operator picks the API host, and log sanitising and secret scrubbing are separate steps.
+// Package safe, an optional helper, holds the security invariants an operator must honour when it logs a request's values or calls a host a request names: the operator picks the API host, and log sanitising and secret scrubbing are kept apart.
 package safe
 
 import (
@@ -15,7 +15,6 @@ type Base struct {
 	host   string
 }
 
-// String renders the base as a URL prefix, e.g. "https://api.github.com".
 func (b Base) String() string {
 	if b.host == "" {
 		return ""
@@ -23,10 +22,8 @@ func (b Base) String() string {
 	return b.scheme + "://" + b.host
 }
 
-// IsZero reports whether the base was never resolved.
 func (b Base) IsZero() bool { return b.host == "" }
 
-// URL joins a path onto the base, taking the host from the allowlist entry and never from the caller-supplied endpoint.
 func (b Base) URL(path string) string {
 	if b.IsZero() {
 		return ""
@@ -39,7 +36,6 @@ type Allowlist struct {
 	hosts []string
 }
 
-// NewAllowlist builds an allowlist from operator-owned values, lower-cased and de-duplicated with empty ones dropped.
 func NewAllowlist(hosts ...string) Allowlist {
 	seen := map[string]bool{}
 	var out []string
@@ -55,7 +51,6 @@ func NewAllowlist(hosts ...string) Allowlist {
 	return Allowlist{hosts: out}
 }
 
-// Hosts returns the allowlisted hosts, for diagnostics.
 func (a Allowlist) Hosts() []string { return append([]string(nil), a.hosts...) }
 
 // TrustedBase returns a Base built from the allowlist entry, never from the endpoint, which is only compared (building from it is an SSRF).
@@ -98,7 +93,6 @@ func Scrub(s string, secrets ...string) string {
 	return s
 }
 
-// LogSafe scrubs the secrets, then sanitises the result for the logger, in that order.
 func LogSafe(s string, secrets ...string) string {
 	return LogValue(Scrub(s, secrets...))
 }

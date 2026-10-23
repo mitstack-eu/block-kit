@@ -8,13 +8,11 @@ import (
 	"time"
 )
 
-// DefaultRenewMargin is how long before expiry a Refresher renews, unless overridden.
 const DefaultRenewMargin = 10 * time.Minute
 
 // Resolve mints a fresh credential; a zero expiry means unknown and is never cached.
 type Resolve[T any] func(context.Context) (T, time.Time, error)
 
-// Refresher holds a credential for work that outlives a single resolve, and renews it ahead of expiry.
 type Refresher[T any] struct {
 	// RenewMargin overrides DefaultRenewMargin when non-zero; set it before the first Get, since writing it concurrently with a Get is a data race.
 	RenewMargin time.Duration
@@ -27,12 +25,10 @@ type Refresher[T any] struct {
 	resolve     Resolve[T]
 }
 
-// New returns a Refresher that mints credentials through resolve.
 func New[T any](resolve Resolve[T]) *Refresher[T] {
 	return &Refresher[T]{resolve: resolve}
 }
 
-// Get returns a usable credential, renewing inside the renewal margin or when expiry is unknown, and never returns an expired one.
 func (r *Refresher[T]) Get(ctx context.Context) (T, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

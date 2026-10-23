@@ -95,7 +95,6 @@ func writeIdentityFile(pem string) (string, error) {
 		os.Remove(name)
 		return "", fmt.Errorf("close identity file: %w", err)
 	}
-	// chmod pins 0600 explicitly rather than relying on the process's umask.
 	if err := os.Chmod(name, 0o600); err != nil {
 		os.Remove(name)
 		return "", fmt.Errorf("chmod identity file: %w", err)
