@@ -38,8 +38,6 @@
 set -uo pipefail
 
 KIT_PATH="."
-# board/ is a separate module its consumers pin by commit, so a change there cuts no kit tag.
-BOARD_PATH=":(exclude)board"
 TAG_PREFIX="v"
 ZERO_SHA="0000000000000000000000000000000000000000"
 
@@ -120,7 +118,7 @@ fi
 # With no base at all — no kit tag and a head with no parent — the whole tree is
 # new, so the kit counts as changed and no diff is computed.
 if [ -n "$resolved_base" ]; then
-  touched="$(in_repo diff --name-only "$resolved_base" "$head_sha" -- "$KIT_PATH" "$BOARD_PATH" 2> /dev/null)"
+  touched="$(in_repo diff --name-only "$resolved_base" "$head_sha" -- "$KIT_PATH" 2> /dev/null)"
   range="$resolved_base..$head_sha"
 else
   touched="$KIT_PATH"
@@ -130,7 +128,7 @@ fi
 echo "release-block-kit: range $range (base ${resolved_base:-<none>}, head $head_sha)"
 
 if [ -z "$touched" ]; then
-  echo "the kit is unchanged in this range, so no kit tag is cut."
+  echo "the repository is unchanged in this range, so no kit tag is cut."
   emit_output "released=false"
   exit 0
 fi

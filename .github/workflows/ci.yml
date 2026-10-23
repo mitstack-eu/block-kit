@@ -20,8 +20,6 @@ jobs:
           go-version: '1.26.8'
       - run: go vet ./...
       - run: go test ./...
-      - run: go -C board vet ./...
-      - run: go -C board test ./...
       # The example block is a module of its own, which ./... leaves out, and
       # blockverify holds it to the same checks as any other block.
       - name: Test the example block and run blockverify on it
@@ -54,8 +52,8 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          go -C board run ./cmd/pr-keys \
-            --repo "$GITHUB_WORKSPACE" \
+          go run github.com/mitstack-eu/plain-delivery/cmd/pr-keys@v0.1.0 \
+            --repo . \
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}"
 
@@ -148,7 +146,7 @@ jobs:
           TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}
           TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
         run: |
-          go -C board run ./cmd/board-delivery \
-            --repo "$GITHUB_WORKSPACE" \
+          go run github.com/mitstack-eu/plain-delivery/cmd/board-delivery@v0.1.0 \
+            --repo . \
             --before "${{ github.event.before }}" \
             --after "${{ github.sha }}"
