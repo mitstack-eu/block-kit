@@ -11,10 +11,6 @@ spec:
   description: >
     Runs the Plain tracker container on the app's host, connected to the
     app's Postgres database.
-  params:
-    - name: image
-      label: Plain tracker container image
-      required: true
   requires: [aws.ec2-instance, aws.ec2-postgres-database]
   resources: [aws.ec2-container]
   provides: [aws.ec2-container]

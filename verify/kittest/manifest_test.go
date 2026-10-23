@@ -22,9 +22,6 @@ spec:
   description: >
     Creates the sample's network
     in the consumer's account.
-  params:
-    - name: region
-      label: Region
   resources:
     - name: net
       type: aws.vpc
