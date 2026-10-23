@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
-	"github.com/mitstack-eu/operator-kit/v3/handler"
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
-	"github.com/mitstack-eu/operator-kit/v3/webhook"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
+	"github.com/mitstack-eu/block-kit/webhook"
 )
 
 // guardSecret is a request secret every row sends, so the scrub and the output refusal are part of what the bytes pin.

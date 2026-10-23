@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
-	"github.com/mitstack-eu/operator-kit/v3/webhook"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
+	"github.com/mitstack-eu/block-kit/webhook"
 )
 
 func TestVerifyOBO_RoundTrip(t *testing.T) {

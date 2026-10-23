@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
-	"github.com/mitstack-eu/operator-kit/v3/handler"
-	"github.com/mitstack-eu/operator-kit/v3/observe"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/observe"
 )
 
 var (
@@ -23,7 +23,6 @@ var (
 	_ handler.Observer = observe.Route53Record{}
 	_ handler.Observer = observe.SSMAssociation{}
 	_ handler.Observer = observe.EC2Container{}
-	_ handler.Observer = observe.EC2PostgresDatabase{}
 	_ handler.Observer = observe.HetznerServer{}
 	_ handler.Observer = observe.HetznerPrimaryIP{}
 	_ handler.Observer = observe.HetznerFirewall{}
@@ -299,81 +298,6 @@ func TestEC2Container_AsksTheInstanceItRunsOn(t *testing.T) {
 			t.Errorf("ran on %q, want nothing run without an instance id", host.ranOn)
 		}
 	})
-}
-
-// postgres-db runs Postgres in a container per subscription. The probe
-// prints PRESENT=1 when Docker inspects the container, PRESENT=0 when Docker
-// answers and has no such container, and PRESENT=unknown when Docker itself
-// does not answer; for a container that exists it then prints READY=<the
-// exit status of pg_isready>, 0 when it accepts connections.
-func TestEC2PostgresDatabase_ProbesItsContainerOnTheInstance(t *testing.T) {
-	cases := []struct {
-		label, stdout string
-		state         contract.State
-		detail        string
-	}{
-		{"accepting connections", "PRESENT=1\nREADY=0\n", contract.Present, ""},
-		{"not yet accepting connections", "PRESENT=1\nREADY=2\n", contract.Unknown, "ready"},
-		{"no readiness answer", "PRESENT=1\n", contract.Unknown, ""},
-		{"gone", "PRESENT=0\n", contract.Absent, ""},
-		{"docker not answering", "PRESENT=unknown\n", contract.Unknown, ""},
-		{"no output", "", contract.Unknown, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			host := &fakeHost{instance: "i-0abc", stdout: map[string]string{"pg-sub-1": tc.stdout}}
-			got, err := observe.EC2PostgresDatabase{API: host}.ObserveResource(context.Background(),
-				refFor("aws.ec2-postgres-database", map[string]string{"instanceId": "i-0abc", "container": "pg-sub-1", "database": "tracker"}))
-			var outputs map[string]string
-			if tc.state == contract.Present {
-				outputs = map[string]string{"dbName": "tracker"}
-			}
-			wantObservation(t, got, err, tc.state, outputs, tc.detail)
-			if len(host.ranOn) != 1 || host.ranOn[0] != "i-0abc" {
-				t.Fatalf("ran on %q, want i-0abc once", host.ranOn)
-			}
-			want := "if docker inspect pg-sub-1 >/dev/null 2>&1; then echo PRESENT=1; docker exec pg-sub-1 pg_isready -U postgres >/dev/null 2>&1; echo READY=$?\n" +
-				"elif docker version >/dev/null 2>&1; then echo PRESENT=0; else echo PRESENT=unknown; fi"
-			if host.scripts[0] != want {
-				t.Errorf("probe script = %q, want %q", host.scripts[0], want)
-			}
-		})
-	}
-}
-
-func TestEC2PostgresDatabase_ReportsDBNameOnlyWhenTheIdentityCarriesIt(t *testing.T) {
-	host := &fakeHost{instance: "i-0abc", stdout: map[string]string{"pg-sub-1": "PRESENT=1\nREADY=0\n"}}
-	got, err := observe.EC2PostgresDatabase{API: host}.ObserveResource(context.Background(),
-		refFor("aws.ec2-postgres-database", map[string]string{"instanceId": "i-0abc", "container": "pg-sub-1"}))
-	wantObservation(t, got, err, contract.Present, nil, "")
-	if v, ok := got.Outputs["dbName"]; ok {
-		t.Errorf("outputs carry dbName %q, want none without a database in the identity", v)
-	}
-}
-
-func TestEC2PostgresDatabase_NeedsTheInstanceAndTheContainer(t *testing.T) {
-	for label, identity := range map[string]map[string]string{
-		"no container, only the retired database key": {"instanceId": "i-0abc", "database": "tracker"},
-		"no instance": {"container": "pg-sub-1"},
-	} {
-		t.Run(label, func(t *testing.T) {
-			host := &fakeHost{instance: "i-0abc", stdout: map[string]string{"pg-sub-1": "PRESENT=1\nREADY=0\n", "tracker": "PRESENT=1\nREADY=0\n"}}
-			got, err := observe.EC2PostgresDatabase{API: host}.ObserveResource(context.Background(), refFor("aws.ec2-postgres-database", identity))
-			wantObservation(t, got, err, contract.Unknown, nil, "")
-			if len(host.ranOn) != 0 {
-				t.Errorf("ran on %q, want nothing run", host.ranOn)
-			}
-		})
-	}
-}
-
-func TestEC2PostgresDatabase_ReturnsAProbeThatFailedOnTheHost(t *testing.T) {
-	boom := errors.New("ssm: command exited 1")
-	got, err := observe.EC2PostgresDatabase{API: &fakeHost{instance: "i-0abc", err: boom}}.ObserveResource(context.Background(),
-		refFor("aws.ec2-postgres-database", map[string]string{"instanceId": "i-0abc", "container": "pg-sub-1"}))
-	if !errors.Is(err, boom) {
-		t.Errorf("observation %+v, error %v; want the host's error returned, never read as absence", got, err)
-	}
 }
 
 type fakeServers map[string]observe.HetznerServerDescription

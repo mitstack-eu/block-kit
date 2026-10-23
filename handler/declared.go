@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
-	"github.com/mitstack-eu/operator-kit/v3/safe"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/safe"
 )
 
 const classUndeclaredResource = "undeclared-resource"

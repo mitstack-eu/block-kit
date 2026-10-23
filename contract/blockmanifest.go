@@ -164,16 +164,6 @@ type ManifestResource struct {
 	// Type is empty for an entry listing more than one type.
 	Type  string   `json:"type"`
 	Types []string `json:"types,omitempty"`
-	// Deprecated: ParseManifest refuses inputs under mitstack/v1beta; a later major release removes it.
-	Inputs map[string]InputValue `json:"inputs,omitempty"`
-	// Deprecated: ParseManifest refuses on under mitstack/v1beta; a later major release removes it.
-	On string `json:"on,omitempty"`
-}
-
-// Deprecated: a mitstack/v1beta resource carries no inputs; a later major release removes it.
-type InputValue struct {
-	Scalar string
-	Map    map[string]InputValue
 }
 
 type ManifestLifecycle struct {

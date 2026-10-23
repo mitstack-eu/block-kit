@@ -4,19 +4,64 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/events"
 )
 
 // NodeReport is one report as GET /v1/subscriptions/{id}/node-reports serves it.
 type NodeReport struct {
-	ReceivedAt time.Time
-	Body       json.RawMessage
+	ReceivedAt time.Time       `json:"receivedAt"`
+	Body       json.RawMessage `json:"body"`
 }
 
 type NodeReportsAPI interface {
 	NodeReports(ctx context.Context, d contract.Desired, subscriptionID string) ([]NodeReport, error)
+}
+
+// maxNodeReportsBody fits the platform's answer, which holds up to 50 reports of up to 256 KiB each.
+const maxNodeReportsBody = 32 << 20
+
+var nodeReportsHTTP = &http.Client{Timeout: 10 * time.Second}
+
+// NodeReportsClient lists a subscription's node reports from the platform the request's events callback names, with the callback's token; a nil HTTPClient waits ten seconds at most.
+type NodeReportsClient struct {
+	HTTPClient *http.Client
+}
+
+func (c NodeReportsClient) NodeReports(ctx context.Context, _ contract.Desired, subscriptionID string) ([]NodeReport, error) {
+	base, token, err := events.PlatformFrom(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("observe: reading the node reports of %s: %w", subscriptionID, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/subscriptions/"+url.PathEscape(subscriptionID)+"/node-reports", nil)
+	if err != nil {
+		return nil, fmt.Errorf("observe: building the node reports request for %s: %w", subscriptionID, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := c.HTTPClient
+	if client == nil {
+		client = nodeReportsHTTP
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("observe: reading the node reports of %s: %w", subscriptionID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("observe: the platform answered %d for the node reports of %s", resp.StatusCode, subscriptionID)
+	}
+	var listed struct {
+		Reports []NodeReport `json:"reports"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxNodeReportsBody)).Decode(&listed); err != nil {
+		return nil, fmt.Errorf("observe: decoding the node reports of %s: %w", subscriptionID, err)
+	}
+	return listed.Reports, nil
 }
 
 // NodeReported matches an object labelled with the observing subscription's id in the reports of the identity's clusterSubscription, else its own.

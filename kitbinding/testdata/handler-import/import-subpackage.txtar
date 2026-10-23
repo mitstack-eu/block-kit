@@ -8,6 +8,6 @@ func main() {}
 -- internal/serve/serve.go --
 package serve
 
-import "github.com/mitstack-eu/operator-kit/handler"
+import "github.com/mitstack-eu/block-kit/handler"
 
 var _ = handler.New

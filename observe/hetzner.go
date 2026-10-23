@@ -3,7 +3,7 @@ package observe
 import (
 	"context"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 type HetznerServerDescription struct {

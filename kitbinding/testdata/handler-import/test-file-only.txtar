@@ -10,7 +10,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/handler"
+	"github.com/mitstack-eu/block-kit/handler"
 )
 
 func TestHandlerIsReachable(t *testing.T) { _ = handler.New }

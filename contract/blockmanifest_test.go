@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 type wantRequirement struct {
@@ -54,9 +54,6 @@ func requireResources(t *testing.T, got []contract.ManifestResource, want []want
 		g := got[i]
 		if g.Name != w.name || g.Type != w.typ || !slices.Equal(g.Types, w.types) {
 			t.Errorf("spec.resources[%d] name, type, types = %q, %q, %q; want %q, %q, %q", i, g.Name, g.Type, g.Types, w.name, w.typ, w.types)
-		}
-		if g.Inputs != nil || g.On != "" {
-			t.Errorf("spec.resources[%d] inputs, on = %+v, %q; want both empty, since mitstack/v1beta retires them", i, g.Inputs, g.On)
 		}
 	}
 }
@@ -263,7 +260,7 @@ spec:
 `
 
 func TestParseManifest_V1BetaReadsEachFieldAsWritten(t *testing.T) {
-	cluster, err := os.ReadFile("../blockverify/testdata/capability-without-issue-handler/manifest.yaml")
+	cluster, err := os.ReadFile("../verify/blockverify/testdata/capability-without-issue-handler/manifest.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,8 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -40,6 +43,21 @@ func EnvelopeFrom(ctx context.Context) (Envelope, bool) {
 	return *env, true
 }
 
+const operatorEventsPath = "/v1/webhooks/operator-events"
+
+// PlatformFrom returns the platform's base URL, the callback URL without its operator-events path, and the callback's bearer token, so an operator can read a platform route as the request it serves.
+func PlatformFrom(ctx context.Context) (baseURL, token string, err error) {
+	env, ok := EnvelopeFrom(ctx)
+	if !ok || env.Callback == nil {
+		return "", "", errors.New("the request carries no events callback to reach the platform through")
+	}
+	base, found := strings.CutSuffix(env.Callback.URL, operatorEventsPath)
+	if !found {
+		return "", "", fmt.Errorf("the events callback URL does not end in %s", operatorEventsPath)
+	}
+	return base, env.Callback.Token, nil
+}
+
 // Short timeout so a slow or dead ingest endpoint never blocks lifecycle handling for long.
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
@@ -52,13 +70,10 @@ type operatorEvent struct {
 	IdempotencyKey string `json:"idempotencyKey"`
 }
 
-// EmitProgress reports a "progress" event with the given detail.
 func EmitProgress(ctx context.Context, detail string) error { return emit(ctx, "progress", detail) }
 
-// EmitCompleted reports a "completed" event with no detail.
 func EmitCompleted(ctx context.Context) error { return emit(ctx, "completed", "") }
 
-// EmitFailed reports a "failed" event carrying the given failure detail.
 func EmitFailed(ctx context.Context, detail string) error { return emit(ctx, "failed", detail) }
 
 func emit(ctx context.Context, status, detail string) error {

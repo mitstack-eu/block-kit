@@ -97,7 +97,7 @@ jobs:
         # No --base: the script resolves the base from the newest kit tag, so
         # a run that was skipped or red does not lose its release. The next
         # push or a dispatch on main picks it up, with no change of its own.
-        run: bash scripts/release-operator-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"
+        run: bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"
 
   # This repository has no other mechanism that reaches the board, so a
   # ticket delivered here never reached Done. needs: [test, release] only

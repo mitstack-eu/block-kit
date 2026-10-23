@@ -1,0 +1,45 @@
+{
+  "suiteVersion": "2.0.0",
+  "kitVersion": "v0.4.0",
+  "mode": "standalone",
+  "manifestDigest": "sha256:436f01667f7c9869674b2caa4af4253dbb27d732378601d4c67144aeb41b0f5d",
+  "verdict": "pass",
+  "resultsDigest": "sha256:efe2824240337a3aa1a7c76c118918ce89d09c9e137cc218ed5b969eb5af97d4",
+  "suites": [
+    {
+      "name": "trust-plumbing",
+      "status": "pass",
+      "detail": "kit/v1 rule: depends on github.com/mitstack-eu/block-kit at or above the floor v0.4.0, operator.go imports github.com/mitstack-eu/block-kit/handler, no kit-owned symbol redeclared, manifest.yaml present"
+    },
+    {
+      "name": "contract",
+      "status": "pass",
+      "detail": "kit/v1 rule: the kit owns the webhook-contract goldens; operator.go imports github.com/mitstack-eu/block-kit/handler"
+    },
+    {
+      "name": "secret-safety",
+      "status": "pass",
+      "detail": "TestNoSecretLeak (+ the /logs variant where /logs is served) passes"
+    },
+    {
+      "name": "teardown",
+      "status": "pass",
+      "detail": "kit/v1 rule: TestUnsubscribeDeletes* proves unsubscribe deletes what subscribe created; the kit's handler asks the provider again after a delete"
+    },
+    {
+      "name": "resources",
+      "status": "pass",
+      "detail": "TestDeclaredResources proves the block's 8 declared resources hold the guards that ran: tagging, observe-asks-the-provider, replacement, absence-after-unsubscribe, required-outputs"
+    },
+    {
+      "name": "deliverable",
+      "status": "pass",
+      "detail": "own Dockerfile exists and assumes no monorepo build context"
+    },
+    {
+      "name": "manifest",
+      "status": "pass",
+      "detail": "the mitstack/v1beta manifest parses; no --base-manifest given, so spec.version was not compared"
+    }
+  ]
+}

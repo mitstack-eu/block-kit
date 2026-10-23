@@ -1,4 +1,4 @@
-// Package scripts_test pins the ci.yml jobs that test the kit and cut its release tag with scripts/release-operator-kit.sh.
+// Package scripts_test pins the ci.yml jobs that test the kit and cut its release tag with scripts/release-block-kit.sh.
 package scripts_test
 
 import (
@@ -111,7 +111,7 @@ func TestCIWorkflow_TestsTheKitAndCutsItsReleaseOnlyFromMain(t *testing.T) {
 		{"the release job pins checkout to the platform's sha", strconv.FormatBool(stepWith(all, "release", "uses", checkout)), "true"},
 		{"the release job checks out the tags the version scan reads", strconv.FormatBool(stepWith(all, "release", "with.fetch-depth", "0")), "true"},
 		{"the release job runs its script under bash, so pipefail fails a red release", strconv.FormatBool(stepWith(all, "release", "shell", "bash")), "true"},
-		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-operator-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
+		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mitstack-eu/operator-kit/v3/boardkeys"
-	"github.com/mitstack-eu/operator-kit/v3/safe"
+	"github.com/mitstack-eu/block-kit/boardkeys"
+	"github.com/mitstack-eu/block-kit/safe"
 )
 
 // Run writes every message, errors included, to stdout so a caller can capture it.

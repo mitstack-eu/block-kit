@@ -6,9 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/events"
+	"github.com/mitstack-eu/block-kit/events"
 )
 
 func TestEmit(t *testing.T) {
@@ -109,6 +110,36 @@ func TestEnvelopeFrom(t *testing.T) {
 
 			if ok != tc.wantOK || !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("EnvelopeFrom = %+v, %v; want %+v, %v", got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestPlatformFrom(t *testing.T) {
+	withURL := func(url string) context.Context {
+		return events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{URL: url, Token: "evt-token"}})
+	}
+	cases := []struct {
+		name, wantBase string
+		ctx            context.Context
+	}{
+		{"the callback URL without its operator-events path is the platform's base", "https://api.mitstack.dev", withURL("https://api.mitstack.dev/v1/webhooks/operator-events")},
+		{"a context with no envelope is an error", "", context.Background()},
+		{"an envelope with no callback is an error", "", events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1"})},
+		{"a callback URL without the operator-events path is an error", "", withURL("https://api.mitstack.dev/v1/webhooks/something-else")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base, token, err := events.PlatformFrom(tc.ctx)
+
+			if tc.wantBase == "" {
+				if err == nil || strings.Contains(err.Error(), "evt-token") {
+					t.Errorf("PlatformFrom = %q, token set %v, %v; want an error carrying no token", base, token != "", err)
+				}
+				return
+			}
+			if err != nil || base != tc.wantBase || token != "evt-token" {
+				t.Errorf("PlatformFrom = %q, token %q, %v; want %q and the callback's token", base, token, err, tc.wantBase)
 			}
 		})
 	}

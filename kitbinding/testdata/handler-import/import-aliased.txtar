@@ -4,6 +4,6 @@ main.go imports the handler package under a local name.
 -- main.go --
 package main
 
-import kithandler "github.com/mitstack-eu/operator-kit/handler"
+import kithandler "github.com/mitstack-eu/block-kit/handler"
 
 func main() { _ = kithandler.New }

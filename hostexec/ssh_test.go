@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/kittest"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
 // The sentinels are low-entropy and not token-shaped so they do not trip a secret scanner on this file.

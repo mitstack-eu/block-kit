@@ -80,19 +80,19 @@ jobs:
       # blockverify is built from a checkout of kit-ref rather than a `go run`
       # of a released tag, so the reusable workflow works whether or not a
       # given kit-ref has been tagged yet.
-      - name: Checkout operator-kit
+      - name: Checkout block-kit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: mitstack-eu/operator-kit
+          repository: mitstack-eu/block-kit
           ref: ${{ inputs.kit-ref }}
-          path: operator-kit
+          path: block-kit
 
       - name: Build blockverify
-        working-directory: operator-kit
-        run: go build -o ../blockverify ./blockverify
+        working-directory: block-kit
+        run: go build -o ../blockverify ./verify/blockverify
 
       - name: Build commentcheck
-        working-directory: operator-kit
+        working-directory: block-kit
         run: go build -o ../commentcheck ./cmd/commentcheck
 
       # blockverify judges `.` and the image builds from `.`, so the kit
@@ -100,7 +100,7 @@ jobs:
       # it, or the block is judged by the kit's own source.
       - name: Remove the kit checkout from the block tree
         run: |
-          rm -rf operator-kit
+          rm -rf block-kit
 
       # On a pull request blockverify compares spec.version with the base
       # commit's manifest.yaml. The checkout is shallow, so the base commit is
@@ -182,25 +182,25 @@ jobs:
           role-to-assume: ${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Checkout operator-kit
+      - name: Checkout block-kit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: mitstack-eu/operator-kit
+          repository: mitstack-eu/block-kit
           ref: ${{ inputs.kit-ref }}
-          path: operator-kit
+          path: block-kit
 
       - name: Build blockverify and blockprov
-        working-directory: operator-kit
+        working-directory: block-kit
         run: |
-          go build -o ../blockverify ./blockverify
-          go build -o ../blockprov ./blockprov
+          go build -o ../blockverify ./verify/blockverify
+          go build -o ../blockprov ./verify/blockprov
 
       # blockverify judges `.` and the image builds from `.`, so the kit
       # checked out inside the block's tree must be gone before either reads
       # it, or the block is judged by the kit's own source.
       - name: Remove the kit checkout from the block tree
         run: |
-          rm -rf operator-kit
+          rm -rf block-kit
 
       - name: Log in to ECR
         run: |
@@ -303,9 +303,8 @@ jobs:
           echo "IMAGE_DIGEST=$IMAGE_DIGEST" >> "$GITHUB_ENV"
 
       # kit-ref names the kit that BUILT the tools above, not the one this
-      # block compiles against, so the record's kitVersion comes from go.mod:
-      # operator-kit, its operator-kit/vN path from v2 on, or the legacy
-      # mitstack/examples/operator-kit.
+      # block compiles against, so the record's kitVersion comes from the
+      # block-kit pin in go.mod.
       - name: Determine the kit version pinned in go.mod
         if: steps.existing.outputs.record == 'false'
         run: |
@@ -314,9 +313,9 @@ jobs:
           # `pipefail` before the check below ever runs — the failure is
           # still reported, just by that explicit check and its message
           # rather than a bare, undiagnosed pipeline abort.
-          KIT_VERSION=$(grep -oE 'github\.com/mitstack-eu/(operator-kit(/v[0-9]+)?|mitstack/examples/operator-kit) v[0-9]+\.[0-9]+\.[0-9]+' go.mod | head -1 | awk '{print $2}' || true)
+          KIT_VERSION=$(grep -oE 'github\.com/mitstack-eu/block-kit v[0-9]+\.[0-9]+\.[0-9]+' go.mod | head -1 | awk '{print $2}' || true)
           if [ -z "$KIT_VERSION" ]; then
-            echo "no operator-kit version pin found in go.mod (checked github.com/mitstack-eu/operator-kit, github.com/mitstack-eu/operator-kit/vN and the legacy github.com/mitstack-eu/mitstack/examples/operator-kit)" >&2
+            echo "no block-kit version pin found in go.mod (checked github.com/mitstack-eu/block-kit)" >&2
             exit 1
           fi
           echo "KIT_VERSION=$KIT_VERSION" >> "$GITHUB_ENV"

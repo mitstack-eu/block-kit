@@ -3,6 +3,6 @@ The quoted handler path appears only as a string literal.
 -- main.go --
 package main
 
-const handlerPackage = "github.com/mitstack-eu/operator-kit/handler"
+const handlerPackage = "github.com/mitstack-eu/block-kit/handler"
 
 func main() { _ = handlerPackage }

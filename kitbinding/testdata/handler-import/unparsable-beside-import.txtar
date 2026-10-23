@@ -4,7 +4,7 @@ main.go imports the handler package, and zz_broken.go, which sorts after it, doe
 -- main.go --
 package main
 
-import "github.com/mitstack-eu/operator-kit/handler"
+import "github.com/mitstack-eu/block-kit/handler"
 
 func main() { _ = handler.New }
 -- zz_broken.go --

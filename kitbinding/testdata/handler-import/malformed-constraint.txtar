@@ -10,6 +10,6 @@ func main() {}
 
 package main
 
-import "github.com/mitstack-eu/operator-kit/handler"
+import "github.com/mitstack-eu/block-kit/handler"
 
 var _ = handler.New

@@ -7,6 +7,6 @@ func main() {}
 -- vendor/example.com/wiring/wire.go --
 package wiring
 
-import "github.com/mitstack-eu/operator-kit/handler"
+import "github.com/mitstack-eu/block-kit/handler"
 
 var _ = handler.New

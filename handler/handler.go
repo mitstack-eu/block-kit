@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mitstack-eu/operator-kit/v3/contract"
-	"github.com/mitstack-eu/operator-kit/v3/webhook"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/webhook"
 )
 
 // maxHookBodyBytes bounds the read so a hostile caller cannot exhaust memory before the trust boundary runs.

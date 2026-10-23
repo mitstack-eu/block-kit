@@ -9,12 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/operator-kit/v3/kitbinding"
+	"github.com/mitstack-eu/block-kit/kitbinding"
 )
 
 const fixtureDir = "testdata/handler-import"
 
-// The txtar cases under testdata/handler-import are shared with the platform's operator gates.
 type fixtureCase struct {
 	name    string
 	verdict string
@@ -107,41 +106,22 @@ func materialise(t *testing.T, c fixtureCase) string {
 	return dir
 }
 
-func TestHandlerPackage_IsTheKitsHandlerImportPath(t *testing.T) {
-	if kitbinding.HandlerPackage != "github.com/mitstack-eu/operator-kit/v3/handler" {
-		t.Errorf("HandlerPackage = %q, want %q", kitbinding.HandlerPackage, "github.com/mitstack-eu/operator-kit/v3/handler")
-	}
-}
-
-// Deleting a hard fixture must fail here, or the agreement between the kit and the platform turns vacuous.
+// Deleting a hard fixture must fail here, or the agreement between kitbinding and blockverify, which reads the same set, turns vacuous.
 func TestFixtureSet_HoldsEveryRequiredCase(t *testing.T) {
-	want := map[string]string{
-		"comment-only":                "absent",
-		"string-literal-only":         "absent",
-		"build-ignore-only":           "absent",
-		"testdata-only":               "absent",
-		"vendor-only":                 "absent",
-		"underscore-dir-only":         "absent",
-		"dot-dir-only":                "absent",
-		"test-file-only":              "absent",
-		"no-mention":                  "absent",
-		"import-root":                 "pass",
-		"import-satisfied-constraint": "pass",
-		"import-aliased":              "pass",
-		"import-subpackage":           "pass",
-		"import-major-v2":             "pass",
-		"import-major-v3":             "pass",
-		"unparsable-only":             "tooling",
-		"unparsable-beside-import":    "tooling",
-		"malformed-constraint":        "tooling",
+	want := map[string][]string{
+		"absent":  {"comment-only", "string-literal-only", "build-ignore-only", "testdata-only", "vendor-only", "underscore-dir-only", "dot-dir-only", "test-file-only", "no-mention"},
+		"pass":    {"import-root", "import-satisfied-constraint", "import-aliased", "import-subpackage"},
+		"tooling": {"unparsable-only", "unparsable-beside-import", "malformed-constraint"},
 	}
 	got := map[string]string{}
 	for _, c := range loadFixtureSet(t) {
 		got[c.name] = c.verdict
 	}
-	for name, verdict := range want {
-		if got[name] != verdict {
-			t.Errorf("fixture %s: verdict %q, want %q (missing fixtures read as \"\")", name, got[name], verdict)
+	for verdict, names := range want {
+		for _, name := range names {
+			if got[name] != verdict {
+				t.Errorf("fixture %s: verdict %q, want %q (missing fixtures read as \"\")", name, got[name], verdict)
+			}
 		}
 	}
 }
@@ -182,14 +162,14 @@ func TestHandlerImportFiles_AnswersEveryFixtureWithItsVerdict(t *testing.T) {
 }
 
 func TestHandlerImportFiles_ReportsEveryImportingFileSorted(t *testing.T) {
-	const imp = "package main\n\nimport \"github.com/mitstack-eu/operator-kit/v3/handler\"\n\nvar _ = handler.New\n"
+	const imp = "package main\n\nimport \"github.com/mitstack-eu/block-kit/handler\"\n\nvar _ = handler.New\n"
 	dir := materialise(t, fixtureCase{files: map[string]string{
 		"z.go":         imp,
 		"a.go":         imp,
 		"cmd/x/x.go":   strings.Replace(imp, "package main", "package x", 1),
 		"a_test.go":    imp,
 		"plain.go":     "package main\n",
-		"docs/note.md": "\"github.com/mitstack-eu/operator-kit/v3/handler\"\n",
+		"docs/note.md": "\"github.com/mitstack-eu/block-kit/handler\"\n",
 	}})
 	files, err := kitbinding.HandlerImportFiles(dir)
 	if err != nil {
@@ -215,7 +195,7 @@ func TestHandlerImportFiles_MissingDirectoryIsAnError(t *testing.T) {
 // A directory the scan cannot enter is an error even when another file imports the handler, since what it could not read is unknown.
 func TestHandlerImportFiles_UnreadableDirectoryIsAnError(t *testing.T) {
 	dir := materialise(t, fixtureCase{files: map[string]string{
-		"main.go":               "package main\n\nimport \"github.com/mitstack-eu/operator-kit/v3/handler\"\n\nfunc main() { _ = handler.New }\n",
+		"main.go":               "package main\n\nimport \"github.com/mitstack-eu/block-kit/handler\"\n\nfunc main() { _ = handler.New }\n",
 		"internal/wire/wire.go": "package wire\n",
 	}})
 	locked := filepath.Join(dir, "internal")

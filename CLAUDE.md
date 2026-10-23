@@ -1,15 +1,18 @@
-# CLAUDE.md — operator-kit
+# CLAUDE.md — block-kit
 
-Module path: `github.com/mitstack-eu/operator-kit/v3`.
+Module path: `github.com/mitstack-eu/block-kit`.
 
 The kit is stdlib-only by design. No third-party dependency is ever added,
 however convenient one looks for a single call site.
 
 Test with `go vet ./... && go test ./...`.
 
-Every push to main that changes the tree cuts the next patch tag; a
-`kit-release: minor` or `kit-release: major` line in a commit message raises
-that level instead (`scripts/release-operator-kit.sh`).
+The first tag, v0.4.0, is cut by hand. After it, every push to main that
+changes the tree cuts the next patch tag, and a `kit-release: minor` line in a
+commit message raises the minor level instead (`scripts/release-block-kit.sh`).
+A breaking change takes the minor raise. No commit carries
+`kit-release: major`, because that raise cuts v1.0.0, which is kept for the
+commercial launch.
 
 Commit subjects carry the `MIT-###:` key of the ticket they deliver.
 

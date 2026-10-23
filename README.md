@@ -1,8 +1,12 @@
-# operator-kit
+# block-kit
 
 This module is the contract every mitstack block imports to talk to the
-engine. It covers the webhook trust boundary a block's handler sits behind,
-the events a block emits as it works, and `kittest`, the conformance harness
+engine, the part of the platform that drives each block through its
+lifecycle. A block is a managed service defined by its `manifest.yaml`, and
+its operator is the Go program in the block's repository that serves the
+engine's lifecycle calls. The kit covers the webhook trust boundary an
+operator sits behind, which checks that every lifecycle call carries the
+platform's signature. It also holds `verify/kittest`, the conformance harness
 a block's own tests run against the same fixtures the engine is tested
 against. The `contract` package owns the wire contract itself: the envelope
 and response JSON schemas, the golden request and response fixtures both
@@ -10,18 +14,30 @@ sides are checked against, and the block manifest parser.
 
 ## Which packages a block needs
 
-The kit's packages fall into three groups, so you can tell which to learn
-first. Learn the core before you write a block. Reach for an optional helper
-only when your block's provider or domain calls for it. You can leave
-mitstack's own tooling alone, because it runs on a block rather than inside
-it. Each package's `go doc` opens by naming its group, and no package's
-import path depends on its group.
+The kit's folders follow mitstack's data model, in which a capability, such
+as `aws` or `github`, holds the resource types that live in it. A manifest
+whose `type` is `capability` is a different thing, which
+[Serving a capability and issuing an app's credential](#serving-a-capability-and-issuing-an-apps-credential)
+describes. A package's folder tells you whether your block needs it:
+
+| Folder | What it holds | Who imports it |
+|---|---|---|
+| The root | The core every block needs and the lifecycle helpers tied to no capability | Every block's code |
+| `capabilities/<slug>` | The helpers for the resource types of one capability | A block whose resources live in that capability |
+| `verify/` | The tooling that checks, attests and publishes a block, and the harness a block's tests run | A block's tests and CI |
+| `cmd/` | mitstack's own commands for the kit's CI | No block |
+
+Each slug under `capabilities/` is a capability the platform's catalogue
+holds, in the `capability` field of the platform repository's
+`blocks/types/*.yaml` files. A first block starts from the core below and
+from [The Handler and Resource](#the-handler-and-resource), which shows how a
+block serves its lifecycle calls. Open a capability's folder only when your
+block's resources live in that capability.
 
 ### The core every block needs
 
 Every block's code imports `contract`, `handler` and `webhook`, and most
-blocks also import `observe` and `safe`. Every block's tests import
-`kittest`.
+blocks also import `observe` and `safe`.
 
 | Package | What a block uses it for |
 |---|---|
@@ -30,51 +46,43 @@ blocks also import `observe` and `safe`. Every block's tests import
 | `webhook` | Verifying mitstack's signature on every lifecycle call |
 | `observe` | Asking the provider what stands now |
 | `safe` | Choosing the API host, sanitising logs and scrubbing secrets |
-| `kittest` | The block's own tests: a signing identity, envelopes and the conformance checks |
 
-### Optional helpers
+### Lifecycle helpers tied to no capability
 
-Each helper serves one provider or one task, and a block imports it only for
-that.
+Each helper serves one task, and a block imports it only for that.
 
 | Package | What it does |
 |---|---|
-| `adopt` | Lets a retried subscribe converge without adopting another app's resources |
-| `appsdns` | Writes, retires and observes an app's A record in the apps zone |
-| `awsnames` | Names the account-unique AWS resources every app-infra engine creates |
-| `cfnstack` | Drives CloudFormation stacks |
-| `cloudid` | Turns the cloud identity in a lifecycle call into short-lived AWS credentials |
 | `credrefresh` | Caches a short-lived credential and renews it before it expires |
-| `customdomain` | Checks that a consumer's custom hostname is a bare hostname |
-| `delivery` | Fetches the dispatcher's delivery record |
-| `events` | Sends advisory lifecycle events back to mitstack |
-| `ghapi` | Calls the GitHub REST API on a host the operator chooses |
-| `gitops` | Commits a block's rendered manifests to its GitOps repository and judges the deploy |
-| `gitops/gitopstest` | Fakes a GitOps repository and Argo CD's notifications in a test |
-| `handover` | Carries a block's durable data across a replacement through EC2 snapshots |
-| `health` | Lets `validate` repair an unhealthy resource within a bound |
+| `events` | Sends advisory lifecycle events back to mitstack, and names the platform an operator reads |
 | `hostexec` | Runs one shell script on a host over SSM or SSH |
-| `progress` | Reports a long provision's progress on the advisory event channel |
 | `reach` | Judges whether an app is serving and records the verdict |
-| `registryauth` | Logs a container-registry CLI in with the credential on stdin |
-| `settle` | Decides whether a consumer's resource is serving, with every wait bounded |
-| `stackitid` | Exchanges mitstack's OIDC assertion for a short-lived STACKIT token |
-| `teardown` | Reclaims what the IaC engine never tracked, scoped to one app |
-| `tftpl` | Renders the subset of OpenTofu's `templatefile` syntax the kit accepts |
 
-### mitstack's own tooling
-
-These packages check, publish and record blocks, and no block imports them.
-Your CI runs `blockverify` on your block, as
-[Running the block checks on your block](docs/block-checks.md) describes.
+### The capability folders
 
 | Package | What it does |
 |---|---|
-| `blockverify` | Runs the conformance checks on a block's source tree |
-| `blockprov` | Builds, verifies and pushes a block's provenance record from its publish workflow |
-| `provenance` | Holds the signed record of where a block's image and manifest came from |
-| `attest` | Holds the signed attestation that a block passed its conformance checks |
-| `kitbinding` | Defines what counts as a block importing the handler, for `blockverify` and the platform alike |
+| `capabilities/aws/cloudid` | Turns the cloud identity in a lifecycle call into short-lived AWS credentials |
+| `capabilities/github/ghapi` | Calls the GitHub REST API on a host the operator chooses |
+| `capabilities/github/gitops` | Commits the Kubernetes files a block renders to its GitOps repository on GitHub, and judges the deploy |
+| `capabilities/github/gitops/gitopstest` | Fakes a GitOps repository and Argo CD's notifications in a test |
+
+### Verification and mitstack's own tooling
+
+Every block's tests import `verify/kittest`. The other packages below check,
+publish and record blocks, and no block imports them. Your CI runs
+`verify/blockverify` on your block, as
+[Running the block checks on your block](docs/block-checks.md) describes.
+`kitbinding` and `boardkeys` sit at the root, beside the core.
+
+| Package | What it does |
+|---|---|
+| `verify/kittest` | The block's own tests: a signing identity, envelopes and the conformance checks |
+| `verify/blockverify` | Runs the conformance checks on a block's source tree |
+| `verify/blockprov` | Builds, verifies and pushes a block's provenance record from its publish workflow |
+| `verify/provenance` | Holds the signed record of where a block's image and manifest came from |
+| `verify/attest` | Holds the signed attestation that a block passed its conformance checks |
+| `kitbinding` | Defines what counts as a block importing the handler, the rule `blockverify` judges by |
 | `boardkeys` | Derives which board keys a commit delivers, and which it only references |
 | `cmd/board-delivery` | Records the keys a push to main delivered on mitstack's board |
 | `cmd/pr-keys` | Fails a pull request whose commits and title carry no board key |
@@ -206,23 +214,23 @@ type without the field has no parts.
 
 `ManifestRequirement.Types` and `ManifestResource.Types` hold the listed ids,
 and `ManifestResource.Type` holds the one id of an entry that lists one.
-`ManifestResource.Inputs` and `On`, and `contract.InputValue`, are deprecated
-and stay empty after a parse.
 
 ## Importing it
 
-The module path is `github.com/mitstack-eu/operator-kit/v3`, since Go puts
-the major version of a v2 or later release in the path. A block adds it the
+The module path is `github.com/mitstack-eu/block-kit`. A block adds it the
 usual way and imports its packages under that path, as in
-`github.com/mitstack-eu/operator-kit/v3/handler`:
+`github.com/mitstack-eu/block-kit/handler`:
 
 ```
-go get github.com/mitstack-eu/operator-kit/v3@vX.Y.Z
+go get github.com/mitstack-eu/block-kit@vX.Y.Z
 ```
 
-A block on a v1 or v2 release keeps working, because v3 changes the Go API
-and the manifest version the parser reads and leaves the wire contract alone.
-It moves to v3 once its manifest is `mitstack/v1beta` with `contract: kit/v1`.
+`blockverify` refuses a block whose `go.mod` requires block-kit below its
+floor, v0.4.0, as [Running the block checks on your block](docs/block-checks.md)
+explains. It also refuses any release of `github.com/mitstack-eu/operator-kit`,
+the module block-kit replaces. block-kit leaves the wire contract alone, so a
+block on operator-kit moves to block-kit by switching its `go.mod` and its
+imports once.
 
 The repository is public, so `go get` fetches it through the Go module proxy
 with no credential and no `GOPRIVATE` setting.
@@ -256,8 +264,9 @@ every verb. `Ensure`, `Observe` and `Delete` are each handed the verb's own
 A request carries `"neverActive": true` only when the engine has proved the
 subscription holds no user data yet, and `Desired.NeverActive` carries it to
 your block. The proof has two parts. The subscription never reached active,
-and it was not created from a data handover, such as the restored snapshot a
-stack switch hands its replacement subscription. A block may then replace a
+and it was not created from a data handover, such as the restored snapshot
+that a stack switch, the platform's move of an app from one stack to another,
+hands its replacement subscription. A block may then replace a
 stateful resource, one that can hold data. Anything else reads as `false`,
 including a request without the field, so a block keeps every stateful
 resource guarded unless the engine has proved it empty.
@@ -348,18 +357,10 @@ settle poll. The outputs `Delete` returns land in the unsubscribe response's
 `outputs` once the block settles absent, and a block with nothing to hand
 over returns none.
 
-This is the shape the kit's own `handover` package exists for: a block reads
-`d.Params["dataHandover"] == "snapshot"` to decide whether to snapshot data
-before destroying it, and returns the resulting id under the key
-`handover.OutputKey` ("dataSnapshotId") so it lands in the unsubscribe
-response's `outputs`, alongside `absent:true`, once the resource settles
-absent.
-
 `Delete` must be idempotent. A settle timeout answers `absent:false` with no
 outputs, and the platform's redrive calls `Delete` again, possibly after an
-earlier call already destroyed the resource; a second call must find the
-snapshot (or other handover artifact) it already made, or report the
-resource gone, rather than fail. Its outputs also reach the wire unscrubbed,
+earlier call already destroyed the resource. A second call must then report
+the resource gone rather than fail. Its outputs also reach the wire unscrubbed,
 the same way Observe's do, so they must never carry secret material.
 
 ### Work that outlasts one subscribe
@@ -579,19 +580,12 @@ The `observe` package holds the kit's shared observers, one per type, each
 over a small API interface the operator implements. They include
 `EC2Instance`, `EgressProxy`, `S3Bucket`, `VPC`, `SecurityGroup`, `EBSVolume`,
 `ECRRepository`, `IAMRole`, `Route53Record`, `SSMAssociation`, `EC2Container`,
-`EC2PostgresDatabase`, `HetznerServer`, `HetznerPrimaryIP`, `HetznerFirewall`,
-`HetznerNetwork`, `GitHubRepository`, `GitHubCommit`, and `NodeReported`. A
-host probe never reads a failed probe as absence: `HostCommander` returns a
-nonzero exit as an error, and empty output is unknown.
-
-`EC2PostgresDatabase` probes the Postgres container postgres-db runs for
-each subscription, named by the identity's `instanceId` and `container`, the
-way postgres-db does. Its probe prints `PRESENT=1`, `PRESENT=0` when Docker
-answers without the container, or `PRESENT=unknown` when Docker does not
-answer, and then for a present container `READY=` and `pg_isready`'s exit
-status. The container is present once `READY=0`, absent on `PRESENT=0`, and
-otherwise unknown. It reports `dbName` only when the identity carries
-`database`. `EC2PostgresDatabase` and `NodeReported` report presence and
+`HetznerServer`, `HetznerPrimaryIP`, `HetznerFirewall`, `HetznerNetwork`,
+`GitHubRepository`, `GitHubCommit`, and `NodeReported`. `EC2Container` asks
+the instance's Docker through a `HostCommander`, which returns a script's
+nonzero exit as an error. It reports a container absent only when Docker
+answers that no such container exists, and empty output is unknown.
+`NodeReported` reports presence and
 identity only, so a block that provides such a resource reports the type's
 other required outputs from its own observer.
 
@@ -611,6 +605,18 @@ created it. A report's body lists those objects under
 newest counting report decides. An object it lists is present. An object it
 does not list is absent only when the report carries a `madeAt` after
 `VerbAt` and `subscriptionResourcesComplete: true`. Otherwise it is unknown.
+
+`observe.NodeReportsClient` is the API a block hands `NodeReported`. It reads
+the reports from the platform the request's events callback names, with the
+callback's token, so a block writes no client of its own:
+
+```go
+observe.NodeReported{API: observe.NodeReportsClient{}}
+```
+
+The platform's base URL is the callback URL without its
+`/v1/webhooks/operator-events` path, which `events.PlatformFrom` derives for
+any platform route an operator reads.
 
 `observe.AWSTagged` and `observe.HetznerLabelled` list everything carrying a
 subscription's id, under the AWS tag `mitstack:subscription`
@@ -843,47 +849,6 @@ repeats nothing from the host.
 `SSMHost` takes the target, credential and region as adjacent strings, so a
 caller passes them in that order, and a block that sets no credential passes
 `""`. The target and region are left for `hostexec.Run` to judge.
-
-### Driving a CloudFormation stack
-
-An operator names its CloudFormation stack with `awsnames.StackName`, which
-prefixes `mitstack-` to the id, turns every character outside the ASCII letters
-and digits `[A-Za-z0-9]` into a dash through `awsnames.SanitiseCFNName`, and
-cuts the result to CloudFormation's limit of 128 characters.
-
-The operator drives the stack through `cfnstack.New`. It writes a short adapter
-from its own AWS SDK client to `cfnstack.Client`, which keeps the kit free of
-any dependency outside the standard library. `EnsureStack` creates the stack
-and updates it instead when the create fails with an error whose `ErrorCode()`
-is `AlreadyExistsException`, which the SDK's typed exception satisfies. An
-update with nothing to change succeeds, and so does deleting a stack that does
-not exist.
-
-### Writing an app's hostname record
-
-An AWS host operator points the app's name in the platform's apps zone at the
-box's Elastic IP, and deletes that record when the app unsubscribes. The
-`appsdns` package holds this one record for every such operator. You build an
-`appsdns.Zone` from the zone's name, its hosted zone ID and a client, and the
-operator writes a short adapter from its AWS SDK Route 53 client to
-`appsdns.Client`, as it does for `cfnstack`.
-
-`Zone.Hostname("myapp")` returns `myapp.apps.mitstack.dev` for the zone
-`apps.mitstack.dev`, and an empty string when the zone, its ID or the app name
-is missing. `Zone.Publish` upserts the A record with a TTL of 60 seconds,
-because a replaced box gets a new address and a stale answer would point at
-the old one.
-
-`Zone.Retire` reads the record and deletes it with the TTL and values it
-holds, since Route 53 refuses a delete that does not match them exactly. A
-refused delete returns the client's error, so a teardown fails instead of
-leaving a name that points at a released address. A record that is already
-gone, before the delete or by the time it runs, counts as deleted.
-
-`Zone` is also the observer for the `mitstack.app-hostname` resource. It reads
-only Route 53 and reports the record present with its `appHostname`, `address`
-and `appUrl` outputs, absent when the zone holds no such record, and unknown
-when the zone is not configured or the read fails.
 
 ## Testing
 
@@ -1129,16 +1094,20 @@ test must therefore not run in parallel with a test that logs.
 
 ## Release
 
-Every push to main that changes the tree cuts the next patch tag
-(`scripts/release-operator-kit.sh`, run from CI). A commit message carrying a
+The release script cuts no tag in a repository that holds no kit tag yet, so
+block-kit's first release, v0.4.0, is tagged by hand. The version a module
+starts at is a choice rather than arithmetic.
+
+After the first tag, every push to main that changes the tree cuts the next
+patch tag (`scripts/release-block-kit.sh`, run from CI). A commit message carrying a
 `kit-release: minor` or `kit-release: major` line raises that level instead,
 and each raise zeroes the levels below it. A skipped or failed release run is
 not lost: the next push resolves the base from the newest tag and cuts the
 release the earlier push owed.
 
-A change that breaks the Go API takes `kit-release: major`. Go requires the
-module path to end in the major version from v2 on, so the same change moves
-the module path, now `/v3`, to the next major and every import with it.
+A change that breaks the Go API takes `kit-release: minor`, which opens the
+next v0 line, such as v0.5.0. No commit carries `kit-release: major` before
+the commercial launch, because that raise cuts v1.0.0, which the launch keeps.
 
 ## Recording a delivery on the board
 
@@ -1218,12 +1187,10 @@ new file until you stage the move.
 
 ## Licence
 
-The kit is licensed under the Business Source License 1.1, whose full text is
-in [the LICENSE file](LICENSE). You may read, copy and change the kit, and use
-it in production only to build, run or operate what the mitstack platform
+block-kit is licensed under the Business Source License 1.1, whose full text
+is in [the LICENSE file](LICENSE). You may read, copy and change the kit, and
+use it in production only to build, run or operate what the mitstack platform
 manages. Each release becomes Apache-2.0 four years after it is published.
 
-`v2.5.0` is the first release under this licence. Every `v0`, `v1` and `v2`
-release before it was published under the Apache License, Version 2.0, and
-keeps that licence. A maintenance release cut later from an older line carries
-this licence, so its branch takes this LICENSE file before the tag.
+`v0.4.0` is block-kit's first release under this licence, and every later
+block-kit release carries it too.
