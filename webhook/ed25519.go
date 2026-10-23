@@ -104,27 +104,24 @@ const JWKSRefreshInterval = 5 * time.Minute
 
 // KeyCache holds the Ed25519 keys of one JWKS document, and is safe for concurrent use.
 type KeyCache struct {
-	mu   sync.Mutex
-	keys map[string]ed25519.PublicKey
-	// fetchedAt is the last fetch for any reason, and unknownFetchedAt the last one an unknown kid caused.
-	fetchedAt, unknownFetchedAt time.Time
+	mu                             sync.Mutex
+	keys                           map[string]ed25519.PublicKey
+	lastFetch, lastUnknownKidFetch time.Time
 }
 
 func NewKeyCache() *KeyCache { return &KeyCache{} }
 
-// PublicKey refetches the JWKS once JWKSRefreshInterval has passed since the last fetch, or for a kid it lacks when no unknown kid caused a fetch within the interval, with a default 5s client when client is nil.
-//
-// A failed fetch keeps the last fetch's keys, so a JWKS outage refuses only the kids it would have brought.
+// PublicKey refetches the JWKS once JWKSRefreshInterval has passed since the last fetch, or for a kid it lacks when no unknown kid caused a fetch within the interval, and a failed fetch keeps the last keys, so a JWKS outage refuses only the kids it would have brought.
 func (kc *KeyCache) PublicKey(jwksURL string, client *http.Client, kid string, now time.Time) (ed25519.PublicKey, error) {
 	kc.mu.Lock()
 	defer kc.mu.Unlock()
 	_, known := kc.keys[kid]
-	due := now.Sub(kc.fetchedAt) >= JWKSRefreshInterval
-	if !due && !known && now.Sub(kc.unknownFetchedAt) >= JWKSRefreshInterval {
-		due, kc.unknownFetchedAt = true, now
+	due := now.Sub(kc.lastFetch) >= JWKSRefreshInterval
+	if !due && !known && now.Sub(kc.lastUnknownKidFetch) >= JWKSRefreshInterval {
+		due, kc.lastUnknownKidFetch = true, now
 	}
 	if due {
-		kc.fetchedAt = now
+		kc.lastFetch = now
 		keys, err := fetchJWKS(jwksURL, client)
 		if err != nil && !known {
 			return nil, err
@@ -179,7 +176,6 @@ func PublicKeyFromJWKS(jwksJSON []byte, kid string) (ed25519.PublicKey, error) {
 	return keyFor(keys, kid)
 }
 
-// keysFromJWKS keeps only well-formed Ed25519 (OKP) keys, so a kid naming any other key is not found.
 func keysFromJWKS(jwksJSON []byte) (map[string]ed25519.PublicKey, error) {
 	var doc struct {
 		Keys []struct {

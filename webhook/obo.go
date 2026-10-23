@@ -20,8 +20,7 @@ type OBOClaims struct {
 	OrgID          string `json:"org_id"`
 	AppID          string `json:"app_id"`
 	SubscriptionID string `json:"sub_id"`
-	// Audience is the id of the block the token was minted for.
-	Audience string `json:"aud,omitempty"`
+	Audience       string `json:"aud,omitempty"`
 }
 
 type oboPayload struct {

@@ -63,6 +63,7 @@ type Config struct {
 	// TypeObservers is keyed by resource-type id and serves a validate naming a resource the manifest no longer declares; refused without a mitstack/v1beta manifest.
 	TypeObservers map[string]Observer
 
+	// Manifest's metadata.id is the block every request's OBO token must name.
 	Manifest []byte
 
 	// Types is the type snapshot the manifest names its types from, and a declared resource of a type it marks EndsWithSubscription is counted absent once the unsubscribe's delete succeeds, unobserved.
@@ -97,7 +98,7 @@ type Handler struct {
 	types      contract.TypeSnapshot
 	capability bool
 
-	// audience is the manifest's metadata.id, and empty without a manifest, which only a token naming no block matches, one the engine never mints.
+	// audience is the manifest's metadata.id; without a manifest it is empty, and no token the engine mints matches it.
 	audience  string
 	jwksURL   string
 	publicKey func(kid string) (ed25519.PublicKey, error)
