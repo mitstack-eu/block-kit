@@ -145,7 +145,7 @@ call's `Desired`.
 |---|---|
 | `subscribe`, `upgrade` | Runs one `EnsureResources`, then observes each declared resource in manifest order until it reports `present` |
 | `unsubscribe` | Runs one `Delete`, then observes each declared resource in reverse order until it reports `absent`, and adds the outputs `Delete` returned to the answer |
-| `validate` | Observes each declared resource once, and names the resources an upgrade would replace |
+| `validate` | Observes each declared resource once, and for a block that implements `handler.ReplacementPlanner` names the resources an upgrade would replace |
 
 To settle means this wait for the state a call asked for. The handler
 observes a resource at most `VerbBudget` times, `PollInterval` apart, and a
@@ -176,8 +176,17 @@ call the validate settles, and otherwise the request's `createdAt`.
 
 A block that implements `handler.ReplacementPlanner` names, on a `validate`,
 the resources an upgrade would replace, and the answer carries them under
-`replaces`. The engine replaces a stateful resource only with an explicit
-confirmation, and this list is how it learns that one is needed.
+`replaces`. Its one method returns the manifest names of those resources, and
+a name the manifest does not declare answers 400:
+
+```go
+type ReplacementPlanner interface {
+	PlanReplacements(ctx context.Context, d contract.Desired) ([]string, error)
+}
+```
+
+The engine replaces a stateful resource only with an explicit confirmation,
+and this list is how it learns that one is needed.
 
 A `validate` may name one resource in `resource`, `resourceIdentity` and
 `resourceType`, and the handler observes only that one. When the name is one

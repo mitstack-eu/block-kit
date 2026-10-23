@@ -180,12 +180,12 @@ logs. `kittest.CheckNoSecretLeak` returns the problems as strings.
 
 A block with work that outlasts one call, as [Serving lifecycle
 calls](handler.md#work-that-outlasts-one-call) describes, proves its re-drive,
-the fresh subscribe the engine sends once the long work is done, with `kittest.AssertVerbSemantics`. It takes a `kittest.VerbSeams`, a struct of
+the fresh subscribe the engine sends once the long work is done, with
+`kittest.AssertVerbSemantics`. It takes a `kittest.VerbSeams`, a struct of
 functions your test supplies, each driving one property against your own
 handler: `Subscribe`, `Unsubscribe`, `UnsubscribeWhenAbsent`, `Upgrade`,
-`ValidateWhileConverging` and `ValidateWhenDead` are required, and `Redrive`
-is set only by a block with such work. `Redrive` returns a
-`kittest.RedriveRun`:
+`ValidateWhileConverging` and `ValidateWhenDead` are required, and `Redrive` is
+set only by a block with such work. `Redrive` returns a `kittest.RedriveRun`:
 
 | Field | What the run reports |
 |---|---|

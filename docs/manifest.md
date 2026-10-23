@@ -55,7 +55,7 @@ without it, naming the key's path.
 |---|---|---|
 | `apiVersion` | Yes | Always `mitstack/v1beta`, the one manifest version the kit reads |
 | `type` | Yes | `block` for a service one app uses, or `capability` for one that serves several apps, such as a shared cluster |
-| `metadata.id` | Yes | The block's id, which every OBO token for the block names, as [Block ids](#block-ids) describes |
+| `metadata.id` | Yes | The block's id, which the signed token in every call for the block, the OBO token, names, as [Block ids](#block-ids) describes |
 | `metadata.name` | Yes | The name people see |
 | `metadata.owner` | No | Who maintains the block |
 | `spec.version` | Yes | The block's version, such as `1.2.0` |
