@@ -2,21 +2,23 @@
 
 This module is the contract every mitstack block imports to talk to the
 engine, the part of the platform that drives each block through its
-lifecycle. It covers the webhook trust boundary a block's handler sits
-behind, which checks that every lifecycle call carries the platform's
-signature. It also covers the events a block emits as it works, and
-`verify/kittest`, the conformance harness a block's own tests run against the
-same fixtures the engine is tested against. The `contract` package owns the
-wire contract itself: the envelope and response JSON schemas, the golden
-request and response fixtures both sides are checked against, and the block
-manifest parser. House terms such as block and operator are defined in
-[the workspace glossary](https://github.com/mitstack-eu/mitstack-workspace/blob/main/docs/glossary.md).
+lifecycle. A block is a managed service defined by its `manifest.yaml`, and
+its operator is the Go program in the block's repository that serves the
+engine's lifecycle calls. The kit covers the webhook trust boundary an
+operator sits behind, which checks that every lifecycle call carries the
+platform's signature. It also holds `verify/kittest`, the conformance harness
+a block's own tests run against the same fixtures the engine is tested
+against. The `contract` package owns the wire contract itself: the envelope
+and response JSON schemas, the golden request and response fixtures both
+sides are checked against, and the block manifest parser.
 
 ## Which packages a block needs
 
 The kit's folders follow mitstack's data model, in which a capability, such
-as `aws` or `github`, holds the resource types that live in it. A package's
-folder tells you whether your block needs it:
+as `aws` or `github`, holds the resource types that live in it. A manifest
+whose `type` is `capability` is a different thing, which
+[Serving a capability and issuing an app's credential](#serving-a-capability-and-issuing-an-apps-credential)
+describes. A package's folder tells you whether your block needs it:
 
 | Folder | What it holds | Who imports it |
 |---|---|---|
@@ -28,8 +30,7 @@ folder tells you whether your block needs it:
 Each slug under `capabilities/` is a capability the platform's catalogue
 holds, in the `capability` field of its `blocks/types/*.yaml` files. Learn
 the core before you write a block, and open a capability's folder only when
-your block's resources live in that capability. Each package's `go doc` opens
-by naming its group.
+your block's resources live in that capability.
 
 ### The core every block needs
 

@@ -25,13 +25,26 @@ reason.
 
 | Suite | What it checks |
 |---|---|
-| `trust-plumbing` | `manifest.yaml` is present and declares `contract: kit/v1`, your `go.mod` requires block-kit at or above the floor and no release of operator-kit, and a non-test file imports the kit's `handler` package. No file redeclares a function the kit owns, such as the webhook's `verifyEd25519Sig` or the event emitter `EmitProgress`, because a local copy drifts from the contract. A block that reads the GitHub API resolves the API base a request supplies through an allowlist: the kit's `ghapi.Base` or `ghapi.BaseFromEnv`, or a `urlguard.go` of its own with `allowedGitHubHosts()`. It never builds a URL by appending to a raw `apiBase` variable, the name the check looks for |
+| `trust-plumbing` | `manifest.yaml` is present and declares `contract: kit/v1`, your `go.mod` requires block-kit at or above the floor and no release of operator-kit, and a non-test file imports the kit's `handler` package. No file redeclares a function the kit owns, such as the webhook's `verifyEd25519Sig` or the event emitter `EmitProgress`, because a local copy drifts from the contract. A block that calls the GitHub API also meets the rule below the table |
 | `contract` | The block passes once a non-test file imports the kit's `handler` package, which serves the webhook contract whose goldens the kit owns |
 | `secret-safety` | `TestNoSecretLeak` exists and passes, plus its `/logs` variant when the block serves `/logs`. A test file that declares one must not build `kittest.FakeResource`, because a test over the kit's fake judges the fake rather than your block |
 | `teardown` | `TestUnsubscribeDeletes*` exists and passes, and its file builds no `kittest.FakeResource`. The kit's handler observes absence after every delete, so the block need not ask its provider again itself |
 | `resources` | Each resource the manifest declares is driven through the kit and proven absent afterwards |
 | `deliverable` | The block has its own `Dockerfile`, and it copies nothing from the retired `examples/operator-kit` path |
 | `manifest` | The manifest parses strictly as `mitstack/v1beta`, its `metadata.id` is a block id, and a changed `spec.version` carries a release class and note |
+
+The `trust-plumbing` suite holds a block that calls the GitHub API to one
+more rule, so that a forged request cannot send the block's GitHub token to
+another host. The suite counts a block as calling the API when a non-test
+file reads `Secrets["github"]` for anything but its `owner`, reads
+`Instances["github"]`, or names `api.github.com`. Such a block passes only
+when both of these hold:
+
+- It resolves the API base a request supplies through the kit's `ghapi.Base`
+  or `ghapi.BaseFromEnv`, or through a `urlguard.go` of its own whose
+  `allowedGitHubHosts()` lists the hosts it trusts.
+- It never builds a URL by appending to a raw `apiBase` variable, the name
+  the suite looks for.
 
 Every suite that reads the lifecycle contract requires `contract: kit/v1`,
 the one contract this kit judges, under which the kit's `handler` package
