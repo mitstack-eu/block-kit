@@ -28,13 +28,15 @@ to answer those calls, a small HTTP server shipped as a container image.
 ## How one lifecycle call reaches your code
 
 Your block's code implements `handler.Resource`, an interface of three
-methods: `Ensure` creates what is missing, `Delete` deletes, and `Observe`
-reports. Each resource also has an observer, a small type whose
-`ObserveResource` method asks the provider whether that one resource stands.
-The kit's `observe` package has observers for common resource types, and you
-write one for any other type. `handler.New` takes your code and the observers
-and returns the HTTP handler your operator serves on the address your manifest
-names as its endpoint:
+methods: `Ensure` creates what is missing, `Delete` deletes and returns any
+outputs it hands over, and `Observe` reports. Each resource also has an
+observer, whose one method, `ObserveResource(ctx, ref)`, gets the resource's
+name, type and identity in a `contract.ResourceRef` and asks the provider
+about it. It returns a `contract.Observation`: `contract.Present`,
+`contract.Absent` or `contract.Unknown`, and the resource's outputs. The kit's
+`observe` package has observers for common resource types, and you write one
+for any other type. `handler.New` takes your code and the observers and
+returns the HTTP handler your operator serves at your manifest's endpoint:
 
 ```mermaid
 sequenceDiagram
@@ -83,10 +85,9 @@ only because the interface requires it.
 ## What a block imports
 
 Every block imports the four packages at the root of this repository, and its
-tests import `verify/kittest`. blockverify, the check every block must pass
-before its image ships, needs both. Everything else is optional: `helpers`
-holds helpers tied to no provider and `capabilities` one folder per provider,
-and you add a package when your block needs what it does:
+tests import `verify/kittest`, since blockverify, the check every block must
+pass before its image ships, needs both. The rest is optional, in `helpers`
+when tied to no provider and in `capabilities` per provider:
 
 | Package | Who imports it | What it gives you |
 |---|---|---|
@@ -96,7 +97,7 @@ and you add a package when your block needs what it does:
 | `webhook` | Every block | The signature checks the handler runs, and `webhook.LogBuffer`, which holds the recent log lines mitstack reads from your operator |
 | `verify/kittest` | Every block's tests | The checks blockverify requires your tests to run |
 | `helpers/safe` | A block that logs values from a call, or calls an API at an address a call supplies | Secret scrubbing for logs, and an allowlist of the hosts the operator trusts, so a call cannot redirect it |
-| `helpers/events` | A block that reports its own progress during long work | Progress events beyond the ones the handler sends |
+| `helpers/events` | A block that reports its own progress during long work | Events of its own to mitstack, beside the one the handler sends as each call ends |
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
@@ -109,9 +110,9 @@ and you add a package when your block needs what it does:
 [`examples/hetzner-firewall`](examples/hetzner-firewall) is a complete block
 that keeps one empty Hetzner Cloud firewall for each subscription, the
 simplest resource a provider offers for free. Its manifest declares the one
-resource, and `verbConnections` names the provider credentials, here the
-Hetzner ones, that a `validate` and an `unsubscribe` need, as [Writing the
-manifest](docs/manifest.md) explains. The manifest, from
+resource and, under `verbConnections`, the Hetzner credentials a `validate`
+and an `unsubscribe` need, which [Writing the manifest](docs/manifest.md)
+explains. The manifest, from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
 ```yaml
@@ -194,8 +195,8 @@ func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) 
 `EnsureResources` reports the firewall, and `newConfig` files its observer,
 under the name the manifest gives it, which for an entry written as a bare type
 is the type itself. The identity it reports, `firewallId`, is what
-`observe.HetznerFirewall` asks Hetzner about. The other files complete the
-block:
+`observe.HetznerFirewall` asks Hetzner about, and `Delete` hands over no
+outputs. The other files complete the block:
 
 - `main.go` calls `handler.New` with this config and the address of mitstack's
   public keys, and serves the handler on port 8080.
@@ -225,16 +226,15 @@ with `VERDICT: PASS — 7 suite(s)`.
 
 Besides the packages above, `verify` holds `blockverify` and the tools that
 sign where a published block's image came from, and `examples` the example
-block, which CI tests and checks on every change. `cmd` holds `commentcheck`,
-which judges a change's comments, and `manifest-schema`, which prints the
-manifest's JSON Schema. `scripts` holds the release script, `board` mitstack's
-work-tracker tooling, a Go module no block uses, and `docs` these pages:
+block, which CI tests and checks on every change. `cmd` and `scripts` hold the
+kit's own commands and release script, `board` mitstack's work-tracker
+tooling, a Go module no block uses, and `docs` these pages:
 
 | Page | What it covers |
 |---|---|
 | [Writing the manifest](docs/manifest.md) | Every manifest key, block ids, resource types and the type snapshot |
 | [Serving lifecycle calls](docs/handler.md) | `handler.New`, the trust checks, each call, errors, retries and the answer |
-| [Observing resources](docs/observe.md) | The kit's observers, and the listers that find what a subscription holds |
+| [Observing resources](docs/observe.md) | What an observer returns, the kit's observers, and the listers that find what a subscription holds |
 | [Testing a block](docs/testing.md) | `kittest.AssertBlock` and the secret-leak and teardown checks |
 | [Running the block checks](docs/block-checks.md) | What blockverify judges and where CI runs it |
 | [The optional helpers](docs/helpers.md) | `helpers` and the AWS and GitHub capability packages |
