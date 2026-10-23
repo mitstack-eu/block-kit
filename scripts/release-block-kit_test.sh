@@ -173,58 +173,27 @@ assert_tag "minor raise cuts v0.6.0" "$W" "v0.6.0"
 assert_no_tag "minor raise does not cut a patch" "$W" "v0.5.1"
 assert_tag "minor raise reaches the remote" "$R" "v0.6.0"
 
-# 3b. The level is matched case-insensitively.
-setup_repo
-tag_at "v0.5.0"
-commit_change "feat: add a capability" -m "kit-release: MINOR"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "uppercase minor exits 0" 0 "$RC"
-assert_tag "uppercase minor still cuts v0.6.0" "$W" "v0.6.0"
+# 3b. Key and level are each matched case-insensitively, in any mixture of cases.
+for trailer in "kit-release: MINOR" "KIT-RELEASE: minor" "Kit-Release: MINOR"; do
+  setup_repo
+  tag_at "v0.5.0"
+  commit_change "feat: add a capability" -m "$trailer"
+  run --repo "$W" --base "$SEED" --head "$(head_sha)"
+  check "'$trailer' exits 0" 0 "$RC"
+  assert_tag "'$trailer' still cuts v0.6.0" "$W" "v0.6.0"
+  assert_no_tag "'$trailer' does not fall back to a patch" "$W" "v0.5.1"
+done
 
-# 3c. The key itself is matched case-insensitively too, not only the level.
-setup_repo
-tag_at "v0.5.0"
-commit_change "feat: add a capability" -m "KIT-RELEASE: minor"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "uppercase key exits 0" 0 "$RC"
-assert_tag "an uppercase key still cuts v0.6.0" "$W" "v0.6.0"
-assert_no_tag "an uppercase key does not fall back to a patch" "$W" "v0.5.1"
-
-# 3d. Key and level may each carry their own mixture of cases.
-setup_repo
-tag_at "v0.5.0"
-commit_change "feat: add a capability" -m "Kit-Release: MINOR"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "mixed-case key and level exit 0" 0 "$RC"
-assert_tag "a mixed-case trailer still cuts v0.6.0" "$W" "v0.6.0"
-assert_no_tag "a mixed-case trailer does not fall back to a patch" "$W" "v0.5.1"
-
-# 3e. Prose after the level means the trailer is discussed rather than declared, so the raise is the patch.
-setup_repo
-tag_at "v0.5.0"
-commit_change "feat: add a capability" -m "kit-release: minor is what we should have used here"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "trailing prose after the level exits 0" 0 "$RC"
-assert_tag "trailing prose leaves the ordinary patch raise" "$W" "v0.5.1"
-assert_no_tag "trailing prose raises no minor" "$W" "v0.6.0"
-
-# 3f. Only leading whitespace may precede the key, so a key mentioned mid-sentence declares nothing.
-setup_repo
-tag_at "v0.5.0"
-commit_change "feat: add a capability" -m "see kit-release: minor for the convention"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "an embedded key exits 0" 0 "$RC"
-assert_tag "an embedded key leaves the ordinary patch raise" "$W" "v0.5.1"
-assert_no_tag "an embedded key raises no minor" "$W" "v0.6.0"
-
-# 3g. Leading prose alone is enough to refuse, with the level ending the line and nothing trailing it.
-setup_repo
-tag_at "v0.5.0"
-commit_change "feat: add a capability" -m "see kit-release: minor"
-run --repo "$W" --base "$SEED" --head "$(head_sha)"
-check "leading prose alone exits 0" 0 "$RC"
-assert_tag "leading prose alone leaves the ordinary patch raise" "$W" "v0.5.1"
-assert_no_tag "leading prose alone raises no minor" "$W" "v0.6.0"
+# 3c. Prose after the level, a key mentioned mid-sentence, or leading prose alone declares nothing, so the raise is the patch.
+for trailer in "kit-release: minor is what we should have used here" "see kit-release: minor for the convention" "see kit-release: minor"; do
+  setup_repo
+  tag_at "v0.5.0"
+  commit_change "feat: add a capability" -m "$trailer"
+  run --repo "$W" --base "$SEED" --head "$(head_sha)"
+  check "'$trailer' exits 0" 0 "$RC"
+  assert_tag "'$trailer' leaves the ordinary patch raise" "$W" "v0.5.1"
+  assert_no_tag "'$trailer' raises no minor" "$W" "v0.6.0"
+done
 
 # 4. `kit-release: major` in a range commit raises the major level and zeroes the levels below it.
 setup_repo
@@ -433,13 +402,25 @@ run --repo "$W" --base "$SEED" --head "$(head_sha)"
 check "a colliding tag fails the run" 1 "$RC"
 assert_tag_at "the published tag is not clobbered" "$R" "v0.5.1" "$UNRELATED"
 
-# 20. A change under any path in the repository counts as a kit change.
+# 20. A change under any path outside board/ counts as a kit change.
 setup_repo
 tag_at "v0.5.0"
 commit_nested_change "chore: touch a deeply nested unrelated-looking path"
 run --repo "$W" --base "$SEED" --head "$(head_sha)"
 check "a deeply nested path change exits 0" 0 "$RC"
 assert_tag "a change anywhere in the repo cuts v0.5.1" "$W" "v0.5.1"
+
+# 20b. A change only under board/, the separate module of mitstack's board tooling, is no kit change.
+setup_repo
+tag_at "v0.5.0"
+mkdir -p "$W/board/cmd/pr-keys"
+printf 'package main // rev %s\n' "$RANDOM" >"$W/board/cmd/pr-keys/run.go"
+git -C "$W" add -A
+git -C "$W" commit -q -m "fix: a board tooling change"
+run --repo "$W" --base "$SEED" --head "$(head_sha)"
+check "a board-only change exits 0" 0 "$RC"
+assert_out_contains "a board-only change reads as unchanged" "unchanged"
+assert_kit_tag_count "a board-only change cuts no kit tag" "$W" 1
 
 # 21. The steady state is quiet: with no --base and nothing changed since the newest tag, the run cuts nothing.
 setup_repo
