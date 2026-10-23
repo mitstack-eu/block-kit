@@ -36,6 +36,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		}
 		r.d.VerbAt = r.h.now()
 		r.setRefs(reported)
+		r.ensured(reported)
 		return r.ensureEach(ctx)
 	case "unsubscribe":
 		outputs, err := r.h.resource.Delete(ctx, r.d)
@@ -113,6 +114,13 @@ func (r *declaredRun) setRefs(reported map[string]contract.CreatedResource) {
 	for _, nr := range r.resources {
 		c := reported[nr.name]
 		r.refs[nr.name] = r.refFor(nr, c.Type, c.Identity)
+	}
+}
+
+// ensured gives each reported resource an ensure outcome carrying its type and identity, so the engine records them even when the answer stops pending before observing it.
+func (r *declaredRun) ensured(reported map[string]contract.CreatedResource) {
+	for name, c := range reported {
+		r.outcomes[name] = contract.ResourceOutcome{Ensure: &contract.CallOutcome{Type: c.Type, Identity: c.Identity}}
 	}
 }
 
