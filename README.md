@@ -30,21 +30,20 @@ to answer those calls, a small HTTP server shipped as a container image.
 
 ## How one lifecycle call reaches your code
 
-Your block's code implements `handler.Resource`, an interface of three
-methods. `Ensure` creates what is missing. `Delete` deletes, and returns any
-outputs the answer should still carry once the resources are gone, usually
-none. `Observe` only completes the interface, since observers answer in its
-place, so a one-line stub will do. Each resource has an
-observer, whose one method, `ObserveResource(ctx, ref)`, gets the resource's
-name, type and identity and the call's `contract.Desired` in a
-`contract.ResourceRef`, and asks the provider about it. It returns a `contract.Observation`:
-`contract.Present`, `contract.Absent` or `contract.Unknown`, and the
-resource's outputs. The kit's `observe` package has observers for common
-resource types, and you write one for any other type. `handler.New` takes a
-`handler.Config` holding your code, the observers, your manifest and the
-address of mitstack's public keys. It returns the HTTP handler your operator
-serves, which answers calls on `POST /hook`, the path your manifest's endpoint
-ends in:
+Your block's code implements `handler.Resource`, an interface of three methods.
+`Ensure` creates what is missing. `Delete` deletes, and returns any outputs the
+answer should still carry once the resources are gone, usually none. `Observe`
+only completes the interface, since observers answer in its place, so a
+one-line stub will do. Each resource has an observer, whose one method,
+`ObserveResource(ctx, ref)`, gets the resource's name, type and identity and
+the call's `contract.Desired` in a `contract.ResourceRef`, and asks the
+provider about it. It returns a `contract.Observation`: `contract.Present`,
+`contract.Absent` or `contract.Unknown`, and the resource's outputs. The kit's
+`observe` package has observers for common resource types, and you write one
+for any other type. `handler.New` takes a `handler.Config` holding your code,
+the observers, your manifest and the address of mitstack's public keys. It
+returns the HTTP handler your operator serves, which answers calls on
+`POST /hook`, the path your manifest's endpoint ends in:
 
 ```mermaid
 sequenceDiagram
@@ -86,11 +85,12 @@ sequenceDiagram
 
 ## What a block imports
 
-A block must import the four packages at the root of this repository, and
-its tests must import `verify/kittest`: your code is written against their
-types, and blockverify, the check every block must pass before its image
-ships, runs your tests' kittest checks. Everything else is optional, in
-`helpers` when tied to no provider and in `capabilities` per provider:
+A block must import the four packages at the root of this repository,
+`contract`, `handler`, `observe` and `webhook`, and its tests must import
+`verify/kittest`: your code is written against their types, and blockverify,
+the check every block must pass before its image ships, runs your tests'
+kittest checks. Everything else is optional, in `helpers` when tied to no
+provider and in `capabilities` per provider:
 
 | Package | Who imports it | What it gives you |
 |---|---|---|
@@ -111,15 +111,14 @@ ships, runs your tests' kittest checks. Everything else is optional, in
 ## A minimal block to copy
 
 [`examples/hetzner-firewall`](examples/hetzner-firewall) is a complete block
-that keeps one empty Hetzner Cloud firewall for each subscription, the
-simplest resource a provider offers for free. Every call carries the
-credentials of each connection the block uses (a connection is an account the
-subscriber connected at a provider, such as a Hetzner Cloud project), filed
-under the connection's name, here `hetzner`. The
-manifest's `verbConnections` (a verb is a lifecycle call) names the
-connections a `validate` and an `unsubscribe` need, so the platform can leave
-the others out of those calls. The example names its Hetzner connection for
-both, since the observer and `Delete` use it. [Writing the
+that keeps one empty Hetzner Cloud firewall for each subscription, the simplest
+resource a provider offers for free. Every call carries the credentials of each
+connection the block uses (a connection is an account the subscriber connected
+at a provider, such as a Hetzner Cloud project), filed under the connection's
+name, here `hetzner`. The manifest's `verbConnections` (a verb is a lifecycle
+call) names the connections a `validate` and an `unsubscribe` need, so the
+platform can leave the others out of those calls. The example names its Hetzner
+connection for both, since the observer and `Delete` use it. [Writing the
 manifest](docs/manifest.md) explains every key. The manifest, from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
@@ -199,8 +198,9 @@ func (b block) Observe(context.Context, contract.Desired) (contract.Observation,
 - `hetzner.go` makes the Hetzner Cloud calls and labels each firewall with the
   subscription's id.
 - `type-snapshot.json` is the `hetzner.firewall` entry of mitstack's type
-  catalogue, its list of every resource type and its outputs, and [Writing the
-  manifest](docs/manifest.md) says where to read yours.
+  catalogue, its list of every resource type and its outputs. The handler and
+  `kittest.AssertBlock` read it, and you copy your own types' entries from the
+  catalogue, as [Writing the manifest](docs/manifest.md) explains.
 - `block_test.go` runs blockverify's three required tests against a fake
   Hetzner API: `TestDeclaredResources`, which calls `kittest.AssertBlock`, and
   tests named `TestUnsubscribeDeletes...` and `TestNoSecretLeak...`.
