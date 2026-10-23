@@ -288,11 +288,24 @@ A block implements `handler.Resource` — `Ensure`, `Observe`, `Delete` — and
 poll of `Observe` until the resource actually serves) and the
 idempotency cache described below.
 
-A request that carries no OBO token is refused with 401 on every verb —
-subscribe, upgrade, validate, unsubscribe — before the Resource is ever
-consulted. The token is the platform's own signed assertion of the
-consuming org, app and subscription, and nothing in `Config` or the
-manifest turns the check off.
+Every verb answers 401, before the Resource is consulted, unless the
+request's OBO token names exactly what the request does. The OBO token is
+the platform's own signed assertion of the block, org, app and subscription
+a call is for. Its audience must be the `metadata.id` of the manifest the
+Handler serves. Its org, app and subscription must be the request's
+`orgId`, `appId` and `subscriptionId`. A request signed for one block and
+replayed to another is therefore refused, and so is a token naming another
+subscription. An operator serving several manifests builds one Handler for
+each, so each route checks its requests against its own block. Nothing in
+`Config` turns the check off. A Handler built without a manifest serves no
+platform call, because every token the platform mints names a block.
+
+The Handler fetches the platform's signing keys from `Config.JWKSURL` and
+fetches them again once `webhook.JWKSRefreshInterval`, five minutes, has
+passed. A key the platform removes from its JWKS stops verifying at that
+refresh. A key id the Handler does not hold causes at most one extra fetch
+in each interval, so a caller without a valid signature cannot make the
+operator fetch at will.
 
 An error the Resource returns is answered by its type. A
 `*handler.Refused` answers 400 with a `refused:<class>` status detail,
@@ -1044,8 +1057,10 @@ operator's verb answers it with an error, so that the verb's error path runs
 and its error text is checked too.
 
 The harness signs each request and adds a fresh `nonce`, `createdAt`, an
-`idempotencyKey` when the body has none, and an OBO token for the body's
-`orgId` and `subscriptionId`. It also reports a fixture whose passing would
+`idempotencyKey` when the body has none, and an OBO token minted for the
+body's `blockId`, `orgId`, `appId` and `subscriptionId`, as the platform
+mints one. A body's `blockId` is therefore the `metadata.id` of the
+manifest the operator's handler serves. It also reports a fixture whose passing would
 prove nothing. A seeded secret that is empty or in no request body is a
 problem. So is a fixture with no request marked `Fails`, and a `Fails`
 request that answers below 400. A body the kit's envelope decoder refuses is

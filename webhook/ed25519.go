@@ -99,51 +99,52 @@ func VerifyTimestampSkew(ts string, now time.Time) error {
 	return nil
 }
 
-// KeyCache memoises Ed25519 public keys fetched from a JWKS endpoint by kid, and is safe for concurrent use.
+// JWKSRefreshInterval bounds how long a key removed from the JWKS still verifies, and how often a caller can make a KeyCache fetch.
+const JWKSRefreshInterval = 5 * time.Minute
+
+// KeyCache holds the Ed25519 keys of one JWKS document, and is safe for concurrent use.
 type KeyCache struct {
-	mu sync.Mutex
-	// Points at the caller's map variable for the same reason as Replay.nonces.
-	keys *map[string]ed25519.PublicKey
+	mu   sync.Mutex
+	keys map[string]ed25519.PublicKey
+	// fetchedAt is the last fetch for any reason, and unknownFetchedAt the last one an unknown kid caused.
+	fetchedAt, unknownFetchedAt time.Time
 }
 
-// NewKeyCache returns an empty key cache owning its own map.
-func NewKeyCache() *KeyCache {
-	m := map[string]ed25519.PublicKey{}
-	return &KeyCache{keys: &m}
+func NewKeyCache() *KeyCache { return &KeyCache{} }
+
+// PublicKey refetches the JWKS once JWKSRefreshInterval has passed since the last fetch, or for a kid it lacks when no unknown kid caused a fetch within the interval, with a default 5s client when client is nil.
+//
+// A failed fetch keeps the last fetch's keys, so a JWKS outage refuses only the kids it would have brought.
+func (kc *KeyCache) PublicKey(jwksURL string, client *http.Client, kid string, now time.Time) (ed25519.PublicKey, error) {
+	kc.mu.Lock()
+	defer kc.mu.Unlock()
+	_, known := kc.keys[kid]
+	due := now.Sub(kc.fetchedAt) >= JWKSRefreshInterval
+	if !due && !known && now.Sub(kc.unknownFetchedAt) >= JWKSRefreshInterval {
+		due, kc.unknownFetchedAt = true, now
+	}
+	if due {
+		kc.fetchedAt = now
+		keys, err := fetchJWKS(jwksURL, client)
+		if err != nil && !known {
+			return nil, err
+		}
+		if err == nil {
+			kc.keys = keys
+		}
+	}
+	return keyFor(kc.keys, kid)
 }
 
-// NewKeyCacheOver returns a key cache backed by the caller's map variable.
-func NewKeyCacheOver(keys *map[string]ed25519.PublicKey) *KeyCache { return &KeyCache{keys: keys} }
-
-// PublicKey returns the Ed25519 public key for kid, fetching it from jwksURL once, with a default 5s client when client is nil.
-func (kc *KeyCache) PublicKey(jwksURL string, client *http.Client, kid string) (ed25519.PublicKey, error) {
-	kc.mu.Lock()
-	if kc.keys == nil {
-		m := map[string]ed25519.PublicKey{}
-		kc.keys = &m
+func keyFor(keys map[string]ed25519.PublicKey, kid string) (ed25519.PublicKey, error) {
+	pub, ok := keys[kid]
+	if !ok {
+		return nil, errors.New("kid not found in jwks")
 	}
-	if *kc.keys == nil {
-		*kc.keys = map[string]ed25519.PublicKey{}
-	}
-	pub, ok := (*kc.keys)[kid]
-	kc.mu.Unlock()
-	if ok {
-		return pub, nil
-	}
-	pub, err := fetchJWKSKey(jwksURL, client, kid)
-	if err != nil {
-		return nil, err
-	}
-	kc.mu.Lock()
-	if *kc.keys == nil {
-		*kc.keys = map[string]ed25519.PublicKey{}
-	}
-	(*kc.keys)[kid] = pub
-	kc.mu.Unlock()
 	return pub, nil
 }
 
-func fetchJWKSKey(jwksURL string, client *http.Client, kid string) (ed25519.PublicKey, error) {
+func fetchJWKS(jwksURL string, client *http.Client) (map[string]ed25519.PublicKey, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
@@ -156,7 +157,7 @@ func fetchJWKSKey(jwksURL string, client *http.Client, kid string) (ed25519.Publ
 	if err != nil {
 		return nil, err
 	}
-	return PublicKeyFromJWKS(raw, kid)
+	return keysFromJWKS(raw)
 }
 
 // VerifyEd25519Sig strips the "ed25519=" prefix, base64-decodes, and verifies.
@@ -171,6 +172,15 @@ func VerifyEd25519Sig(pub ed25519.PublicKey, body []byte, sigHeader string) bool
 
 // PublicKeyFromJWKS extracts the Ed25519 (OKP) key for kid from a JWKS document.
 func PublicKeyFromJWKS(jwksJSON []byte, kid string) (ed25519.PublicKey, error) {
+	keys, err := keysFromJWKS(jwksJSON)
+	if err != nil {
+		return nil, err
+	}
+	return keyFor(keys, kid)
+}
+
+// keysFromJWKS keeps only well-formed Ed25519 (OKP) keys, so a kid naming any other key is not found.
+func keysFromJWKS(jwksJSON []byte) (map[string]ed25519.PublicKey, error) {
 	var doc struct {
 		Keys []struct {
 			Kty string `json:"kty"`
@@ -182,21 +192,13 @@ func PublicKeyFromJWKS(jwksJSON []byte, kid string) (ed25519.PublicKey, error) {
 	if err := json.Unmarshal(jwksJSON, &doc); err != nil {
 		return nil, err
 	}
+	keys := make(map[string]ed25519.PublicKey, len(doc.Keys))
 	for _, k := range doc.Keys {
-		if k.Kid != kid {
+		raw, err := base64.RawURLEncoding.DecodeString(k.X)
+		if k.Kty != "OKP" || k.Crv != "Ed25519" || err != nil || len(raw) != ed25519.PublicKeySize {
 			continue
 		}
-		if k.Kty != "OKP" || k.Crv != "Ed25519" {
-			return nil, errors.New("unexpected key type for kid")
-		}
-		raw, err := base64.RawURLEncoding.DecodeString(k.X)
-		if err != nil {
-			return nil, err
-		}
-		if len(raw) != ed25519.PublicKeySize {
-			return nil, errors.New("invalid ed25519 public key length")
-		}
-		return ed25519.PublicKey(raw), nil
+		keys[k.Kid] = ed25519.PublicKey(raw)
 	}
-	return nil, errors.New("kid not found in jwks")
+	return keys, nil
 }
