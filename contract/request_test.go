@@ -230,6 +230,11 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 		check  func(t *testing.T, req contract.Request, d contract.Desired)
 	}{
 		{"an unmodified golden decodes", func(map[string]any) {}, func(t *testing.T, req contract.Request, d contract.Desired) {}},
+		{"a property the contract does not declare changes nothing", func(m map[string]any) {
+			m["undeclared"] = map[string]any{"id": "b1", "branch": "main"}
+		}, func(t *testing.T, req contract.Request, d contract.Desired) {
+			wantField(t, "DecodeRequest", req, decodeGolden(t, "subscribe"))
+		}},
 		{"a named resource is decoded", func(m map[string]any) { m["operation"] = "validate"; m["resource"] = "firewall" },
 			func(t *testing.T, req contract.Request, d contract.Desired) {
 				wantField(t, "Resource", req.Resource, "firewall")
