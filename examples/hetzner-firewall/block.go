@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 
 	"github.com/mitstack-eu/block-kit/contract"
@@ -12,12 +11,6 @@ import (
 )
 
 const firewallResource = "hetzner.firewall"
-
-//go:embed manifest.yaml
-var manifest []byte
-
-//go:embed type-snapshot.json
-var typeSnapshot []byte
 
 // block creates and deletes the subscription's firewall, and observe.HetznerFirewall reports whether it stands.
 type block struct{ cloud *hetzner }

@@ -129,6 +129,16 @@ no image ships without a pass.
 
 When the platform creates a block's repository from its templates, which it
 calls scaffolding, the repository also carries
-`.github/workflows/block-verify.yml`. That workflow runs blockverify on each
-push to `main` and submits the report to the platform, which signs it as the
-block's attestation.
+`.github/workflows/block-verify.yml` and an org API token as the repository
+secret `MITSTACK_API_TOKEN`. On each push to `main` that workflow does three
+things with the token:
+
+1. It fetches the platform's copy of the manifest from
+   `GET https://api.mitstack.dev/v1/blocks/{id}/manifest` and writes it over
+   `manifest.yaml`.
+2. It runs `blockverify --standalone --json .` into `report.json`.
+3. It posts the report to `POST https://api.mitstack.dev/v1/blocks/{id}/attestations`,
+   and the platform signs a passing report as the block's attestation.
+
+A block whose repository you created yourself runs the same three commands in
+a workflow of its own, with an org API token in the same secret.

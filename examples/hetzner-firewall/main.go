@@ -1,7 +1,7 @@
-// Command hetzner-firewall is an example block operator that keeps one empty Hetzner Cloud firewall for each subscription.
 package main
 
 import (
+	_ "embed"
 	"io"
 	"log"
 	"net/http"
@@ -16,6 +16,12 @@ const (
 	listenAddr        = ":8080"
 	readHeaderTimeout = 10 * time.Second
 )
+
+//go:embed manifest.yaml
+var manifest []byte
+
+//go:embed type-snapshot.json
+var typeSnapshot []byte
 
 func main() {
 	logs := webhook.NewLogBuffer(0)

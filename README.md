@@ -4,7 +4,7 @@ block-kit is the Go module you write a mitstack block's operator with. This
 page is for a developer building a first block. It explains what a block and
 its operator are, follows one lifecycle call into your code, names the
 packages every block imports and the optional ones, and ends with a block to
-copy. Its commands name v0.4.0, the kit's first release.
+copy. Its commands name v0.4.0, the first release under the name block-kit.
 
 ## What a block and its operator are
 
@@ -13,7 +13,8 @@ service, described by the `manifest.yaml` file in the block's repository. The
 manifest names the block, its version and the resources it creates. A resource
 is one object at a provider, such as a firewall in a Hetzner Cloud project.
 Each resource has a resource type (the exact sort of object it is, written
-`<capability>.<name>` as in `hetzner.firewall`).
+`<capability>.<name>`, where the capability names the provider, as in
+`hetzner.firewall`).
 
 An app uses a block through a subscription. The engine, the part of mitstack
 that drives every subscription, sends the block four lifecycle calls over
@@ -25,19 +26,19 @@ HTTP server shipped as a container image.
 
 ## How one lifecycle call reaches your code
 
-The engine signs every call with mitstack's private key and posts it to the
-endpoint your manifest names. Inside your operator, the kit's `webhook`
-package checks the call is genuine, and the `handler` package turns it into
-calls on your code:
+Your code implements `handler.Resource`, an interface of three methods,
+`Ensure`, `Observe` and `Delete`, and you give `handler.New` one observer for
+each resource. `handler.New` returns the HTTP handler your operator serves.
+The engine signs every call with mitstack's private key and posts it to your
+manifest's endpoint, the handler's `/hook` route:
 
 ```mermaid
 sequenceDiagram
     participant E as mitstack engine
-    participant H as webhook and handler in your operator
+    participant H as the handler in your operator
     participant B as your block code
     E->>H: POST /hook with a signed subscribe request
-    Note over H: webhook checks the signature, the nonce and the time
-    Note over H: handler decodes the request and checks its OBO token
+    Note over H: webhook checks the signature, then the OBO token is checked
     H->>B: EnsureResources(ctx, desired)
     B-->>H: each created resource and its identity
     loop until present, at most VerbBudget times
@@ -48,62 +49,67 @@ sequenceDiagram
     H--)E: a lifecycle event to the request's events callback
 ```
 
-1. `webhook` fetches mitstack's public keys from the JWKS URL you configure
-   and verifies the Ed25519 signature in the `X-Mitstack-Signature-Ed25519`
-   header. It answers 401, before any of your code runs, to a bad signature,
-   to a request created more than five minutes ago and to a reused nonce.
-2. `handler` decodes the body into a `contract.Request` and checks its OBO
+1. The handler first runs the `webhook` package's checks, which verify the
+   `X-Mitstack-Signature-Ed25519` header with mitstack's keys from the JWKS
+   URL you configure. They answer 401, before your code runs, to a bad
+   signature, a reused nonce or a request over five minutes from your clock.
+2. The handler decodes the body into a `contract.Request` and checks its OBO
    token, a second signed token that must name your manifest's `metadata.id`
-   and the request's org, app and subscription.
-3. On `subscribe` and `upgrade`, `handler` calls your block's `Ensure`, which
-   creates whatever is missing. When your block also has `EnsureResources`,
-   as the example below does, `handler` calls that instead, since it also
-   returns each resource's identity, such as its id at the provider.
-4. `handler` then waits for the call to settle, which means it asks each
-   resource's observer until the provider shows the state the call asked for.
-   An observer is code, yours or the kit's, that asks the provider whether one
-   resource stands.
-5. `handler` answers with what it observed, and sends the engine an event
-   saying whether the call completed, is still in progress or failed.
+   and the request's org, app and subscription. Your code receives the request
+   as a `contract.Desired`: the subscription, its settings, the provider
+   credentials the request carries and what the engine recorded.
+3. On `subscribe` and `upgrade`, the handler calls your `Ensure`, which creates
+   whatever is missing. When your code also has `EnsureResources`, as the
+   example below does, the handler calls that instead, since it also returns
+   each resource's identity, such as its id at the provider.
+4. The handler then waits for the call to settle, which means it asks each
+   resource's observer until the provider shows the state the call asked for,
+   at most `VerbBudget` times, 20 by default. An observer implements
+   `handler.Observer` and answers in place of your `Observe`. Its
+   `ObserveResource(ctx, ref)` reads the resource's name, type and identity
+   from `ref` and answers present, absent, or unknown to be asked again.
+5. The handler answers with each resource's state and its outputs, the values
+   such as an address that the rest of the app may read. An unsettled call
+   answers that it is still pending, and the engine asks again later. The
+   handler also sends the engine an event saying how the call ended.
 
-| Call | What `handler` calls on your code once the checks pass |
+| Call | What the handler calls on your code once the checks pass |
 |---|---|
 | `subscribe`, `upgrade` | `EnsureResources` or `Ensure`, then each resource's observer until it reports present |
 | `unsubscribe` | `Delete`, then each resource's observer until it reports absent |
 | `validate` | Each resource's observer, once |
 
-A call whose resources do not settle within `VerbBudget` observations answers
-that it is still pending, and the engine asks again later.
-
 ## What a block imports
 
-The root of this repository holds the four packages every block imports.
-Everything else is optional, and you add it when your block needs what it
-does:
+Every block imports the four packages at the root of this repository, and its
+tests import `verify/kittest`. blockverify, the check every block must pass
+before its image ships, needs both. Everything else is optional, and you add
+it when your block needs what it does:
 
 | Package | Who imports it | What it gives you |
 |---|---|---|
 | `contract` | Every block | The request and answer types, such as `contract.Desired` and `contract.Observation`, and the manifest parser |
 | `handler` | Every block | `handler.New`, which serves the lifecycle calls over your code |
-| `observe` | Every block | Observers and provider listers for common resource types, such as `observe.HetznerFirewall` |
-| `webhook` | Every block | The signature checks `handler` runs, and the buffer behind the `/logs` route |
-| `verify/kittest` | Every block's tests | The checks your tests must run to pass blockverify, the kit's conformance verdict |
+| `observe` | Every block | Observers for common resource types, such as `observe.HetznerFirewall`, and `observe.Tagged`, the shape in which your tests list what a subscription created |
+| `webhook` | Every block | The signature checks the handler runs, and `webhook.LogBuffer`, the recent log lines the platform reads at your operator's `/logs` route |
+| `verify/kittest` | Every block's tests | The checks blockverify requires your tests to run |
 | `helpers/safe` | A block that logs a request's values or calls a host a request names | Secret scrubbing for logs, and an allowlist that picks the API host |
-| `helpers/events` | A block that reports its own progress or reads a platform route | Lifecycle events beyond the ones `handler` sends, and the platform's address |
+| `helpers/events` | A block that reports its own progress or calls the mitstack API during a call | Progress events of its own, and the mitstack API's address and token, taken from the request |
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
-| `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials from the request's cloud identity |
+| `capabilities/aws/cloudid` | A block whose resources live in the org's AWS account | Short-lived AWS credentials from the role and token the request carries for that account |
 | `capabilities/github/ghapi` | A block that calls the GitHub API | A GitHub REST client whose host the operator decides |
-| `capabilities/github/gitops` | A block that deploys to Kubernetes through Argo CD | Commits the block's files to a GitOps repository and judges the deploy, with fakes in `gitopstest` |
+| `capabilities/github/gitops` | A block that deploys to Kubernetes through Argo CD | Commits the block's files to a GitOps repository and judges the deploy, with test fakes in `capabilities/github/gitops/gitopstest` |
 
 ## A minimal block to copy
 
 [`examples/hetzner-firewall`](examples/hetzner-firewall) is a complete block
 that keeps one empty Hetzner Cloud firewall for each subscription, the
-simplest resource a provider offers for free. Its manifest declares that
-resource and the connection whose secrets its `validate` and `unsubscribe`
-calls need, from
+simplest resource a provider offers for free. Each request carries the org's
+credentials for the providers it connected, such as its Hetzner API token, in
+`Desired.Secrets`, and `verbConnections` names the ones a `validate` and an
+`unsubscribe` need. The manifest, from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
 ```yaml
@@ -133,7 +139,6 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 
 	"github.com/mitstack-eu/block-kit/contract"
@@ -143,12 +148,6 @@ import (
 )
 
 const firewallResource = "hetzner.firewall"
-
-//go:embed manifest.yaml
-var manifest []byte
-
-//go:embed type-snapshot.json
-var typeSnapshot []byte
 
 // block creates and deletes the subscription's firewall, and observe.HetznerFirewall reports whether it stands.
 type block struct{ cloud *hetzner }
@@ -190,40 +189,44 @@ func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) 
 }
 ```
 
-[`main.go`](examples/hetzner-firewall/main.go) passes that config to
-`handler.New` with the JWKS URL from `MITSTACK_JWKS_URL`, which is
-`https://api.mitstack.dev/.well-known/jwks.json` in production, and serves the
-handler on port 8080. `hetzner.go` makes the Hetzner Cloud calls, and
-`type-snapshot.json` describes `hetzner.firewall` as mitstack's type catalogue
-does. `block_test.go` runs the block against a fake Hetzner API in the three
-tests blockverify requires.
+`EnsureResources` reports each resource under its manifest name, which for an
+unnamed entry is its type, with the identity its observer reads, here the
+`firewallId` that `observe.HetznerFirewall` asks Hetzner about. `Delete`
+returns no outputs, since a firewall leaves nothing to hand over.
+[`main.go`](examples/hetzner-firewall/main.go) embeds the manifest and
+`type-snapshot.json`, the entry for `hetzner.firewall` from mitstack's type
+catalogue, which lists every resource type and its outputs and which the
+platform's API serves to your account. It passes the config to
+`handler.New` with the JWKS URL, `https://api.mitstack.dev/.well-known/jwks.json`
+in production, and serves it on port 8080. `hetzner.go` makes the Hetzner
+Cloud calls, and `block_test.go` runs the block against a fake Hetzner API in
+the three tests blockverify requires by name: `TestDeclaredResources` and
+tests whose names start `TestUnsubscribeDeletes` and `TestNoSecretLeak`.
 
 To start your own block, copy the folder into a new repository, delete the
 `replace` line from its `go.mod` and run `go mod tidy`. Change the module
 path, `metadata.id` and `spec.lifecycle.endpoint`, replace the firewall with
-your resource, and run your tests and the block checks from the copy:
+your resource, and run your tests and blockverify from the copy:
 
 ```sh
 go test ./...
 go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
-A passing block ends with `VERDICT: PASS — 7 suite(s)`, and
+`--standalone` judges the one directory on its own. blockverify runs seven
+suites, each a group of checks such as the one that runs your three tests, and
+a passing block ends with `VERDICT: PASS — 7 suite(s)`.
 [Running the block checks](docs/block-checks.md) explains each suite.
 
-## What is in this repository
+## The rest of the repository
 
-The packages in the table above sit at the paths it names. The other folders:
-
-| Folder | What it holds |
-|---|---|
-| `verify` | Besides `kittest`, the `blockverify` command and the provenance tooling the publish workflow runs |
-| `examples` | The example block above, which CI tests and checks on every change |
-| `cmd` | `commentcheck`, which judges a change's comments, and `manifest-schema`, which prints the manifest's JSON Schema |
-| `docs` | The reference pages listed below, and `scripts` holds the kit's release script |
-| `board` | mitstack's own work-tracker tooling, a separate Go module that no block uses |
-
-## Where to read more
+Besides the packages above, `verify` holds the `blockverify` command and the
+tools that sign where a published block's image came from. `examples` holds
+the example block, which CI tests and checks on every change. `cmd` holds
+`commentcheck`, which judges a change's comments, and `manifest-schema`, which
+prints the manifest's JSON Schema. `scripts` holds the kit's release script.
+`board` holds mitstack's own work-tracker tooling, a separate Go module that
+no block uses. `docs` holds the reference pages:
 
 | Page | What it covers |
 |---|---|
@@ -242,6 +245,4 @@ block-kit is licensed under the Business Source License 1.1, whose full text
 is in [the LICENSE file](LICENSE). You may read, copy and change the kit, and
 use it in production only to build, run or operate what the mitstack platform
 manages. Each release becomes Apache-2.0 four years after it is published.
-
-`v0.4.0` is block-kit's first release under this licence, and every later
-block-kit release carries it too.
+`v0.4.0`, block-kit's first release, and every later one carry this licence.
