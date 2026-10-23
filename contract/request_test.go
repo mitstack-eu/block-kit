@@ -80,9 +80,6 @@ func requestFromGolden(m map[string]any) contract.Request {
 		r.CloudIdentity = &contract.CloudIdentity{Provider: strOf(ci, "provider"), RoleARN: strOf(ci, "roleArn"),
 			WebIdentityToken: strOf(ci, "webIdentityToken"), AccountRef: strOf(ci, "accountRef")}
 	}
-	if br, ok := m["buildRequest"].(map[string]any); ok {
-		r.BuildRequest = &contract.BuildRequest{ID: strOf(br, "id"), SourceBranch: strOf(br, "sourceBranch"), SourceSha: strOf(br, "sourceSha")}
-	}
 	return r
 }
 
@@ -182,13 +179,6 @@ func TestDecodeRequest_RefusesAMalformedFieldNamingIt(t *testing.T) {
 	without := func(key string) func(m map[string]any) {
 		return func(m map[string]any) { delete(m["cloudIdentity"].(map[string]any), key) }
 	}
-	buildWithout := func(key string) func(m map[string]any) {
-		return func(m map[string]any) {
-			br := map[string]any{"id": "b1", "sourceBranch": "main", "sourceSha": "abc123"}
-			delete(br, key)
-			m["buildRequest"] = br
-		}
-	}
 	cases := []struct {
 		label  string
 		mutate func(m map[string]any)
@@ -204,9 +194,6 @@ func TestDecodeRequest_RefusesAMalformedFieldNamingIt(t *testing.T) {
 		{"cloudIdentity without provider", without("provider"), []string{"cloudIdentity.provider"}},
 		{"cloudIdentity without roleArn", without("roleArn"), []string{"cloudIdentity.roleArn"}},
 		{"cloudIdentity without webIdentityToken", without("webIdentityToken"), []string{"cloudIdentity.webIdentityToken"}},
-		{"buildRequest without id", buildWithout("id"), []string{"buildRequest.id"}},
-		{"buildRequest without sourceBranch", buildWithout("sourceBranch"), []string{"buildRequest.sourceBranch"}},
-		{"buildRequest without sourceSha", buildWithout("sourceSha"), []string{"buildRequest.sourceSha"}},
 		{"a resource identity with no resource", func(m map[string]any) { m["resourceIdentity"] = identity },
 			[]string{`"resourceIdentity"`, `"resource"`}},
 		{"a resource identity with an empty resource", func(m map[string]any) { m["resource"] = ""; m["resourceIdentity"] = identity },
@@ -243,6 +230,11 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 		check  func(t *testing.T, req contract.Request, d contract.Desired)
 	}{
 		{"an unmodified golden decodes", func(map[string]any) {}, func(t *testing.T, req contract.Request, d contract.Desired) {}},
+		{"a property the contract does not declare, such as buildRequest, changes nothing", func(m map[string]any) {
+			m["buildRequest"] = map[string]any{"id": "b1", "sourceBranch": "main", "sourceSha": "abc123"}
+		}, func(t *testing.T, req contract.Request, d contract.Desired) {
+			wantField(t, "DecodeRequest", req, decodeGolden(t, "subscribe"))
+		}},
 		{"a named resource is decoded", func(m map[string]any) { m["operation"] = "validate"; m["resource"] = "firewall" },
 			func(t *testing.T, req contract.Request, d contract.Desired) {
 				wantField(t, "Resource", req.Resource, "firewall")
@@ -340,10 +332,9 @@ var requestGoldenBehaviours = []struct {
 		wantField(t, "Desired().Identity", d.Identity, identityOf(req))
 		wantField(t, "Desired().Instances", d.Instances, req.Instances)
 	}},
-	{"hands Desired the request's params, secret inputs and build request", func(t *testing.T, req contract.Request) {
+	{"hands Desired the request's params and secret inputs", func(t *testing.T, req contract.Request) {
 		d := req.Desired()
-		wantField(t, "Desired() params, secret inputs, build request", []any{d.Params, d.SecretInputs, d.BuildRequest},
-			[]any{req.Params, req.SecretInputs, req.BuildRequest})
+		wantField(t, "Desired() params, secret inputs", []any{d.Params, d.SecretInputs}, []any{req.Params, req.SecretInputs})
 	}},
 }
 
@@ -537,10 +528,10 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_7_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_8_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.7.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.7.0: it adds neverActive, a minor change from 1.6.0", doc["version"])
+	if doc["version"] != "1.8.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.8.0: it drops buildRequest, a minor change from 1.7.0", doc["version"])
 	}
 }
