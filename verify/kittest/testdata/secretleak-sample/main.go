@@ -20,10 +20,6 @@ func (sampleResource) Ensure(_ context.Context, d contract.Desired) error {
 	return fmt.Errorf("upstream refused API token %s", d.Secrets["api"]["token"])
 }
 
-func (sampleResource) Observe(context.Context, contract.Desired) (contract.Observation, error) {
-	return contract.Observation{State: contract.Absent}, nil
-}
-
 func (sampleResource) Delete(context.Context, contract.Desired) (map[string]string, error) {
 	return nil, nil
 }

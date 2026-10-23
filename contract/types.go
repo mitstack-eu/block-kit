@@ -158,7 +158,7 @@ type Identity struct {
 	CloudIdentity  *CloudIdentity
 }
 
-// Desired's Instances reach a block through the embedded Identity, so d.Instances in Ensure is the same map Delete and Observe are handed. VerbAt is the request's settlesAt when set, else its createdAt.
+// Desired's Instances reach a block through the embedded Identity, so d.Instances in Ensure is the same map Delete and each observer's ResourceRef are handed. VerbAt is the request's settlesAt when set, else its createdAt.
 type Desired struct {
 	Identity
 

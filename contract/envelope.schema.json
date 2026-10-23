@@ -27,7 +27,7 @@
     },
     "resource": {
       "type": "string",
-      "description": "The name of the one resource the block's manifest declares that a validate observes. Omitted, the verb runs on every declared resource, in creation order and in reverse for a teardown. A block refuses a name on any verb but validate, and a block served as one resource refuses any name."
+      "description": "The name of the one resource the block's manifest declares that a validate observes. Omitted, the verb runs on every declared resource, in creation order and in reverse for a teardown. A block refuses a name on any verb but validate."
     },
     "resourceIdentity": {
       "type": "object",
@@ -137,7 +137,7 @@
     },
     "secretInputs": {
       "type": "object",
-      "description": "Resolved plaintext for manifest-declared secret params (T-122), keyed by param name.",
+      "description": "Resolved plaintext for the block's secret params, the inputs a type it creates marks secret, keyed by param name.",
       "additionalProperties": { "type": "string" }
     },
     "bindings": {

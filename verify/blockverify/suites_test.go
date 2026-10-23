@@ -49,6 +49,8 @@ func TestTrustPlumbingSuite(t *testing.T) {
 			status: "fail", detail: []string{"manifest.yaml"}},
 		{name: "a kit/v1 block that redeclares a kit-owned symbol still fails, naming it",
 			dir: kitV1Block(withSource("rogue.go", "redeclares-emit-progress.go")), status: "fail", detail: []string{"EmitProgress"}},
+		{name: "a kit/v1 block that declares its own fetchJWKS fails, naming it", status: "fail", detail: []string{"fetchJWKS() in rogue.go"},
+			dir: kitV1Block(with("rogue.go", "package main\n\nfunc fetchJWKS(jwksURL string) (map[string][]byte, error) { return nil, nil }\n"))},
 		{name: "a module that reads no GitHub credential, instance or host is not judged", dir: githubBlock("", ""),
 			status: "pass", detail: []string{"manifest.yaml present"}},
 		{name: "a module that reads only the GitHub owner makes no API call and is not judged",

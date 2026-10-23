@@ -23,9 +23,26 @@ import (
 
 func noopSleep(context.Context, time.Duration) {}
 
+var oneResourceManifest = v1betaManifest("test-block", []string{"{ name: r, type: aws.vpc }"}, "r")
+
+type selfObserver interface {
+	Observe(ctx context.Context, d contract.Desired) (contract.Observation, error)
+}
+
+// observedThrough serves a test Resource that observes itself as the observer of oneResourceManifest's resource.
+type observedThrough struct{ selfObserver }
+
+func (o observedThrough) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	return o.Observe(ctx, r.Desired)
+}
+
 func baseConfig(t *testing.T, r handler.Resource, s *kittest.Signer) handler.Config {
 	t.Helper()
-	return handler.Config{Resource: r, JWKSURL: s.JWKSServer(t), VerbBudget: 3, PollInterval: time.Millisecond, Sleep: noopSleep}
+	cfg := handler.Config{Resource: r, Manifest: []byte(oneResourceManifest), JWKSURL: s.JWKSServer(t), VerbBudget: 3, PollInterval: time.Millisecond, Sleep: noopSleep}
+	if o, ok := r.(selfObserver); ok {
+		cfg.Observers = map[string]handler.Observer{"r": observedThrough{o}}
+	}
+	return cfg
 }
 
 // harness serves signed requests to one Handler, each with a fresh nonce, as a genuine retry carries, and mints each OBO token for the block its manifest names; every harness signs with the same key.
@@ -167,11 +184,10 @@ func withManifestEdit(t *testing.T, raw []byte, old, new string) []byte {
 	return []byte(edited)
 }
 
-// resource is kittest.FakeResource plus what the kit's fake leaves out: it keeps every request, answers SecretOutputs and DeleteOutputs, and reports Unknown until its settleAfter-th observe.
+// resource is kittest.FakeResource plus what the kit's fake leaves out: it keeps every request and answers SecretOutputs.
 type resource struct {
 	*kittest.FakeResource
-	secretOutputs, deleteOutputs map[string]string
-	settleAfter                  int
+	secretOutputs map[string]string
 
 	mu                         sync.Mutex
 	ensured, observed, deleted []contract.Desired
@@ -179,11 +195,10 @@ type resource struct {
 
 func fake(f *kittest.FakeResource) *resource { return &resource{FakeResource: f} }
 
-func (r *resource) record(calls *[]contract.Desired, d contract.Desired) int {
+func (r *resource) record(calls *[]contract.Desired, d contract.Desired) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	*calls = append(*calls, d)
-	return len(*calls)
 }
 
 func (r *resource) Ensure(ctx context.Context, d contract.Desired) error {
@@ -192,21 +207,15 @@ func (r *resource) Ensure(ctx context.Context, d contract.Desired) error {
 }
 
 func (r *resource) Observe(ctx context.Context, d contract.Desired) (contract.Observation, error) {
-	n := r.record(&r.observed, d)
+	r.record(&r.observed, d)
 	obs, err := r.FakeResource.Observe(ctx, d)
-	if n < r.settleAfter {
-		obs.State = contract.Unknown
-	}
 	obs.SecretOutputs = r.secretOutputs
 	return obs, err
 }
 
 func (r *resource) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
 	r.record(&r.deleted, d)
-	if _, err := r.FakeResource.Delete(ctx, d); err != nil {
-		return nil, err
-	}
-	return r.deleteOutputs, nil
+	return r.FakeResource.Delete(ctx, d)
 }
 
 // blockingResource holds Ensure and Observe open until release closes; entered is buffered so a wrongly duplicated call never blocks on the signal.

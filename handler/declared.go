@@ -242,7 +242,7 @@ func (r *declaredRun) notReached(name string) string {
 	return safe.Scrub(fmt.Sprintf("resource %q not reached: the request ended before the verb got to it", name), r.secrets...)
 }
 
-// settle paces Observe as settlePresent and settleAbsent do, and records no observe outcome when no attempt ran.
+// settle checks the context before every attempt, because defaultSleep returns at once on a done context and a cancelled request would otherwise spend its budget on unpaced calls to the provider, and records no observe outcome when no attempt ran.
 func (r *declaredRun) settle(ctx context.Context, nr namedResource, want contract.State, entry *contract.ResourceOutcome) (contract.Observation, int, error) {
 	var last contract.Observation
 	attempts := 0

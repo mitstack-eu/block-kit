@@ -53,10 +53,6 @@ func (b hostBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]c
 	return []contract.CreatedResource{{Name: "aws.ec2-instance", Type: "aws.ec2-instance", Identity: map[string]string{"instanceId": "i-0fixture"}}}, nil
 }
 
-func (b hostBlock) Observe(ctx context.Context, d contract.Desired) (contract.Observation, error) {
-	return contract.Observation{State: contract.Unknown}, nil
-}
-
 func (b hostBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
 	b.api.lose("i-0fixture")
 	return nil, nil

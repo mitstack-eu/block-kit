@@ -196,9 +196,27 @@ set only by a block with such work. `Redrive` returns a `kittest.RedriveRun`:
 
 The check fails a run that misses any of the first three, and one whose
 `Changed` is above zero, since a re-drive must resume from what it observes
-instead of redoing work. `kittest.FakeBuilder` and
-`kittest.RedriveOverHandler` show a passing run over the kit's own fakes.
-`kittest.CheckVerbSemantics` returns the problems as strings.
+instead of redoing work. `kittest.CheckVerbSemantics` returns the problems as
+strings.
+
+`kittest.VerbSeamsOverHandler(t, manifest, fake)` checks what the kit's
+handler does with your manifest before your own code is involved. It returns a
+`kittest.VerbSeams` with every function but `Redrive` filled in, each driving
+a handler that serves your manifest through `handler.New` with `fake`, a
+`kittest.FakeResource`, as the block's code and as the observer of every
+resource the manifest declares. Each request is signed for your manifest's
+block. The zero `FakeResource` behaves correctly, so this test passes when the
+handler serves every verb property for the resources your manifest declares:
+
+```go
+func TestManifestServesEachVerb(t *testing.T) {
+	kittest.AssertVerbSemantics(t, kittest.VerbSeamsOverHandler(t, manifestYAML, &kittest.FakeResource{}))
+}
+```
+
+The fake replaces your block's code, so this proves nothing about it. The
+functions you write against your own handler, described above, are the ones
+that judge your code.
 
 ## Reading a manifest in a test
 
