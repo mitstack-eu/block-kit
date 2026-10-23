@@ -1,3 +1,4 @@
+// Command board-delivery, part of mitstack's own tooling, records the board keys a push to main delivered on the board's /v1/delivered endpoint.
 package main
 
 import (

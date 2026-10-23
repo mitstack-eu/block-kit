@@ -1,7 +1,5 @@
 package main
 
-// http.go posts a derived delivery to the board's /v1/delivered endpoint.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -10,20 +8,12 @@ import (
 	"net/http"
 )
 
-// deliveryRecord is the body /v1/delivered expects: the delivered sha and
-// the board keys it delivers, in the derived order. Named distinctly from
-// the test fixture's own deliveredPayload decoding type, which lives in the
-// same package.
 type deliveryRecord struct {
 	Delivery string   `json:"delivery"`
 	Keys     []string `json:"keys"`
 }
 
-// postDelivered posts exactly one request recording that delivery shipped
-// keys. Authorization is sent only when token is non-empty — the header
-// must be entirely absent otherwise, never sent empty. A non-2xx response
-// and a transport failure are both hard failures; a non-2xx error carries
-// the response body verbatim, so a caller can see what the board rejected.
+// postDelivered sends no Authorization header for an empty token, and a non-2xx error carries the board's answer verbatim.
 func postDelivered(baseURL, token, delivery string, keys []string) error {
 	body, err := json.Marshal(deliveryRecord{Delivery: delivery, Keys: keys})
 	if err != nil {

@@ -1,11 +1,5 @@
 package main
 
-// git.go wraps the one git operation Run needs: reading every commit's
-// subject and body in a base..head range. Mirrors
-// cmd/board-delivery/git.go's idiom, minus the anchor-tag machinery this
-// command has no use for — pr-keys only ever reads a range, and never
-// writes to the repository.
-
 import (
 	"bytes"
 	"fmt"
@@ -13,15 +7,12 @@ import (
 	"strings"
 )
 
-// commitFieldSep separates a commit's subject from its body in git log's
-// custom format. commitRecordSep separates one commit's record from the
-// next. Neither byte appears in ordinary commit text.
+// Neither separator byte appears in ordinary commit text.
 const (
 	commitFieldSep  = "\x1f"
 	commitRecordSep = "\x1e"
 )
 
-// gitOutput runs git in repo and returns its trimmed combined output.
 func gitOutput(repo string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repo

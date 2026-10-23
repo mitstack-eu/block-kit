@@ -1,5 +1,4 @@
-// The board module holds mitstack's own board tooling, which no block
-// imports, so it changes and versions apart from the kit's module.
+// mitstack's own board tooling, which no block imports, versioned apart from the kit's module.
 module github.com/mitstack-eu/block-kit/board
 
 go 1.25
