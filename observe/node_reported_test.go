@@ -1,6 +1,6 @@
 package observe_test
 
-// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete, and the client reads the reports with the events callback's token.
+// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, and the client reads the reports with the events callback's token.
 
 import (
 	"context"
@@ -37,13 +37,14 @@ func (f *fakeReports) NodeReports(_ context.Context, _ contract.Desired, subscri
 
 var verbAt = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 
-// nodeReport describes one report: when the platform received it, when the
-// node made it (unset leaves madeAt out), whether it says its list is
-// complete (nil leaves the key out), and the list itself.
+// nodeReport describes one report: when the platform received it, when the node
+// made it, whether it marks its list complete, which kinds it read whole, and
+// the list itself; an unset field leaves its key out of the body.
 type nodeReport struct {
 	received time.Duration
 	made     *time.Duration
 	complete *bool
+	kinds    []string
 	items    any
 }
 
@@ -58,6 +59,9 @@ func (r nodeReport) build(t *testing.T) observe.NodeReport {
 	}
 	if r.complete != nil {
 		body["subscriptionResourcesComplete"] = *r.complete
+	}
+	if r.kinds != nil {
+		body["subscriptionResourceKinds"] = r.kinds
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -83,7 +87,7 @@ func namespaceRef() contract.ResourceRef {
 	return r
 }
 
-func TestNodeReported_ClaimsAbsenceOnlyFromACompleteReportMadeAfterTheVerb(t *testing.T) {
+func TestNodeReported_ClaimsAbsenceOnlyFromAReportMadeAfterTheVerbThatReadTheObjectsKindWhole(t *testing.T) {
 	cases := []struct {
 		label   string
 		reports []nodeReport
@@ -102,6 +106,9 @@ func TestNodeReported_ClaimsAbsenceOnlyFromACompleteReportMadeAfterTheVerb(t *te
 			[]nodeReport{{received: time.Minute, made: at(30 * time.Second), items: list(otherObject)}}, contract.Unknown, "absence"},
 		{"a report made after the verb marked incomplete",
 			[]nodeReport{{received: time.Minute, made: at(30 * time.Second), complete: flag(false), items: list(otherObject)}}, contract.Unknown, "absence"},
+		{"a report made after the verb that read its kind whole", []nodeReport{{received: time.Minute, made: at(30 * time.Second), kinds: []string{"ServiceAccount", "Namespace"}, items: list(otherObject)}}, contract.Absent, ""},
+		{"a report made after the verb that read only other kinds whole", []nodeReport{{received: time.Minute, made: at(30 * time.Second), kinds: []string{"ServiceAccount", "namespace"}, items: list(otherObject)}}, contract.Unknown, `kind "Namespace"`},
+		{"a report with no made-at time that read its kind whole", []nodeReport{{received: time.Minute, kinds: []string{"Namespace"}, items: list(otherObject)}}, contract.Unknown, "madeAt"},
 		{"a report the node could not read the cluster for",
 			[]nodeReport{{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: readFailed}}, contract.Unknown, ""},
 		{"a report made before the verb, received after it, listing it",

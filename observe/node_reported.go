@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
@@ -66,7 +67,7 @@ func (c NodeReportsClient) NodeReports(ctx context.Context, _ contract.Desired, 
 
 // NodeReported matches an object labelled with the observing subscription's id in the reports of the identity's clusterSubscription, else its own.
 // A report counts when its madeAt, else its receivedAt, is after the verb, and the newest counting report decides.
-// An unlisted object is absent only when that report has a madeAt after the verb and marks its list complete.
+// An unlisted object is absent only when that report has a madeAt after the verb and marks its list complete or names the object's kind as read whole.
 type NodeReported struct {
 	API NodeReportsAPI
 }
@@ -82,6 +83,7 @@ type reportBody struct {
 	MadeAt                        *time.Time      `json:"madeAt"`
 	SubscriptionResources         json.RawMessage `json:"subscriptionResources"`
 	SubscriptionResourcesComplete bool            `json:"subscriptionResourcesComplete"`
+	SubscriptionResourceKinds     []string        `json:"subscriptionResourceKinds"`
 }
 
 func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
@@ -125,8 +127,11 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 			return present(nil), nil
 		}
 	}
-	if newest.MadeAt == nil || !newest.SubscriptionResourcesComplete {
-		return unknown("resource %q: the newest node report does not list it, but proves no absence: it carries no madeAt or does not mark its list complete", r.Name), nil
+	if newest.MadeAt == nil {
+		return unknown("resource %q: the newest node report does not list it, but proves no absence: it carries no madeAt", r.Name), nil
+	}
+	if !newest.SubscriptionResourcesComplete && !slices.Contains(newest.SubscriptionResourceKinds, want.Kind) {
+		return unknown("resource %q: the newest node report does not list it, but proves no absence: it neither marks its list complete nor read kind %q whole", r.Name, want.Kind), nil
 	}
 	return absent(), nil
 }
