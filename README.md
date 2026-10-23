@@ -1,12 +1,16 @@
 # block-kit
 
 This module is the contract every mitstack block imports to talk to the
-engine. It covers the webhook trust boundary a block's handler sits behind,
-the events a block emits as it works, and `verify/kittest`, the conformance
-harness a block's own tests run against the same fixtures the engine is
-tested against. The `contract` package owns the wire contract itself: the envelope
-and response JSON schemas, the golden request and response fixtures both
-sides are checked against, and the block manifest parser.
+engine, the part of the platform that drives each block through its
+lifecycle. It covers the webhook trust boundary a block's handler sits
+behind, which checks that every lifecycle call carries the platform's
+signature. It also covers the events a block emits as it works, and
+`verify/kittest`, the conformance harness a block's own tests run against the
+same fixtures the engine is tested against. The `contract` package owns the
+wire contract itself: the envelope and response JSON schemas, the golden
+request and response fixtures both sides are checked against, and the block
+manifest parser. House terms such as block and operator are defined in
+[the workspace glossary](https://github.com/mitstack-eu/mitstack-workspace/blob/main/docs/glossary.md).
 
 ## Which packages a block needs
 
@@ -57,7 +61,7 @@ Each helper serves one task, and a block imports it only for that.
 |---|---|
 | `capabilities/aws/cloudid` | Turns the cloud identity in a lifecycle call into short-lived AWS credentials |
 | `capabilities/github/ghapi` | Calls the GitHub REST API on a host the operator chooses |
-| `capabilities/github/gitops` | Commits a block's rendered manifests to its GitOps repository and judges the deploy |
+| `capabilities/github/gitops` | Commits the Kubernetes files a block renders to its GitOps repository on GitHub, and judges the deploy |
 | `capabilities/github/gitops/gitopstest` | Fakes a GitOps repository and Argo CD's notifications in a test |
 
 ### Verification and mitstack's own tooling
@@ -218,11 +222,12 @@ usual way and imports its packages under that path, as in
 go get github.com/mitstack-eu/block-kit@vX.Y.Z
 ```
 
-The platform supports block-kit v0.4.0 and every later v0.4 release. So
-`blockverify` refuses a block whose `go.mod` requires a release below v0.4.0,
-or any release of `github.com/mitstack-eu/operator-kit`. block-kit leaves the
-wire contract alone, so a block on operator-kit moves to it by switching its
-`go.mod` and its imports once.
+`blockverify` refuses a block whose `go.mod` requires block-kit below its
+floor, v0.4.0, as [Running the block checks on your block](docs/block-checks.md)
+explains. It also refuses any release of `github.com/mitstack-eu/operator-kit`,
+the module block-kit replaces. block-kit leaves the wire contract alone, so a
+block on operator-kit moves to block-kit by switching its `go.mod` and its
+imports once.
 
 The repository is public, so `go get` fetches it through the Go module proxy
 with no credential and no `GOPRIVATE` setting.
@@ -256,8 +261,9 @@ every verb. `Ensure`, `Observe` and `Delete` are each handed the verb's own
 A request carries `"neverActive": true` only when the engine has proved the
 subscription holds no user data yet, and `Desired.NeverActive` carries it to
 your block. The proof has two parts. The subscription never reached active,
-and it was not created from a data handover, such as the restored snapshot a
-stack switch hands its replacement subscription. A block may then replace a
+and it was not created from a data handover, such as the restored snapshot
+that a stack switch, the platform's move of an app from one stack to another,
+hands its replacement subscription. A block may then replace a
 stateful resource, one that can hold data. Anything else reads as `false`,
 including a request without the field, so a block keeps every stateful
 resource guarded unless the engine has proved it empty.
@@ -348,17 +354,10 @@ settle poll. The outputs `Delete` returns land in the unsubscribe response's
 `outputs` once the block settles absent, and a block with nothing to hand
 over returns none.
 
-A block that hands its data over reads
-`d.Params["dataHandover"] == "snapshot"` to decide whether to snapshot data
-before destroying it. It returns the resulting id under the output key
-`dataSnapshotId`, so the id lands in the unsubscribe response's `outputs`,
-alongside `absent:true`, once the resource settles absent.
-
 `Delete` must be idempotent. A settle timeout answers `absent:false` with no
 outputs, and the platform's redrive calls `Delete` again, possibly after an
-earlier call already destroyed the resource; a second call must find the
-snapshot (or other handover artifact) it already made, or report the
-resource gone, rather than fail. Its outputs also reach the wire unscrubbed,
+earlier call already destroyed the resource. A second call must then report
+the resource gone rather than fail. Its outputs also reach the wire unscrubbed,
 the same way Observe's do, so they must never carry secret material.
 
 ### Work that outlasts one subscribe
@@ -1090,12 +1089,12 @@ test must therefore not run in parallel with a test that logs.
 
 ## Release
 
-block-kit's first release, v0.4.0, is tagged by hand, because the version a
-module starts at is a choice rather than arithmetic. Until that tag exists,
-the release script cuts nothing and says so.
+The release script cuts no tag in a repository that holds no kit tag yet, so
+block-kit's first release, v0.4.0, is tagged by hand. The version a module
+starts at is a choice rather than arithmetic.
 
-From then on, every push to main that changes the tree cuts the next patch
-tag (`scripts/release-block-kit.sh`, run from CI). A commit message carrying a
+After the first tag, every push to main that changes the tree cuts the next
+patch tag (`scripts/release-block-kit.sh`, run from CI). A commit message carrying a
 `kit-release: minor` or `kit-release: major` line raises that level instead,
 and each raise zeroes the levels below it. A skipped or failed release run is
 not lost: the next push resolves the base from the newest tag and cuts the
