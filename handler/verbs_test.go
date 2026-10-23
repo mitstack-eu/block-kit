@@ -234,12 +234,8 @@ func TestServe_AnswersEachVerbOverOneResource(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			logged := captureLog(t)
 			x := newHarness(t, tc.r, tc.config...)
-			fields := map[string]any{"operation": tc.op, "secrets": guardSecrets()}
-			for k, v := range tc.fields {
-				fields[k] = v
-			}
 
-			status, raw := x.post(fields)
+			status, raw := x.post(map[string]any{"operation": tc.op, "secrets": guardSecrets()}, tc.fields)
 
 			if status != tc.status || string(raw) != tc.body {
 				t.Errorf("%s answered %d %s\nwant %d %s", tc.op, status, raw, tc.status, tc.body)

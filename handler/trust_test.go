@@ -145,15 +145,10 @@ func plainRequest(t *testing.T, s *kittest.Signer, claims webhook.OBOClaims) map
 
 func TestServe_ARequestMintedForOneBlockIsRefusedOnAnotherBlocksRoute(t *testing.T) {
 	x := newHarness(t, &kittest.FakeResource{}, servesBlock(plainV1Beta(t)))
-	cfg := baseConfig(t, &kittest.FakeResource{}, x.s)
-	servesBlock(withManifestEdit(t, plainV1Beta(t), "  id: plain\n", "  id: other\n"))(&cfg)
-	other, err := handler.New(cfg)
-	if err != nil {
-		t.Fatalf("handler.New: %v", err)
-	}
+	other := newHarness(t, &kittest.FakeResource{}, servesBlock(withManifestEdit(t, plainV1Beta(t), "  id: plain\n", "  id: other\n")))
 	operator := http.NewServeMux()
 	operator.Handle("/plain/", http.StripPrefix("/plain", x.h))
-	operator.Handle("/other/", http.StripPrefix("/other", other))
+	operator.Handle("/other/", http.StripPrefix("/other", other.h))
 	body := x.envelope(plainRequest(t, x.s, webhook.OBOClaims{Audience: "plain", OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-1"}))
 
 	var got []int

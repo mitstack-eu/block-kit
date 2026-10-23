@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -117,10 +118,7 @@ func namedFields(operation, app string) map[string]any {
 // post signs fields as a fresh delivery with its own nonce and OBO token.
 func post(t *testing.T, h http.Handler, s *kittest.Signer, fields map[string]any) (int, []byte) {
 	t.Helper()
-	body := make(map[string]any, len(fields)+1)
-	for k, v := range fields {
-		body[k] = v
-	}
+	body := maps.Clone(fields)
 	subID, _ := fields["subscriptionId"].(string)
 	orgID, _ := fields["orgId"].(string)
 	appID, _ := fields["appId"].(string)
