@@ -704,9 +704,9 @@ rule, and `AssertBlock` logs the name of every guard that ran:
 | Guard | What the block must do |
 |---|---|
 | `required-outputs` | After subscribe and after an upgrade, each resource `spec.provides` names observes present with every output its type marks required |
-| `tagging` | What the provider lists under the subscription's id and the recorded resources account for each other, as the next paragraph sets out |
+| `tagging` | What the provider lists under the subscription's id and the recorded resources account for each other, as the paragraphs below set out |
 | `replacement` | With `Upgrade` set, a resource the upgrade replaces is named in the `replaces` of the validate before it, and the problem says so when its type is stateful. `Upgrade` nil while a declared type is stateful is itself a problem |
-| `observe-asks-the-provider` | Each resource the check loses through the provider then observes not present, since an observer asks the provider instead of remembering what the ensure created |
+| `observe-asks-the-provider` | Each resource the check removes through `Provider.Lose` then observes not present, since an observer asks the provider instead of remembering what the ensure created |
 | `absence-after-unsubscribe` | After unsubscribe every declared resource observes absent, except one whose type `Config.Types` marks `endsWithSubscription` |
 
 The tagging guard checks both directions. Everything the provider lists under
@@ -717,18 +717,19 @@ every recorded resource, including two entries naming that type in one list,
 and does not tie a part to the resource that owns it.
 
 In the other direction, each recorded resource needs a listed object of its
-type, so a resource its ensure left untagged fails, named as `untagged`. A
-resource takes the listed object whose ID is one of its identity values
-first, and any other object of its type after that. When the provider names
-an object by such a value, as `observe.GitHubTagged` names a repository by
-its full name, the guard names the very resource left untagged, even beside
-a tagged one of the same type.
+type, so a resource its ensure left untagged fails, named as `untagged`. Each
+resource first claims the listed object whose ID equals one of its identity
+values, and only then any unclaimed object of its type. When the provider
+names an object by such a value, as `observe.GitHubTagged` names a repository
+by its full name, the guard names exactly the resource left untagged, even
+beside a tagged one of the same type.
 
 A resource whose type carries no tag of its own still needs a listed object,
-so the provider lists it by whatever stands in for the tag. The platform's
-type catalogue says so of `mitstack.app-hostname`: a Route 53 record carries
-no tag, so the platform finds the record by its name, which no other app
-holds.
+so the provider lists it by whatever stands in for the tag.
+`mitstack.app-hostname` is one such type. The platform's type catalogue notes
+that a Route 53 record carries no tag, so the platform finds the record by
+its name, which no other app holds. A block's test provider lists that record
+by the same name.
 
 A requirement listing more than one type runs the check once per listed
 type, with `Requirements` giving each type's outputs, and each problem names
