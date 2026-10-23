@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "types": [
+    {
+      "id": "hetzner.firewall",
+      "capability": "hetzner",
+      "kind": "firewall",
+      "scope": "per-app",
+      "stateful": false,
+      "pricing": {"priced": false},
+      "category": "network",
+      "outputs": [],
+      "observe": "GET /firewalls/{id} returns the firewall with its rules and the resources it applies to",
+      "absence": "GET /firewalls/{id} answers 404",
+      "timeBudgets": {"delete": "5m", "ensure": "2m", "observe": "30s"},
+      "failures": [
+        {"class": "transient", "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"},
+        {"class": "permanent", "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"},
+        {"class": "transient", "cause": "delete is refused while the firewall is still applied to a resource"},
+        {"class": "permanent", "cause": "a firewall of the name exists in the project"}
+      ],
+      "version": 1
+    }
+  ]
+}
