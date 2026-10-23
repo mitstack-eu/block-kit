@@ -69,6 +69,8 @@ type fakeProvider struct {
 	mu    sync.Mutex
 	items map[string]observe.Tagged
 	tags  map[string]string
+	// listPrefix prefixes every id it lists, like a lister that names an object by none of its identity's values.
+	listPrefix string
 }
 
 func newFakeProvider() *fakeProvider {
@@ -102,7 +104,7 @@ func (p *fakeProvider) ListTagged(_ context.Context, subscriptionID string) ([]o
 	var out []observe.Tagged
 	for id, item := range p.items {
 		if p.tags[id] == subscriptionID {
-			out = append(out, item)
+			out = append(out, observe.Tagged{Type: item.Type, ID: p.listPrefix + item.ID})
 		}
 	}
 	return out, nil
@@ -132,6 +134,36 @@ type fakeBlock struct {
 	leaveOnDelete   string
 	hideReplacement bool
 	failOnHostType  string
+	// untagged names the resource its ensure creates without the subscription's tag.
+	untagged string
+
+	counts *observeCounts
+}
+
+// observeCounts keeps the most observes any one verb made of each resource, a verb beginning at the block-level call the handler makes before it observes.
+type observeCounts struct {
+	mu   sync.Mutex
+	verb map[string]int
+	most map[string]int
+}
+
+func (c *observeCounts) begin() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.verb = map[string]int{}
+}
+
+func (c *observeCounts) observed(name string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.verb[name]++
+	c.most[name] = max(c.most[name], c.verb[name])
 }
 
 func (b *fakeBlock) newID(prefix string) string {
@@ -153,6 +185,7 @@ func (b *fakeBlock) wanted(d contract.Desired) map[string]string {
 }
 
 func (b *fakeBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	b.counts.begin()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.container && d.Bindings["host"]["hostId"] == "" {
@@ -172,7 +205,11 @@ func (b *fakeBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]
 		r := prior
 		if !keep {
 			r = contract.CreatedResource{Name: name, Type: typ, Identity: map[string]string{"id": b.newID(typ)}}
-			b.p.put(r.Identity["id"], typ, d.SubscriptionID)
+			sub := d.SubscriptionID
+			if name == b.untagged {
+				sub = ""
+			}
+			b.p.put(r.Identity["id"], typ, sub)
 		}
 		b.created[name] = r
 		out = append(out, r)
@@ -193,6 +230,7 @@ func (b *fakeBlock) Ensure(ctx context.Context, d contract.Desired) error {
 }
 
 func (b *fakeBlock) PlanReplacements(ctx context.Context, d contract.Desired) ([]string, error) {
+	b.counts.begin()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if _, had := b.created["aws.ebs-volume"]; had && !b.hideReplacement && b.size != d.Params["volumeSize"] {
@@ -206,6 +244,7 @@ func (b *fakeBlock) Observe(ctx context.Context, d contract.Desired) (contract.O
 }
 
 func (b *fakeBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
+	b.counts.begin()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for name, r := range b.created {
@@ -228,11 +267,13 @@ var (
 )
 
 type providerObserver struct {
-	p    *fakeProvider
-	drop string
+	p      *fakeProvider
+	drop   string
+	counts *observeCounts
 }
 
 func (o providerObserver) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	o.counts.observed(r.Name)
 	id := r.Identity["id"]
 	switch {
 	case id == "":
@@ -309,12 +350,14 @@ func hostBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 	b := &fakeBlock{p: p}
 	upgrade := blockDesired("20")
 	return b, kittest.Block{
-		Manifest: []byte(hostBlockManifest),
-		Types:    typeSnapshot(t),
-		Handler:  b,
-		Observers: map[string]handler.Observer{
-			"aws.ec2-instance": providerObserver{p: p},
-			"aws.ebs-volume":   providerObserver{p: p},
+		Config: handler.Config{
+			Resource: b,
+			Manifest: []byte(hostBlockManifest),
+			Types:    typeSnapshot(t),
+			Observers: map[string]handler.Observer{
+				"aws.ec2-instance": providerObserver{p: p},
+				"aws.ebs-volume":   providerObserver{p: p},
+			},
 		},
 		Provider: p,
 		Desired:  blockDesired("10"),
@@ -350,12 +393,14 @@ func containerBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 	p := newFakeProvider()
 	b := &fakeBlock{p: p, container: true}
 	return b, kittest.Block{
-		Manifest:  []byte(containerBlockManifest),
-		Types:     typeSnapshot(t),
-		Handler:   b,
-		Observers: map[string]handler.Observer{"app-container": providerObserver{p: p}},
-		Provider:  p,
-		Desired:   blockDesired(""),
+		Config: handler.Config{
+			Resource:  b,
+			Manifest:  []byte(containerBlockManifest),
+			Types:     typeSnapshot(t),
+			Observers: map[string]handler.Observer{"app-container": providerObserver{p: p}},
+		},
+		Provider: p,
+		Desired:  blockDesired(""),
 		Requirements: map[string]map[string]map[string]string{
 			"host": {
 				"aws.ec2-instance": {"hostId": "i-0host", "execKind": "ssm", "execTarget": "i-0host"},
@@ -401,6 +446,33 @@ func TestAssertBlock_FailsTheTestWithEveryProblem(t *testing.T) {
 	}
 }
 
+// The volume's delete leaves it standing, so the unsubscribe observes it until the budget runs out.
+func TestAssertBlock_ObservesAResourceAtMostTheBlocksVerbBudgetTimesPerVerb(t *testing.T) {
+	for _, budget := range []int{1, 2} {
+		t.Run(fmt.Sprintf("VerbBudget %d", budget), func(t *testing.T) {
+			b, in := hostBlock(t)
+			counts := &observeCounts{most: map[string]int{}}
+			b.counts, b.leaveOnDelete = counts, "aws.ebs-volume"
+			in.Config.VerbBudget = budget
+			in.Config.Observers = map[string]handler.Observer{
+				"aws.ec2-instance": providerObserver{p: b.p, counts: counts},
+				"aws.ebs-volume":   providerObserver{p: b.p, counts: counts},
+			}
+
+			runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
+
+			for name, most := range counts.most {
+				if most > budget {
+					t.Errorf("one verb observed %s %d times; want at most the block's VerbBudget, %d", name, most, budget)
+				}
+			}
+			if got := counts.most["aws.ebs-volume"]; got != budget {
+				t.Errorf("the unsubscribe observed the volume its delete left standing %d times; want the block's VerbBudget, %d", got, budget)
+			}
+		})
+	}
+}
+
 const contributionBlockManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
@@ -440,12 +512,14 @@ func contributionBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 		"github.scaffold-contribution": "github.scaffold-contribution",
 	}, leaveOnDelete: "github.scaffold-contribution"}
 	return b, kittest.Block{
-		Manifest: []byte(contributionBlockManifest),
-		Types:    markedSnapshot(t, "github.scaffold-contribution"),
-		Handler:  b,
-		Observers: map[string]handler.Observer{
-			"aws.ec2-instance":             providerObserver{p: p},
-			"github.scaffold-contribution": providerObserver{p: p},
+		Config: handler.Config{
+			Resource: b,
+			Manifest: []byte(contributionBlockManifest),
+			Types:    markedSnapshot(t, "github.scaffold-contribution"),
+			Observers: map[string]handler.Observer{
+				"aws.ec2-instance":             providerObserver{p: p},
+				"github.scaffold-contribution": providerObserver{p: p},
+			},
 		},
 		Provider: p,
 		Desired:  blockDesired(""),
@@ -562,13 +636,10 @@ func cfnBlock(t *testing.T) kittest.Block {
 	snap.Types = append(snap.Types, appHostnameType)
 	upgrade := blockDesired("20")
 	return kittest.Block{
-		Manifest:  []byte(cfnBlockManifest),
-		Types:     snap,
-		Handler:   b,
-		Observers: observers,
-		Provider:  p,
-		Desired:   blockDesired("10"),
-		Upgrade:   &upgrade,
+		Config:   handler.Config{Resource: b, Manifest: []byte(cfnBlockManifest), Types: snap, Observers: observers},
+		Provider: p,
+		Desired:  blockDesired("10"),
+		Upgrade:  &upgrade,
 		Requirements: map[string]map[string]map[string]string{
 			"github.repository": {"github.repository": {"repo": "acme/myapp"}},
 		},
@@ -610,7 +681,7 @@ func listedHostBlock(t *testing.T) (*fakeBlock, kittest.Block, *[]contract.Desir
 	t.Helper()
 	b, in := hostBlock(t)
 	seen := &[]contract.Desired{}
-	in.Manifest = []byte(repoHostBlockManifest)
+	in.Config.Manifest = []byte(repoHostBlockManifest)
 	in.Requirements = map[string]map[string]map[string]string{
 		"app-repo": {"github.repository": {"repo": "acme/app"}},
 	}
@@ -658,6 +729,41 @@ func TestListerProvider_RefusesAListingWithoutTheGuardsDesired(t *testing.T) {
 	}
 }
 
+const githubBlockManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: github-block
+  name: GitHub Block
+spec:
+  version: 1.0.0
+  resources:
+    - github.repository
+    - { name: docs, type: github.repository }
+  lifecycle:
+    endpoint: https://github-block.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
+// githubBlock creates an app repository and a docs repository, and leaves the one named untagged without the subscription's tag.
+func githubBlock(t *testing.T, untagged string) kittest.Block {
+	t.Helper()
+	p := newFakeProvider()
+	b := &fakeBlock{p: p, untagged: untagged, resources: map[string]string{"github.repository": "github.repository", "docs": "github.repository"}}
+	upgrade := blockDesired("")
+	return kittest.Block{
+		Config: handler.Config{
+			Resource:  b,
+			Manifest:  []byte(githubBlockManifest),
+			Types:     typeSnapshot(t),
+			Observers: map[string]handler.Observer{"github.repository": providerObserver{p: p}, "docs": providerObserver{p: p}},
+		},
+		Provider: p,
+		Desired:  blockDesired(""),
+		Upgrade:  &upgrade,
+	}
+}
+
 func TestCheckBlock(t *testing.T) {
 	type mutation func(b *fakeBlock, in *kittest.Block)
 	host := func(m mutation) func(t *testing.T) kittest.Block {
@@ -673,7 +779,7 @@ func TestCheckBlock(t *testing.T) {
 		return func(t *testing.T) kittest.Block {
 			b, in := contributionBlock(t)
 			if leave != "" {
-				b.leaveOnDelete, in.Types = leave, markedSnapshot(t, marked...)
+				b.leaveOnDelete, in.Config.Types = leave, markedSnapshot(t, marked...)
 			}
 			return in
 		}
@@ -685,8 +791,11 @@ func TestCheckBlock(t *testing.T) {
 			return in
 		}
 	}
+	github := func(untagged string) func(t *testing.T) kittest.Block {
+		return func(t *testing.T) kittest.Block { return githubBlock(t, untagged) }
+	}
 	remembering := func(b *fakeBlock, in *kittest.Block) {
-		in.Observers["aws.ec2-instance"] = rememberingObserver{b: b, name: "aws.ec2-instance"}
+		in.Config.Observers["aws.ec2-instance"] = rememberingObserver{b: b, name: "aws.ec2-instance"}
 	}
 	withParts := func(parts ...observe.Tagged) mutation {
 		return func(b *fakeBlock, _ *kittest.Block) { b.parts = parts }
@@ -709,16 +818,16 @@ func TestCheckBlock(t *testing.T) {
 		{"a validate hiding the replacement of a stateful resource fails", host(func(b *fakeBlock, _ *kittest.Block) { b.hideReplacement = true }), [][]string{{`resource "aws.ebs-volume"`, "stateful"}}, false},
 		{"a block run once per listed requirement type passes", func(t *testing.T) kittest.Block { _, in := containerBlock(t); return in }, nil, true},
 		{"declared resources with no identity after subscribe fail", host(func(b *fakeBlock, in *kittest.Block) {
-			in.Handler = silentBlock{b: b}
-			in.Observers = map[string]handler.Observer{"aws.ec2-instance": byTypeObserver{p: b.p}, "aws.ebs-volume": byTypeObserver{p: b.p}}
+			in.Config.Resource = silentBlock{b: b}
+			in.Config.Observers = map[string]handler.Observer{"aws.ec2-instance": byTypeObserver{p: b.p}, "aws.ebs-volume": byTypeObserver{p: b.p}}
 			in.Upgrade = nil
 		}), [][]string{{`resource "aws.ec2-instance"`, "identity"}, {`resource "aws.ebs-volume"`, "identity"}}, false},
 		{"a stateful resource with no Upgrade to prove its replacement fails", host(func(_ *fakeBlock, in *kittest.Block) { in.Upgrade = nil }), [][]string{{`resource "aws.ebs-volume"`, "Upgrade"}}, false},
 		{"a provided resource missing a required output fails", host(func(b *fakeBlock, in *kittest.Block) {
-			in.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "hostId"}
+			in.Config.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "hostId"}
 		}), [][]string{{`resource "aws.ec2-instance"`, "hostId"}}, false},
 		{"a provided resource missing only an optional output passes", host(func(b *fakeBlock, in *kittest.Block) {
-			in.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "publicIp"}
+			in.Config.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "publicIp"}
 		}), nil, true},
 		{"a resource of a marked type left present after unsubscribe passes", contribution(""), nil, true},
 		{"an unmarked resource left present beside a marked one fails", contribution("aws.ec2-instance", "github.scaffold-contribution"), [][]string{{`resource "aws.ec2-instance"`, "unsubscribe"}}, false},
@@ -730,7 +839,7 @@ func TestCheckBlock(t *testing.T) {
 			observe.Tagged{Type: "aws.iam-instance-profile", ID: "mitstack-app-myapp-profile-stray"},
 		)), [][]string{{`resource "mitstack-app-myapp-profile-stray"`, "aws.iam-instance-profile"}}, true},
 		{"every tagged part fails when the snapshot lists no parts", host(func(b *fakeBlock, in *kittest.Block) {
-			b.parts, in.Types = hostParts(), partlessSnapshot(t)
+			b.parts, in.Config.Types = hostParts(), partlessSnapshot(t)
 		}), noPartNamings, false},
 		{"tagged objects beyond the room the declared resources and their parts give fail alone", host(withParts(append(hostParts(),
 			observe.Tagged{Type: "aws.vpc", ID: "vpc-0stray"}, observe.Tagged{Type: "aws.iam-role", ID: "mitstack-app-myapp-stray"})...)),
@@ -739,6 +848,10 @@ func TestCheckBlock(t *testing.T) {
 		{"through the adapted lister, a tagged resource the manifest does not declare fails", listed(func(b *fakeBlock, _ *kittest.Block) { b.extraTagged = true }),
 			[][]string{{`resource "state-bucket"`, "aws.s3-bucket"}}, false},
 		{"through the adapted lister, each resource is lost through the loser", listed(remembering), [][]string{{`resource "aws.ec2-instance"`, "provider"}}, false},
+		{"a github block that tags each repository it creates passes", github(""), nil, true},
+		{"a github block whose Ensure never tags its app repository fails, naming it untagged", github("github.repository"), [][]string{{`resource "github.repository"`, "untagged"}}, true},
+		{"a docs repository left untagged beside a tagged app repository fails, naming docs", github("docs"), [][]string{{`resource "docs"`, "untagged"}}, true},
+		{"tagged resources the provider lists by no value of their identity pass, each matched by its type", host(func(b *fakeBlock, _ *kittest.Block) { b.p.listPrefix = "arn:" }), nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

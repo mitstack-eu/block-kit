@@ -347,9 +347,7 @@ func assertBlock(t *testing.T, m misbehave, container bool) {
 	p := &provider{items: map[string]observe.Tagged{}, tags: map[string]string{}}
 	b := &block{p: p, m: m, container: container}
 	in := kittest.Block{
-		Manifest: manifest,
-		Types:    snap,
-		Handler:  b,
+		Config:   handler.Config{Resource: b, Manifest: manifest, Types: snap},
 		Provider: p,
 		Desired: contract.Desired{
 			Identity: contract.Identity{SubscriptionID: "sub-fixture", BlockID: "blockverify-block-fixture", OrgID: "org-fixture"},
@@ -357,15 +355,15 @@ func assertBlock(t *testing.T, m misbehave, container bool) {
 		},
 	}
 	if container {
-		in.Observers = map[string]handler.Observer{"app-container": providerObserver{p: p}}
+		in.Config.Observers = map[string]handler.Observer{"app-container": providerObserver{p: p}}
 		in.Requirements = map[string]map[string]map[string]string{"host": {
 			"aws.ec2-instance": {"hostId": "i-0host", "execKind": "ssm", "execTarget": "i-0host"},
 			"hetzner.server":   {"hostId": "4711", "execKind": "ssh", "execTarget": "198.51.100.9"},
 		}}
 	} else {
-		in.Observers = map[string]handler.Observer{"aws.ec2-instance": providerObserver{p: p, drop: m.dropOutput}, "aws.ebs-volume": providerObserver{p: p}}
+		in.Config.Observers = map[string]handler.Observer{"aws.ec2-instance": providerObserver{p: p, drop: m.dropOutput}, "aws.ebs-volume": providerObserver{p: p}}
 		if m.staleObserve != "" {
-			in.Observers[m.staleObserve] = rememberingObserver{b: b, name: m.staleObserve}
+			in.Config.Observers[m.staleObserve] = rememberingObserver{b: b, name: m.staleObserve}
 		}
 		upgrade := in.Desired
 		upgrade.Params = map[string]string{"volumeSize": "20"}

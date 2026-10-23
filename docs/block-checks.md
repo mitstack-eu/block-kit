@@ -29,7 +29,7 @@ reason.
 | `contract` | The block passes once a non-test file imports the kit's `handler` package, which serves the webhook contract whose goldens the kit owns |
 | `secret-safety` | `TestNoSecretLeak` exists and passes, plus its `/logs` variant when the block serves `/logs`. A test file that declares one must not build `kittest.FakeResource`, because a test over the kit's fake judges the fake rather than your block |
 | `teardown` | `TestUnsubscribeDeletes*` exists and passes, and its file builds no `kittest.FakeResource`. The kit's handler observes absence after every delete, so the block need not ask its provider again itself |
-| `resources` | Each resource the manifest declares is driven through the kit and proven absent afterwards |
+| `resources` | `TestDeclaredResources` exists and passes, driving each resource the manifest declares through `kittest.AssertBlock` at your block's own verb budget. Each resource must carry the subscription's tag, observe what the provider holds, and be proven absent after unsubscribe |
 | `deliverable` | The block has its own `Dockerfile`, and it copies nothing from the retired `examples/operator-kit` path |
 | `manifest` | The manifest parses strictly as `mitstack/v1beta`, its `metadata.id` is a block id, and a changed `spec.version` carries a release class and note |
 
