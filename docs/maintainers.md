@@ -34,8 +34,9 @@ script cuts no tag in a repository that holds no kit tag yet. The version a
 module starts at is a choice, not arithmetic.
 
 After the first tag, every push to `main` that changes the tree cuts the next
-patch tag, through `scripts/release-block-kit.sh`, which CI runs. A commit message carrying a `kit-release: minor` line raises
-the minor level instead and zeroes the patch level. A skipped or failed
+patch tag, through `scripts/release-block-kit.sh`, which CI runs. A commit
+message carrying a `kit-release: minor` line raises the minor level instead
+and zeroes the patch level. A skipped or failed
 release run is not lost: the next push resolves its base from the newest tag
 and cuts the release the earlier push owed.
 
@@ -47,8 +48,8 @@ cuts v1.0.0, a version kept for the launch.
 ## Gating and recording a pull request's board keys
 
 The `pr key gate` and `record delivery` jobs run `pr-keys` and
-`board-delivery` from mitstack-eu/plain-delivery at its release tag `v0.1.0`,
-and that repository's README says what each command does.
+`board-delivery` from mitstack-eu/plain-delivery at the release tag that
+`ci.yml` pins, and that repository's README says what each command does.
 
 ## Judging the comments in a pull request
 
