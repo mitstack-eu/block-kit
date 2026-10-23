@@ -26,7 +26,7 @@ describes. A package's folder tells you whether your block needs it:
 | `capabilities/<slug>` | The helpers for the resource types of one capability | A block whose resources live in that capability |
 | `verify/` | The tooling that checks, attests and publishes a block, and the harness a block's tests run | A block's tests and CI |
 | `cmd/` | mitstack's own commands for the kit's CI | No block |
-| `board/` | mitstack's own board tooling, in a separate Go module the kit's module leaves out | No block |
+| `board/` | The tooling for mitstack's work tracker, the board, in a separate Go module the kit's module leaves out | No block |
 
 Each slug under `capabilities/` is a capability the platform's catalogue
 holds, in the `capability` field of the platform repository's
@@ -1142,15 +1142,20 @@ Every push to main also records which board issues it delivered, through
 `github.com/mitstack-eu/block-kit/board`. It has its own `go.mod`, so the
 kit's module leaves it out, and a change to it cuts no kit tag.
 
-Another repository's CI installs a command from the board module at a commit
-of this repository's main, which Go names by a pseudo-version:
+The board module has no tag of its own, so another repository installs it at
+a commit of this repository's main, which Go names by a pseudo-version. The
+CI of board-automation, plain-block and talos-cluster-kit does this. A
+pseudo-version names one commit forever, so a consumer moves to newer board
+code only by editing its own pin. This install pins the commit `f55d2df16fa9`
+as an example:
 
 ```sh
 go install github.com/mitstack-eu/block-kit/board/cmd/board-delivery@v0.0.0-20261023050337-f55d2df16fa9
 ```
 
-The `boardkeys` package derives the keys a commit delivers: a key counts only when it sits in a leading key list in the
-commit's subject, terminated by a colon, or in a whole-line `Jira:` trailer
+The `boardkeys` package derives the keys a commit delivers: a key counts only
+when it sits in a leading key list in the commit's subject, terminated by a
+colon, or in a whole-line `Jira:` trailer
 in the body. A key anywhere else in a subject, or in an ordinary body line,
 is prose and delivers nothing. So is a reference, a key in a `(refs MIT-123)`
 group that closes the subject or on a `Jira-refs:` trailer line, which names
