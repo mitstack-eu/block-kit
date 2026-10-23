@@ -1187,11 +1187,11 @@ The board module has no tag of its own, so another repository installs it at
 a commit of this repository's main, which Go names by a pseudo-version. The
 CI of board-automation, plain-block and talos-cluster-kit does this. A
 pseudo-version names one commit forever, so a consumer moves to newer board
-code only by editing its own pin. This install pins the commit `f55d2df16fa9`
-as an example:
+code only by editing its own pin. This install pins `6dbf4157af66`, the first
+commit of main that holds the board module, as an example:
 
 ```sh
-go install github.com/mitstack-eu/block-kit/board/cmd/board-delivery@v0.0.0-20261023050337-f55d2df16fa9
+go install github.com/mitstack-eu/block-kit/board/cmd/board-delivery@v0.0.0-20261023064823-6dbf4157af66
 ```
 
 The `boardkeys` package derives the keys a commit delivers: a key counts only
