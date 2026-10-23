@@ -146,7 +146,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the pr key gate reads nothing from a commit, since a branch name in a commit is no delivery intent", "jobs.pr-key-gate.", "head_commit"},
 		{"record delivery never continues on error, so a failed board write is a red run", "jobs.record-delivery.", "continue-on-error"},
 		{"record delivery never reads release's outputs.released, so a push that cut no tag still delivers its keys", "jobs.record-delivery.", "outputs.released"},
-		{"no workflow value derives keys itself instead of calling boardkeys", "", "MIT-[0-9]"},
+		{"no workflow value derives keys itself instead of calling plain-delivery", "", "MIT-[0-9]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for path, v := range all {
