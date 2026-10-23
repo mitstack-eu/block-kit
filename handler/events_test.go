@@ -71,6 +71,8 @@ func TestServe_EmitsOneTerminalEventPerVerb(t *testing.T) {
 		{"a settled subscribe emits completed alone", "subscribe", withOutputs(), 3, http.StatusOK, completed, ""},
 		{"a settled upgrade emits completed alone", "upgrade", withOutputs(), 3, http.StatusOK, completed, ""},
 		{"a settled unsubscribe emits completed alone", "unsubscribe", &kittest.FakeResource{Count: 1}, 3, http.StatusOK, completed, ""},
+		{"an unsubscribe not yet absent emits progress", "unsubscribe", &kittest.FakeResource{ObserveState: stateOf(contract.Present)}, 2, http.StatusOK, progress,
+			"after 2 attempts"},
 		{"a pending subscribe emits progress, not completed", "subscribe", &kittest.FakeResource{ObserveState: stateOf(contract.Absent)}, 2, http.StatusOK, progress, ""},
 		{"a pending upgrade emits progress, not completed", "upgrade", &kittest.FakeResource{ObserveState: stateOf(contract.Absent)}, 2, http.StatusOK, progress, ""},
 		{"a failing subscribe emits failed with the error", "subscribe", &kittest.FakeResource{EnsureErr: errors.New("resource backend unavailable")}, 3,
@@ -88,8 +90,8 @@ func TestServe_EmitsOneTerminalEventPerVerb(t *testing.T) {
 			if status != tc.status {
 				t.Fatalf("status = %d, want %d; response %+v", status, tc.status, resp)
 			}
-			if slices.Equal(tc.want, progress) && !resp.Pending {
-				t.Fatalf("pending = false, want the pending outcome this row exercises; response %+v", resp)
+			if settled := !resp.Pending && (resp.Absent == nil || *resp.Absent); slices.Equal(tc.want, progress) && settled {
+				t.Fatalf("the answer is settled, want the pending or absent:false outcome this row exercises; response %+v", resp)
 			}
 			got := events.recorded()
 			var statuses []string
