@@ -71,15 +71,33 @@ the subscription of the cluster whose reports to read. Without it,
 
 An object matches only when it also carries the observing subscription's id,
 since the subscription that creates an object labels it. A report's body lists
-those objects under `subscriptionResources`, and may carry `madeAt` and
-`subscriptionResourcesComplete`. A report counts when its `madeAt`, or its
-receipt time when it has none, is after `Desired.VerbAt`, and the newest
-counting report decides:
+those objects under `subscriptionResources`. It may also carry `madeAt`, when
+the node began reading, and one of two ways to say what it read in full:
+`subscriptionResourcesComplete: true` for the whole list, or
+`subscriptionResourceKinds` for the kinds whose read finished. A kind is the
+object's type, written as the report lists it, such as `Namespace`, and the
+identity's `kind` must match it exactly. A node that may not read every kind,
+such as one with no right to read a Secret, names the kinds it did read:
+
+```json
+{
+  "madeAt": "2026-10-23T09:00:00Z",
+  "subscriptionResources": [
+    {"kind": "Namespace", "name": "app-alpha", "namespace": null, "subscription": "sub-1"}
+  ],
+  "subscriptionResourceKinds": ["Namespace", "ServiceAccount"]
+}
+```
+
+A report counts when its `madeAt`, or its receipt time when it has none, is
+after `Desired.VerbAt`, and the newest counting report decides:
 
 - An object the report lists is present.
 - An object it does not list is absent only when the report carries a `madeAt`
-  after `VerbAt` and `subscriptionResourcesComplete: true`.
-- Anything else is unknown.
+  after `VerbAt` and either marks its whole list complete or names the
+  object's kind in `subscriptionResourceKinds`.
+- Anything else is unknown, so an object of a kind the node never read stays
+  unknown rather than reading absent.
 
 `observe.NodeReportsClient` reads the reports from the platform the request's
 events callback names, with the callback's token, so a block writes no client
