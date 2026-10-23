@@ -15,6 +15,8 @@ jobs:
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the release dry run reads the tags and the pull request's history
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.8'
@@ -27,6 +29,15 @@ jobs:
           go -C examples/hetzner-firewall vet ./...
           go -C examples/hetzner-firewall test ./...
           go run ./verify/blockverify --standalone examples/hetzner-firewall
+      - run: bash scripts/release-block-kit_test.sh
+      # The release job runs only after a merge, so a line it would refuse has
+      # to fail here, in a check main requires, before it reaches main.
+      - name: Dry-run the kit release over the pull request's commits
+        if: github.event_name == 'pull_request'
+        run: |
+          bash scripts/release-block-kit.sh --dry-run \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
 
   # A pull request's own delivery intent has to reach the board somehow: a
   # merge commit or a rebase carries it in the commits, a squash carries it

@@ -2,7 +2,7 @@
 # release-block-kit.sh — decide whether a pushed commit range changed this
 # repository, and cut the next kit tag at head when it did.
 #
-# Explained in the root README.md, "Release".
+# Explained in docs/maintainers.md, "Release".
 #
 # Usage:
 #   scripts/release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>]
@@ -22,8 +22,8 @@
 #           repository holds no kit tag yet, a tag was cut and verified, or a
 #           plan was reported
 #   exit 1  head is unreachable from any kit tag after the cut, a --verify-only
-#           assertion did not hold, or the computed tag is already published
-#           elsewhere
+#           assertion did not hold, the computed tag is already published
+#           elsewhere, or the range asks for a major raise from a v0 tag
 #   exit 2  an unknown flag
 #
 # Why this exists. This repository IS the kit: github.com/mitstack-eu/block-kit
@@ -91,6 +91,20 @@ newest_kit_version() {
   kit_versions | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1
 }
 
+# raise_level <range> prints the level a whole kit-release line in the range's
+# commit messages asks for, major winning over minor, or patch when none does.
+raise_level() {
+  local messages
+  messages="$(in_repo log --format=%B "$1" 2> /dev/null)"
+  if grep -qiE '^[[:space:]]*kit-release:[[:space:]]*major[[:space:]]*$' <<< "$messages"; then
+    echo "major"
+  elif grep -qiE '^[[:space:]]*kit-release:[[:space:]]*minor[[:space:]]*$' <<< "$messages"; then
+    echo "minor"
+  else
+    echo "patch"
+  fi
+}
+
 head_sha="$(in_repo rev-parse --verify --quiet "${head_ref}^{commit}" 2> /dev/null)"
 if [ -z "$head_sha" ]; then
   echo "release-block-kit: cannot resolve --head '$head_ref' in $repo" >&2
@@ -127,6 +141,16 @@ fi
 
 echo "release-block-kit: range $range (base ${resolved_base:-<none>}, head $head_sha)"
 
+level="$(raise_level "$range")"
+
+# Refused before the unchanged check, so a range carrying the line fails
+# whatever it touches.
+if [ "$level" = "major" ] && [[ "$newest_version" == 0.* ]]; then
+  echo "::error::a kit-release: major line in $range asks for v1.0.0 from $newest_tag, and v1.0.0 is cut by hand at the commercial launch, so no tag is cut. A breaking change takes kit-release: minor." >&2
+  emit_output "released=false"
+  exit 1
+fi
+
 if [ -z "$touched" ]; then
   echo "the repository is unchanged in this range, so no kit tag is cut."
   emit_output "released=false"
@@ -154,16 +178,6 @@ if [ -z "$newest_tag" ]; then
   echo "the repository changed in $range, and it holds no kit tag yet, so no tag is cut: its first release is tagged by hand."
   emit_output "released=false"
   exit 0
-fi
-
-# The raise level. A whole line in any commit message in the range asks for one;
-# major wins over minor, and each zeroes the levels below it.
-level="patch"
-messages="$(in_repo log --format=%B "$range" 2> /dev/null)"
-if grep -qiE '^[[:space:]]*kit-release:[[:space:]]*major[[:space:]]*$' <<< "$messages"; then
-  level="major"
-elif grep -qiE '^[[:space:]]*kit-release:[[:space:]]*minor[[:space:]]*$' <<< "$messages"; then
-  level="minor"
 fi
 
 IFS=. read -r cur_major cur_minor cur_patch <<< "$newest_version"
