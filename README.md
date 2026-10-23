@@ -34,15 +34,16 @@ Your block's code implements `handler.Resource`, an interface of three
 methods. `Ensure` creates what is missing. `Delete` deletes, and returns any
 outputs the answer should still carry once the resources are gone, usually
 none. `Observe` only completes the interface, since observers answer in its
-place, so a one-line stub like the example's will do. Each resource has an
+place, so a one-line stub will do. Each resource has an
 observer, whose one method, `ObserveResource(ctx, ref)`, gets the resource's
 name, type and identity and the call itself in a `contract.ResourceRef`, and
 asks the provider about it. It returns a `contract.Observation`:
 `contract.Present`, `contract.Absent` or `contract.Unknown`, and the
 resource's outputs. The kit's `observe` package has observers for common
-resource types, and you write one for any other type. `handler.New` takes your
-code and the observers and returns the HTTP handler your operator serves at
-your manifest's endpoint:
+resource types, and you write one for any other type. `handler.New` takes a
+`handler.Config` holding your code, the observers, your manifest and the URL
+of the keys mitstack signs calls with, and returns the HTTP handler your
+operator serves at your manifest's endpoint:
 
 ```mermaid
 sequenceDiagram
@@ -69,9 +70,9 @@ sequenceDiagram
    the provider credentials it carries and the resources mitstack recorded.
 3. On `subscribe` and `upgrade`, the handler calls your `EnsureResources`,
    which does the work of `Ensure` and also returns each identity. Write it,
-   as the example does, since kittest's checks need the identities; the
-   handler calls `Ensure` only for code without it. On `unsubscribe` it calls
-   `Delete`, and on `validate` neither.
+   since the kit's test checks need the identities; the handler calls `Ensure`
+   only for code without it. On `unsubscribe` it calls `Delete`, and on
+   `validate` neither.
 4. The handler then waits for the call to settle, which means it asks each
    resource's observer until the provider shows the state the call asked for,
    20 times at most by default, where unknown means the provider cannot tell
@@ -109,10 +110,11 @@ ships, runs your tests' kittest checks. Everything else is optional, in
 
 [`examples/hetzner-firewall`](examples/hetzner-firewall) is a complete block
 that keeps one empty Hetzner Cloud firewall for each subscription, the
-simplest resource a provider offers for free. Its manifest declares the one
-resource, and its `verbConnections` asks mitstack to send the org's Hetzner
-credentials with `validate` and `unsubscribe` calls too, which the observer
-and `Delete` need. The manifest, from
+simplest resource a provider offers for free. A call carries the subscriber's
+credentials for the providers the block uses, `subscribe` and `upgrade`
+always, and the manifest's `verbConnections` asks for the Hetzner ones, under
+the capability name `hetzner`, on `validate` and `unsubscribe` too, for the
+observer and `Delete`. The manifest, from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
 ```yaml
@@ -195,20 +197,19 @@ func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) 
 `EnsureResources` reports the firewall under its name, its type
 `hetzner.firewall`, and `newConfig` keys its observer by the same name. The
 identity it reports, `firewallId`, is what `observe.HetznerFirewall` asks
-Hetzner about, and `Delete` hands over nothing. The other files:
+Hetzner about. The other files:
 
 - `main.go` embeds `manifest.yaml` and `type-snapshot.json` as the `manifest`
-  and `typeSnapshot` values above, and serves the handler on port 8080 with the
-  URL of the keys mitstack signs calls with, from `MITSTACK_JWKS_URL`.
+  and `typeSnapshot` values above, sets the config's `JWKSURL` from
+  `MITSTACK_JWKS_URL`, calls `handler.New` and serves it on port 8080.
 - `hetzner.go` makes the Hetzner Cloud calls and labels each firewall with the
   subscription's id.
 - `type-snapshot.json` is the `hetzner.firewall` entry of mitstack's type
   catalogue, its list of every resource type and its outputs, and [Writing the
   manifest](docs/manifest.md) says where to read yours.
-- `block_test.go` runs, against a fake Hetzner API, the three tests
-  blockverify requires by name: `TestDeclaredResources`, which calls
-  `kittest.AssertBlock`, and tests named `TestUnsubscribeDeletes...` and
-  `TestNoSecretLeak...`, which call kittest's teardown and secret-leak checks.
+- `block_test.go` runs blockverify's three required tests against a fake
+  Hetzner API: `TestDeclaredResources`, which calls `kittest.AssertBlock`, and
+  tests named `TestUnsubscribeDeletes...` and `TestNoSecretLeak...`.
 
 To start your own block, copy the folder into a new repository, delete the
 `replace` line from its `go.mod` and run `go mod tidy`. Change the module path,
@@ -220,9 +221,8 @@ go test ./...
 go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
-blockverify runs seven suites, groups of checks such as the one that runs your
-three tests, on the directory `--standalone` names, and a passing block ends
-with `VERDICT: PASS — 7 suite(s)`.
+blockverify runs seven suites, groups of checks, on the directory
+`--standalone` names, and a passing block ends with `VERDICT: PASS — 7 suite(s)`.
 
 ## The rest of the repository
 
