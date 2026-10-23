@@ -81,13 +81,13 @@ func (c *fakeCloud) stands(name string) bool {
 
 // blockResource returns deleteOutputs from each Delete, or deleteErr, keeps the request each Delete is handed, and with a clock reads it once each call has run.
 type blockResource struct {
-	cloud                                  *fakeCloud
-	ensureCalls, observeCalls, deleteCalls int
-	deleteOutputs                          map[string]string
-	deleteErr                              error
-	deleted                                []contract.Desired
-	clock                                  *tickingClock
-	ensuredAt, deletedAt                   time.Time
+	cloud                    *fakeCloud
+	ensureCalls, deleteCalls int
+	deleteOutputs            map[string]string
+	deleteErr                error
+	deleted                  []contract.Desired
+	clock                    *tickingClock
+	ensuredAt, deletedAt     time.Time
 }
 
 func (b *blockResource) Ensure(ctx context.Context, d contract.Desired) error {
@@ -97,11 +97,6 @@ func (b *blockResource) Ensure(ctx context.Context, d contract.Desired) error {
 		b.ensuredAt = b.clock.advance()
 	}
 	return nil
-}
-
-func (b *blockResource) Observe(ctx context.Context, d contract.Desired) (contract.Observation, error) {
-	b.observeCalls++
-	return contract.Observation{State: contract.Unknown}, nil
 }
 
 func (b *blockResource) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
@@ -117,7 +112,7 @@ func (b *blockResource) Delete(ctx context.Context, d contract.Desired) (map[str
 	return b.deleteOutputs, nil
 }
 
-func (b *blockResource) calls() [3]int { return [3]int{b.ensureCalls, b.observeCalls, b.deleteCalls} }
+func (b *blockResource) calls() [2]int { return [2]int{b.ensureCalls, b.deleteCalls} }
 
 type reportingBlock struct {
 	*blockResource
@@ -291,8 +286,8 @@ func TestBlockLevel_SubscribeAndUpgradeRunOneEnsureThenObserveEachResourceByName
 			if status != http.StatusOK || resp.Pending {
 				t.Fatalf("status, pending = %d, %v; want 200 and settled, every resource stands; response %+v", status, resp.Pending, resp)
 			}
-			if got := block.calls(); got != [3]int{1, 0, 0} {
-				t.Errorf("block Ensure, Observe, Delete calls = %v, want one Ensure for the whole block", got)
+			if got := block.calls(); got != [2]int{1, 0} {
+				t.Errorf("block Ensure, Delete calls = %v, want one Ensure for the whole block", got)
 			}
 			wantEveryResourceObserved(t, resp, contract.Present)
 			for name, o := range obs {
@@ -434,8 +429,8 @@ func TestBlockLevel_UnsubscribeRunsOneDeleteHandedTheRequestThenProvesEachResour
 	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: "unsubscribe", fields: fields})
 
 	wantOK(t, status, resp)
-	if got := block.calls(); got != [3]int{0, 0, 1} || block.deleted[0].Params["dataHandover"] != "snapshot" {
-		t.Errorf("block Ensure, Observe, Delete calls = %v handed %+v, want one Delete for the whole block carrying the request's params", got, block.deleted)
+	if got := block.calls(); got != [2]int{0, 1} || block.deleted[0].Params["dataHandover"] != "snapshot" {
+		t.Errorf("block Ensure, Delete calls = %v handed %+v, want one Delete for the whole block carrying the request's params", got, block.deleted)
 	}
 	wantAbsent(t, resp, true)
 	wantEveryResourceObserved(t, resp, contract.Absent)
@@ -505,8 +500,8 @@ func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBl
 			t.Errorf("resource %q observed %d times, want once", name, got)
 		}
 	}
-	if got := block.calls(); got != [3]int{} {
-		t.Errorf("validate ran block Ensure, Observe, Delete %v times, want none", got)
+	if got := block.calls(); got != [2]int{} {
+		t.Errorf("validate ran block Ensure, Delete %v times, want none", got)
 	}
 	wantEveryResourceObserved(t, resp, contract.Present)
 	if !slices.Equal(resp.Replaces, []string{"b"}) {
@@ -537,9 +532,9 @@ func TestBlockLevel_ObservesOneResourceThroughItsDeclaredObserverByTheTypeAndIde
 			cloud := newFakeCloud()
 			cloud.createAll()
 			block, obs, typed := &blockResource{cloud: cloud}, blockObservers(cloud), fixed(contract.Observation{State: contract.Present})
+			byType := map[string]handler.Observer{"aws.iam-role": typed, "aws.vpc": typed}
 
-			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: tc.op, fields: tc.fields, config: []func(*handler.Config){
-				func(c *handler.Config) { c.TypeObservers = map[string]handler.Observer{"aws.iam-role": typed, "aws.vpc": typed} }}})
+			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: tc.op, fields: tc.fields, config: []func(*handler.Config){func(c *handler.Config) { c.TypeObservers = byType }}})
 
 			wantOK(t, status, resp)
 			refs := obs["b"].calls()
@@ -557,8 +552,8 @@ func TestBlockLevel_ObservesOneResourceThroughItsDeclaredObserverByTheTypeAndIde
 					t.Errorf("resource %q was observed, but the request names b alone", name)
 				}
 			}
-			if got := block.calls(); got != [3]int{} {
-				t.Errorf("the block-level handler ran Ensure, Observe, Delete %v times; want none for an observe of one resource", got)
+			if got := block.calls(); got != [2]int{} {
+				t.Errorf("the block-level handler ran Ensure, Delete %v times; want none for an observe of one resource", got)
 			}
 			o := resp.Resources["b"].Observe
 			if len(resp.Resources) != 1 || o == nil || o.State != contract.Present || o.Type != tc.typ || !reflect.DeepEqual(o.Identity, tc.identity) {
@@ -643,8 +638,8 @@ func TestTypeObservers_ServeOnlyAValidateNamingAResourceTheManifestNoLongerDecla
 			status, resp := serveBlock(t, blockCall{r: block, obs: map[string]handler.Observer{"a": &observer{name: "a", cloud: newFakeCloud()}}, op: tc.op, fields: tc.fields, config: []func(*handler.Config){
 				withManifest(onlyAManifest), func(c *handler.Config) { c.TypeObservers = map[string]handler.Observer{"aws.vpc": vpc} }}})
 
-			if got := block.calls(); got != [3]int{} {
-				t.Errorf("block-level handler ran Ensure, Observe, Delete %v times; want none", got)
+			if got := block.calls(); got != [2]int{} {
+				t.Errorf("block-level handler ran Ensure, Delete %v times; want none", got)
 			}
 			if tc.refused {
 				wantRefusal(t, status, resp, "undeclared-resource", tc.names...)

@@ -239,10 +239,6 @@ func (b *fakeBlock) PlanReplacements(ctx context.Context, d contract.Desired) ([
 	return nil, nil
 }
 
-func (b *fakeBlock) Observe(ctx context.Context, d contract.Desired) (contract.Observation, error) {
-	return contract.Observation{State: contract.Unknown}, nil
-}
-
 func (b *fakeBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
 	b.counts.begin()
 	b.mu.Lock()
@@ -315,9 +311,6 @@ func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.Resource
 type silentBlock struct{ b *fakeBlock }
 
 func (s silentBlock) Ensure(ctx context.Context, d contract.Desired) error { return s.b.Ensure(ctx, d) }
-func (s silentBlock) Observe(ctx context.Context, d contract.Desired) (contract.Observation, error) {
-	return s.b.Observe(ctx, d)
-}
 func (s silentBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
 	return s.b.Delete(ctx, d)
 }
