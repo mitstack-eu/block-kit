@@ -345,6 +345,13 @@ request bypass the cache entirely: a validate, because it is a probe of the
 resource's current state and a replayed observation could report a state
 the resource has left, and any request whose `idempotencyKey` is empty.
 
+The same reading decides the lifecycle event a verb sends to the request's
+events callback. A subscribe, upgrade or unsubscribe sends `progress` with
+its status detail while its answer is pending or answers `absent:false`.
+It sends `completed` once the answer settles, so an unsubscribe completes
+only after its teardown is observed absent. An error answer sends `failed`,
+and a validate or an issue sends nothing.
+
 `Resource` has one `Observe` and one `Delete`, and each receives the verb's
 own `Desired`:
 

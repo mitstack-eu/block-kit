@@ -32,15 +32,15 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 
 	run := func() (int, []byte, bool) {
 		status, resp := h.dispatchVerbRecovering(ctx, req, secrets)
-		h.emitVerbEvent(ctx, req.Operation, status, resp)
+		settled := answerSettled(req.Operation, resp)
+		h.emitVerbEvent(ctx, req.Operation, status, resp, settled)
 
 		raw, err := json.Marshal(resp)
 		if err != nil {
 			raw, _ = json.Marshal(contract.Response{Error: "handler: encoding response failed: " + err.Error()})
 			return http.StatusInternalServerError, raw, true
 		}
-		notYetAbsent := req.Operation == "unsubscribe" && resp.Absent != nil && !*resp.Absent
-		return status, raw, !resp.Pending && !notYetAbsent
+		return status, raw, settled
 	}
 
 	var status int
@@ -55,6 +55,12 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(raw)
+}
+
+// answerSettled is the one verdict the idempotency cache and the verb's event both read: an answer is settled unless it is pending or an unsubscribe still observed present.
+func answerSettled(operation string, resp contract.Response) bool {
+	notYetAbsent := operation == "unsubscribe" && resp.Absent != nil && !*resp.Absent
+	return !resp.Pending && !notYetAbsent
 }
 
 // dispatchVerbRecovering recovers inside the single-flight call because a recover further out would leave a waiter on the same key holding a zero status, and its fixed error carries nothing from the panic value since the platform stores the response body.
@@ -90,12 +96,12 @@ func panicValueForLog(p any, secrets []string) string {
 // emitVerbEvent emits none for validate, since ProbeHealth dispatches validate in answer to a terminal event and a completed one would loop, and none for an issue, which changes nothing the subscription's events record.
 //
 // It emits no start event because the event log's partial unique index on (subscriptionId, idempotencyKey) would drop the terminal event under a start event that took its slot.
-func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status int, resp contract.Response) {
+func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status int, resp contract.Response, settled bool) {
 	if operation == "validate" || operation == contract.OperationIssue {
 		return
 	}
 	if status >= 200 && status < 300 {
-		if resp.Pending {
+		if !settled {
 			_ = events.EmitProgress(ctx, resp.StatusDetail)
 		} else {
 			_ = events.EmitCompleted(ctx)
