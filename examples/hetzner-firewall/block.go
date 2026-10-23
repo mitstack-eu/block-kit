@@ -2,12 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/handler"
-	"github.com/mitstack-eu/block-kit/observe"
-	"github.com/mitstack-eu/block-kit/webhook"
 )
 
 const firewallResource = "hetzner.firewall"
@@ -35,18 +31,4 @@ func (b block) Ensure(ctx context.Context, d contract.Desired) error {
 
 func (b block) Observe(context.Context, contract.Desired) (contract.Observation, error) {
 	return contract.Observation{State: contract.Unknown}, nil
-}
-
-func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) {
-	types, err := contract.ParseTypeSnapshot(typeSnapshot)
-	if err != nil {
-		return handler.Config{}, fmt.Errorf("reading type-snapshot.json: %w", err)
-	}
-	return handler.Config{
-		Resource:  block{cloud: cloud},
-		Observers: map[string]handler.Observer{firewallResource: observe.HetznerFirewall{API: cloud}},
-		Manifest:  manifest,
-		Types:     types,
-		Logs:      logs,
-	}, nil
 }

@@ -36,14 +36,14 @@ outputs the answer should still carry once the resources are gone, usually
 none. `Observe` only completes the interface, since observers answer in its
 place, so a one-line stub will do. Each resource has an
 observer, whose one method, `ObserveResource(ctx, ref)`, gets the resource's
-name, type and identity and the call itself in a `contract.ResourceRef`, and
-asks the provider about it. It returns a `contract.Observation`:
+name, type and identity and the call's `contract.Desired` in a
+`contract.ResourceRef`, and asks the provider about it. It returns a `contract.Observation`:
 `contract.Present`, `contract.Absent` or `contract.Unknown`, and the
 resource's outputs. The kit's `observe` package has observers for common
 resource types, and you write one for any other type. `handler.New` takes a
-`handler.Config` holding your code, the observers, your manifest and the URL
-of the keys mitstack signs calls with, and returns the HTTP handler your
-operator serves at your manifest's endpoint:
+`handler.Config` holding your code, the observers, your manifest and the
+address of mitstack's public keys, and returns the HTTP handler your operator
+serves at your manifest's endpoint:
 
 ```mermaid
 sequenceDiagram
@@ -70,9 +70,9 @@ sequenceDiagram
    the provider credentials it carries and the resources mitstack recorded.
 3. On `subscribe` and `upgrade`, the handler calls your `EnsureResources`,
    which does the work of `Ensure` and also returns each identity. Write it,
-   since the kit's test checks need the identities; the handler calls `Ensure`
-   only for code without it. On `unsubscribe` it calls `Delete`, and on
-   `validate` neither.
+   since an observer finds its resource by that identity; the handler calls
+   `Ensure` only for code without it. On `unsubscribe` it calls `Delete`, and
+   on `validate` neither.
 4. The handler then waits for the call to settle, which means it asks each
    resource's observer until the provider shows the state the call asked for,
    20 times at most by default, where unknown means the provider cannot tell
@@ -110,11 +110,13 @@ ships, runs your tests' kittest checks. Everything else is optional, in
 
 [`examples/hetzner-firewall`](examples/hetzner-firewall) is a complete block
 that keeps one empty Hetzner Cloud firewall for each subscription, the
-simplest resource a provider offers for free. A call carries the subscriber's
-credentials for the providers the block uses, `subscribe` and `upgrade`
-always, and the manifest's `verbConnections` asks for the Hetzner ones, under
-the capability name `hetzner`, on `validate` and `unsubscribe` too, for the
-observer and `Delete`. The manifest, from
+simplest resource a provider offers for free. Each call carries the
+subscriber's credentials for the providers the block uses. A `subscribe` and
+an `upgrade` always carry them. The manifest's `verbConnections` (a verb is a
+lifecycle call, a connection a provider account) asks for the Hetzner ones on
+`validate` and `unsubscribe` too, since the observer and `Delete` need them.
+[Writing the manifest](docs/manifest.md) explains every key. The manifest,
+from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
 ```yaml
@@ -144,12 +146,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/handler"
-	"github.com/mitstack-eu/block-kit/observe"
-	"github.com/mitstack-eu/block-kit/webhook"
 )
 
 const firewallResource = "hetzner.firewall"
@@ -178,30 +176,21 @@ func (b block) Ensure(ctx context.Context, d contract.Desired) error {
 func (b block) Observe(context.Context, contract.Desired) (contract.Observation, error) {
 	return contract.Observation{State: contract.Unknown}, nil
 }
-
-func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) {
-	types, err := contract.ParseTypeSnapshot(typeSnapshot)
-	if err != nil {
-		return handler.Config{}, fmt.Errorf("reading type-snapshot.json: %w", err)
-	}
-	return handler.Config{
-		Resource:  block{cloud: cloud},
-		Observers: map[string]handler.Observer{firewallResource: observe.HetznerFirewall{API: cloud}},
-		Manifest:  manifest,
-		Types:     types,
-		Logs:      logs,
-	}, nil
-}
 ```
 
 `EnsureResources` reports the firewall under its name, its type
-`hetzner.firewall`, and `newConfig` keys its observer by the same name. The
-identity it reports, `firewallId`, is what `observe.HetznerFirewall` asks
-Hetzner about. The other files:
+`hetzner.firewall`, with the identity `firewallId` that
+`observe.HetznerFirewall` asks Hetzner about. The other files:
 
-- `main.go` embeds `manifest.yaml` and `type-snapshot.json` as the `manifest`
-  and `typeSnapshot` values above, sets the config's `JWKSURL` from
-  `MITSTACK_JWKS_URL`, calls `handler.New` and serves it on port 8080.
+- `config.go` builds the `handler.Config`: the block as its `Resource`,
+  `observe.HetznerFirewall` as the observer filed under the resource's name,
+  the manifest, the type snapshot and a log buffer. [Serving lifecycle
+  calls](docs/handler.md) explains each field.
+- `main.go` embeds `manifest.yaml` and `type-snapshot.json`, and sets the
+  config's `JWKSURL` from `MITSTACK_JWKS_URL`, the address of the JSON Web Key
+  Set holding mitstack's public keys, which the `webhook` checks verify
+  signatures with: `https://api.mitstack.dev/.well-known/jwks.json` in
+  production. It calls `handler.New` and serves the handler on port 8080.
 - `hetzner.go` makes the Hetzner Cloud calls and labels each firewall with the
   subscription's id.
 - `type-snapshot.json` is the `hetzner.firewall` entry of mitstack's type
@@ -211,10 +200,11 @@ Hetzner about. The other files:
   Hetzner API: `TestDeclaredResources`, which calls `kittest.AssertBlock`, and
   tests named `TestUnsubscribeDeletes...` and `TestNoSecretLeak...`.
 
-To start your own block, copy the folder into a new repository, delete the
-`replace` line from its `go.mod` and run `go mod tidy`. Change the module path,
-`metadata.id` and the endpoint, swap the firewall for your resource in every
-file, and run your tests and blockverify from the copy:
+To start your own block, copy the folder into a new repository and delete the
+`replace` line from its `go.mod`, which points the example at the kit beside
+it, so that `go mod tidy` fetches block-kit v0.4.0 instead. Change the module
+path, `metadata.id` and the endpoint, swap the firewall for your resource in
+every file, and run your tests and blockverify from the copy:
 
 ```sh
 go test ./...
