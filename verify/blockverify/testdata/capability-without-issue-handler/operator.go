@@ -18,6 +18,9 @@ import (
 //go:embed manifest.yaml
 var manifest []byte
 
+//go:embed type-snapshot.json
+var typeSnapshot []byte
+
 // cloud holds each object the operator created under the subscription that tagged it, and observes every declared resource.
 type cloud struct {
 	mu      sync.Mutex
@@ -96,25 +99,31 @@ func (o *operator) Delete(_ context.Context, d contract.Desired) (map[string]str
 	return nil, nil
 }
 
-func newOperator(logs *webhook.LogBuffer) (*operator, map[string]handler.Observer, error) {
+func newOperator(logs *webhook.LogBuffer) (*operator, handler.Config, error) {
 	m, err := contract.ParseManifest(manifest)
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading the operator's manifest: %w", err)
+		return nil, handler.Config{}, fmt.Errorf("reading the operator's manifest: %w", err)
+	}
+	types, err := contract.ParseTypeSnapshot(typeSnapshot)
+	if err != nil {
+		return nil, handler.Config{}, fmt.Errorf("reading the operator's type snapshot: %w", err)
 	}
 	c := &cloud{objects: map[string]observe.Tagged{}, subs: map[string]string{}}
 	observers := map[string]handler.Observer{}
 	for _, r := range m.Block.Spec.Resources {
 		observers[r.Name] = c
 	}
-	return &operator{cloud: c, resources: m.Block.Spec.Resources, logs: logs}, observers, nil
+	op := &operator{cloud: c, resources: m.Block.Spec.Resources, logs: logs}
+	return op, handler.Config{Resource: op, Observers: observers, Manifest: manifest, Types: types, Logs: logs}, nil
 }
 
 func newHandler(jwksURL string, logs *webhook.LogBuffer) (*handler.Handler, error) {
-	op, observers, err := newOperator(logs)
+	_, config, err := newOperator(logs)
 	if err != nil {
 		return nil, err
 	}
-	return handler.New(handler.Config{Resource: op, Observers: observers, Manifest: manifest, JWKSURL: jwksURL, Logs: logs})
+	config.JWKSURL = jwksURL
+	return handler.New(config)
 }
 
 func main() {
