@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// mitstack/v1beta has no lifecycle hooks, retainsOnUnsubscribe, spec.naming, spec.dependsOn or optional requirement, and no retired entry key, so each is unknown.
+// mitstack/v1beta has no lifecycle hooks, retainsOnUnsubscribe, spec.params, spec.naming, spec.dependsOn or optional requirement, and no retired entry key, so each is unknown.
 func v1betaUnknownFields(t *testing.T) map[string][]byte {
 	beta := func(old, new string) []byte { return edit(t, betaManifest, old, new) }
 	const hostType, containerType = "      type: aws.ec2-instance\n", "      type: aws.ec2-container\n"
@@ -19,8 +19,7 @@ func v1betaUnknownFields(t *testing.T) map[string][]byte {
 		"spec.bogus":                     beta("  version: 1.0.0\n", "  version: 1.0.0\n  bogus: 1\n"),
 		"spec.outputs":                   beta("  requires:\n", "  outputs: [host]\n  requires:\n"),
 		"spec.dependsOn":                 beta("  requires:\n", "  dependsOn:\n    - weather-app\n  requires:\n"),
-		"spec.params[0].bogus":           beta("      label: Container image\n", "      label: Container image\n      bogus: 1\n"),
-		"spec.params[0].type":            beta("      label: Container image\n", "      label: Container image\n      type: string\n"),
+		"spec.params":                    beta("  requires:\n", "  params:\n    - name: image\n      label: Container image\n  requires:\n"),
 		"spec.requires[0].bogus":         beta("    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      bogus: 1\n"),
 		"spec.requires[0].capability":    beta("    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      capability: app-host\n"),
 		"spec.requires[0].optional":      beta("    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      optional: true\n"),

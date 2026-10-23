@@ -33,10 +33,6 @@ func (b namespaceBlock) Ensure(ctx context.Context, d contract.Desired) error {
 	return b.deploy(ctx, d, out.App, out.Files, out.App+": update manifests")
 }
 
-func (b namespaceBlock) Observe(context.Context, contract.Desired) (contract.Observation, error) {
-	return contract.Observation{State: contract.Unknown}, nil
-}
-
 func (b namespaceBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
 	out, err := b.resource.Render(d)
 	if err != nil {

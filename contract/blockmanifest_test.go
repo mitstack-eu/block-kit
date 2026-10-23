@@ -76,7 +76,6 @@ func TestParseManifest_ReadsTheWorkedV1BetaManifests(t *testing.T) {
 					Version: "3.0.0", ReleaseClass: "breaking",
 					ReleaseNote: "Plain runs its container on the app's EC2 host, against the Postgres database offered there.",
 					Description: "Runs the Plain tracker container on the app's host, connected to the app's Postgres database.",
-					Params:      []contract.ManifestParam{{Name: "image", Label: "Plain tracker container image", Required: true}},
 					Provides:    []string{"aws.ec2-container"},
 					Lifecycle: contract.ManifestLifecycle{Endpoint: "https://api.mitstack.dev/operators/plain/hook",
 						Operations: []string{"subscribe", "unsubscribe", "upgrade", "validate"}, Contract: "kit/v1"},
@@ -98,12 +97,7 @@ func TestParseManifest_ReadsTheWorkedV1BetaManifests(t *testing.T) {
 					Version: "2.0.0", ReleaseClass: "breaking",
 					ReleaseNote: "AWS App Infrastructure offers its host, data volume, registry, deploy role and address as separate resources.",
 					Description: "Creates the app's host, data volume and image registry in the consumer's own AWS account, and the app's public address.",
-					Params: []contract.ManifestParam{
-						{Name: "instanceType", Label: "EC2 instance type"},
-						{Name: "domain", Label: "Your own domain pointed at the app"},
-						{Name: "customDomain", Label: "Extra hostname served alongside the app's address"},
-					},
-					Provides: []string{"aws.ec2-instance", "aws.ebs-volume", "aws.ecr-repository", "deploy-role", "aws.route53-record"},
+					Provides:    []string{"aws.ec2-instance", "aws.ebs-volume", "aws.ecr-repository", "deploy-role", "aws.route53-record"},
 					Lifecycle: contract.ManifestLifecycle{Endpoint: "https://api.mitstack.dev/operators/aws-app-infra/hook",
 						Operations: []string{"subscribe", "unsubscribe", "upgrade", "validate"}, Contract: "kit/v1"},
 				},
@@ -217,9 +211,6 @@ metadata:
   name: Retired Keys
 spec:
   version: 1.0.0
-  params:
-    - name: image
-      label: Container image
   requires:
     - github.repository
     - name: host
@@ -242,9 +233,6 @@ metadata:
   name: Fixture Block
 spec:
   version: 1.0.0
-  params:
-    - name: image
-      label: Container image
   requires:
     - type: aws.ec2-instance
   resources:
@@ -294,8 +282,7 @@ func TestParseManifest_V1BetaReadsEachFieldAsWritten(t *testing.T) {
 		{"many absent reads false", requires(""), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Many }, false},
 		{"many: true reads true", requires("      many: true\n"), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Many }, true},
 		{"many: false reads false", requires("      many: false\n"), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Many }, false},
-		{"a quoted number is a string", edit(t, betaManifest, "      label: Container image\n", "      label: Container image\n      default: \"8080\"\n"),
-			func(b *contract.BlockManifest) any { return b.Spec.Params[0].Default }, "8080"},
+		{"a quoted number is a string", spec("  description: \"8080\"\n"), func(b *contract.BlockManifest) any { return b.Spec.Description }, "8080"},
 		{"receivesAppSecrets absent reads false", spec(""), func(b *contract.BlockManifest) any { return b.Spec.ReceivesAppSecrets }, false},
 		{"receivesAppSecrets: true reads true", spec("  receivesAppSecrets: true\n"),
 			func(b *contract.BlockManifest) any { return b.Spec.ReceivesAppSecrets }, true},
@@ -383,9 +370,8 @@ func TestParseManifest_V1BetaRefusesAManifestNamingWhatIsWrong(t *testing.T) {
 		{"a null resource type", beta("      type: aws.security-group\n", "      type:\n"), []string{"spec.resources[1].type"}},
 		{"a null optional field", beta("  name: Fixture Block\n", "  name: Fixture Block\n  owner:\n"), []string{"metadata.owner"}},
 		{"a plain number in a string field", beta("  name: Fixture Block\n", "  name: 2048\n"), []string{"metadata.name"}},
-		{"a plain number as a param default", beta("      label: Container image\n", "      label: Container image\n      default: 8080\n"),
-			[]string{"spec.params[0].default"}},
-		{"a plain boolean in a string field", beta("      label: Container image\n", "      label: true\n"), []string{"spec.params[0].label"}},
+		{"a plain number as an entry's name", beta("    - name: app-security-group\n", "    - name: 8080\n"), []string{"spec.resources[1].name"}},
+		{"a plain boolean in a string field", spec("  description: true\n"), []string{"spec.description"}},
 		{"no resources", beta("  resources:\n    - name: fallback-network\n      type: aws.vpc\n    - name: app-security-group\n"+
 			"      type: aws.security-group\n  provides: [app-security-group]\n", "  resources: []\n"), []string{"spec.resources"}},
 		{"no lifecycle operations", beta("    operations: [subscribe, unsubscribe]\n", "    operations: []\n"), []string{"spec.lifecycle.operations"}},

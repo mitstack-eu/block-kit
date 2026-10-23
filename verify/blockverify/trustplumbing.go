@@ -24,6 +24,7 @@ var kitOwnedFuncs = []string{
 	"verifyTimestampSkew",
 	"verifyEd25519Sig",
 	"publicKeyFromJWKS",
+	"fetchJWKS",
 	"fetchJWKSKey",
 	"MintOBO",
 	"VerifyOBO",

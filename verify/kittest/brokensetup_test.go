@@ -105,10 +105,6 @@ func (b *credentialThenContainer) Ensure(ctx context.Context, d contract.Desired
 	return err
 }
 
-func (b *credentialThenContainer) Observe(context.Context, contract.Desired) (contract.Observation, error) {
-	return contract.Observation{State: contract.Unknown}, nil
-}
-
 func (b *credentialThenContainer) Delete(_ context.Context, d contract.Desired) (map[string]string, error) {
 	b.mu.Lock()
 	items := b.created

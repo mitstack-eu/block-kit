@@ -107,30 +107,21 @@ func assertPanicAnswer(t *testing.T, who string, res servedResult) contract.Resp
 	return resp
 }
 
-func TestServe_APanickingResourceAnswers500WithABody(t *testing.T) {
+func TestServe_APanickingResourceAnswers500WithABodyAndARetryReachesItAgain(t *testing.T) {
 	for _, op := range []string{"subscribe", "upgrade", "validate", "unsubscribe"} {
 		for _, key := range []string{"", "idem-panic-" + op} {
 			t.Run(fmt.Sprintf("%s with idempotency key %q", op, key), func(t *testing.T) {
-				x := newHarness(t, &panickingResource{})
+				r := &panickingResource{}
+				x := newHarness(t, r)
 
-				res := serveRecovering(x.h, panicRequest(x, map[string]any{"operation": op, "idempotencyKey": key}))
-
-				assertPanicAnswer(t, "calling delivery", res)
+				for _, who := range []string{"calling delivery", "retry"} {
+					assertPanicAnswer(t, who, serveRecovering(x.h, panicRequest(x, map[string]any{"operation": op, "idempotencyKey": key})))
+				}
+				if got := r.count(); got != 2 {
+					t.Errorf("the Resource was called %d times, want 2: the retry reaches it again", got)
+				}
 			})
 		}
-	}
-}
-
-func TestServe_APanicIsNotCachedSoARetryReachesTheResourceAgain(t *testing.T) {
-	r := &panickingResource{}
-	x := newHarness(t, r)
-	extra := map[string]any{"idempotencyKey": "idem-panic-retry"}
-
-	assertPanicAnswer(t, "first delivery", serveRecovering(x.h, panicRequest(x, extra)))
-	assertPanicAnswer(t, "retry", serveRecovering(x.h, panicRequest(x, extra)))
-
-	if got := r.count(); got != 2 {
-		t.Errorf("Ensure called %d times, want 2: a panic's 500 must not be cached under the key", got)
 	}
 }
 

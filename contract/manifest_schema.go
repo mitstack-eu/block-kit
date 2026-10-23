@@ -32,7 +32,7 @@ func GenerateManifestSchema() ([]byte, error) {
 	doc["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	doc["$id"] = manifestSchemaID
 	doc["title"] = "mitstack block manifest " + ManifestAPIVersion
-	doc["description"] = "A block manifest under " + ManifestAPIVersion + ": its params, its requirements by exact type, " +
+	doc["description"] = "A block manifest under " + ManifestAPIVersion + ": its requirements by exact type, " +
 		"the resources it creates by exact type, the resources it provides, its lifecycle and its observability. " +
 		"Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice, " +
 		"a requirement reference used twice, an entry listing several types without a name, " +

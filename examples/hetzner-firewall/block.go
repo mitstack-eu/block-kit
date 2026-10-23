@@ -23,12 +23,8 @@ func (b block) Delete(ctx context.Context, d contract.Desired) (map[string]strin
 	return nil, b.cloud.deleteFirewalls(ctx, d)
 }
 
-// Ensure and Observe complete handler.Resource, and the handler calls EnsureResources and the observer in their place.
+// Ensure completes handler.Resource, and the handler calls EnsureResources in its place.
 func (b block) Ensure(ctx context.Context, d contract.Desired) error {
 	_, err := b.EnsureResources(ctx, d)
 	return err
-}
-
-func (b block) Observe(context.Context, contract.Desired) (contract.Observation, error) {
-	return contract.Observation{State: contract.Unknown}, nil
 }

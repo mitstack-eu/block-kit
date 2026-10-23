@@ -121,7 +121,6 @@ type ManifestSpec struct {
 	ReleaseClass string                `json:"releaseClass,omitempty"`
 	ReleaseNote  string                `json:"releaseNote,omitempty"`
 	Description  string                `json:"description,omitempty"`
-	Params       []ManifestParam       `json:"params,omitempty"`
 	Requires     []ManifestRequirement `json:"requires,omitempty"`
 	Resources    []ManifestResource    `json:"resources"`
 	// Provides names entries of Resources.
@@ -129,15 +128,6 @@ type ManifestSpec struct {
 	Lifecycle          ManifestLifecycle      `json:"lifecycle"`
 	Observability      *ManifestObservability `json:"observability,omitempty"`
 	ReceivesAppSecrets bool                   `json:"receivesAppSecrets,omitempty"`
-}
-
-type ManifestParam struct {
-	Name        string `json:"name"`
-	Label       string `json:"label,omitempty"`
-	Description string `json:"description,omitempty"`
-	Default     string `json:"default,omitempty"`
-	Required    bool   `json:"required,omitempty"`
-	Secret      bool   `json:"secret,omitempty"`
 }
 
 type ManifestRequirement struct {

@@ -25,7 +25,7 @@
   "$id": "https://mitstack.dev/schemas/block/manifest.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A block manifest under mitstack/v1beta: its params, its requirements by exact type, the resources it creates by exact type, the resources it provides, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice, a requirement reference used twice, an entry listing several types without a name, and a provides entry that names no resource.",
+  "description": "A block manifest under mitstack/v1beta: its requirements by exact type, the resources it creates by exact type, the resources it provides, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice, a requirement reference used twice, an entry listing several types without a name, and a provides entry that names no resource.",
   "properties": {
     "apiVersion": {
       "const": "mitstack/v1beta",
@@ -188,37 +188,6 @@
             }
           },
           "type": "object"
-        },
-        "params": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "default": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "label": {
-                "type": "string"
-              },
-              "name": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "required": {
-                "type": "boolean"
-              },
-              "secret": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "name"
-            ],
-            "type": "object"
-          },
-          "type": "array"
         },
         "provides": {
           "items": {

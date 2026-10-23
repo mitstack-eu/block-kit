@@ -88,10 +88,6 @@ func (o *operator) Ensure(ctx context.Context, d contract.Desired) error {
 	return err
 }
 
-func (o *operator) Observe(context.Context, contract.Desired) (contract.Observation, error) {
-	return contract.Observation{State: contract.Unknown}, nil
-}
-
 func (o *operator) Delete(_ context.Context, d contract.Desired) (map[string]string, error) {
 	for _, r := range o.resources {
 		o.cloud.set(d.SubscriptionID+"/"+r.Name, nil, "")

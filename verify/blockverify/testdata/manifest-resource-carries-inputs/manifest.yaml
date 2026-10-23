@@ -10,13 +10,6 @@ spec:
   description: >
     Creates the app's host, data volume and image registry in the
     consumer's own AWS account, and the app's public address.
-  params:
-    - name: instanceType
-      label: EC2 instance type
-    - name: domain
-      label: Your own domain pointed at the app
-    - name: customDomain
-      label: Extra hostname served alongside the app's address
   requires: [github.repository]
   resources:
     - aws.s3-bucket

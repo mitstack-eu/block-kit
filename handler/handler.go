@@ -24,10 +24,6 @@ type Resource interface {
 	// Ensure may be called more than once for the same subscription and must converge rather than duplicate.
 	Ensure(ctx context.Context, d contract.Desired) error
 
-	// Observe is polled after Ensure and Delete and called once for validate, and sees the verb's Secrets held only for that one call.
-	// Its outputs reach the wire unscrubbed, so they must never carry secret material, and a value identical to one of d.Secrets is refused.
-	Observe(ctx context.Context, d contract.Desired) (contract.Observation, error)
-
 	// Delete must not error when nothing was ever provisioned, and must be idempotent, since a settle timeout's redrive calls it again after it may already have destroyed the resource.
 	// Its outputs are merged into the unsubscribe answer once the block settles absent and reach the wire unscrubbed, so they must never carry secret material.
 	Delete(ctx context.Context, d contract.Desired) (outputs map[string]string, err error)
@@ -53,17 +49,17 @@ type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)
 }
 
-// Config wires a Handler; only Resource and JWKSURL are required, VerbBudget defaults to 20, PollInterval to 500ms, and a nil Logs answers GET /logs with 404.
+// Config wires a Handler; Resource, Manifest and JWKSURL are required, VerbBudget defaults to 20, PollInterval to 500ms, and a nil Logs answers GET /logs with 404.
 type Config struct {
 	Resource Resource
 
-	// Observers needs one Observer for each declared resource, and is refused without a mitstack/v1beta manifest.
+	// Observers needs one Observer for each resource the manifest declares.
 	Observers map[string]Observer
 
-	// TypeObservers is keyed by resource-type id and serves a validate naming a resource the manifest no longer declares; refused without a mitstack/v1beta manifest.
+	// TypeObservers is keyed by resource-type id and serves a validate naming a resource the manifest no longer declares.
 	TypeObservers map[string]Observer
 
-	// Manifest's metadata.id is the block every request's OBO token must name.
+	// Manifest is the block's mitstack/v1beta manifest, whose metadata.id every request's OBO token must name.
 	Manifest []byte
 
 	// Types is the type snapshot the manifest names its types from, and a declared resource of a type it marks EndsWithSubscription is counted absent once the unsubscribe's delete succeeds, unobserved.
@@ -90,7 +86,6 @@ type Config struct {
 type Handler struct {
 	resource Resource
 
-	// declared is nil unless the manifest is mitstack/v1beta, whose block the handler serves at block level.
 	declared      []namedResource
 	typeObservers map[string]Observer
 	provided      map[string]bool
@@ -98,7 +93,6 @@ type Handler struct {
 	types      contract.TypeSnapshot
 	capability bool
 
-	// audience is the manifest's metadata.id; without a manifest it is empty, and no token the engine mints matches it.
 	audience  string
 	jwksURL   string
 	publicKey func(kid string) (ed25519.PublicKey, error)
@@ -118,6 +112,9 @@ func New(cfg Config) (*Handler, error) {
 	if cfg.Resource == nil {
 		return nil, errNilResource
 	}
+	if len(cfg.Manifest) == 0 {
+		return nil, errNoManifest
+	}
 	if cfg.JWKSURL == "" {
 		return nil, errEmptyJWKSURL
 	}
@@ -125,19 +122,11 @@ func New(cfg Config) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	var resources []namedResource
-	switch {
-	case declared.apiVersion == contract.ManifestAPIVersion:
-		resources, err = observedResources(cfg, declared)
-		if err == nil {
-			err = validateTypeObservers(cfg.TypeObservers)
-		}
-	case len(cfg.Observers) > 0:
-		err = errObserversWithoutManifest
-	case len(cfg.TypeObservers) > 0:
-		err = errTypeObserversWithoutManifest
-	}
+	resources, err := observedResources(cfg, declared)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateTypeObservers(cfg.TypeObservers); err != nil {
 		return nil, err
 	}
 

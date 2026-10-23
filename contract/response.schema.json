@@ -64,7 +64,7 @@
       }
     },
     "resources": {
-      "description": "The outcome of each call a verb ran for a resource the block's manifest declares, keyed by the resource's name. A resource the verb never reached has no entry, and within an entry a call that did not run has no key. A block served over a single resource reports none.",
+      "description": "The outcome of each call a verb ran for a resource the block's manifest declares, keyed by the resource's name. A resource the verb never reached has no entry, and within an entry a call that did not run has no key.",
       "type": "object",
       "additionalProperties": {
         "type": "object",

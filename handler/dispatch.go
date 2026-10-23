@@ -115,36 +115,11 @@ func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status in
 	_ = events.EmitFailed(ctx, detail)
 }
 
-// dispatchVerb refuses with a 400 a request naming a resource of a block served over a single Resource, before the Resource is reached.
 func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secrets []string) (int, contract.Response) {
 	if req.Operation == contract.OperationIssue {
 		return h.issue(ctx, req, secrets)
 	}
-	desired := req.Desired()
-
-	if h.declared != nil {
-		return h.dispatchDeclared(ctx, req.Operation, desired, secrets)
-	}
-	if req.Resource != "" {
-		return h.errorResponse(Refuse(classUndeclaredResource,
-			"resource %q is not declared: the block is served as one resource and declares none", req.Resource), secrets)
-	}
-
-	switch req.Operation {
-	case "subscribe", "upgrade":
-		return h.ensureAndSettle(ctx, desired, secrets)
-	case "validate":
-		return h.validate(ctx, desired, secrets)
-	case "unsubscribe":
-		return h.deleteAndSettle(ctx, desired, secrets)
-	default:
-		return http.StatusInternalServerError, contract.Response{Error: "handler: unreachable — unknown operation " + req.Operation}
-	}
-}
-
-// observe never retains d, so no Handler field can hand one verb's secrets to a later call.
-func (h *Handler) observe(ctx context.Context, d contract.Desired) (contract.Observation, error) {
-	return h.resource.Observe(ctx, d)
+	return h.dispatchDeclared(ctx, req.Operation, req.Desired(), secrets)
 }
 
 // refuseSecretOutputs inspects only Outputs, since SecretOutputs is where a secret is returned on purpose, and matches exact values so an output merely containing a secret is left alone.
@@ -165,92 +140,6 @@ func refuseSecretOutputs(outputs map[string]string, secrets map[string]map[strin
 	return nil
 }
 
-func (h *Handler) ensureAndSettle(ctx context.Context, d contract.Desired, secrets []string) (int, contract.Response) {
-	if err := h.resource.Ensure(ctx, d); err != nil {
-		return h.errorResponse(err, secrets)
-	}
-	return h.settlePresent(ctx, d, secrets)
-}
-
-func (h *Handler) deleteAndSettle(ctx context.Context, desired contract.Desired, secrets []string) (int, contract.Response) {
-	handoverOutputs, err := h.resource.Delete(ctx, desired)
-	if err != nil {
-		return h.errorResponse(err, secrets)
-	}
-	return h.settleAbsent(ctx, desired, secrets, handoverOutputs)
-}
-
-// settlePresent answers 200 {"pending":true} on budget exhaustion, since pending is never an error.
-//
-// It checks ctx.Err() before every attempt because defaultSleep returns at once once ctx is done, and a cancelled request would otherwise spend its whole budget on unpaced Observe calls against a cloud API.
-func (h *Handler) settlePresent(ctx context.Context, d contract.Desired, secrets []string) (int, contract.Response) {
-	var last contract.Observation
-	attempts := 0
-	for attempts < h.verbBudget {
-		if ctx.Err() != nil {
-			break
-		}
-		obs, err := h.observe(ctx, d)
-		if err != nil {
-			return h.errorResponse(err, secrets)
-		}
-		attempts++
-		last = obs
-		if obs.State == contract.Present {
-			if err := refuseSecretOutputs(obs.Outputs, d.Secrets); err != nil {
-				return h.errorResponse(err, secrets)
-			}
-			return http.StatusOK, scrubResponse(obs.Response(), secrets)
-		}
-		if attempts < h.verbBudget {
-			h.sleep(ctx, h.pollInterval)
-		}
-	}
-	return http.StatusOK, contract.Response{
-		Pending:      true,
-		StatusDetail: safe.Scrub(fmt.Sprintf("still %s after %d attempts", last.State, attempts), secrets...),
-	}
-}
-
-// settleAbsent always answers a definite boolean, absent:false with a detail for anything but Absent, including Unknown, and checks ctx.Err() before every attempt like settlePresent.
-//
-// On absent:true, the outputs Delete returned are merged over Observe's outputs; the absent:false answer carries none.
-func (h *Handler) settleAbsent(ctx context.Context, d contract.Desired, secrets []string, handoverOutputs map[string]string) (int, contract.Response) {
-	var last contract.Observation
-	attempts := 0
-	for attempts < h.verbBudget {
-		if ctx.Err() != nil {
-			break
-		}
-		obs, err := h.observe(ctx, d)
-		if err != nil {
-			return h.errorResponse(err, secrets)
-		}
-		attempts++
-		last = obs
-		if obs.State == contract.Absent {
-			merged := mergeOutputs(obs.Outputs, handoverOutputs)
-			if err := refuseSecretOutputs(merged, d.Secrets); err != nil {
-				return h.errorResponse(err, secrets)
-			}
-			absent := true
-			return http.StatusOK, contract.Response{
-				Absent:       &absent,
-				Outputs:      merged,
-				StatusDetail: safe.Scrub(obs.StatusDetail, secrets...),
-			}
-		}
-		if attempts < h.verbBudget {
-			h.sleep(ctx, h.pollInterval)
-		}
-	}
-	absent := false
-	return http.StatusOK, contract.Response{
-		Absent:       &absent,
-		StatusDetail: safe.Scrub(fmt.Sprintf("observed %s after %d attempts", last.State, attempts), secrets...),
-	}
-}
-
 func mergeOutputs(base, overlay map[string]string) map[string]string {
 	if len(overlay) == 0 {
 		return base
@@ -263,23 +152,6 @@ func mergeOutputs(base, overlay map[string]string) map[string]string {
 		merged[k] = v
 	}
 	return merged
-}
-
-// validate calls Observe once and layers "pending":true and the observed redrive on Unknown, which Response() cannot carry; an Observe error is classified, never folded into pending.
-func (h *Handler) validate(ctx context.Context, d contract.Desired, secrets []string) (int, contract.Response) {
-	obs, err := h.observe(ctx, d)
-	if err != nil {
-		return h.errorResponse(err, secrets)
-	}
-	if err := refuseSecretOutputs(obs.Outputs, d.Secrets); err != nil {
-		return h.errorResponse(err, secrets)
-	}
-	resp := obs.Response()
-	if obs.State == contract.Unknown {
-		resp.Pending = true
-		resp.Redrive = obs.Redrive
-	}
-	return http.StatusOK, scrubResponse(resp, secrets)
 }
 
 // errorResponse answers a *Refused with 400 and statusDetail "refused:<class>: <msg>" and anything else with 500, and logs a refusal with no class since the wire would otherwise be the only trace.
@@ -297,12 +169,6 @@ func (h *Handler) errorResponse(err error, secrets []string) (int, contract.Resp
 
 	log.Printf("handler: %s", safe.LogSafe(err.Error(), secrets...))
 	return http.StatusInternalServerError, contract.Response{Error: safe.Scrub(err.Error(), secrets...)}
-}
-
-func scrubResponse(resp contract.Response, secrets []string) contract.Response {
-	resp.Error = safe.Scrub(resp.Error, secrets...)
-	resp.StatusDetail = safe.Scrub(resp.StatusDetail, secrets...)
-	return resp
 }
 
 // secretsFor collects every literal secret a request carries so all can be scrubbed from the response body and logs.
