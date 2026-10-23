@@ -69,11 +69,12 @@ sequenceDiagram
    replayed to another block. A mismatch answers 401 too. The handler hands
    your code the call as a `contract.Desired`: the subscription, its settings,
    the provider credentials it carries and the resources mitstack recorded.
-3. On `subscribe` and `upgrade`, the handler calls your `EnsureResources`,
-   which does the work of `Ensure` and also returns each identity. Write it,
-   since an observer finds its resource by that identity; the handler calls
-   `Ensure` only for code without it. On `unsubscribe` it calls `Delete`, and
-   on `validate` neither.
+3. On `subscribe` and `upgrade`, the handler calls your `EnsureResources`, the
+   one method of the `handler.ResourceReporter` interface, which does the work
+   of `Ensure` and also returns each identity. Write it, since an observer
+   finds its resource by that identity. The handler checks whether your code
+   has it and calls `Ensure` only for code without it. On `unsubscribe` it
+   calls `Delete`, and on `validate` neither.
 4. The handler then waits for the call to settle, which means it asks each
    resource's observer until the provider shows the state the call asked for,
    20 times at most by default, where unknown means the provider cannot tell
@@ -215,20 +216,20 @@ go test ./...
 go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
-blockverify runs seven suites, groups of checks, on the block in the directory
-you name, here `.`, and a passing block ends with `VERDICT: PASS — 7 suite(s)`.
+blockverify runs only with `--standalone`, which checks the block in the
+directory you name, here `.`, on its own. It runs seven suites, groups of
+checks, and a passing block ends with `VERDICT: PASS — 7 suite(s)`.
 
 ## The rest of the repository
 
 `verify` also holds `blockverify` and three packages no block imports.
-`blockprov` and `provenance` build and sign a record of the repository,
-commit and CI run that built a block's image. Your block's CI never runs them
-itself. It calls the kit's publish workflow, as [Running the block
-checks](docs/block-checks.md) shows, and that workflow runs them once it has
-built and pushed the image. `attest` checks the platform's signed record that
-a block passed blockverify. `examples` holds the example, `cmd` and `scripts` the
-kit's own commands, and `board` mitstack's work-tracker tooling, a Go module
-no block uses. `docs` holds these pages:
+`blockprov` and `provenance` sign a record of the repository, commit and CI
+run that built a block's image, and `attest` checks the platform's signed
+record that a block passed blockverify. Your block's CI calls the kit's
+publish workflow, as [Running the block checks](docs/block-checks.md) shows,
+and that workflow runs `blockprov` for you. `examples` holds the example,
+`cmd` and `scripts` the kit's own commands, and `board` mitstack's
+work-tracker tooling, a Go module no block uses. `docs` holds these pages:
 
 | Page | What it covers |
 |---|---|
@@ -243,8 +244,7 @@ no block uses. `docs` holds these pages:
 
 ## Licence
 
-block-kit is licensed under the Business Source License 1.1, whose full text
-is in [the LICENSE file](LICENSE). You may read, copy and change the kit, and
-use it in production only to build, run or operate what the mitstack platform
-manages. Each release, `v0.4.0` and every later one, becomes Apache-2.0 four
-years after it is published.
+block-kit is licensed under the [Business Source License 1.1](LICENSE). You
+may read, copy and change the kit, and use it in production only to build,
+run or operate what the mitstack platform manages. Each release, `v0.4.0` and
+every later one, becomes Apache-2.0 four years after it is published.
