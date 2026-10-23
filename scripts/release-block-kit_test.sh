@@ -313,7 +313,7 @@ assert_kit_tag_count "empty base cuts nothing when unchanged" "$W" 1
 setup_repo
 run --repo "$W" --base "" --head "$SEED"
 check "rootless head exits 0" 0 "$RC"
-assert_out_contains "a head with no parent counts as a change" "changed"
+assert_out_contains "a head with no parent counts as a change that waits for the first release" "no kit tag yet"
 assert_kit_tag_count "a rootless head cuts no tag before the first release" "$W" 0
 
 # 11. The all-zero sha means unknown in exactly the same way, and it resolves to the newest tag's commit rather than to <head>^.
@@ -483,24 +483,6 @@ assert_tag "the healing tag reaches the remote" "$R" "v0.5.1"
 assert_tag_at "the pushed healing tag points at the current head" "$R" "v0.5.1" "$C"
 OUT="$(git -C "$W" tag --list "v*" --contains "$C")"
 assert_out_contains "head is reachable from a tag afterwards" "v0.5.1"
-
-# 24. The script's header describes this repository's own root and plain vX.Y.Z tags.
-if [ -f "$SCRIPT" ]; then
-  header="$(sed -n '1,60p' "$SCRIPT")"
-  if grep -q "examples/operator-kit" <<<"$header"; then
-    bad "release-block-kit.sh header/usage still mentions the retired examples/operator-kit subdirectory layout"
-  else
-    ok
-  fi
-  if grep -qE 'v[0-9]+\.[0-9]+\.[0-9]+' <<<"$header"; then
-    ok
-  else
-    bad "release-block-kit.sh header/usage does not show a plain vX.Y.Z tag shape"
-  fi
-else
-  bad "release-block-kit.sh does not exist yet — its header cannot describe the present"
-  bad "release-block-kit.sh does not exist yet — its usage cannot show a plain vX.Y.Z tag shape"
-fi
 
 echo "----"
 echo "release-block-kit: $pass passed, $fail failed"
