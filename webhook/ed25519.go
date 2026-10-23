@@ -111,24 +111,28 @@ type KeyCache struct {
 
 func NewKeyCache() *KeyCache { return &KeyCache{} }
 
-// PublicKey refetches the JWKS once JWKSRefreshInterval has passed since the last fetch, or for a kid it lacks when no unknown kid caused a fetch within the interval, and a failed fetch keeps the last keys, so a JWKS outage refuses only the kids it would have brought.
+// PublicKey refetches the JWKS once JWKSRefreshInterval has passed since the last fetch, or for a kid it lacks when no unknown kid caused a fetch within the interval; a failed fetch keeps the last keys and waits out the interval, unless the cache holds none.
 func (kc *KeyCache) PublicKey(jwksURL string, client *http.Client, kid string, now time.Time) (ed25519.PublicKey, error) {
 	kc.mu.Lock()
 	defer kc.mu.Unlock()
 	_, known := kc.keys[kid]
 	due := now.Sub(kc.lastFetch) >= JWKSRefreshInterval
-	if !due && !known && now.Sub(kc.lastUnknownKidFetch) >= JWKSRefreshInterval {
-		due, kc.lastUnknownKidFetch = true, now
+	unknownKidFetch := !due && !known && now.Sub(kc.lastUnknownKidFetch) >= JWKSRefreshInterval
+	if !due && !unknownKidFetch {
+		return keyFor(kc.keys, kid)
 	}
-	if due {
+	keys, err := fetchJWKS(jwksURL, client)
+	if err == nil {
+		kc.keys = keys
+	}
+	if err == nil || len(kc.keys) > 0 {
 		kc.lastFetch = now
-		keys, err := fetchJWKS(jwksURL, client)
-		if err != nil && !known {
-			return nil, err
+		if unknownKidFetch {
+			kc.lastUnknownKidFetch = now
 		}
-		if err == nil {
-			kc.keys = keys
-		}
+	}
+	if err != nil && !known {
+		return nil, err
 	}
 	return keyFor(kc.keys, kid)
 }
@@ -150,6 +154,9 @@ func fetchJWKS(jwksURL string, client *http.Client) (map[string]ed25519.PublicKe
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("jwks answered HTTP " + strconv.Itoa(resp.StatusCode))
+	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if err != nil {
 		return nil, err

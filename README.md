@@ -305,7 +305,9 @@ fetches them again once `webhook.JWKSRefreshInterval`, five minutes, has
 passed. A key the platform removes from its JWKS stops verifying at that
 refresh. A key id the Handler does not hold causes at most one extra fetch
 in each interval, so a caller without a valid signature cannot make the
-operator fetch at will.
+operator fetch at will. A fetch that fails, or that the JWKS answers with
+anything but 200, leaves the keys the Handler already holds in place until
+the next interval. While it holds no key at all, the next call tries again.
 
 An error the Resource returns is answered by its type. A
 `*handler.Refused` answers 400 with a `refused:<class>` status detail,
