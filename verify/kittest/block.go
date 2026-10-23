@@ -134,7 +134,7 @@ func blockSpec(in Block) (contract.ManifestSpec, []string) {
 	}
 	var problems []string
 	if in.Provider == nil {
-		problems = append(problems, "Provider is required, so the guards cannot run")
+		problems = append(problems, "Provider is nil, so the guards cannot list or lose what the block creates")
 	}
 	if in.Desired.SubscriptionID == "" || in.Desired.BlockID == "" || in.Desired.OrgID == "" {
 		problems = append(problems, "Desired needs a SubscriptionID, a BlockID and an OrgID, which every request the engine sends carries")
@@ -395,14 +395,14 @@ func untagged(recorded map[string]contract.RecordedResource, tagged []observe.Ta
 		}
 		return false
 	}
-	var unnamed, missing []string
+	var unmatched, missing []string
 	for _, name := range sortedKeys(recorded) {
 		identity := slices.Collect(maps.Values(recorded[name].Identity))
 		if !take(recorded[name], func(t observe.Tagged) bool { return slices.Contains(identity, t.ID) }) {
-			unnamed = append(unnamed, name)
+			unmatched = append(unmatched, name)
 		}
 	}
-	for _, name := range unnamed {
+	for _, name := range unmatched {
 		if !take(recorded[name], func(observe.Tagged) bool { return true }) {
 			missing = append(missing, name)
 		}
