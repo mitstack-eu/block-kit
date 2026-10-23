@@ -16,65 +16,69 @@ Each resource has a resource type (the exact sort of object it is, written
 `<capability>.<name>`, where the capability names the provider, as in
 `hetzner.firewall`).
 
-An app uses a block through a subscription. The engine, the part of mitstack
-that drives every subscription, sends the block four lifecycle calls over
-HTTPS. `subscribe` creates the resources for a new subscription, `upgrade`
-brings them to a new version of the block, `validate` reports whether each
-resource stands and changes nothing, and `unsubscribe` deletes them. The
-operator is the program you write with this kit to answer those calls, a small
-HTTP server shipped as a container image.
+An app uses a block through a subscription, and the block marks everything it
+creates with the subscription's id, as a tag or a label, so mitstack can always
+find what a subscription owns. The engine, the part of mitstack that drives
+every subscription, sends the block four lifecycle calls over HTTPS.
+`subscribe` creates the resources, `upgrade` brings them to a new version of
+the block, `validate` reports whether each one stands and changes nothing, and
+`unsubscribe` deletes them. The operator is the program you write with this kit
+to answer those calls, a small HTTP server shipped as a container image.
 
 ## How one lifecycle call reaches your code
 
-Your code implements `handler.Resource`, an interface of three methods,
-`Ensure`, `Observe` and `Delete`, and you give `handler.New` one observer for
-each resource. `handler.New` returns the HTTP handler your operator serves.
-The engine signs every call with mitstack's private key and posts it to your
-manifest's endpoint, the public HTTPS address of that handler's `/hook` route:
+Your block's code implements `handler.Resource`, an interface of three
+methods: `Ensure` creates what is missing, `Delete` deletes, and `Observe`
+reports. Each resource also has an observer, a small type whose
+`ObserveResource` method asks the provider whether that one resource stands.
+The kit's `observe` package has observers for common resource types, and you
+write one for any other type. `handler.New` takes your code and the observers
+and returns the HTTP handler your operator serves on the address your manifest
+names as its endpoint:
 
 ```mermaid
 sequenceDiagram
     participant E as mitstack engine
     participant H as the handler in your operator
     participant B as your block code
-    E->>H: POST /hook with a signed subscribe request
-    Note over H: webhook checks the signature, then handler the OBO token
+    E->>H: POST /hook with a signed subscribe call
+    Note over H: webhook checks the signature, then handler checks the call
     H->>B: EnsureResources(ctx, desired), which returns each identity
-    loop until present, at most VerbBudget times
+    loop until present, at most 20 times by default
         H->>B: ObserveResource(ctx, ref) on the resource's observer
         B-->>H: present, absent or unknown
     end
     H-->>E: the answer, with each resource and its outputs
 ```
 
-1. The handler first runs the `webhook` package's checks, which verify the
-   `X-Mitstack-Signature-Ed25519` header with mitstack's keys from the JWKS
-   URL you configure. They answer 401, before your code runs, to a bad
-   signature, a reused nonce or a request over five minutes from your clock.
-2. The handler decodes the body into a `contract.Request` and checks its OBO
-   (on-behalf-of) token, signed with the same keys, which must name your
-   manifest's `metadata.id` and the request's org, app and subscription. It
-   hands your code a `contract.Desired`: the subscription, its settings, the
-   provider credentials and each recorded resource with its identity.
-3. On `subscribe` and `upgrade`, the handler calls your `Ensure`, which creates
-   whatever is missing. When your code also has `EnsureResources`, as the
-   example below does, the handler calls that instead, since it also returns
-   each resource's identity, such as its id at the provider.
+1. The handler first runs the kit's `webhook` checks: mitstack signed the call
+   with a key the operator can verify, the call is under five minutes old, and
+   it is not a replay. A call that fails any of them answers 401 and never
+   reaches your code.
+2. The handler decodes the call and checks that a second signed token in it
+   names your block and the call's subscription. It hands your code the call
+   as a `contract.Desired`: the subscription, its settings, the provider
+   credentials it carries and the resources mitstack has recorded for it.
+3. On `subscribe` and `upgrade`, the handler calls your `Ensure`, or
+   `EnsureResources` when your code has it, as the example below does.
+   `EnsureResources` does the same work and also returns each resource's
+   identity, the values such as an id that find it at the provider.
 4. The handler then waits for the call to settle, which means it asks each
    resource's observer until the provider shows the state the call asked for,
-   at most `VerbBudget` times, a `handler.Config` field that defaults to 20.
-   An observer implements `handler.Observer` in place of your `Observe`: its
-   `ObserveResource(ctx, ref)` reads the resource's name, type and identity
-   from `ref`, and answers present with its outputs, absent or unknown.
+   20 times at most by default. An observer answers present, absent, or unknown
+   when the provider cannot tell yet, such as while a server boots.
 5. The handler answers with each resource's state and its outputs, the values
-   such as an address that the rest of the app may read, or, for a call still
-   unsettled, that it is pending, and the engine asks again later.
+   such as an address that other blocks of the app may read. A call that has
+   not settled answers that it is still in progress, and the engine asks again.
 
 | Call | What the handler calls on your code once the checks pass |
 |---|---|
 | `subscribe`, `upgrade` | `EnsureResources` or `Ensure`, then each resource's observer until it reports present |
 | `unsubscribe` | `Delete`, then each resource's observer until it reports absent |
 | `validate` | Each resource's observer, once |
+
+The handler asks the observers in place of `Observe`, which your code keeps
+only because the interface requires it.
 
 ## What a block imports
 
@@ -86,17 +90,17 @@ and you add a package when your block needs what it does:
 
 | Package | Who imports it | What it gives you |
 |---|---|---|
-| `contract` | Every block | The request and answer types, such as `contract.Desired` and `contract.Observation`, and the manifest parser |
+| `contract` | Every block | The call's types, such as `contract.Desired` and `contract.Observation`, and the manifest parser |
 | `handler` | Every block | `handler.New`, which serves the lifecycle calls over your code |
-| `observe` | Every block | Observers for common resource types, such as `observe.HetznerFirewall`. Listers your tests use to find what the block created by the subscription's id, which a block puts on everything it creates as a tag or label |
-| `webhook` | Every block | The signature checks the handler runs, and `webhook.LogBuffer`, the recent log lines the platform reads at your operator's `/logs` route |
+| `observe` | Every block | Observers for common resource types, such as `observe.HetznerFirewall`, and listers, which your tests use to find everything marked with a subscription's id |
+| `webhook` | Every block | The signature checks the handler runs, and `webhook.LogBuffer`, which holds the recent log lines mitstack reads from your operator |
 | `verify/kittest` | Every block's tests | The checks blockverify requires your tests to run |
-| `helpers/safe` | A block that logs a request's values, or calls an API at an address a request supplies | Secret scrubbing for logs, and an allowlist of the hosts the operator trusts, so a request cannot redirect a call |
-| `helpers/events` | A block that reports its own progress or calls the mitstack API during a call | Progress events of its own, and the mitstack API's address and token, taken from the request |
+| `helpers/safe` | A block that logs values from a call, or calls an API at an address a call supplies | Secret scrubbing for logs, and an allowlist of the hosts the operator trusts, so a call cannot redirect it |
+| `helpers/events` | A block that reports its own progress during long work | Progress events beyond the ones the handler sends |
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
-| `capabilities/aws/cloudid` | A block whose resources live in the org's AWS account | Short-lived AWS credentials from the role and token the request carries for that account |
+| `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials for the AWS account a call names |
 | `capabilities/github/ghapi` | A block that calls the GitHub API | A GitHub REST client whose host the operator decides |
 | `capabilities/github/gitops` | A block that deploys to Kubernetes through Argo CD | Commits the block's files to a GitOps repository and judges the deploy, with test fakes in `capabilities/github/gitops/gitopstest` |
 
@@ -104,12 +108,10 @@ and you add a package when your block needs what it does:
 
 [`examples/hetzner-firewall`](examples/hetzner-firewall) is a complete block
 that keeps one empty Hetzner Cloud firewall for each subscription, the
-simplest resource a provider offers for free. A connection is the org's
-account at a provider the block works with, and each request carries the
-connections' credentials, such as the Hetzner API token, in `Desired.Secrets`.
-`verbConnections` lists the connections a `validate` and an `unsubscribe`
-need, so the platform can send those two calls just their credentials, while a
-`subscribe` and an `upgrade` carry every connection's. The manifest, from
+simplest resource a provider offers for free. Its manifest declares the one
+resource, and `verbConnections` names the provider credentials, here the
+Hetzner ones, that a `validate` and an `unsubscribe` need, as [Writing the
+manifest](docs/manifest.md) explains. The manifest, from
 [`examples/hetzner-firewall/manifest.yaml`](examples/hetzner-firewall/manifest.yaml):
 
 ```yaml
@@ -189,46 +191,44 @@ func newConfig(cloud *hetzner, logs *webhook.LogBuffer) (handler.Config, error) 
 }
 ```
 
-`EnsureResources` reports each resource, and `newConfig` files its observer,
-under the resource's manifest name, which for an unnamed entry is its type.
-The identity is what the observer reads, here the `firewallId` that
-`observe.HetznerFirewall` asks Hetzner about. `Delete` returns no outputs,
-since a firewall leaves nothing to hand over. `hetzner.go` makes the Hetzner
-Cloud calls and labels each firewall with the subscription's id, and
-`block_test.go` runs the three tests blockverify requires by name,
-`TestDeclaredResources` and tests whose names start `TestUnsubscribeDeletes`
-and `TestNoSecretLeak`, against a fake Hetzner API. `main.go` serves the
-handler on port 8080 with the JWKS URL, in production
-`https://api.mitstack.dev/.well-known/jwks.json`. It embeds the manifest and
-`type-snapshot.json`, the `hetzner.firewall` entry of mitstack's type catalogue,
-from which `handler.New` and the kittest checks read each type's outputs. The
-platform returns the whole catalogue to a request carrying your org's API token
-at `GET https://api.mitstack.dev/v1/resource-types/snapshots/latest`.
+`EnsureResources` reports the firewall, and `newConfig` files its observer,
+under the name the manifest gives it, which for an entry written as a bare type
+is the type itself. The identity it reports, `firewallId`, is what
+`observe.HetznerFirewall` asks Hetzner about. The other files complete the
+block:
+
+- `main.go` calls `handler.New` with this config and the address of mitstack's
+  public keys, and serves the handler on port 8080.
+- `hetzner.go` makes the Hetzner Cloud calls and labels each firewall with the
+  subscription's id.
+- `type-snapshot.json` describes `hetzner.firewall` as mitstack's type catalogue
+  does, and [Writing the manifest](docs/manifest.md) says where to read yours.
+- `block_test.go` runs the three tests blockverify requires against a fake
+  Hetzner API: `TestDeclaredResources`, and two whose names start
+  `TestUnsubscribeDeletes` and `TestNoSecretLeak`.
 
 To start your own block, copy the folder into a new repository, delete the
-`replace` line from its `go.mod` and run `go mod tidy`. Change the module
-path, `metadata.id` and `spec.lifecycle.endpoint`, replace the firewall with
-your resource there and in `type-snapshot.json`, and run your tests and
-blockverify from the copy:
+`replace` line from its `go.mod` and run `go mod tidy`. Change the module path,
+`metadata.id` and the endpoint, swap the firewall for your resource in every
+file, and run your tests and blockverify from the copy:
 
 ```sh
 go test ./...
 go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
-`--standalone` judges the one directory on its own. blockverify runs seven
-suites, groups of checks such as the one that runs your three tests, and a
-passing block ends with `VERDICT: PASS — 7 suite(s)`, as
-[Running the block checks](docs/block-checks.md) explains.
+blockverify runs seven suites, groups of checks such as the one that runs your
+three tests, on the directory `--standalone` names, and a passing block ends
+with `VERDICT: PASS — 7 suite(s)`.
 
 ## The rest of the repository
 
-Besides the packages above, `verify` holds the `blockverify` command and the
-tools that sign where a published block's image came from, and `examples` the
-example block, which CI tests and checks on every change. `cmd` holds
-`commentcheck`, which judges a change's comments, and `manifest-schema`, which
-prints the manifest's JSON Schema. `scripts` holds the release script, `board`
-mitstack's work-tracker tooling, a Go module no block uses, and `docs` these pages:
+Besides the packages above, `verify` holds `blockverify` and the tools that
+sign where a published block's image came from, and `examples` the example
+block, which CI tests and checks on every change. `cmd` holds `commentcheck`,
+which judges a change's comments, and `manifest-schema`, which prints the
+manifest's JSON Schema. `scripts` holds the release script, `board` mitstack's
+work-tracker tooling, a Go module no block uses, and `docs` these pages:
 
 | Page | What it covers |
 |---|---|
