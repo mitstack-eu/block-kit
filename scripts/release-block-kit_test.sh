@@ -163,13 +163,14 @@ assert_tag "the cut tag is pushed to the remote" "$R" "v0.5.1"
 assert_tag_at "the pushed tag points at head" "$R" "v0.5.1" "$H"
 assert_kit_tag_count "exactly one new tag" "$W" 2
 
-# 3. A whole `kit-release: minor` line raises the minor level, key and level in any mixture of cases, and zeroes the patch level; prose around the key declares nothing, so the raise is the patch.
-for row in "kit-release: minor|v0.5.0|v0.4.4" "kit-release: MINOR|v0.5.0|v0.4.4" "KIT-RELEASE: minor|v0.5.0|v0.4.4" \
-  "Kit-Release: MINOR|v0.5.0|v0.4.4" "see kit-release: minor|v0.4.4|v0.5.0" \
-  "kit-release: minor is what we should have used here|v0.4.4|v0.5.0" "see kit-release: minor for the convention|v0.4.4|v0.5.0"; do
-  IFS='|' read -r trailer want not <<<"$row"
+# 3. A whole `kit-release:` line raises its level, key and level in any mixture of cases, and zeroes the levels below it; prose around the key declares nothing, so the raise is the patch; a major line is honoured from v1 on.
+for row in "kit-release: minor|v0.4.3|v0.5.0|v0.4.4" "kit-release: MINOR|v0.4.3|v0.5.0|v0.4.4" "KIT-RELEASE: minor|v0.4.3|v0.5.0|v0.4.4" \
+  "Kit-Release: MINOR|v0.4.3|v0.5.0|v0.4.4" "see kit-release: minor|v0.4.3|v0.4.4|v0.5.0" \
+  "kit-release: minor is what we should have used here|v0.4.3|v0.4.4|v0.5.0" "see kit-release: minor for the convention|v0.4.3|v0.4.4|v0.5.0" \
+  "kit-release: major|v1.2.3|v2.0.0|v1.3.0"; do
+  IFS='|' read -r trailer base want not <<<"$row"
   setup_repo
-  tag_at "v0.4.3"
+  tag_at "$base"
   commit_change "feat: a change" -m "$trailer"
   run --repo "$W" --base "$SEED" --head "$(head_sha)"
   check "'$trailer' exits 0" 0 "$RC"
@@ -178,18 +179,19 @@ for row in "kit-release: minor|v0.5.0|v0.4.4" "kit-release: MINOR|v0.5.0|v0.4.4"
   assert_no_tag "'$trailer' cuts no $not" "$W" "$not"
 done
 
-# 5. From a v0 tag a whole `kit-release: major` line fails the run and cuts no tag, beside a minor line or in a range leaving the kit unchanged, since v1.0.0 is cut by hand at the commercial launch.
-for kind in change empty; do
+# 5. From a v0 tag a whole `kit-release: major` line beside a minor one fails the run and its dry run alike and cuts no tag, whether the range changes the kit or not, since v1.0.0 is cut by hand at the commercial launch.
+for row in "commit_change|" "commit_empty|" "commit_change|--dry-run" "commit_empty|--dry-run"; do
+  IFS='|' read -r commit_minor dry <<<"$row"
   setup_repo
   tag_at "v0.5.0"
   git -C "$W" push -q origin "v0.5.0"
-  [ "$kind" = change ] && commit_change "feat: add a capability" -m "kit-release: minor"
+  "$commit_minor" "feat: add a capability" -m "kit-release: minor"
   commit_empty "feat!: break the webhook signature" -m "Kit-Release: MAJOR"
-  run --repo "$W" --base "$SEED" --head "$(head_sha)"
-  check "a major line from v0.5.0 fails ($kind)" 1 "$RC"
-  assert_out_contains "the refusal says why ($kind)" "v1.0.0 is cut by hand at the commercial launch"
-  assert_kit_tag_count "a refused raise cuts no tag ($kind)" "$W" 1
-  assert_kit_tag_count "a refused raise pushes no tag ($kind)" "$R" 1
+  run --repo "$W" --base "$SEED" --head "$(head_sha)" ${dry:+"$dry"}
+  check "a major line from v0.5.0 fails ($row)" 1 "$RC"
+  assert_out_contains "the refusal says why ($row)" "v1.0.0 is cut by hand at the commercial launch"
+  assert_kit_tag_count "a refused raise cuts no tag ($row)" "$W" 1
+  assert_kit_tag_count "a refused raise pushes no tag ($row)" "$R" 1
 done
 
 # 6. The base tag is chosen by numeric version order, not lexical order.

@@ -118,6 +118,8 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
 		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
 		{"the test job reports as test, the context branch protection requires", field("jobs.test.name"), "test"},
+		{"the test job carries no if, so every event runs the check main requires", field("jobs.test.if"), "<absent>"},
+		{"the release tests carry no if, so every event runs them", field(stepOf(all, "test", "run", "bash scripts/release-block-kit_test.sh") + "if"), "<absent>"},
 		{"the test job checks out the tags and history the release dry run reads", strconv.FormatBool(stepWith(all, "test", "with.fetch-depth", "0")), "true"},
 		{"the test job runs the release script's tests", strconv.FormatBool(stepWith(all, "test", "run", "bash scripts/release-block-kit_test.sh")), "true"},
 		{"the test job dry-runs the release over a pull request's base and head, on a pull request alone",
@@ -151,6 +153,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct{ name, scope, forbidden string }{
+		{"the test job never continues on error, so a failing step fails the check main requires", "jobs.test.", "continue-on-error"},
 		{"the pr key gate never continues on error, so a missing key is a red check", "jobs.pr-key-gate.", "continue-on-error"},
 		{"the pr key gate needs no secret", "jobs.pr-key-gate.", "secrets."},
 		{"the pr key gate reads nothing from a commit, since a branch name in a commit is no delivery intent", "jobs.pr-key-gate.", "head_commit"},
