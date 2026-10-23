@@ -44,6 +44,8 @@ var entryPoints = []entryPoint{
 	{"RunOutput", hostexec.RunOutput},
 }
 
+var run, runOutput = entryPoints[0], entryPoints[1]
+
 // awsFake configures the aws stub: each Status poll fails pollFailures times, then serves statuses holding the last, or InProgress while held; hang and sendHangs sleep until killed, leakGrandchild holds stderr open past WaitDelay, and failureUnreadable fails the read of a failed command's details.
 type awsFake struct {
 	noCommandID, held, hang, sendHangs, leakGrandchild, failureUnreadable bool
@@ -75,16 +77,13 @@ func newFakes(t *testing.T, aws awsFake, sshBody string) fakes {
 	for i, s := range statuses {
 		quoted[i] = shQuote(s)
 	}
-	commandID := "cmd-1"
-	if aws.noCommandID {
-		commandID = ""
-	}
 	optional := func(on bool, line string) string {
 		if on {
 			return line
 		}
 		return ""
 	}
+	commandID := optional(!aws.noCommandID, "cmd-1")
 	failure, _ := json.Marshal(map[string]any{"ResponseCode": aws.exitCode, "StandardErrorContent": aws.stderr + "\n", "StandardOutputContent": aws.stdout + "\n"})
 	d := shQuote(f.dir)
 	awsScript := "#!/usr/bin/env bash\nset -u\n" + fmt.Sprintf(record, d+"/aws") +

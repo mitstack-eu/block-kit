@@ -104,10 +104,9 @@ func TestSSMHost(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct {
-		name               string
-		target, credential string
-		region             string
-		env                []string
+		name                       string
+		target, credential, region string
+		env                        []string
 	}{
 		{"it carries the target, credential, region and env", fixtureInstance, credential, fixtureRegion, env},
 		{"it leaves the credential empty when none is given", fixtureInstance, "", fixtureRegion, env},
