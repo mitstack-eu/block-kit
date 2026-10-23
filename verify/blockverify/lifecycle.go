@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/kitbinding"
+	"github.com/mitstack-eu/block-kit/verify/internal/kitbinding"
 )
 
 const kitV1Contract = "kit/v1"

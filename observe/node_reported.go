@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
-	"github.com/mitstack-eu/block-kit/events"
+	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
 // NodeReport is one report as GET /v1/subscriptions/{id}/node-reports serves it.

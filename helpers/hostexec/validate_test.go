@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/block-kit/hostexec"
+	"github.com/mitstack-eu/block-kit/helpers/hostexec"
 )
 
 // Target values come from manifests and subscription inputs, and neither ssh nor the aws CLI has an end-of-options marker, so validation before any spawn is the only defence.
@@ -104,10 +104,9 @@ func TestSSMHost(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct {
-		name               string
-		target, credential string
-		region             string
-		env                []string
+		name                       string
+		target, credential, region string
+		env                        []string
 	}{
 		{"it carries the target, credential, region and env", fixtureInstance, credential, fixtureRegion, env},
 		{"it leaves the credential empty when none is given", fixtureInstance, "", fixtureRegion, env},

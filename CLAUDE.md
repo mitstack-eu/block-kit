@@ -11,6 +11,17 @@ with `go -C board vet ./... && go -C board test ./...`. Its `go.mod` pins the
 kit at a commit of main, so bump that pin by hand when the board module needs
 newer kit code.
 
+The example block under `examples/hetzner-firewall` is a module of its own,
+built against this checkout. Test it with
+`go -C examples/hetzner-firewall test ./...` and
+`go run ./verify/blockverify --standalone examples/hetzner-firewall`. The
+README shows its `manifest.yaml` and `block.go` whole, and a test in
+`examples/` fails when the README and those files differ.
+
+The root holds only the packages every block imports, `contract`, `handler`,
+`observe` and `webhook`. An optional helper tied to no provider goes in
+`helpers/`, and one for a single provider in `capabilities/<provider>/`.
+
 The first tag, v0.4.0, is cut by hand. After it, every push to main that
 changes the tree outside `board/` cuts the next patch tag, and a
 `kit-release: minor` line in a commit message raises the minor level instead

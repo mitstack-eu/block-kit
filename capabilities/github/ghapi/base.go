@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mitstack-eu/block-kit/safe"
+	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
 const APIGitHubHost = "api.github.com"

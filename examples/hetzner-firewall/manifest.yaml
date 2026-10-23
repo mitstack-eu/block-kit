@@ -1,0 +1,16 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: hetzner-firewall
+  name: Hetzner firewall
+spec:
+  version: 0.1.0
+  description: Keeps one empty Hetzner Cloud firewall for each subscription.
+  resources: [hetzner.firewall]
+  lifecycle:
+    endpoint: https://hetzner-firewall.example.com/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+    verbConnections:
+      validate: [hetzner]
+      unsubscribe: [hetzner]

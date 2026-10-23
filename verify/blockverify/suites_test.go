@@ -78,12 +78,12 @@ func TestTrustPlumbingSuite(t *testing.T) {
 	})
 }
 
-// handlerImportCases reads the shared set in ../../kitbinding/testdata/handler-import, whose comment opens with the verdict.
+// handlerImportCases reads the shared set in ../internal/kitbinding/testdata/handler-import, whose comment opens with the verdict.
 func handlerImportCases(t *testing.T) []suiteCase {
 	t.Helper()
-	paths, err := filepath.Glob("../../kitbinding/testdata/handler-import/*.txtar")
+	paths, err := filepath.Glob("../internal/kitbinding/testdata/handler-import/*.txtar")
 	if err != nil || len(paths) == 0 {
-		t.Fatalf("no fixtures under ../../kitbinding/testdata/handler-import (%v): the shared handler-import set is missing", err)
+		t.Fatalf("no fixtures under ../internal/kitbinding/testdata/handler-import (%v): the shared handler-import set is missing", err)
 	}
 	var cases []suiteCase
 	for _, p := range paths {

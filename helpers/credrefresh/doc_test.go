@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"io/fs"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -17,10 +18,7 @@ var providerNamePattern = regexp.MustCompile(`(?i)\b(` + strings.Join(providerNa
 
 func mentionsProviderName(text string) (name string, found bool) {
 	m := providerNamePattern.FindString(text)
-	if m == "" {
-		return "", false
-	}
-	return strings.ToLower(m), true
+	return strings.ToLower(m), m != ""
 }
 
 func TestMentionsProviderName_MatchesWholeWordsOnlyNotSubstrings(t *testing.T) {
@@ -69,21 +67,13 @@ func TestPackageMakesNoProviderSpecificClaim(t *testing.T) {
 	}
 	for _, ty := range docPkg.Types {
 		check("exported type "+ty.Name, ty.Name)
-		for _, fn := range ty.Funcs {
-			check("exported func "+fn.Name, fn.Name)
-		}
-		for _, m := range ty.Methods {
-			check("exported method "+m.Name, m.Name)
+		for _, fn := range slices.Concat(ty.Funcs, ty.Methods) {
+			check("exported func or method "+fn.Name, fn.Name)
 		}
 	}
-	for _, c := range docPkg.Consts {
-		for _, name := range c.Names {
-			check("exported const "+name, name)
-		}
-	}
-	for _, v := range docPkg.Vars {
+	for _, v := range slices.Concat(docPkg.Consts, docPkg.Vars) {
 		for _, name := range v.Names {
-			check("exported var "+name, name)
+			check("exported const or var "+name, name)
 		}
 	}
 }

@@ -23,7 +23,7 @@ func TestSSH(t *testing.T) {
 	secretScript := "export PGPASSWORD=" + leakScriptSecret + "\npsql -c 'select 1'"
 	cases := []struct {
 		name    string
-		output  bool
+		ep      entryPoint
 		body    string
 		pem     string
 		script  string
@@ -31,24 +31,24 @@ func TestSSH(t *testing.T) {
 		errHas  string
 		check   func(t *testing.T, f fakes, out string)
 	}{
-		{"the identity file is written 0600 and removed once Run returns", false, "exit 0", "PEM-DATA", "true", "", "", func(t *testing.T, f fakes, _ string) {
+		{"the identity file is written 0600 and removed once Run returns", run, "exit 0", "PEM-DATA", "true", "", "", func(t *testing.T, f fakes, _ string) {
 			if perm := strings.TrimSpace(f.read("perm")); perm != "600" {
 				t.Errorf("identity file mode = %s, want 600: a readable private key on disk is a leak however short-lived", perm)
 			}
 			assertIdentityFileGone(t, f)
 		}},
-		{"a non-zero exit carries the captured stderr", false, `echo "Permission denied (publickey)" >&2; exit 255`, "PEM-DATA", "true", "", "Permission denied", nil},
-		{"RunOutput returns the captured stdout", true, `printf 'READY=0\n'`, "PEM-DATA", "true", "READY=0", "", nil},
-		{"RunOutput returns no partial output from a failed run", true, `printf 'partial output\n'; echo "Permission denied (publickey)" >&2; exit 255`, "PEM-DATA", "true", "", "Permission denied", nil},
-		{"a successful exit is not failed by a grandchild holding stderr open past WaitDelay", false, "( sleep 3 & ); exit 0", "PEM-DATA", "true", "", "", nil},
-		{"the script's secret arrives over stdin and never on the command line", false, "exit 0", "irrelevant-pem", secretScript, "", "", func(t *testing.T, f fakes, _ string) {
+		{"a non-zero exit carries the captured stderr", run, `echo "Permission denied (publickey)" >&2; exit 255`, "PEM-DATA", "true", "", "Permission denied", nil},
+		{"RunOutput returns the captured stdout", runOutput, `printf 'READY=0\n'`, "PEM-DATA", "true", "READY=0", "", nil},
+		{"RunOutput returns no partial output from a failed run", runOutput, `printf 'partial output\n'; echo "Permission denied (publickey)" >&2; exit 255`, "PEM-DATA", "true", "", "Permission denied", nil},
+		{"a successful exit is not failed by a grandchild holding stderr open past WaitDelay", run, "( sleep 3 & ); exit 0", "PEM-DATA", "true", "", "", nil},
+		{"the script's secret arrives over stdin and never on the command line", run, "exit 0", "irrelevant-pem", secretScript, "", "", func(t *testing.T, f fakes, _ string) {
 			assertOnlyOnStdin(t, f, secretScript, leakScriptSecret)
 		}},
-		{"the private key never reaches the command line, only a file that is gone afterwards", false, "exit 0", leakPEM, "true", "", "", func(t *testing.T, f fakes, _ string) {
+		{"the private key never reaches the command line, only a file that is gone afterwards", run, "exit 0", leakPEM, "true", "", "", func(t *testing.T, f fakes, _ string) {
 			kittest.AssertNoSecret(t, "ssh argv", strings.Join(f.calls("ssh")[0], "\n"), leakPEM)
 			assertIdentityFileGone(t, f)
 		}},
-		{"RunOutput's return value carries neither secret", true, "cat >/dev/null; printf 'ok\\n'", leakPEM, secretScript, "ok", "", func(t *testing.T, f fakes, out string) {
+		{"RunOutput's return value carries neither secret", runOutput, "cat >/dev/null; printf 'ok\\n'", leakPEM, secretScript, "ok", "", func(t *testing.T, f fakes, out string) {
 			kittest.AssertNoSecret(t, "ssh RunOutput return value", out, leakScriptSecret, leakPEM)
 			assertOnlyOnStdin(t, f, secretScript, leakScriptSecret)
 		}},
@@ -59,15 +59,11 @@ func TestSSH(t *testing.T) {
 			var logs bytes.Buffer
 			log.SetOutput(&logs)
 			t.Cleanup(func() { log.SetOutput(os.Stderr) })
-			ep := entryPoints[0]
-			if tc.output {
-				ep = entryPoints[1]
-			}
 
-			out, err := ep.call(context.Background(), sshHost(tc.pem), tc.script)
+			out, err := tc.ep.call(context.Background(), sshHost(tc.pem), tc.script)
 
 			if out != tc.wantOut || (tc.errHas == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.errHas)) {
-				t.Errorf("%s() = %q, %v; want %q with an error saying %q", ep.name, out, err, tc.wantOut, tc.errHas)
+				t.Errorf("%s() = %q, %v; want %q with an error saying %q", tc.ep.name, out, err, tc.wantOut, tc.errHas)
 			}
 			kittest.AssertNoSecret(t, "log output", logs.String(), leakScriptSecret, leakPEM)
 			if tc.check != nil {

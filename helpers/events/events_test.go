@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/block-kit/events"
+	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
 func TestEmit(t *testing.T) {

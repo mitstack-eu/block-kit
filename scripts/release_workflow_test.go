@@ -86,11 +86,10 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	}
 	all := workflowFields(string(raw))
 	field := func(path string) string {
-		v, ok := all[path]
-		if !ok {
-			return "<absent>"
+		if v, ok := all[path]; ok {
+			return v
 		}
-		return v
+		return "<absent>"
 	}
 	cases := []struct{ name, got, want string }{
 		{"it runs on a pull request", field("on.pull_request"), ""},
@@ -114,6 +113,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
 		{"the test job vets the board module", strconv.FormatBool(stepWith(all, "test", "run", "go -C board vet ./...")), "true"},
 		{"the test job tests the board module", strconv.FormatBool(stepWith(all, "test", "run", "go -C board test ./...")), "true"},
+		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
 		{"the pr key gate runs only on a pull request, never on a push", field("jobs.pr-key-gate.if"), "github.event_name == 'pull_request'"},
 		{"the pr key gate checks out the full history the base..head range needs", strconv.FormatBool(stepWith(all, "pr-key-gate", "with.fetch-depth", "0")), "true"},
 		{"the pr key gate pins checkout to the platform's sha", strconv.FormatBool(stepWith(all, "pr-key-gate", "uses", checkout)), "true"},

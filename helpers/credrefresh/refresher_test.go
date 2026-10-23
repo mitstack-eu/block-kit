@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitstack-eu/block-kit/credrefresh"
+	"github.com/mitstack-eu/block-kit/helpers/credrefresh"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
@@ -19,12 +19,9 @@ type cred struct {
 	id, token string
 }
 
-type outcome int
+type outcome bool
 
-const (
-	usable outcome = iota
-	refused
-)
+const usable, refused outcome = false, true
 
 // get is one Refresher.Get at an offset from the start, with the outcome and credential id it must have.
 type get struct {
@@ -140,13 +137,11 @@ func TestRefresher_SerialisesConcurrentGetCalls(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for range 50 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := r.Get(context.Background()); err != nil {
 				t.Errorf("concurrent Get: %v", err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

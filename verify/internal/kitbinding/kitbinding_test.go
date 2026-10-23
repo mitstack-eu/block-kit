@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitstack-eu/block-kit/kitbinding"
+	"github.com/mitstack-eu/block-kit/verify/internal/kitbinding"
 )
 
 const fixtureDir = "testdata/handler-import"
