@@ -180,10 +180,12 @@ suite refuses an id that `contract.ParseBlockID` refuses.
 Resource types live in mitstack's type catalogue, not in the kit. The type
 snapshot is one numbered version of that catalogue as JSON. It lists each
 type with the outputs it declares, whether it is stateful, and the facts the
-checks need. The platform serves it to an authenticated request at
-`GET https://api.mitstack.dev/v1/resource-types/snapshots/latest`, and a block
-embeds the types its manifest names, as the example's `type-snapshot.json`
-does.
+checks need. The platform serves it to any member of your org at
+`GET https://api.mitstack.dev/v1/resource-types/snapshots/latest`, with an org
+API token sent as `Authorization: Bearer <token>`. You mint that token on the
+API Tokens page of the mitstack console. A block embeds the entries for the
+types its manifest names, as the example's `type-snapshot.json` does, so a
+first block can start from that file and add its own types' entries.
 
 `contract.ParseTypeSnapshot` reads a snapshot, and
 `contract.CheckManifestTypes` refuses a manifest entry listing a type the

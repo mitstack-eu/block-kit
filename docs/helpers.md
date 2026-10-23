@@ -55,8 +55,8 @@ a detail before it leaves the process.
 
 `events.PlatformFrom(ctx)` returns the platform's base URL, the callback URL
 without its `/v1/webhooks/operator-events` path, and the callback's token. A
-block reads another platform route with them as the request it serves, as
-`observe.NodeReportsClient` does for node reports.
+block calls another platform route with that base URL and token, acting for
+the call it serves, as `observe.NodeReportsClient` does to read node reports.
 
 ## Holding a short-lived credential
 
@@ -100,8 +100,9 @@ transport, and `execTarget`, its address for that transport, and the block
 finds them in `Desired.Bindings` under its host requirement's name.
 `hostexec.SSMHost(kind, target, credential, region, env)` builds an SSM host
 from them. It accepts only the kind `aws-ssm` (`hostexec.KindSSM`) and refuses
-any other with `hostexec.ErrNotSSM`, which repeats nothing from the host. A
-block that sets no credential passes `""`:
+any other with `hostexec.ErrNotSSM`, whose message names only the kind it
+accepts and none of the host's values. A block that sets no credential passes
+`""`:
 
 ```go
 host := d.Bindings["host"]

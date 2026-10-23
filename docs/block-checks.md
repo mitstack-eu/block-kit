@@ -119,6 +119,10 @@ jobs:
       kit-ref: v0.4.0
 ```
 
+`ecr-repository` names the repository in Amazon Elastic Container Registry
+(ECR), AWS's image registry, that receives the image, and `kit-ref` the
+block-kit tag the workflow builds blockverify and `blockprov` from.
+
 Its `conformance` job runs on every event your CI calls it for. It runs your
 tests and `blockverify --standalone`, and on a pull request it also runs
 `commentcheck`, which judges the comments the change adds, as [Maintaining
@@ -143,4 +147,5 @@ things with the token:
    and the platform signs a passing report as the block's attestation.
 
 A block whose repository you created yourself runs the same three commands in
-a workflow of its own, with an org API token in the same secret.
+a workflow of its own, with an org API token in the same secret. You mint that
+token on the API Tokens page of the mitstack console.

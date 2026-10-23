@@ -30,7 +30,7 @@ server := &http.Server{Addr: listenAddr, Handler: h, ReadHeaderTimeout: readHead
 | Field | Required | What it holds |
 |---|---|---|
 | `Resource` | Yes | Your block's code, a `handler.Resource` |
-| `Manifest` | Yes | The bytes of your `manifest.yaml`, whose `metadata.id` every call's OBO token must name. Without it `handler.New` refuses a config that sets any observer, and `kittest.AssertBlock`, which blockverify requires, fails |
+| `Manifest` | Yes | The bytes of your `manifest.yaml`, whose `metadata.id` the signed token in every call, the OBO token the next section describes, must name. Without it `handler.New` refuses a config that sets any observer, and `kittest.AssertBlock`, which blockverify requires, fails |
 | `JWKSURL` | Yes | Where mitstack publishes its public keys, `https://api.mitstack.dev/.well-known/jwks.json` in production |
 | `Observers` | One per declared resource | A `handler.Observer` for each resource your manifest declares, keyed by the resource's name |
 | `Types` | Yes, for the checks | The type snapshot your manifest names its types from, which `kittest.AssertBlock` and the unsubscribe of an `endsWithSubscription` type read |
@@ -167,9 +167,11 @@ not list, answers 400. The answer carries each reported type and identity as
 that resource's `ensure` outcome, so the engine records them even when the
 call stops pending before it observes that resource.
 
-Every observation reads only what was made after `Desired.VerbAt`. After
-`EnsureResources` or `Delete`, that is the handler's clock once the call
-returned. On a `validate` it is the request's `settlesAt`, the time of the
+An observer that reads records the provider writes over time, such as
+`observe.NodeReported` reading node reports, counts only records made after
+`Desired.VerbAt`, so a record older than the call cannot settle it. After
+`EnsureResources` or `Delete`, the handler sets `VerbAt` to its clock once the
+call returned. On a `validate` it is the request's `settlesAt`, the time of the
 call the validate settles, and otherwise the request's `createdAt`.
 
 A block that implements `handler.ReplacementPlanner` names, on a `validate`,

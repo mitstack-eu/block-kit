@@ -44,7 +44,7 @@ and cuts the release the earlier push owed.
 A change that breaks the Go API, such as a package move, takes
 `kit-release: minor`, which opens the next v0 line, such as v0.5.0. No commit
 carries `kit-release: major` before the commercial launch, because that raise
-cuts v1.0.0, which the launch keeps.
+cuts v1.0.0, a version kept for the launch.
 
 ## Recording a delivery on the board
 

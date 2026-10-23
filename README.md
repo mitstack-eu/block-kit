@@ -42,8 +42,9 @@ name, type and identity and the call's `contract.Desired` in a
 resource's outputs. The kit's `observe` package has observers for common
 resource types, and you write one for any other type. `handler.New` takes a
 `handler.Config` holding your code, the observers, your manifest and the
-address of mitstack's public keys, and returns the HTTP handler your operator
-serves at your manifest's endpoint:
+address of mitstack's public keys. It returns the HTTP handler your operator
+serves, which answers calls on `POST /hook`, the path your manifest's endpoint
+ends in:
 
 ```mermaid
 sequenceDiagram
@@ -112,7 +113,8 @@ ships, runs your tests' kittest checks. Everything else is optional, in
 that keeps one empty Hetzner Cloud firewall for each subscription, the
 simplest resource a provider offers for free. Every call carries the
 credentials of each connection the block uses (a connection is an account the
-subscriber connected at a provider, such as a Hetzner Cloud project). The
+subscriber connected at a provider, such as a Hetzner Cloud project), filed
+under the connection's name, here `hetzner`. The
 manifest's `verbConnections` (a verb is a lifecycle call) names the
 connections a `validate` and an `unsubscribe` need, so the platform can leave
 the others out of those calls. The example names its Hetzner connection for
@@ -183,15 +185,16 @@ func (b block) Observe(context.Context, contract.Desired) (contract.Observation,
 `hetzner.firewall`, with the identity `firewallId` that
 `observe.HetznerFirewall` asks Hetzner about. The other files:
 
-- `config.go` builds the `handler.Config`: the block as its `Resource`,
-  `observe.HetznerFirewall` as the observer filed under the resource's name,
-  the manifest, the type snapshot and a log buffer. [Serving lifecycle
-  calls](docs/handler.md) explains each field.
+- `config.go` builds the `handler.Config`: `Resource` holds the block,
+  `Observers` files `observe.HetznerFirewall` under the resource's name,
+  `Manifest` and `Types` hold the manifest and the type snapshot, and `Logs` a
+  log buffer. [Serving lifecycle calls](docs/handler.md) explains each field.
 - `main.go` embeds `manifest.yaml` and `type-snapshot.json`, and sets the
   config's `JWKSURL` from `MITSTACK_JWKS_URL`, the address of the JSON Web Key
   Set holding mitstack's public keys, which the `webhook` checks verify
   signatures with: `https://api.mitstack.dev/.well-known/jwks.json` in
-  production. It calls `handler.New` and serves the handler on port 8080.
+  production. It passes the config to `handler.New(cfg)` and serves the
+  returned handler at the root of an `http.Server` on port 8080.
 - `hetzner.go` makes the Hetzner Cloud calls and labels each firewall with the
   subscription's id.
 - `type-snapshot.json` is the `hetzner.firewall` entry of mitstack's type
@@ -212,8 +215,8 @@ go test ./...
 go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
-blockverify runs seven suites, groups of checks, on the directory
-`--standalone` names, and a passing block ends with `VERDICT: PASS — 7 suite(s)`.
+blockverify runs seven suites, groups of checks, on the block in the directory
+you name, here `.`, and a passing block ends with `VERDICT: PASS — 7 suite(s)`.
 
 ## The rest of the repository
 
@@ -243,5 +246,5 @@ no block uses. `docs` holds these pages:
 block-kit is licensed under the Business Source License 1.1, whose full text
 is in [the LICENSE file](LICENSE). You may read, copy and change the kit, and
 use it in production only to build, run or operate what the mitstack platform
-manages. `v0.4.0`, block-kit's first release, and every later one carry this
-licence, and each becomes Apache-2.0 four years after it is published.
+manages. Each release, `v0.4.0` and every later one, becomes Apache-2.0 four
+years after it is published.
