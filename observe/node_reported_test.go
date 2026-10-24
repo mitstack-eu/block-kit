@@ -37,9 +37,7 @@ func (f *fakeReports) NodeReports(_ context.Context, _ contract.Desired, subscri
 
 var verbAt = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 
-// nodeReport describes one report: when the platform received it, when the node
-// made it, whether it marks its list complete, which kinds it read whole, and
-// the list itself; an unset field leaves its key out of the body.
+// nodeReport describes one report: when the platform received it, when the node made it, whether it marks its list complete, which kinds it read whole, and the list itself; an unset field leaves its key out of the body.
 type nodeReport struct {
 	received time.Duration
 	made     *time.Duration
@@ -146,9 +144,7 @@ func TestNodeReported_ClaimsAbsenceOnlyFromAReportMadeAfterTheVerbThatReadTheObj
 	}
 }
 
-// Node reports are stored under the cluster's own subscription, whose nodes
-// send them, while a namespace carries the label of the subscription that
-// created it, here sub-1.
+// Node reports are stored under the cluster's own subscription, whose nodes send them, while a namespace carries the label of the subscription that created it, here sub-1.
 func TestNodeReported_ReadsTheReportsOfTheClusterSubscriptionTheIdentityNames(t *testing.T) {
 	complete := func(items ...map[string]any) nodeReport {
 		return nodeReport{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: append([]map[string]any{}, items...)}

@@ -31,8 +31,7 @@ var (
 	_ handler.Observer = observe.GitHubCommit{}
 )
 
-// existsFake answers every existence question from the keys it holds, and
-// records each key it was asked about.
+// existsFake answers every existence question from the keys it holds, and records each key it was asked about.
 type existsFake struct {
 	held  map[string]bool
 	asked []string
@@ -73,9 +72,7 @@ type observer interface {
 	ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error)
 }
 
-// existenceObservers are the observers that ask only whether the object the
-// identity names exists, each with the identity that names it, the key the
-// fake is asked about, and the outputs a present object reports.
+// existenceObservers are the observers that ask only whether the object the identity names exists, each with the identity that names it, the key the fake is asked about, and the outputs a present object reports.
 var existenceObservers = []struct {
 	typ      string
 	build    func(f *existsFake) observer
@@ -193,8 +190,7 @@ func (f fakeRoles) DescribeRole(_ context.Context, _ contract.Desired, name stri
 	return r, ok, nil
 }
 
-// aws.iam-role marks roleArn secret, so it is reported among the secret
-// outputs and never among the plain ones.
+// aws.iam-role marks roleArn secret, so it is reported among the secret outputs and never among the plain ones.
 func TestIAMRole_ReportsItsARNAsASecretOutput(t *testing.T) {
 	const arn = "arn:aws:iam::123456789012:role/deploy"
 	api := fakeRoles{"deploy": {Name: "deploy", ARN: arn}}
@@ -229,10 +225,7 @@ func TestRoute53Record_ReportsTheAppsHostnameAndURL(t *testing.T) {
 	wantObservation(t, ref, got, err, contract.Absent, nil, "")
 }
 
-// fakeHost answers a script run on an instance with the stdout the test
-// gives the object the script names, and records where it ran. A
-// HostCommander reports a nonzero exit as an error, so err stands for a
-// probe that failed on the host.
+// fakeHost answers a script run on an instance with the stdout the test gives the object the script names, and records where it ran. A HostCommander reports a nonzero exit as an error, so err stands for a probe that failed on the host.
 type fakeHost struct {
 	instance string
 	stdout   map[string]string
@@ -258,10 +251,7 @@ func (f *fakeHost) RunOnInstance(_ context.Context, _ contract.Desired, instance
 	return "", nil
 }
 
-// An aws.ec2-container's script prints the container's state, or the word
-// absent when Docker answers that no such container exists, run on the
-// instance its identity names. Empty output proves nothing, so it is
-// unknown, never absent.
+// An aws.ec2-container's script prints the container's state, or the word absent when Docker answers that no such container exists, run on the instance its identity names. Empty output proves nothing, so it is unknown, never absent.
 func TestEC2Container_AsksTheInstanceItRunsOn(t *testing.T) {
 	cases := []struct {
 		label, stdout string

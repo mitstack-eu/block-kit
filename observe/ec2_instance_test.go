@@ -20,8 +20,7 @@ var (
 	_ handler.Observer = observe.EgressProxy{}
 )
 
-// fakeEC2 answers DescribeInstance from the instances it holds and records
-// each instance id and subscription it was asked about.
+// fakeEC2 answers DescribeInstance from the instances it holds and records each instance id and subscription it was asked about.
 type fakeEC2 struct {
 	mu        sync.Mutex
 	instances map[string]observe.EC2InstanceDescription
@@ -125,8 +124,7 @@ func TestEC2Instance_AnIdentityWithNoInstanceIDIsUnknownAndAsksNothing(t *testin
 	}
 }
 
-// Observe asks the provider each time: once the provider has lost the
-// instance, the next observe finds it absent.
+// Observe asks the provider each time: once the provider has lost the instance, the next observe finds it absent.
 func TestEC2Instance_AsksTheAPIOnEveryObserve(t *testing.T) {
 	api := &fakeEC2{instances: map[string]observe.EC2InstanceDescription{"i-0abc": instance("running")}}
 	o := observe.EC2Instance{API: api}
@@ -151,8 +149,7 @@ func TestEC2Instance_ReturnsTheAPIsError(t *testing.T) {
 	}
 }
 
-// aws.egress-proxy is an instance of its own, read through the same API by
-// the instance id its identity names; it reports no outputs.
+// aws.egress-proxy is an instance of its own, read through the same API by the instance id its identity names; it reports no outputs.
 func TestEgressProxy_ObservesItsInstanceThroughTheEC2API(t *testing.T) {
 	cases := []struct {
 		label string
