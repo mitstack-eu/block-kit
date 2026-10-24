@@ -294,17 +294,40 @@ func (o providerObserver) outputs(typ, id string) map[string]string {
 	return nil
 }
 
-// byTypeObserver needs no identity, so a block reporting none still observes present.
-type byTypeObserver struct{ p *fakeProvider }
+// byTypeObserver needs no identity, so a block reporting none still observes present; it answers unknown while inFlight counts observes left, and with report set reports the identity it found.
+type byTypeObserver struct {
+	p        *fakeProvider
+	report   bool
+	inFlight *int
+}
 
 func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	if o.inFlight != nil && *o.inFlight > 0 {
+		*o.inFlight--
+		return contract.Observation{State: contract.Unknown, StatusDetail: "the block's work is in flight"}, nil
+	}
 	tagged, _ := o.p.ListTagged(ctx, r.Desired.SubscriptionID)
 	for _, item := range tagged {
 		if item.Type == r.Type {
-			return contract.Observation{State: contract.Present, Outputs: providerObserver{}.outputs(item.Type, item.ID)}, nil
+			obs := contract.Observation{State: contract.Present, Outputs: providerObserver{}.outputs(item.Type, item.ID)}
+			if o.report {
+				obs.Identity = map[string]string{"id": item.ID}
+			}
+			return obs, nil
 		}
 	}
 	return contract.Observation{State: contract.Absent}, nil
+}
+
+// unnamedBlock reports its resources with no identity, as a block whose ensure answers before its work finishes does.
+type unnamedBlock struct{ *fakeBlock }
+
+func (b unnamedBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	created, err := b.fakeBlock.EnsureResources(ctx, d)
+	for i := range created {
+		created[i].Identity = nil
+	}
+	return created, err
 }
 
 // silentBlock hides EnsureResources, so it reports no identity.
@@ -790,6 +813,14 @@ func TestCheckBlock(t *testing.T) {
 	remembering := func(b *fakeBlock, in *kittest.Block) {
 		in.Config.Observers["aws.ec2-instance"] = rememberingObserver{b: b, name: "aws.ec2-instance"}
 	}
+	settling := func(report bool) mutation {
+		return func(b *fakeBlock, in *kittest.Block) {
+			inFlight := 1
+			observer := byTypeObserver{p: b.p, report: report, inFlight: &inFlight}
+			in.Config.Resource, in.Config.VerbBudget = unnamedBlock{b}, 1
+			in.Config.Observers = map[string]handler.Observer{"aws.ec2-instance": observer, "aws.ebs-volume": observer}
+		}
+	}
 	withParts := func(parts ...observe.Tagged) mutation {
 		return func(b *fakeBlock, _ *kittest.Block) { b.parts = parts }
 	}
@@ -815,6 +846,9 @@ func TestCheckBlock(t *testing.T) {
 			in.Config.Observers = map[string]handler.Observer{"aws.ec2-instance": byTypeObserver{p: b.p}, "aws.ebs-volume": byTypeObserver{p: b.p}}
 			in.Upgrade = nil
 		}), [][]string{{`resource "aws.ec2-instance"`, "identity"}, {`resource "aws.ebs-volume"`, "identity"}}, false},
+		{"a pending subscribe settled through validate, its observer reporting each identity, passes", host(settling(true)), nil, true},
+		{"a pending subscribe settled through validate, its observer reporting no identity, fails", host(settling(false)),
+			[][]string{{`resource "aws.ec2-instance"`, "identity"}, {`resource "aws.ebs-volume"`, "identity"}}, false},
 		{"a stateful resource with no Upgrade to prove its replacement fails", host(func(_ *fakeBlock, in *kittest.Block) { in.Upgrade = nil }), [][]string{{`resource "aws.ebs-volume"`, "Upgrade"}}, false},
 		{"a provided resource missing a required output fails", host(func(b *fakeBlock, in *kittest.Block) {
 			in.Config.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "hostId"}

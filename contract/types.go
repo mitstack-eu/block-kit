@@ -174,6 +174,7 @@ type Observation struct {
 	Outputs       map[string]string
 	SecretOutputs map[string]string
 	StatusDetail  string
+	Identity      map[string]string
 	// Redrive, read beside State Unknown alone, reports from what the provider holds, never a clock, that the work the last Ensure left in flight has finished, so a validate asks the engine to re-drive subscribe.
 	Redrive bool
 }

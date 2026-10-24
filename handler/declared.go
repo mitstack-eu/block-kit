@@ -158,7 +158,7 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	}
 
 	outputs = mergeOutputs(outputs, r.deleteOutputs)
-	if err := refuseSecretOutputs(outputs, r.d.Secrets); err != nil {
+	if err := refuseSecretValues("output", outputs, r.d.Secrets); err != nil {
 		status, resp := r.h.errorResponse(err, r.secrets)
 		resp.Resources = r.outcomes
 		return status, resp
@@ -278,17 +278,24 @@ func (r *declaredRun) observe(ctx context.Context, nr namedResource) (contract.O
 	return nr.observer.ObserveResource(ctx, r.refs[nr.name])
 }
 
-// observed refuses outputs carrying a request secret rather than reporting them.
+// observed refuses outputs or an identity carrying a request secret rather than reporting them, and keeps the identity the observer was handed when it reports none.
 func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*contract.CallOutcome, error) {
-	if err := refuseSecretOutputs(obs.Outputs, r.d.Secrets); err != nil {
+	if err := refuseSecretValues("output", obs.Outputs, r.d.Secrets); err != nil {
+		return nil, err
+	}
+	if err := refuseSecretValues("identity key", obs.Identity, r.d.Secrets); err != nil {
 		return nil, err
 	}
 	ref := r.refs[nr.name]
+	identity := ref.Identity
+	if len(obs.Identity) > 0 {
+		identity = obs.Identity
+	}
 	return &contract.CallOutcome{
 		State:        obs.State,
 		Outputs:      obs.Outputs,
 		StatusDetail: safe.Scrub(obs.StatusDetail, r.secrets...),
-		Identity:     ref.Identity,
+		Identity:     identity,
 		Type:         ref.Type,
 	}, nil
 }

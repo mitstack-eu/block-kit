@@ -37,9 +37,7 @@ func (f *fakeReports) NodeReports(_ context.Context, _ contract.Desired, subscri
 
 var verbAt = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 
-// nodeReport describes one report: when the platform received it, when the node
-// made it, whether it marks its list complete, which kinds it read whole, and
-// the list itself; an unset field leaves its key out of the body.
+// nodeReport describes one report: when the platform received it, when the node made it, whether it marks its list complete, which kinds it read whole, and the list itself; an unset field leaves its key out of the body.
 type nodeReport struct {
 	received time.Duration
 	made     *time.Duration
@@ -136,8 +134,9 @@ func TestNodeReported_ClaimsAbsenceOnlyFromAReportMadeAfterTheVerbThatReadTheObj
 				reports = append(reports, r.build(t))
 			}
 			api := &fakeReports{reports: reports}
-			got, err := observe.NodeReported{API: api}.ObserveResource(context.Background(), namespaceRef())
-			wantObservation(t, got, err, tc.want, nil, tc.detail)
+			ref := namespaceRef()
+			got, err := observe.NodeReported{API: api}.ObserveResource(context.Background(), ref)
+			wantObservation(t, ref, got, err, tc.want, nil, tc.detail)
 			if len(api.asked) != 1 || api.asked[0] != "sub-1" {
 				t.Errorf("asked for the reports of %q, want sub-1 once", api.asked)
 			}
@@ -145,9 +144,7 @@ func TestNodeReported_ClaimsAbsenceOnlyFromAReportMadeAfterTheVerbThatReadTheObj
 	}
 }
 
-// Node reports are stored under the cluster's own subscription, whose nodes
-// send them, while a namespace carries the label of the subscription that
-// created it, here sub-1.
+// Node reports are stored under the cluster's own subscription, whose nodes send them, while a namespace carries the label of the subscription that created it, here sub-1.
 func TestNodeReported_ReadsTheReportsOfTheClusterSubscriptionTheIdentityNames(t *testing.T) {
 	complete := func(items ...map[string]any) nodeReport {
 		return nodeReport{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: append([]map[string]any{}, items...)}
@@ -182,7 +179,7 @@ func TestNodeReported_ReadsTheReportsOfTheClusterSubscriptionTheIdentityNames(t 
 				ref.Identity["clusterSubscription"] = tc.cluster
 			}
 			got, err := observe.NodeReported{API: api}.ObserveResource(context.Background(), ref)
-			wantObservation(t, got, err, tc.want, nil, "")
+			wantObservation(t, ref, got, err, tc.want, nil, "")
 			if len(api.asked) != 1 || api.asked[0] != tc.wantAsked {
 				t.Errorf("asked for the reports of %q, want %s once", api.asked, tc.wantAsked)
 			}
@@ -195,7 +192,7 @@ func TestNodeReported_AnIdentityNamingNoObjectIsUnknownAndAsksNothing(t *testing
 	r := namespaceRef()
 	r.Identity = map[string]string{"kind": "Namespace"}
 	got, err := observe.NodeReported{API: api}.ObserveResource(context.Background(), r)
-	wantObservation(t, got, err, contract.Unknown, nil, "")
+	wantObservation(t, r, got, err, contract.Unknown, nil, "")
 	if len(api.asked) != 0 {
 		t.Errorf("asked for reports %q, want no call without a name", api.asked)
 	}

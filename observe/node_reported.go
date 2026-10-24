@@ -124,7 +124,7 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 	want := reportedObject{Namespace: r.Identity["namespace"], Kind: ids[0], Name: ids[1], Subscription: r.Desired.SubscriptionID}
 	for _, item := range listed {
 		if item == want {
-			return present(nil), nil
+			return present(r, nil), nil
 		}
 	}
 	if newest.MadeAt == nil {

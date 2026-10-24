@@ -84,7 +84,7 @@ func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.Crea
 		if !slices.Contains(nr.declaration.Types, c.Type) {
 			return nil, typeNotListed(nr, c.Type)
 		}
-		if err := refuseSecretOutputs(c.Identity, r.d.Secrets); err != nil {
+		if err := refuseSecretValues("identity key", c.Identity, r.d.Secrets); err != nil {
 			return nil, err
 		}
 		reported[c.Name] = c

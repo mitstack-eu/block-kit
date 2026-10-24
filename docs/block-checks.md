@@ -44,6 +44,32 @@ The platform reads a release class as `correctness-fix`, `feature` or
 changes. In CI the reusable workflow passes the base branch's manifest to
 blockverify, and on your machine `--base-manifest <path>` does.
 
+## How a block reports each resource's identity
+
+Every resource a block creates reports its identity once it is observed
+present. An identity is the set of values that address the resource at its
+provider, such as `{"bucket": "app-state"}`. The platform records it and shows
+it beside the resource, so a bill line or an audit finding traces to its app.
+
+A block reports the identity through its ensure or its observe. Its ensure,
+`EnsureResources` of `handler.ResourceReporter`, reports what it created. Its
+observer reports what it read at the provider in the `Identity` field of the
+`contract.Observation` it returns. An ensure that answers before its work
+finishes has nothing to report yet, so its observer reports the identity once
+the resource stands. Every shared observer in `observe` reports, on a present
+answer, the identity it observed the resource by.
+
+The `resources` suite checks the rule through `kittest.AssertBlock`, in
+`verify/kittest/block.go`. After the subscribe, the check settles a pending
+answer with `validate` calls, as the engine does. It then fails each resource
+observed present with no identity, naming it, as in
+`resource "aws.ebs-volume": observed present after subscribe with no identity`.
+
+A block's test builds the block as production does, with the settings its
+`main` uses. A setting only the test changes, such as a wait for the work to
+finish before the subscribe answers, lets the check pass while production
+records the resource with no identity.
+
 ## The GitHub API rule
 
 The `trust-plumbing` suite holds a block that calls the GitHub API to one more

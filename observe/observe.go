@@ -7,8 +7,9 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-func present(outputs map[string]string) contract.Observation {
-	return contract.Observation{State: contract.Present, Outputs: outputs}
+// present reports the identity r names, since the observer found the resource by it.
+func present(r contract.ResourceRef, outputs map[string]string) contract.Observation {
+	return contract.Observation{State: contract.Present, Identity: r.Identity, Outputs: outputs}
 }
 
 func absent() contract.Observation {
@@ -31,12 +32,12 @@ func identityKeys(r contract.ResourceRef, keys ...string) ([]string, contract.Ob
 	return values, contract.Observation{}, true
 }
 
-func existence(exists bool, err error, outputs map[string]string) (contract.Observation, error) {
+func existence(r contract.ResourceRef, exists bool, err error, outputs map[string]string) (contract.Observation, error) {
 	if err != nil {
 		return contract.Observation{}, err
 	}
 	if !exists {
 		return absent(), nil
 	}
-	return present(outputs), nil
+	return present(r, outputs), nil
 }

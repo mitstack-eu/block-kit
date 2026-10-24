@@ -61,7 +61,7 @@ func observeInstance(ctx context.Context, api EC2API, r contract.ResourceRef, ou
 	case !found || desc.State == "terminated":
 		return absent(), nil
 	case desc.State == "running":
-		return present(outputs(desc)), nil
+		return present(r, outputs(desc)), nil
 	}
 	return unknown("resource %q: instance %s is %s", r.Name, ids[0], desc.State), nil
 }
@@ -81,7 +81,7 @@ func (o S3Bucket) ObserveResource(ctx context.Context, r contract.ResourceRef) (
 		return obs, nil
 	}
 	exists, err := o.API.BucketExists(ctx, r.Desired, ids[0])
-	return existence(exists, err, nil)
+	return existence(r, exists, err, nil)
 }
 
 type VPCAPI interface {
@@ -99,7 +99,7 @@ func (o VPC) ObserveResource(ctx context.Context, r contract.ResourceRef) (contr
 		return obs, nil
 	}
 	exists, err := o.API.VPCExists(ctx, r.Desired, ids[0])
-	return existence(exists, err, nil)
+	return existence(r, exists, err, nil)
 }
 
 type SecurityGroupAPI interface {
@@ -117,7 +117,7 @@ func (o SecurityGroup) ObserveResource(ctx context.Context, r contract.ResourceR
 		return obs, nil
 	}
 	exists, err := o.API.SecurityGroupExists(ctx, r.Desired, ids[0])
-	return existence(exists, err, nil)
+	return existence(r, exists, err, nil)
 }
 
 type SSMAssociationAPI interface {
@@ -135,7 +135,7 @@ func (o SSMAssociation) ObserveResource(ctx context.Context, r contract.Resource
 		return obs, nil
 	}
 	exists, err := o.API.AssociationExists(ctx, r.Desired, ids[0])
-	return existence(exists, err, nil)
+	return existence(r, exists, err, nil)
 }
 
 type EBSVolumeDescription struct {
@@ -165,7 +165,7 @@ func (o EBSVolume) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 	case !found || desc.State == "deleted":
 		return absent(), nil
 	case desc.State == "available" || desc.State == "in-use":
-		return present(nil), nil
+		return present(r, nil), nil
 	}
 	return unknown("resource %q: volume %s is %s", r.Name, ids[0], desc.State), nil
 }
@@ -192,10 +192,10 @@ func (o ECRRepository) ObserveResource(ctx context.Context, r contract.ResourceR
 	}
 	desc, found, err := o.API.DescribeRepository(ctx, r.Desired, ids[0])
 	if err != nil || !found {
-		return existence(found, err, nil)
+		return existence(r, found, err, nil)
 	}
 	host, _, _ := strings.Cut(desc.URI, "/")
-	return present(map[string]string{"registryHost": host}), nil
+	return present(r, map[string]string{"registryHost": host}), nil
 }
 
 type IAMRoleDescription struct {
@@ -220,9 +220,9 @@ func (o IAMRole) ObserveResource(ctx context.Context, r contract.ResourceRef) (c
 	}
 	desc, found, err := o.API.DescribeRole(ctx, r.Desired, ids[0])
 	if err != nil || !found {
-		return existence(found, err, nil)
+		return existence(r, found, err, nil)
 	}
-	return contract.Observation{State: contract.Present, SecretOutputs: map[string]string{"roleArn": desc.ARN}}, nil
+	return contract.Observation{State: contract.Present, Identity: r.Identity, SecretOutputs: map[string]string{"roleArn": desc.ARN}}, nil
 }
 
 type Route53RecordDescription struct {
@@ -248,8 +248,8 @@ func (o Route53Record) ObserveResource(ctx context.Context, r contract.ResourceR
 	}
 	desc, found, err := o.API.DescribeRecord(ctx, r.Desired, ids[0], ids[1])
 	if err != nil || !found {
-		return existence(found, err, nil)
+		return existence(r, found, err, nil)
 	}
 	host := strings.TrimSuffix(desc.Name, ".")
-	return present(map[string]string{"appHostname": host, "appUrl": "https://" + host}), nil
+	return present(r, map[string]string{"appHostname": host, "appUrl": "https://" + host}), nil
 }

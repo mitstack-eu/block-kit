@@ -53,6 +53,13 @@ func newFakeCloud() *fakeCloud {
 	return &fakeCloud{present: map[string]bool{}, neverPresent: map[string]bool{}, standing: map[string]bool{}}
 }
 
+// standingCloud holds every declared resource, as a cloud does after a subscribe.
+func standingCloud() *fakeCloud {
+	c := newFakeCloud()
+	c.createAll()
+	return c
+}
+
 func (c *fakeCloud) createAll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -406,8 +413,7 @@ func TestBlockLevel_RefusesWhatTheManifestDoesNotDeclare(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			cloud := newFakeCloud()
-			cloud.createAll()
+			cloud := standingCloud()
 			block := tc.block(cloud)
 
 			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: tc.op, fields: tc.fields})
@@ -421,8 +427,7 @@ func TestBlockLevel_RefusesWhatTheManifestDoesNotDeclare(t *testing.T) {
 }
 
 func TestBlockLevel_UnsubscribeRunsOneDeleteHandedTheRequestThenProvesEachResourceAbsentAndMergesTheDeletesOutputs(t *testing.T) {
-	cloud := newFakeCloud()
-	cloud.createAll()
+	cloud := standingCloud()
 	block, obs := &blockResource{cloud: cloud, deleteOutputs: map[string]string{"dataSnapshotId": "snap-0abc"}}, blockObservers(cloud)
 	fields := recordedAll()
 	fields["params"] = map[string]string{"dataHandover": "snapshot"}
@@ -445,8 +450,7 @@ func TestBlockLevel_UnsubscribeRunsOneDeleteHandedTheRequestThenProvesEachResour
 }
 
 func TestBlockLevel_UnsubscribeLeavesAResourceRecordedAbsentUnobservedAndHandsTheBlockItsState(t *testing.T) {
-	cloud := newFakeCloud()
-	cloud.createAll()
+	cloud := standingCloud()
 	obs := blockObservers(cloud)
 	obs["aws.ec2-instance"] = &observer{err: errors.New("the instance does not answer")}
 	block := &blockResource{cloud: cloud}
@@ -475,8 +479,7 @@ func TestBlockLevel_UnsubscribeLeavesAResourceRecordedAbsentUnobservedAndHandsTh
 }
 
 func TestBlockLevel_AnUnsubscribeLeavingAResourceStandingAnswersAbsentFalseNamingItWithNoneOfTheDeletesOutputs(t *testing.T) {
-	cloud := newFakeCloud()
-	cloud.createAll()
+	cloud := standingCloud()
 	cloud.standing["b"] = true
 	block := &blockResource{cloud: cloud, deleteOutputs: map[string]string{"dataSnapshotId": "snap-0abc"}}
 
@@ -490,8 +493,7 @@ func TestBlockLevel_AnUnsubscribeLeavingAResourceStandingAnswersAbsentFalseNamin
 }
 
 func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBlockPlans(t *testing.T) {
-	cloud := newFakeCloud()
-	cloud.createAll()
+	cloud := standingCloud()
 	block, obs := planningBlock{blockResource: &blockResource{cloud: cloud}, replaces: []string{"b"}}, blockObservers(cloud)
 
 	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: "validate", fields: recordedAll()})
@@ -531,8 +533,7 @@ func TestBlockLevel_ObservesOneResourceThroughItsDeclaredObserverByTheTypeAndIde
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			cloud := newFakeCloud()
-			cloud.createAll()
+			cloud := standingCloud()
 			block, obs, typed := &blockResource{cloud: cloud}, blockObservers(cloud), fixed(contract.Observation{State: contract.Present})
 			byType := map[string]handler.Observer{"aws.iam-role": typed, "aws.vpc": typed}
 
@@ -909,12 +910,12 @@ func TestBlockLevel_ScrubsAndRefusesARequestSecretInWhatTheBlockAnswers(t *testi
 		{"a resource's statusDetail is scrubbed", "validate", contract.Observation{State: contract.Present, StatusDetail: "role assumed with " + token}, nil, http.StatusOK},
 		{"an observed output carrying it is refused", "validate", contract.Observation{State: contract.Present, Outputs: map[string]string{"leaked": token}}, nil, http.StatusBadRequest},
 		{"a subscribe's observed output carrying it is refused", "subscribe", contract.Observation{State: contract.Present, Outputs: map[string]string{"leaked": token}}, nil, http.StatusBadRequest},
+		{"an observed identity carrying it is refused, as an output is", "validate", contract.Observation{State: contract.Present, Identity: map[string]string{"roleName": token}}, nil, http.StatusBadRequest},
 		{"a delete output carrying it is refused", "unsubscribe", contract.Observation{}, map[string]string{"leaked": token}, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			cloud := newFakeCloud()
-			cloud.createAll()
+			cloud := standingCloud()
 			obs := asObservers(blockObservers(cloud))
 			if tc.obs.State != "" {
 				obs["a"] = fixed(tc.obs)
@@ -943,8 +944,7 @@ func TestBlockLevel_ScrubsAndRefusesARequestSecretInWhatTheBlockAnswers(t *testi
 }
 
 func TestBlockLevel_ALaterProvidedResourceWinsAnOutputBothProduce(t *testing.T) {
-	cloud := newFakeCloud()
-	cloud.createAll()
+	cloud := standingCloud()
 	obs := asObservers(blockObservers(cloud))
 	obs["aws.ec2-instance"] = fixed(contract.Observation{State: contract.Present, Outputs: map[string]string{"shared": "from-instance"}})
 	obs["a"] = fixed(contract.Observation{State: contract.Present, Outputs: map[string]string{"shared": "from-a"}})
