@@ -56,8 +56,13 @@ subscription's `Desired`, which carries the requirement bindings.
 
 The check keeps the block's own `VerbBudget`, the most times a call observes
 one resource while it waits for it, so a block that needs more observations
-than its budget allows fails here as it would in production. After subscribe,
-every declared resource must report present with an identity. The check then
+than its budget allows fails here as it would in production. A subscribe that
+answers pending is settled the way the engine settles it: the check sends
+`validate` calls, and a fresh subscribe when one answers `redrive`, until every
+declared resource reads present or ten seconds pass. Every declared resource
+must then report present with an identity, from its ensure or its observer, as
+[Running the block checks](block-checks.md#how-a-block-reports-each-resources-identity)
+explains. The check then
 holds the block to five guards, the rules below, and logs the name of every
 guard that ran:
 

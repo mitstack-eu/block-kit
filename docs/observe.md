@@ -20,6 +20,7 @@ behind the block's back. It returns a `contract.Observation`:
 | `Outputs` | The values the resource's type declares, such as a host's `publicIp`, which other blocks of the app may read |
 | `SecretOutputs` | The outputs the type marks secret, which the handler keeps out of the engine's records |
 | `StatusDetail` | A short reason, shown to people, for a state other than present |
+| `Identity` | The values the observer read the resource by. Nil keeps the identity it was handed, and one holding a request secret is refused |
 | `Redrive` | Read only beside `Unknown`, as [Serving lifecycle calls](handler.md#work-that-outlasts-one-call) explains |
 
 The `contract.ResourceRef` an observer receives carries the resource's name,
@@ -27,7 +28,8 @@ its type, its identity and the call's `contract.Desired`. A resource's identity
 is the set of values that address it at the provider, such as
 `{"instanceId": "i-0abc"}`, which `EnsureResources` reported when it created
 the resource. Every shared observer answers `Unknown` without calling the
-provider when the identity lacks the key it needs.
+provider when the identity lacks the key it needs, and reports that identity
+on a present answer.
 
 ## The observers the kit ships
 

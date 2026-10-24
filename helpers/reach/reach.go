@@ -317,14 +317,14 @@ func resolveDialURL(appURL string, allowedURLs []string, extraSuffixes []string)
 	}
 	if !vouched {
 		return "", fmt.Errorf(
-			"reach: app URL %q is not vouched for by the caller's allowlist (MIT-1683) — TrustedAppURL alone is not sufficient",
+			"reach: app URL %q is not vouched for by the caller's allowlist — TrustedAppURL alone is not sufficient",
 			appURL)
 	}
 
 	dial, err := vouchBarrierCheckedURL(appURL, extraSuffixes)
 	if err != nil {
 		return "", fmt.Errorf(
-			"reach: app URL %q is vouched for but clears neither the platform apps domain (%s) nor a loopback/non-production host (MIT-1686): %v",
+			"reach: app URL %q is vouched for but clears neither the platform apps domain (%s) nor a loopback/non-production host: %v",
 			appURL, PlatformAppsDomain, err)
 	}
 	return dial, nil

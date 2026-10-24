@@ -31,7 +31,7 @@ func (o HetznerServer) ObserveResource(ctx context.Context, r contract.ResourceR
 	desc, found, err := o.API.GetServer(ctx, r.Desired, ids[0])
 	switch {
 	case err != nil || !found:
-		return existence(found, err, nil)
+		return existence(r, found, err, nil)
 	case desc.Status != "running":
 		return unknown("resource %q: server %s is %s", r.Name, ids[0], desc.Status), nil
 	}
@@ -42,7 +42,7 @@ func (o HetznerServer) ObserveResource(ctx context.Context, r contract.ResourceR
 	if desc.PublicIP != "" {
 		outputs["execTarget"] = desc.PublicIP
 	}
-	return present(outputs), nil
+	return present(r, outputs), nil
 }
 
 type HetznerPrimaryIPDescription struct {
@@ -67,9 +67,9 @@ func (o HetznerPrimaryIP) ObserveResource(ctx context.Context, r contract.Resour
 	}
 	desc, found, err := o.API.GetPrimaryIP(ctx, r.Desired, ids[0])
 	if err != nil || !found {
-		return existence(found, err, nil)
+		return existence(r, found, err, nil)
 	}
-	return present(map[string]string{"publicIp": desc.IP}), nil
+	return present(r, map[string]string{"publicIp": desc.IP}), nil
 }
 
 type HetznerNetworkAPI interface {
@@ -87,7 +87,7 @@ func (o HetznerNetwork) ObserveResource(ctx context.Context, r contract.Resource
 		return obs, nil
 	}
 	exists, err := o.API.NetworkExists(ctx, r.Desired, ids[0])
-	return existence(exists, err, nil)
+	return existence(r, exists, err, nil)
 }
 
 type HetznerFirewallAPI interface {
@@ -105,5 +105,5 @@ func (o HetznerFirewall) ObserveResource(ctx context.Context, r contract.Resourc
 		return obs, nil
 	}
 	exists, err := o.API.FirewallExists(ctx, r.Desired, ids[0])
-	return existence(exists, err, nil)
+	return existence(r, exists, err, nil)
 }

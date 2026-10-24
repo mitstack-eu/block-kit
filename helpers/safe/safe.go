@@ -69,7 +69,7 @@ func TrustedBase(endpoint string, allow Allowlist) (Base, error) {
 			return Base{scheme: "https", host: allowed}, nil
 		}
 	}
-	return Base{}, fmt.Errorf("safe: api base %q is not in this operator's allowlist %v — the operator decides the host, not the caller (MIT-1325)",
+	return Base{}, fmt.Errorf("safe: api base %q is not in this operator's allowlist %v — the operator decides the host, not the caller",
 		endpoint, allow.hosts)
 }
 

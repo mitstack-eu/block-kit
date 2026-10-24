@@ -122,9 +122,9 @@ func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secret
 	return h.dispatchDeclared(ctx, req.Operation, req.Desired(), secrets)
 }
 
-// refuseSecretOutputs inspects only Outputs, since SecretOutputs is where a secret is returned on purpose, and matches exact values so an output merely containing a secret is left alone.
-func refuseSecretOutputs(outputs map[string]string, secrets map[string]map[string]string) error {
-	for key, value := range outputs {
+// refuseSecretValues is never handed SecretOutputs, where a secret is returned on purpose, and matches exact values so a value merely containing a secret is left alone.
+func refuseSecretValues(field string, values map[string]string, secrets map[string]map[string]string) error {
+	for key, value := range values {
 		for _, group := range secrets {
 			for _, secretValue := range group {
 				// An empty secret value is an unset optional secret and must not combine with an empty output into a false refusal.
@@ -132,7 +132,7 @@ func refuseSecretOutputs(outputs map[string]string, secrets map[string]map[strin
 					continue
 				}
 				if value == secretValue {
-					return Refuse("secret-in-output", "output %q carries a secret value", key)
+					return Refuse("secret-in-output", "%s %q carries a secret value", field, key)
 				}
 			}
 		}

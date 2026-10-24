@@ -20,7 +20,7 @@ func (o GitHubRepository) ObserveResource(ctx context.Context, r contract.Resour
 		return obs, nil
 	}
 	exists, err := o.API.RepositoryExists(ctx, r.Desired, ids[0])
-	return existence(exists, err, map[string]string{"repo": ids[0]})
+	return existence(r, exists, err, map[string]string{"repo": ids[0]})
 }
 
 type GitHubCommitAPI interface {
@@ -43,5 +43,5 @@ func (o GitHubCommit) ObserveResource(ctx context.Context, r contract.ResourceRe
 		outputs["sourceBranch"] = branch
 	}
 	exists, err := o.API.CommitExists(ctx, r.Desired, ids[0], ids[1])
-	return existence(exists, err, outputs)
+	return existence(r, exists, err, outputs)
 }

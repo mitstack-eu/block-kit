@@ -168,6 +168,13 @@ not list, answers 400. The answer carries each reported type and identity as
 that resource's `ensure` outcome, so the engine records them even when the
 call stops pending before it observes that resource.
 
+An observer that reads the identity at the provider returns it in
+`Observation.Identity`, and the `observe` outcome carries that identity. This
+serves an ensure that answers before its work finishes and reports none. An
+observer that reports no identity leaves the one it was handed on the outcome.
+The handler refuses an identity holding one of the request's secrets, as it
+refuses such an output.
+
 An observer that reads records the provider writes over time, such as
 `observe.NodeReported` reading node reports, counts only records made after
 `Desired.VerbAt`, so a record older than the call cannot settle it. After

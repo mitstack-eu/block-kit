@@ -1,6 +1,7 @@
 package kittest
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -265,7 +266,7 @@ func (c *blockCheck) run() {
 	}
 	for _, entry := range c.spec.Resources {
 		if len(c.desired.RecordedResources[entry.Name].Identity) == 0 {
-			c.resourceProblem(entry.Name, "observed present after subscribe with no identity, so the check cannot lose it from the provider; report each resource's identity through handler.ResourceReporter")
+			c.resourceProblem(entry.Name, "observed present after subscribe with no identity, so the check cannot lose it from the provider; report each resource's identity through handler.ResourceReporter or the Observation its observer returns")
 		}
 	}
 	c.requiredOutputs(resp, "subscribe")
@@ -276,32 +277,81 @@ func (c *blockCheck) run() {
 	c.unsubscribe()
 }
 
+// settleBudget bounds how long converge settles a pending answer, as the engine's settle budget bounds its own, and settlePause spaces the calls so work the block left in flight can finish.
+const (
+	settleBudget = 10 * time.Second
+	settlePause  = 20 * time.Millisecond
+)
+
+// converge settles operation as the engine does: while the answer leaves a declared resource not present, it validates with what every answer so far reported of each resource, and sends operation again when a validate asks for a re-drive.
 func (c *blockCheck) converge(operation string) (contract.Response, bool) {
-	_, resp, ok := c.sendOK(operation, c.desired)
-	if !ok {
-		return resp, false
+	recorded := maps.Clone(c.desired.RecordedResources)
+	call, deadline := operation, time.Now().Add(settleBudget)
+	for {
+		d := c.desired
+		d.RecordedResources = recorded
+		_, resp, ok := c.sendOK(call, d)
+		if !ok {
+			return resp, false
+		}
+		recorded = c.recordReported(recorded, resp)
+		if c.settled(resp) {
+			c.desired.RecordedResources = recorded
+			return resp, true
+		}
+		if time.Now().After(deadline) {
+			c.unsettled(operation, resp)
+			return resp, false
+		}
+		call = "validate"
+		if resp.Redrive {
+			call = operation
+		}
+		time.Sleep(settlePause)
 	}
-	recorded := make(map[string]contract.RecordedResource, len(c.spec.Resources))
+}
+
+// recordReported keeps, as the engine's record does, the type and identity each ensure and observe reported, and what was recorded where a call reported none.
+func (c *blockCheck) recordReported(recorded map[string]contract.RecordedResource, resp contract.Response) map[string]contract.RecordedResource {
+	if recorded == nil {
+		recorded = make(map[string]contract.RecordedResource, len(c.spec.Resources))
+	}
+	for _, entry := range c.spec.Resources {
+		for _, call := range []*contract.CallOutcome{resp.Resources[entry.Name].Ensure, resp.Resources[entry.Name].Observe} {
+			if call == nil {
+				continue
+			}
+			rec := recorded[entry.Name]
+			rec.Type = cmp.Or(call.Type, rec.Type)
+			if len(call.Identity) > 0 {
+				rec.Identity = call.Identity
+			}
+			recorded[entry.Name] = rec
+		}
+	}
+	return recorded
+}
+
+func (c *blockCheck) settled(resp contract.Response) bool {
+	for _, entry := range c.spec.Resources {
+		if o := resp.Resources[entry.Name].Observe; o == nil || o.State != contract.Present {
+			return false
+		}
+	}
+	return !resp.Pending
+}
+
+func (c *blockCheck) unsettled(operation string, resp contract.Response) {
 	named := false
 	for _, entry := range c.spec.Resources {
-		o := resp.Resources[entry.Name].Observe
-		switch {
-		case o == nil:
-		case o.State != contract.Present:
-			c.resourceProblem(entry.Name, "observed %s after %s, want present", o.State, operation)
+		if o := resp.Resources[entry.Name].Observe; o != nil && o.State != contract.Present {
+			c.resourceProblem(entry.Name, "observed %s after %s and validates for %s, want present", o.State, operation, settleBudget)
 			named = true
-		default:
-			recorded[entry.Name] = contract.RecordedResource{Type: o.Type, Identity: o.Identity}
 		}
 	}
-	if len(recorded) < len(c.spec.Resources) || resp.Pending {
-		if !named {
-			c.problem("%s did not settle every declared resource present: %s", operation, resp.StatusDetail)
-		}
-		return resp, false
+	if !named {
+		c.problem("%s did not settle every declared resource present within %s: %s", operation, settleBudget, resp.StatusDetail)
 	}
-	c.desired.RecordedResources = recorded
-	return resp, true
 }
 
 func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract.Response, bool) {

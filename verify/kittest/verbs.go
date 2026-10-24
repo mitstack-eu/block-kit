@@ -74,11 +74,11 @@ func CheckVerbSemantics(s VerbSeams) []string {
 	} else if remaining, err := s.Unsubscribe(); err != nil {
 		add("unsubscribe failed: %v", err)
 	} else if remaining != 0 {
-		add("%d resource(s) survived unsubscribe — the consumer is still paying for them (MIT-1124)", remaining)
+		add("%d resource(s) survived unsubscribe — the consumer is still paying for them", remaining)
 	}
 
 	if err := s.UnsubscribeWhenAbsent(); err != nil {
-		add("unsubscribe errored on a resource that was never there: %v — absence is SUCCESS; erroring turns teardown into an endless retry instead of a finish (MIT-1302/MIT-1278)", err)
+		add("unsubscribe errored on a resource that was never there: %v — absence is SUCCESS; erroring turns teardown into an endless retry instead of a finish", err)
 	}
 
 	if _, err := s.Subscribe(); err != nil {
@@ -92,10 +92,10 @@ func CheckVerbSemantics(s VerbSeams) []string {
 	if pending, isErr := s.ValidateWhileConverging(); !pending {
 		add("a resource still coming up was not reported PENDING")
 	} else if isErr {
-		add("a resource still coming up was reported as an ERROR — a block merely waiting is never marked failed and never consumes a retry (MIT-1293)")
+		add("a resource still coming up was reported as an ERROR — a block merely waiting is never marked failed and never consumes a retry")
 	}
 	if deadPending, _ := s.ValidateWhenDead(); deadPending {
-		add("a resource that will not recover was reported PENDING — it would wait forever instead of failing (MIT-1291)")
+		add("a resource that will not recover was reported PENDING — it would wait forever instead of failing")
 	}
 	if s.Redrive != nil {
 		problems = append(problems, checkRedrive(s.Redrive)...)

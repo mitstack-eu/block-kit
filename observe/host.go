@@ -39,7 +39,7 @@ func (o EC2Container) ObserveResource(ctx context.Context, r contract.ResourceRe
 	}
 	switch state := strings.TrimSpace(stdout); state {
 	case "running":
-		return present(nil), nil
+		return present(r, nil), nil
 	case "absent":
 		return absent(), nil
 	case "":
