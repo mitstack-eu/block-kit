@@ -5,6 +5,7 @@ package observe_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"sync"
 	"testing"
@@ -56,9 +57,8 @@ func refFor(typ string, identity map[string]string) contract.ResourceRef {
 	}
 }
 
-// wantObservation checks state, that every output in outputs is reported
-// with its value, and that detail, when set, is in the status detail.
-func wantObservation(t *testing.T, got contract.Observation, err error, state contract.State, outputs map[string]string, detail string) {
+// wantObservation checks state, each output in outputs, detail when set, and that a present answer reports the identity ref names.
+func wantObservation(t *testing.T, ref contract.ResourceRef, got contract.Observation, err error, state contract.State, outputs map[string]string, detail string) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("ObserveResource: %v", err)
@@ -73,6 +73,9 @@ func wantObservation(t *testing.T, got contract.Observation, err error, state co
 	}
 	if detail != "" && !strings.Contains(got.StatusDetail, detail) {
 		t.Errorf("statusDetail = %q, want it to name %q", got.StatusDetail, detail)
+	}
+	if state == contract.Present && !maps.Equal(got.Identity, ref.Identity) {
+		t.Errorf("identity = %v, want %v, the identity it observed by", got.Identity, ref.Identity)
 	}
 }
 
@@ -102,9 +105,9 @@ func TestEC2Instance_ObservesTheReportedInstanceThroughTheAPI(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
 			api := &fakeEC2{instances: tc.held}
-			got, err := observe.EC2Instance{API: api}.ObserveResource(context.Background(),
-				refFor("aws.ec2-instance", map[string]string{"instanceId": "i-0abc"}))
-			wantObservation(t, got, err, tc.state, tc.outputs, tc.detail)
+			ref := refFor("aws.ec2-instance", map[string]string{"instanceId": "i-0abc"})
+			got, err := observe.EC2Instance{API: api}.ObserveResource(context.Background(), ref)
+			wantObservation(t, ref, got, err, tc.state, tc.outputs, tc.detail)
 			if len(api.asked) != 1 || api.asked[0] != "i-0abc" || api.subs[0] != "sub-1" {
 				t.Errorf("asked about %q for %q, want i-0abc once for sub-1", api.asked, api.subs)
 			}
@@ -114,8 +117,9 @@ func TestEC2Instance_ObservesTheReportedInstanceThroughTheAPI(t *testing.T) {
 
 func TestEC2Instance_AnIdentityWithNoInstanceIDIsUnknownAndAsksNothing(t *testing.T) {
 	api := &fakeEC2{instances: map[string]observe.EC2InstanceDescription{"i-0abc": instance("running")}}
-	got, err := observe.EC2Instance{API: api}.ObserveResource(context.Background(), refFor("aws.ec2-instance", map[string]string{"hostname": "app"}))
-	wantObservation(t, got, err, contract.Unknown, nil, "instanceId")
+	ref := refFor("aws.ec2-instance", map[string]string{"hostname": "app"})
+	got, err := observe.EC2Instance{API: api}.ObserveResource(context.Background(), ref)
+	wantObservation(t, ref, got, err, contract.Unknown, nil, "instanceId")
 	if len(api.asked) != 0 {
 		t.Errorf("the API was asked about %q, want no call without an instance id", api.asked)
 	}
@@ -129,10 +133,10 @@ func TestEC2Instance_AsksTheAPIOnEveryObserve(t *testing.T) {
 	ref := refFor("aws.ec2-instance", map[string]string{"instanceId": "i-0abc"})
 
 	first, err := o.ObserveResource(context.Background(), ref)
-	wantObservation(t, first, err, contract.Present, nil, "")
+	wantObservation(t, ref, first, err, contract.Present, nil, "")
 	api.lose("i-0abc")
 	second, err := o.ObserveResource(context.Background(), ref)
-	wantObservation(t, second, err, contract.Absent, nil, "")
+	wantObservation(t, ref, second, err, contract.Absent, nil, "")
 	if len(api.asked) != 2 {
 		t.Errorf("the API was asked %d times, want once per observe", len(api.asked))
 	}
@@ -162,9 +166,9 @@ func TestEgressProxy_ObservesItsInstanceThroughTheEC2API(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			got, err := observe.EgressProxy{API: &fakeEC2{instances: tc.held}}.ObserveResource(context.Background(),
-				refFor("aws.egress-proxy", map[string]string{"instanceId": "i-0abc"}))
-			wantObservation(t, got, err, tc.state, nil, "")
+			ref := refFor("aws.egress-proxy", map[string]string{"instanceId": "i-0abc"})
+			got, err := observe.EgressProxy{API: &fakeEC2{instances: tc.held}}.ObserveResource(context.Background(), ref)
+			wantObservation(t, ref, got, err, tc.state, nil, "")
 		})
 	}
 }
