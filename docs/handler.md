@@ -82,7 +82,7 @@ that time. A key id the handler does not hold causes at most one extra fetch
 in each interval, so a caller without a valid signature cannot make the
 operator fetch at will. A failed fetch leaves the keys already held in place
 until the next interval. When the handler holds no key for the call's key id
-and the fetch fails, it answers 503, because the failure says nothing about
+and its last fetch failed, it answers 503, because the failure says nothing about
 the call, and the engine retries it.
 
 Each refusal before your code runs is a 4xx whose `error` and `statusDetail`

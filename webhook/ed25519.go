@@ -111,6 +111,7 @@ type KeyCache struct {
 	mu                             sync.Mutex
 	keys                           map[string]ed25519.PublicKey
 	lastFetch, lastUnknownKidFetch time.Time
+	lastFetchErr                   error
 }
 
 func NewKeyCache() *KeyCache { return &KeyCache{} }
@@ -123,9 +124,10 @@ func (kc *KeyCache) PublicKey(jwksURL string, client *http.Client, kid string, n
 	due := now.Sub(kc.lastFetch) >= JWKSRefreshInterval
 	unknownKidFetch := !due && !known && now.Sub(kc.lastUnknownKidFetch) >= JWKSRefreshInterval
 	if !due && !unknownKidFetch {
-		return keyFor(kc.keys, kid)
+		return kc.held(kid)
 	}
 	keys, err := fetchJWKS(jwksURL, client)
+	kc.lastFetchErr = err
 	if err == nil {
 		kc.keys = keys
 	}
@@ -135,8 +137,13 @@ func (kc *KeyCache) PublicKey(jwksURL string, client *http.Client, kid string, n
 			kc.lastUnknownKidFetch = now
 		}
 	}
-	if err != nil && !known {
-		return nil, fmt.Errorf("%w: %v", ErrKeysUnavailable, err)
+	return kc.held(kid)
+}
+
+// held answers a kid it lacks as unavailable while the last fetch failed, since that fetch may have carried it.
+func (kc *KeyCache) held(kid string) (ed25519.PublicKey, error) {
+	if _, ok := kc.keys[kid]; !ok && kc.lastFetchErr != nil {
+		return nil, fmt.Errorf("%w: %v", ErrKeysUnavailable, kc.lastFetchErr)
 	}
 	return keyFor(kc.keys, kid)
 }
