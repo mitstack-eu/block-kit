@@ -18,7 +18,6 @@ type LogBuffer struct {
 	lines []string
 }
 
-// NewLogBuffer returns a buffer holding at most max lines, or MaxRecentLogLines when max is not positive.
 func NewLogBuffer(max int) *LogBuffer {
 	if max <= 0 {
 		max = MaxRecentLogLines
@@ -26,7 +25,6 @@ func NewLogBuffer(max int) *LogBuffer {
 	return &LogBuffer{max: max}
 }
 
-// Append adds one line to the ring buffer.
 func (b *LogBuffer) Append(line string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -39,7 +37,6 @@ func (b *LogBuffer) Append(line string) {
 	}
 }
 
-// Clear resets the ring buffer.
 func (b *LogBuffer) Clear() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -72,7 +69,7 @@ func (w logBufferWriter) Write(p []byte) (int, error) {
 // ServeLogs returns the operator's recent log lines as {"lines": []}, authenticated by AuthenticateLogsGET.
 func ServeLogs(d Deps, b *LogBuffer, w http.ResponseWriter, r *http.Request) {
 	if _, ok := AuthenticateLogsGET(d, w, r); !ok {
-		return // AuthenticateLogsGET already wrote 401
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"lines": b.Snapshot()})

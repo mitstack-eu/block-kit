@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -283,24 +284,29 @@ func (j *jwks) setDown(down bool) {
 	j.down = down
 }
 
-func TestKeyCache_AnEmptyCacheRetriesAFailedFetchAndAWarmOneKeepsItsKeys(t *testing.T) {
+func TestKeyCache_AnOutageLeavesHeldKeysAndAnswersEveryOtherKidUnavailable(t *testing.T) {
 	j := newJWKS(t, kittest.NewSigner(t, "kid-1", 7))
 	cache, t0 := webhook.NewKeyCache(), time.Now()
-	lookup := func(after time.Duration) error {
-		_, err := cache.PublicKey(j.url, nil, "kid-1", t0.Add(after))
+	lookup := func(kid string, after time.Duration) error {
+		_, err := cache.PublicKey(j.url, nil, kid, t0.Add(after))
 		return err
 	}
 
 	j.setDown(true)
-	cold, coldAgain := lookup(0), lookup(time.Second)
+	cold, coldAgain := lookup("kid-1", 0), lookup("kid-1", time.Second)
 	j.setDown(false)
-	recovered := lookup(2 * time.Second)
+	recovered := lookup("kid-1", 2*time.Second)
 	j.setDown(true)
-	duringOutage := lookup(2*time.Second + webhook.JWKSRefreshInterval)
+	duringOutage := lookup("kid-1", 2*time.Second+webhook.JWKSRefreshInterval)
+	rotated, rotatedAgain := lookup("kid-2", 3*time.Second+webhook.JWKSRefreshInterval), lookup("kid-2", 4*time.Second+webhook.JWKSRefreshInterval)
 
-	if cold == nil || coldAgain == nil || recovered != nil || duringOutage != nil {
-		t.Errorf("lookups = %v, %v, %v, %v; want two refusals while the JWKS is down, the key once it is back, and the key kept through a later outage",
-			cold, coldAgain, recovered, duringOutage)
+	for i, err := range []error{cold, coldAgain, rotated, rotatedAgain} {
+		if !errors.Is(err, webhook.ErrKeysUnavailable) {
+			t.Errorf("outage lookup %d = %v; want ErrKeysUnavailable for kid-1 while nothing is held and for kid-2 on every retry", i, err)
+		}
+	}
+	if recovered != nil || duringOutage != nil {
+		t.Errorf("kid-1 lookups = %v, %v; want its key once the JWKS is back and kept through a later outage", recovered, duringOutage)
 	}
 }
 

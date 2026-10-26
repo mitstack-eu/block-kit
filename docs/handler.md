@@ -53,11 +53,14 @@ observer under any key. Nothing in `Config` turns a trust check off.
 
 Every lifecycle call carries two signatures from mitstack's platform key, so
 the operator holds no shared secret. The checks run in this order, and each
-failure answers 401 without reaching your code:
+failure answers 401 without reaching your code, unless the step names
+another status:
 
 1. The `X-Mitstack-Key-Id` header names the signing key, and
    `X-Mitstack-Signature-Ed25519` carries the Ed25519 signature of the body.
-   The handler looks the key up in the JWKS at `Config.JWKSURL`.
+   The handler looks the key up in the JWKS at `Config.JWKSURL`. When it
+   holds no key for that id and its last fetch of the JWKS failed, it
+   answers 503 instead, which the engine retries.
 2. The body's `createdAt` must lie within five minutes of the operator's
    clock (`webhook.ReplaySkew`), and its `nonce` must be one the operator has
    not seen in that window, so a captured call cannot be replayed.
@@ -80,7 +83,19 @@ minutes, has passed, so a key the platform removes stops verifying within
 that time. A key id the handler does not hold causes at most one extra fetch
 in each interval, so a caller without a valid signature cannot make the
 operator fetch at will. A failed fetch leaves the keys already held in place
-until the next interval.
+until the next interval. The 503 of step 1 covers only a key id the handler
+does not hold, because a failed fetch says nothing about the call.
+
+Each refusal before your code runs is a 4xx whose `error` and `statusDetail`
+both read `refused:<class>: <detail>`, so the engine reads every 4xx as a
+refusal. The class follows the status, as this table shows.
+
+| Status | Class | When |
+|---|---|---|
+| 400 | `malformed-request` | The body cannot be read, is too large, or fails `contract.DecodeRequest` |
+| 401 | `untrusted-request` | A signature, replay or OBO token check fails |
+| 404 | `unknown-path` | The path is neither `/hook` nor `/logs`, or `/logs` on a handler with no `Config.Logs` |
+| 405 | `method-not-allowed` | `/hook` is called with anything but POST, or `/logs` with anything but GET |
 
 ## The request your code receives
 
