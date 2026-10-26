@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -99,6 +100,9 @@ func VerifyTimestampSkew(ts string, now time.Time) error {
 	return nil
 }
 
+// ErrKeysUnavailable wraps a failed fetch of the JWKS, which says nothing about the request, so an authenticator answers it 503 instead of refusing.
+var ErrKeysUnavailable = errors.New("mitstack signing keys unavailable")
+
 // JWKSRefreshInterval bounds how long a key removed from the JWKS still verifies, and how often a caller can make a KeyCache fetch.
 const JWKSRefreshInterval = 5 * time.Minute
 
@@ -132,7 +136,7 @@ func (kc *KeyCache) PublicKey(jwksURL string, client *http.Client, kid string, n
 		}
 	}
 	if err != nil && !known {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrKeysUnavailable, err)
 	}
 	return keyFor(kc.keys, kid)
 }

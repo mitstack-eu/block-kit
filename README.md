@@ -61,7 +61,8 @@ sequenceDiagram
 
 1. The handler first runs the kit's `webhook` checks that mitstack signed the
    call, that it is under five minutes old and that it is not a replay. A call
-   that fails one answers 401 and never reaches your code.
+   that fails one answers 401 with a refusal class and never reaches your
+   code. When the platform's signing keys cannot be fetched, it answers 503.
 2. The handler decodes the call and checks a token mitstack signs into it,
    which names the block and subscription the call is for, so a call cannot be
    replayed to another block. A mismatch answers 401 too. The handler hands
