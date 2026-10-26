@@ -58,7 +58,9 @@ another status:
 
 1. The `X-Mitstack-Key-Id` header names the signing key, and
    `X-Mitstack-Signature-Ed25519` carries the Ed25519 signature of the body.
-   The handler looks the key up in the JWKS at `Config.JWKSURL`.
+   The handler looks the key up in the JWKS at `Config.JWKSURL`. When it
+   holds no key for that id and its last fetch of the JWKS failed, it
+   answers 503 instead, which the engine retries.
 2. The body's `createdAt` must lie within five minutes of the operator's
    clock (`webhook.ReplaySkew`), and its `nonce` must be one the operator has
    not seen in that window, so a captured call cannot be replayed.
@@ -81,9 +83,8 @@ minutes, has passed, so a key the platform removes stops verifying within
 that time. A key id the handler does not hold causes at most one extra fetch
 in each interval, so a caller without a valid signature cannot make the
 operator fetch at will. A failed fetch leaves the keys already held in place
-until the next interval. When the handler holds no key for the call's key id
-and its last fetch failed, it answers 503, because the failure says nothing about
-the call, and the engine retries it.
+until the next interval. The 503 of step 1 covers only a key id the handler
+does not hold, because a failed fetch says nothing about the call.
 
 Each refusal before your code runs is a 4xx whose `error` and `statusDetail`
 both read `refused:<class>: <detail>`, so the engine reads every 4xx as a
