@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/robot"
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/robottest"
@@ -206,6 +207,24 @@ func TestOpenRescueWindow_AdmitsSSHOnlyFromTheInstallerAndRestoreBringsBackTheRu
 	}
 	if got := f.Firewall(number); !slices.Equal(got.Input, worker.Input) || got.Status != "active" {
 		t.Errorf("after restore the input rules read %v, want the worker's %v", got.Input, worker.Input)
+	}
+}
+
+func TestOpenRescueWindow_RestoresTheRulesWhenTheWindowNeverReadsApplied(t *testing.T) {
+	f, c := newFake(t)
+	worker := robot.Firewall{Status: "active", FilterIPv6: true, WhitelistHOS: true, Input: robot.ReplyRules()}
+	if err := c.WriteFirewall(context.Background(), number, worker); err != nil {
+		t.Fatal(err)
+	}
+	f.SettleReads = 100
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	if _, err := c.OpenRescueWindow(ctx, number, netip.MustParseAddr("203.0.113.9")); err == nil {
+		t.Fatal("OpenRescueWindow succeeded on a window Robot never read applied")
+	}
+	if got := f.Firewall(number); !slices.Equal(got.Input, worker.Input) {
+		t.Errorf("after the failed window the input rules read %v, want the worker's %v", got.Input, worker.Input)
 	}
 }
 

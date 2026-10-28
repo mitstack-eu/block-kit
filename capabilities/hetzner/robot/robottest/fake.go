@@ -80,6 +80,8 @@ type Fake struct {
 	atReset   map[int64][]robot.Firewall
 	// HostKeys are the rescue host keys an activation answers, none by default as on the trial.
 	HostKeys []string
+	// SettleReads is how many reads a firewall stays in process after a write, one when zero.
+	SettleReads int
 }
 
 // InternalRules are the two output rules Robot listed ahead of every rule a write sent.
@@ -399,7 +401,7 @@ func (f *Fake) serveFirewall(w http.ResponseWriter, method string, parts []strin
 			Status: form.Get("status"), FilterIPv6: form.Get("filter_ipv6") == "true", WhitelistHOS: form.Get("whitelist_hos") == "true",
 			Input: decodeRules(rules["input"]), Output: decodeRules(rules["output"]),
 		}
-		fw.settling = 1
+		fw.settling = max(f.SettleReads, 1)
 	}
 	read := fw.read()
 	if fw.settling > 0 && method == http.MethodGet {
