@@ -195,22 +195,29 @@ Robot's documentation at
 limits each call per hour. It allows `GET /server/{number}` 200 times an hour,
 and `GET /firewall/{number}`, `GET /vswitch` and `GET /vswitch/{id}` 500 times.
 Past a limit Robot answers `403 RATE_LIMIT_EXCEEDED`, and after three failed
-logins it blocks the calling address for ten minutes. The platform calls a
-block again every few seconds while a subscription settles, so the client
-answers a repeat read from its last answer. A read of a server, the vSwitch
-list, a vSwitch or a firewall answers the same read for `robot.ReadWindow`,
-one minute, which keeps each at 60 reads an hour. Every client of the same
-login in the process shares those answers, and no other login reads them. A
-write drops the answers it changes, and `Adopt`, `Release`, `Couple`,
-`Uncouple`, `WriteFirewall` and `OpenRescueWindow` read Robot afresh, so they
-never act on an earlier answer. A client's `ReadWindow` field set to zero
-sends every read to Robot.
+logins it blocks the calling address for ten minutes. While a subscription
+settles, the platform calls the block again every few seconds, as
+[Work that outlasts one call](handler.md#work-that-outlasts-one-call)
+describes. The client therefore answers a repeat read from its last answer. A
+read of a server, the vSwitch list, a vSwitch or a firewall answers the same
+read for `robot.ReadWindow`, one minute, which keeps each at 60 reads an hour.
+Every client of the same login in the process shares those answers, and no
+other login reads them. A write drops the answers it changes.
+
+`Adopt`, `Release`, `Couple`, `Uncouple`, `WriteFirewall` and
+`OpenRescueWindow` read Robot afresh, so they never act on an earlier answer.
+Each of them writes, so call it only when a write is due rather than on every
+call the platform sends. A client's `ReadWindow` field set to zero sends every
+read to Robot, and its `Now` field is the clock the window is judged by, which
+a test sets to move time.
 
 A `403 RATE_LIMIT_EXCEEDED` answer matches `errors.Is(err,
 robot.ErrRateLimited)`, and no other answer does. It passes once Robot's
 hourly allowance refills, so a block waits it out instead of failing, for
-example by returning `handler.Wait` from `Ensure`. The client keeps that answer
-for the read window too, so it does not ask Robot again in the meantime.
+example by returning `handler.Wait` from `EnsureResources` or `Ensure`, as
+[Errors, refusals and panics](handler.md#errors-refusals-and-panics)
+describes. The client keeps that answer for the read window too, so it does not
+ask Robot again in the meantime.
 
 `robottest.New(t)` is a fake of the webservice for a block's tests. It lists
 the internal rules ahead of the rules a write sent, reads a firewall `in
