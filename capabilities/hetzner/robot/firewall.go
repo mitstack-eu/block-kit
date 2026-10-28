@@ -110,6 +110,7 @@ func (c *Client) SetFirewall(ctx context.Context, number int64, fw Firewall) err
 // in want, it keeps the output rules it read but Robot's internal ones, which Robot keeps itself and would otherwise
 // list twice, and admits all output when none is left, as the trial server's firewall did before any write.
 func (c *Client) WriteFirewall(ctx context.Context, number int64, want Firewall) error {
+	ctx = afresh(ctx)
 	current, err := c.settledFirewall(ctx, number)
 	if err != nil {
 		return err
@@ -161,6 +162,7 @@ func (c *Client) OpenRescueWindow(ctx context.Context, number int64, installer n
 	if !installer.Is4() {
 		return nil, fmt.Errorf("the installer's address %s is no IPv4 address", installer)
 	}
+	ctx = afresh(ctx)
 	server, err := c.GetServer(ctx, number)
 	if err != nil {
 		return nil, fmt.Errorf("reading dedicated server %d: %w", number, err)

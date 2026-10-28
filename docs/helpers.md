@@ -190,8 +190,34 @@ impersonate. The package holds no SSH client, since the kit takes no
 dependency beyond the standard library: `RescueKey.PrivateKey()` hands the
 block the key for its own SSH client.
 
+Robot's documentation at
+[robot.hetzner.com/doc/webservice](https://robot.hetzner.com/doc/webservice/en.html)
+limits each call per hour. It allows `GET /server/{number}` 200 times an hour,
+and `GET /firewall/{number}`, `GET /vswitch` and `GET /vswitch/{id}` 500 times.
+Past a limit Robot answers `403 RATE_LIMIT_EXCEEDED`, and after three failed
+logins it blocks the calling address for ten minutes. The platform calls a
+block again every few seconds while a subscription settles, so the client
+answers a repeat read from its last answer. A read of a server, the vSwitch
+list, a vSwitch or a firewall answers the same read for `robot.ReadWindow`,
+one minute, which keeps each at 60 reads an hour. Every client of the same
+login in the process shares those answers, and no other login reads them. A
+write drops the answers it changes, and `Adopt`, `Release`, `Couple`,
+`Uncouple`, `WriteFirewall` and `OpenRescueWindow` read Robot afresh, so they
+never act on an earlier answer. A client's `ReadWindow` field set to zero
+sends every read to Robot.
+
+A `403 RATE_LIMIT_EXCEEDED` answer matches `errors.Is(err,
+robot.ErrRateLimited)`, and no other answer does. It passes once Robot's
+hourly allowance refills, so a block waits it out instead of failing, for
+example by returning `handler.Wait` from `Ensure`. The client keeps that answer
+for the read window too, so it does not ask Robot again in the meantime.
+
 `robottest.New(t)` is a fake of the webservice for a block's tests. It lists
 the internal rules ahead of the rules a write sent, reads a firewall `in
 process` once after each write, clears a rescue activation once it boots it,
 and lists a server joining or leaving a vSwitch as `in process`.
-`fake.Client()` returns a client logged in to it.
+`fake.Client()` returns a client logged in to it that sends every read to the
+fake, so a test that changes the fake reads the change at once.
+`fake.Calls(method, path)` counts the requests sent, and
+`fake.SetRateLimited(true)` answers every request `403 RATE_LIMIT_EXCEEDED`
+until it is set false.

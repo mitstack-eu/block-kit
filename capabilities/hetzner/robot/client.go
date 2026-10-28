@@ -5,6 +5,7 @@ package robot
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,16 +29,23 @@ const (
 
 type Client struct {
 	base, user, password string
+	login                [sha256.Size]byte
 	http                 *http.Client
 	// PollInterval is the wait between reads while Robot applies a change.
 	PollInterval time.Duration
+	// ReadWindow is how long a read answers the same read from every client of this login; zero sends each to Robot.
+	ReadWindow time.Duration
+	Now        func() time.Time
 }
 
 func New(user, password string) *Client { return NewAt(Endpoint, user, password) }
 
 // NewAt calls the webservice at base, which only a test's fake sets.
 func NewAt(base, user, password string) *Client {
-	return &Client{base: base, user: user, password: password, http: &http.Client{Timeout: timeout}, PollInterval: 10 * time.Second}
+	return &Client{
+		base: base, user: user, password: password, login: sha256.Sum256([]byte(base + "\x00" + user + "\x00" + password)),
+		http: &http.Client{Timeout: timeout}, PollInterval: 10 * time.Second, ReadWindow: ReadWindow, Now: time.Now,
+	}
 }
 
 type Server struct {
@@ -107,6 +115,13 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("Robot answered %d %s: %s", e.Status, e.Code, e.Message)
 }
 
+// ErrRateLimited matches Robot's 403 RATE_LIMIT_EXCEEDED, which passes once the hourly allowance refills, so wait it out.
+var ErrRateLimited = errors.New("Robot's request limit is reached")
+
+const codeRateLimited = "RATE_LIMIT_EXCEEDED"
+
+func (e *Error) Is(target error) bool { return target == ErrRateLimited && e.Code == codeRateLimited }
+
 // ErrorCode is the code of a Robot error answer within err, or "".
 func ErrorCode(err error) string {
 	var re *Error
@@ -118,13 +133,24 @@ func ErrorCode(err error) string {
 
 // do sends form form-encoded, as the webservice requires, and decodes the answer into out when out is not nil.
 func (c *Client) do(ctx context.Context, method, path string, form url.Values, out any) error {
+	raw, err := c.exchange(ctx, method, path, form)
+	if err != nil || out == nil || len(raw) == 0 {
+		return err
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("decoding Robot's answer to %s %s: %w", method, path, err)
+	}
+	return nil
+}
+
+func (c *Client) send(ctx context.Context, method, path string, form url.Values) ([]byte, error) {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
 	if err != nil {
-		return fmt.Errorf("building the Robot request %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("building the Robot request %s %s: %w", method, path, err)
 	}
 	req.SetBasicAuth(c.user, c.password)
 	if form != nil {
@@ -132,12 +158,12 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, o
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("calling Robot %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("calling Robot %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes))
 	if err != nil {
-		return fmt.Errorf("reading Robot's answer to %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("reading Robot's answer to %s %s: %w", method, path, err)
 	}
 	if resp.StatusCode >= 300 {
 		var answer struct {
@@ -147,15 +173,9 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, o
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(raw, &answer)
-		return &Error{Status: resp.StatusCode, Code: answer.Error.Code, Message: answer.Error.Message}
+		return nil, &Error{Status: resp.StatusCode, Code: answer.Error.Code, Message: answer.Error.Message}
 	}
-	if out == nil || len(raw) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("decoding Robot's answer to %s %s: %w", method, path, err)
-	}
-	return nil
+	return raw, nil
 }
 
 func numbered(prefix string, n int64) string { return prefix + strconv.FormatInt(n, 10) }
