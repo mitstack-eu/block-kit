@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
@@ -68,6 +69,7 @@ func (c NodeReportsClient) NodeReports(ctx context.Context, _ contract.Desired, 
 // NodeReported matches an object labelled with the observing subscription's id in the reports of the identity's clusterSubscription, else its own.
 // A report counts when its madeAt, else its receivedAt, is after the verb, and the newest counting report decides.
 // An unlisted object is absent only when that report has a madeAt after the verb and marks its list complete or names the object's kind as read whole.
+// An identity holding argocdApplication is matched instead against the objects that Argo CD Application applied, and an object it does not list is absent only when that report has a madeAt after the verb and shows the Application Synced.
 type NodeReported struct {
 	API NodeReportsAPI
 }
@@ -84,6 +86,27 @@ type reportBody struct {
 	SubscriptionResources         json.RawMessage `json:"subscriptionResources"`
 	SubscriptionResourcesComplete bool            `json:"subscriptionResourcesComplete"`
 	SubscriptionResourceKinds     []string        `json:"subscriptionResourceKinds"`
+	ArgoCD                        json.RawMessage `json:"argocd"`
+}
+
+// reportedApplication is one Argo CD Application; a nil Resources means the report carries no list of what it applied.
+type reportedApplication struct {
+	Name      string           `json:"name"`
+	Sync      string           `json:"sync"`
+	Resources *[]appliedObject `json:"resources"`
+}
+
+type appliedObject struct {
+	Group     string `json:"group"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+}
+
+// is reports whether o is the object kubectlKind names as kubectl does, its kind in any case and its API group after a dot.
+func (o appliedObject) is(kubectlKind, namespace, name string) bool {
+	kind, group, _ := strings.Cut(kubectlKind, ".")
+	return strings.EqualFold(o.Kind, kind) && o.Group == group && o.Namespace == namespace && o.Name == name
 }
 
 func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
@@ -117,6 +140,9 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 	if newest == nil {
 		return unknown("resource %q: no node report made since the verb has arrived", r.Name), nil
 	}
+	if app := r.Identity["argocdApplication"]; app != "" {
+		return appliedBy(r, *newest, app, ids[0], ids[1]), nil
+	}
 	var listed []reportedObject
 	if json.Unmarshal(newest.SubscriptionResources, &listed) != nil {
 		return unknown("resource %q: the newest node report could not list the subscription's objects", r.Name), nil
@@ -134,4 +160,31 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 		return unknown("resource %q: the newest node report does not list it, but proves no absence: it neither marks its list complete nor read kind %q whole", r.Name, want.Kind), nil
 	}
 	return absent(), nil
+}
+
+// appliedBy reads the object of kind and name from the list of the Application app in the newest counting report.
+func appliedBy(r contract.ResourceRef, newest reportBody, app, kind, name string) contract.Observation {
+	var argo struct {
+		Applications []reportedApplication `json:"applications"`
+	}
+	if json.Unmarshal(newest.ArgoCD, &argo) != nil {
+		return unknown("resource %q: the newest node report could not list Argo CD's Applications", r.Name)
+	}
+	i := slices.IndexFunc(argo.Applications, func(a reportedApplication) bool { return a.Name == app })
+	if i < 0 || argo.Applications[i].Resources == nil {
+		return unknown("resource %q: the newest node report lists no objects the Argo CD Application %q applied", r.Name, app)
+	}
+	application := argo.Applications[i]
+	for _, o := range *application.Resources {
+		if o.is(kind, r.Identity["namespace"], name) {
+			return present(r, nil)
+		}
+	}
+	if newest.MadeAt == nil {
+		return unknown("resource %q: the Argo CD Application %q does not list it, but the newest node report proves no absence: it carries no madeAt", r.Name, app)
+	}
+	if application.Sync != "Synced" {
+		return unknown("resource %q: the Argo CD Application %q does not list it, but proves no absence until it reads Synced, not %q", r.Name, app, application.Sync)
+	}
+	return absent()
 }

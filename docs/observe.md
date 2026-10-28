@@ -53,7 +53,7 @@ block's Hetzner client implements in a few lines.
 | `HetznerFirewall`, `HetznerNetwork` | `hetzner.firewall`, `hetzner.network` | `firewallId`, `networkId` | Whether it exists |
 | `GitHubRepository` | `github.repository` | `repo` | `repo`, the repository's full name |
 | `GitHubCommit` | `github.commit` | `repo`, `sha` | `sourceSha`, and `sourceBranch` when the identity holds a `branch` |
-| `NodeReported` | A resource the platform cannot reach, such as `kubernetes.namespace` | `kind`, `name` | Presence from the cluster's node reports, as below |
+| `NodeReported` | A resource the platform cannot reach, such as `kubernetes.namespace` | `kind`, `name`, and `argocdApplication` for an object Argo CD applied | Presence from the cluster's node reports, as below |
 
 `EC2Container` runs a short probe script on the instance through a
 `HostCommander`, the interface you implement to run a script on an EC2
@@ -100,6 +100,41 @@ after `Desired.VerbAt`, and the newest counting report decides:
   object's kind in `subscriptionResourceKinds`.
 - Anything else is unknown, so an object of a kind the node never read stays
   unknown rather than reading absent.
+
+### An object Argo CD applied
+
+A node may have no right to read an object, such as a Secret, that Argo CD
+applied from Git. Argo CD is the controller that applies a cluster's Git
+repositories, and each of its Applications lists the objects it applied, with
+no contents. When the resource's identity also holds `argocdApplication`, the
+name of the Application that applies the object, `NodeReported` reads that
+Application's list instead of `subscriptionResources`. The report carries it
+under `argocd.applications`, each entry with its `sync` status and
+`resources`:
+
+```json
+{
+  "madeAt": "2026-10-23T09:00:00Z",
+  "argocd": {"applications": [
+    {"name": "repository-credentials", "health": "Healthy", "sync": "Synced", "resources": [
+      {"group": "", "kind": "Secret", "namespace": "argocd", "name": "app-repository-alpha", "sync": "Synced"}
+    ]}
+  ]}
+}
+```
+
+The identity's `kind` names the object as `kubectl` does, its kind in lower
+case followed by a dot and its API group when it has one, such as `secret` or
+`role.rbac.authorization.k8s.io`. The newest counting report decides, as
+above:
+
+- An object the Application's `resources` lists, by kind, API group,
+  namespace and name, is present.
+- An object it does not list is absent only when the report carries a
+  `madeAt` after `VerbAt` and shows the Application `Synced`, since a synced
+  Application that prunes holds nothing its Git no longer names.
+- Anything else is unknown, including a report that names no such Application
+  or carries no `resources` for it.
 
 `observe.NodeReportsClient` reads the reports from the platform the request's
 events callback names, with the callback's token, so a block writes no client
