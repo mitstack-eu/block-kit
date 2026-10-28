@@ -5,7 +5,6 @@ package robot
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,7 +28,7 @@ const (
 
 type Client struct {
 	base, user, password string
-	login                [sha256.Size]byte
+	login                string
 	http                 *http.Client
 	// PollInterval is the wait between reads while Robot applies a change.
 	PollInterval time.Duration
@@ -43,7 +42,7 @@ func New(user, password string) *Client { return NewAt(Endpoint, user, password)
 // NewAt calls the webservice at base, which only a test's fake sets.
 func NewAt(base, user, password string) *Client {
 	return &Client{
-		base: base, user: user, password: password, login: sha256.Sum256([]byte(base + "\x00" + user + "\x00" + password)),
+		base: base, user: user, password: password, login: loginKey(base, user, password),
 		http: &http.Client{Timeout: timeout}, PollInterval: 10 * time.Second, ReadWindow: ReadWindow, Now: time.Now,
 	}
 }

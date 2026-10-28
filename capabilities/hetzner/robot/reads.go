@@ -2,6 +2,8 @@ package robot
 
 import (
 	"context"
+	"crypto/pbkdf2"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"net/http"
@@ -24,10 +26,23 @@ var answers = struct {
 	writes uint64
 }{byKey: map[answerKey]answer{}}
 
-// answerKey holds the login as a hash of the endpoint, user and password, so no other login is answered from it.
+// answerKey holds the login as a key derived from the endpoint, user and password, so no other login is answered from it.
 type answerKey struct {
-	login [sha256.Size]byte
+	login string
 	path  string
+}
+
+const loginIterations = 4096
+
+var loginSalt = rand.Text()
+
+// loginKey is empty when PBKDF2 refuses, and a client without a key remembers nothing.
+func loginKey(base, user, password string) string {
+	key, err := pbkdf2.Key(sha256.New, base+"\x00"+user+"\x00"+password, []byte(loginSalt), loginIterations, sha256.Size)
+	if err != nil {
+		return ""
+	}
+	return string(key)
 }
 
 type answer struct {
@@ -47,7 +62,7 @@ func (c *Client) exchange(ctx context.Context, method, path string, form url.Val
 		defer c.forget(path)
 		return c.send(ctx, method, path, form)
 	}
-	if !remembered(path) {
+	if !remembered(path) || c.login == "" {
 		return c.send(ctx, method, path, form)
 	}
 	key := answerKey{login: c.login, path: path}
