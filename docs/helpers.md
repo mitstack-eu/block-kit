@@ -16,6 +16,7 @@ package has [a page of its own](gitops.md).
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
+| `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
 
@@ -158,3 +159,38 @@ commits files and sets Actions variables, each idempotently.
 blockverify holds a block that calls the GitHub API to this rule: it must
 resolve the host through `ghapi.Base`, `ghapi.BaseFromEnv` or an allowlist of
 its own, as [Running the block checks](block-checks.md) describes.
+
+## Adopting a Hetzner dedicated server
+
+`capabilities/hetzner/robot` calls Robot, Hetzner's webservice for dedicated
+servers. `robot.New(user, password)` takes the Robot login from the call's
+`hetzner` connection and stores it nowhere else. The login reaches every
+server of the Robot account, so a block's README names that reach as a limit.
+The calls follow the shapes and timings Robot answered on a live trial,
+recorded in the workspace note
+[Talos on a Hetzner Robot server behind a vSwitch gateway](https://github.com/mitstack-eu/mitstack-workspace/blob/main/product/knowledge/2026-10-28-talos-on-a-hetzner-robot-server-behind-a-vswitch-gateway.md).
+
+| Call | What it does |
+|---|---|
+| `Adopt(ctx, number, name)` | Names a ready server, whose name begins with `robot.NamePrefix`, and refuses one that is cancelled, absent, without a firewall or named by another subscription, before any write |
+| `Release(ctx, number, name)` | Clears the rescue activation, the keys named after the server and its name, and admits all traffic, but only while the server carries `name` |
+| `Couple(ctx, name, number)` | Finds or creates the vSwitch `name` on the lowest free VLAN and waits until Robot reads the server ready on it, which took under three minutes on the trial |
+| `Uncouple(ctx, id, number)` and `CancelVSwitch(ctx, id)` | Takes the server off and waits until Robot stops listing it, which took 152 seconds, then cancels the vSwitch |
+| `WriteFirewall(ctx, number, fw)` | Writes the firewall and waits until Robot reads it active, which took 62 to 131 seconds. It never sends Robot's two internal mail-port rules back, since Robot keeps them ahead of every write |
+| `OpenRescueWindow(ctx, number, installer)` | Adds one rule admitting SSH from the installer's address alone and admits Hetzner's own services. The function it returns writes back the firewall it found |
+| `NewRescueKey()` and `BootRescue(ctx, number, keyName, key)` | Mints a one-time ed25519 key, registers it and resets the server into a rescue system that admits that key alone |
+| `LeaveRescue(ctx, session)` | Clears any activation Robot still holds and deletes the key, so the next reset boots the disk |
+
+A rescue boot answers the host keys Robot names in `RescueSession.HostKeys`.
+On the trial Robot named none, so a client cannot tell the rescue system from
+an impersonator on the path to it. A block therefore sends that session no
+secret, and its secrets reach the disk by a channel an on-path attacker cannot
+impersonate. The package holds no SSH client, since the kit takes no
+dependency beyond the standard library: `RescueKey.PrivateKey()` hands the
+block the key for its own SSH client.
+
+`robottest.New(t)` is a fake of the webservice for a block's tests. It lists
+the internal rules ahead of the rules a write sent, reads a firewall `in
+process` once after each write, clears a rescue activation once it boots it,
+and lists a server joining or leaving a vSwitch as `in process`.
+`fake.Client()` returns a client logged in to it.

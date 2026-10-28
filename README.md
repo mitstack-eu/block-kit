@@ -109,6 +109,7 @@ provider and in `capabilities` per provider:
 | `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials for the AWS account a call names |
 | `capabilities/github/ghapi` | A block that calls the GitHub API | A GitHub REST client whose host the operator decides |
 | `capabilities/github/gitops` | A block that deploys to Kubernetes through Argo CD | Commits the block's files to a GitOps repository and judges the deploy, with test fakes in `capabilities/github/gitops/gitopstest` |
+| `capabilities/hetzner/robot` | A block that adopts a Hetzner dedicated server | Hetzner's Robot webservice: adopt, name and release a server, boot it into the rescue system and back, couple a vSwitch and write the Robot firewall, with a fake of the webservice in `capabilities/hetzner/robot/robottest` |
 
 ## A minimal block to copy
 
