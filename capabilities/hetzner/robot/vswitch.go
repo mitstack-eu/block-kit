@@ -86,6 +86,7 @@ func (c *Client) CancelVSwitch(ctx context.Context, id int64) error {
 // Couple finds the one vSwitch named name, or creates it on the lowest free VLAN, adds the server and waits until
 // Robot reads the server ready on it.
 func (c *Client) Couple(ctx context.Context, name string, number int64) (VSwitch, error) {
+	ctx = afresh(ctx)
 	all, err := c.ListVSwitches(ctx)
 	if err != nil {
 		return VSwitch{}, fmt.Errorf("listing vSwitches: %w", err)
@@ -136,6 +137,7 @@ func freeVLAN(all []VSwitch) (int, bool) {
 // Uncouple takes the server off the vSwitch and waits until Robot no longer lists it, since Robot refuses to cancel
 // a vSwitch it is still updating.
 func (c *Client) Uncouple(ctx context.Context, id, number int64) error {
+	ctx = afresh(ctx)
 	removed := false
 	return c.wait(ctx, fmt.Sprintf("server %d to leave vSwitch %d", number, id), func() (bool, error) {
 		vs, err := c.GetVSwitch(ctx, id)

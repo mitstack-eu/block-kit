@@ -2,11 +2,14 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
 const (
@@ -31,6 +34,9 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 	switch operation {
 	case "subscribe", "upgrade":
 		reported, err := r.ensureBlock(ctx)
+		if w, ok := waiting(err); ok {
+			return http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
+		}
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
@@ -40,6 +46,10 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		return r.ensureEach(ctx)
 	case "unsubscribe":
 		outputs, err := r.h.resource.Delete(ctx, r.d)
+		if w, ok := waiting(err); ok {
+			absent := false
+			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
+		}
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
@@ -61,6 +71,22 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 	default:
 		return http.StatusInternalServerError, contract.Response{Error: "handler: unreachable — unknown operation " + operation}
 	}
+}
+
+// Waiting holds a call back until something outside the block passes, answered pending, or absent:false on an unsubscribe.
+type Waiting struct {
+	Detail string
+}
+
+func (e *Waiting) Error() string { return e.Detail }
+
+func Wait(format string, args ...any) error {
+	return &Waiting{Detail: fmt.Sprintf(format, args...)}
+}
+
+func waiting(err error) (*Waiting, bool) {
+	var w *Waiting
+	return w, errors.As(err, &w)
 }
 
 // ensureBlock returns what the ensure reported by resource name, refusing a

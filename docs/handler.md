@@ -231,7 +231,18 @@ args...)`, answers 400 with a `statusDetail` of `refused:<class>: <detail>`.
 The engine reads a refusal as permanent and stops retrying. Any other error
 answers 500, and the engine retries the call under the same idempotency key.
 
-When `Delete` returns an error, the handler answers that error at once and
+A `*handler.Waiting`, which you build with `handler.Wait(format, args...)`,
+holds a call back until something outside the block passes, such as a
+provider's request limit. A `subscribe` or `upgrade` whose `EnsureResources`,
+or `Ensure` for a block without it, returns one answers 200 with
+`pending:true`. An `unsubscribe` whose `Delete` returns one answers 200 with
+`absent:false`. Either answer carries the detail as `statusDetail`, which the
+call's `progress` event repeats, as [Lifecycle events](#lifecycle-events)
+describes. The handler observes nothing on that call. The engine asks again,
+as it does for any pending answer, and the wait counts against the block's
+settle budget.
+
+When `Delete` returns any other error, the handler answers that error at once and
 observes nothing. Whatever `Delete` already removed stays removed, and the
 engine's retry calls `Delete` again. `Delete` must therefore be idempotent: a
 second call after the resource is gone reports it gone instead of failing.

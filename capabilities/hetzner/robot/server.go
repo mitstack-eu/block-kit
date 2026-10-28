@@ -16,6 +16,7 @@ func (c *Client) Adopt(ctx context.Context, number int64, name string) (Server, 
 	if !strings.HasPrefix(name, NamePrefix) {
 		return Server{}, fmt.Errorf("the name %q does not begin with %s", name, NamePrefix)
 	}
+	ctx = afresh(ctx)
 	server, err := c.GetServer(ctx, number)
 	switch {
 	case ErrorCode(err) == "SERVER_NOT_FOUND":
@@ -53,6 +54,7 @@ func (c *Client) Adopt(ctx context.Context, number int64, name string) (Server, 
 // Release clears the rescue, the keys named after name and the name, and admits all traffic, since Robot refuses to
 // disable a firewall that holds its internal rules; it leaves a server under any other name alone.
 func (c *Client) Release(ctx context.Context, number int64, name string) error {
+	ctx = afresh(ctx)
 	server, err := c.GetServer(ctx, number)
 	if ErrorCode(err) == "SERVER_NOT_FOUND" {
 		return nil

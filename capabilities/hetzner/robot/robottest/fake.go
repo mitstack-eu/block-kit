@@ -82,6 +82,7 @@ type Fake struct {
 	HostKeys []string
 	// SettleReads is how many reads a firewall stays in process after a write, one when zero.
 	SettleReads int
+	rateLimited bool
 }
 
 // InternalRules are the two output rules Robot listed ahead of every rule a write sent.
@@ -97,11 +98,32 @@ func New(t testing.TB) *Fake {
 	return f
 }
 
-// Client is a client logged in to the fake that polls without waiting.
+// Client is a client logged in to the fake that polls without waiting and sends every read to the fake, so a test
+// that changes the fake behind it reads the change at once.
 func (f *Fake) Client() *robot.Client {
 	c := robot.NewAt(f.URL, User, Password)
 	c.PollInterval = time.Millisecond
+	c.ReadWindow = 0
 	return c
+}
+
+// SetRateLimited makes the fake answer every request 403 RATE_LIMIT_EXCEEDED, as Robot answers past an hourly limit,
+// until it is set false; each refused request is still recorded.
+func (f *Fake) SetRateLimited(limited bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rateLimited = limited
+}
+
+// Calls counts the requests sent with method to path, such as GET /server/3041839.
+func (f *Fake) Calls(method, path string) int {
+	n := 0
+	for _, r := range f.Requests() {
+		if r.Method == method && r.Path == path {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *Fake) AddServer(s Server) {
@@ -202,6 +224,10 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.requests = append(f.requests, Request{Method: r.Method, Path: r.URL.Path, Form: form})
 	if !ok || user != User || password != Password {
 		fail(w, http.StatusUnauthorized, "UNAUTHORIZED")
+		return
+	}
+	if f.rateLimited {
+		fail(w, http.StatusForbidden, "RATE_LIMIT_EXCEEDED")
 		return
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
