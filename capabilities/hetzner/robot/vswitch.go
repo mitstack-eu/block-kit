@@ -108,9 +108,11 @@ func (c *Client) Couple(ctx context.Context, name string, number int64) (VSwitch
 	}
 	added := false
 	err = c.wait(ctx, fmt.Sprintf("server %d to be ready on vSwitch %d", number, vs.ID), func() (bool, error) {
-		if vs, err = c.GetVSwitch(ctx, vs.ID); err != nil {
+		read, err := c.GetVSwitch(ctx, vs.ID)
+		if err != nil {
 			return false, fmt.Errorf("reading vSwitch %d: %w", vs.ID, err)
 		}
+		vs = read
 		i := slices.IndexFunc(vs.Servers, func(s VSwitchServer) bool { return s.Number == number })
 		if i < 0 && !added {
 			added = true

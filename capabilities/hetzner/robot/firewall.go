@@ -2,6 +2,7 @@ package robot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -16,6 +18,8 @@ const (
 	ephemeralPorts  = "32768-65535"
 	// internalRuleName names the two mail-port output rules Robot keeps ahead of whatever a write sends.
 	internalRuleName = "Block mail ports"
+	// restoreTimeout outlasts two firewall writes, which took up to 131 seconds each on the trial.
+	restoreTimeout = 5 * time.Minute
 )
 
 // ReplyRules admit the replies to a server's own TCP, DNS and NTP traffic, which the stateless firewall otherwise drops.
@@ -171,8 +175,12 @@ func (c *Client) OpenRescueWindow(ctx context.Context, number int64, installer n
 	window.Input = append(slices.Clone(found.Input), Rule{
 		Name: "rescue ssh", IPVersion: "ipv4", SrcIP: installer.String() + "/32", DstIP: server.IP + "/32", Protocol: "tcp", DstPort: "22", Action: "accept",
 	})
+	restore = func(ctx context.Context) error { return c.WriteFirewall(ctx, number, found) }
 	if err := c.WriteFirewall(ctx, number, window); err != nil {
-		return nil, fmt.Errorf("opening port 22 for the rescue session: %w", err)
+		// A write Robot took may still apply, so the rules found go back even once ctx ended.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
+		defer cancel()
+		return nil, errors.Join(fmt.Errorf("opening port 22 for the rescue session: %w", err), restore(rctx))
 	}
-	return func(ctx context.Context) error { return c.WriteFirewall(ctx, number, found) }, nil
+	return restore, nil
 }

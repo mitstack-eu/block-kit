@@ -163,8 +163,9 @@ its own, as [Running the block checks](block-checks.md) describes.
 ## Adopting a Hetzner dedicated server
 
 `capabilities/hetzner/robot` calls Robot, Hetzner's webservice for dedicated
-servers. `robot.New(user, password)` takes the Robot login from the call's
-`hetzner` connection and stores it nowhere else. The login reaches every
+servers. `robot.New(user, password)` takes the Robot login as its two
+arguments, which the block reads from its own connection, and stores it
+nowhere else. The login reaches every
 server of the Robot account, so a block's README names that reach as a limit.
 The calls follow the shapes and timings Robot answered on a live trial,
 recorded in the workspace note
