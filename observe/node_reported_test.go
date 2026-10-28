@@ -1,6 +1,6 @@
 package observe_test
 
-// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, and the client reads the reports with the events callback's token.
+// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, and the client reads the reports with the events callback's token.
 
 import (
 	"context"
@@ -269,6 +269,77 @@ func TestNodeReportsClient_IsAnErrorCarryingNoTokenWhenThePlatformCannotAnswer(t
 			if err == nil || strings.Contains(err.Error(), callbackToken) || strings.Contains(err.Error(), "stale-token-0c1d") {
 				t.Errorf("NodeReports = %+v, %v; want an error carrying no token", got, err)
 			}
+		})
+	}
+}
+
+// argoReport is a node report body carrying Argo CD's Applications as the talos-cluster-kit report passes them on; a nil made leaves out madeAt.
+func argoReport(made *time.Duration, apps ...map[string]any) map[string]any {
+	body := map[string]any{"argocd": map[string]any{"applications": apps}}
+	if made != nil {
+		body["madeAt"] = verbAt.Add(*made).Format(time.RFC3339Nano)
+	}
+	return body
+}
+
+// application is an Application entry; a nil applied leaves out its resources key.
+func application(name, sync string, applied ...map[string]any) map[string]any {
+	app := map[string]any{"name": name, "health": "Healthy", "sync": sync}
+	if applied != nil {
+		app["resources"] = applied
+	}
+	return app
+}
+
+func appliedObject(group, kind, namespace string) map[string]any {
+	return map[string]any{"group": group, "kind": kind, "namespace": namespace, "name": "app-repository-alpha", "sync": "Synced"}
+}
+
+func TestNodeReported_ReadsAnObjectAnArgoCDApplicationAppliedFromThatApplicationsList(t *testing.T) {
+	secret, role, made, none := appliedObject("", "Secret", "argocd"), appliedObject("rbac.authorization.k8s.io", "Role", "argocd"), at(30*time.Second), []map[string]any{}
+	creds := func(sync string, applied ...map[string]any) map[string]any {
+		return application("repository-credentials", sync, applied...)
+	}
+	labelled := argoReport(made, creds("Synced", role))
+	labelled["subscriptionResources"] = []map[string]string{{"namespace": "argocd", "kind": "secret", "name": "app-repository-alpha", "subscription": "sub-1"}}
+	cases := []struct {
+		label, kind, namespace string
+		reports                []map[string]any
+		want                   contract.State
+		detail                 string
+	}{
+		{"the Application's list names it", "secret", "argocd", []map[string]any{argoReport(made, creds("OutOfSync", role, secret))}, contract.Present, ""},
+		{"the list names it under its API group", "role.rbac.authorization.k8s.io", "argocd", []map[string]any{argoReport(made, creds("Synced", role))}, contract.Present, ""},
+		{"a cluster-scoped object the list names with a null namespace", "namespace", "", []map[string]any{argoReport(made, creds("Synced", map[string]any{"group": "", "kind": "Namespace", "namespace": nil, "name": "app-repository-alpha"}))}, contract.Present, ""},
+		{"a report made after the verb shows the Application Synced without it", "secret", "argocd", []map[string]any{argoReport(made, creds("Synced", role))}, contract.Absent, ""},
+		{"only another Application's list names it", "secret", "argocd", []map[string]any{argoReport(made, creds("Synced", role), application("cluster-root", "Synced", secret))}, contract.Absent, ""},
+		{"the list names it in another namespace", "secret", "argocd", []map[string]any{argoReport(made, creds("Synced", appliedObject("", "Secret", "app-alpha")))}, contract.Absent, ""},
+		{"the list names it in another API group", "secret", "argocd", []map[string]any{argoReport(made, creds("Synced", appliedObject("example.com", "Secret", "argocd")))}, contract.Absent, ""},
+		{"only the subscription's labelled objects list it", "secret", "argocd", []map[string]any{labelled}, contract.Absent, ""},
+		{"the Application is OutOfSync without it", "secret", "argocd", []map[string]any{argoReport(made, creds("OutOfSync", role))}, contract.Unknown, "Synced"},
+		{"a report with no made-at time shows the Application Synced without it", "secret", "argocd", []map[string]any{argoReport(nil, creds("Synced", role))}, contract.Unknown, "madeAt"},
+		{"the report carries no list for the Application", "secret", "argocd", []map[string]any{argoReport(made, creds("Synced"))}, contract.Unknown, "repository-credentials"},
+		{"the report does not name the Application", "secret", "argocd", []map[string]any{argoReport(made, application("cluster-root", "Synced", secret))}, contract.Unknown, "repository-credentials"},
+		{"a report made before the verb names it", "secret", "argocd", []map[string]any{argoReport(at(-30*time.Second), creds("Synced", secret))}, contract.Unknown, ""},
+		{"the newest of several shows the Application Synced without it", "secret", "argocd",
+			[]map[string]any{argoReport(at(40*time.Second), creds("Synced", secret)), argoReport(at(50*time.Second), creds("Synced", none...))}, contract.Absent, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			api := &fakeReports{}
+			for _, body := range tc.reports {
+				raw, err := json.Marshal(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				api.reports = append(api.reports, observe.NodeReport{ReceivedAt: verbAt.Add(time.Minute), Body: raw})
+			}
+			ref := refFor("kubernetes.secret", map[string]string{"kind": tc.kind, "name": "app-repository-alpha", "namespace": tc.namespace, "clusterSubscription": "sub-cluster", "argocdApplication": "repository-credentials"})
+			ref.Desired.VerbAt = verbAt
+
+			got, err := observe.NodeReported{API: api}.ObserveResource(context.Background(), ref)
+
+			wantObservation(t, ref, got, err, tc.want, nil, tc.detail)
 		})
 	}
 }
