@@ -63,7 +63,7 @@ type desiredLister interface {
 
 // Block is what a block served through one block-level handler supplies to have its guards checked.
 type Block struct {
-	// Config is the handler.Config the block serves, of which the check replaces only the signing key, the JWKS address and the sleep, so the guards run at the block's own VerbBudget.
+	// Config is the handler.Config the block serves, of which the check replaces only the signing key and the JWKS address.
 	Config   handler.Config
 	Provider Provider
 	// Desired needs its SubscriptionID, BlockID and OrgID.
@@ -156,7 +156,6 @@ func newBlockServer(cfg handler.Config) (*blockServer, error) {
 	}
 	cfg.JWKSURL = "https://kittest.invalid/jwks"
 	cfg.PublicKey = func(string) (ed25519.PublicKey, error) { return pub, nil }
-	cfg.Sleep = func(context.Context, time.Duration) {}
 	h, err := handler.New(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("the block cannot be served: %v", err)

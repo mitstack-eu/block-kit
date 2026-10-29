@@ -16,10 +16,6 @@ import (
 // maxHookBodyBytes bounds the read so a hostile caller cannot exhaust memory before the trust boundary runs.
 const maxHookBodyBytes = 1 << 20 // 1 MiB
 
-const defaultVerbBudget = 20
-
-const defaultPollInterval = 500 * time.Millisecond
-
 type Resource interface {
 	// Ensure may be called more than once for the same subscription and must converge rather than duplicate.
 	Ensure(ctx context.Context, d contract.Desired) error
@@ -49,7 +45,7 @@ type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)
 }
 
-// Config wires a Handler; Resource, Manifest and JWKSURL are required, VerbBudget defaults to 20, PollInterval to 500ms, and a nil Logs answers GET /logs with 404.
+// Config wires a Handler; Resource, Manifest and JWKSURL are required, and a nil Logs answers GET /logs with 404.
 type Config struct {
 	Resource Resource
 
@@ -74,12 +70,6 @@ type Config struct {
 
 	Logs *webhook.LogBuffer
 
-	VerbBudget int
-
-	PollInterval time.Duration
-
-	Sleep func(ctx context.Context, d time.Duration)
-
 	Now func() time.Time
 }
 
@@ -99,10 +89,7 @@ type Handler struct {
 	replay    *webhook.Replay
 	logs      *webhook.LogBuffer
 
-	verbBudget   int
-	pollInterval time.Duration
-	sleep        func(ctx context.Context, d time.Duration)
-	now          func() time.Time
+	now func() time.Time
 
 	idempotency *idempotencyCache
 }
@@ -142,22 +129,10 @@ func New(cfg Config) (*Handler, error) {
 		publicKey:     cfg.PublicKey,
 		replay:        cfg.Replay,
 		logs:          cfg.Logs,
-		verbBudget:    cfg.VerbBudget,
-		pollInterval:  cfg.PollInterval,
-		sleep:         cfg.Sleep,
 		now:           cfg.Now,
 		idempotency:   newIdempotencyCache(),
 	}
 
-	if h.verbBudget <= 0 {
-		h.verbBudget = defaultVerbBudget
-	}
-	if h.pollInterval <= 0 {
-		h.pollInterval = defaultPollInterval
-	}
-	if h.sleep == nil {
-		h.sleep = defaultSleep
-	}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -172,15 +147,6 @@ func New(cfg Config) (*Handler, error) {
 	}
 
 	return h, nil
-}
-
-func defaultSleep(ctx context.Context, d time.Duration) {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-	case <-t.C:
-	}
 }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {

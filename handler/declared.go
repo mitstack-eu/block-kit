@@ -84,7 +84,7 @@ func (r *declaredRun) keepSecretOutputs(name string, secretOutputs map[string]st
 	r.resourceSecretOutputs[name] = maps.Clone(secretOutputs)
 }
 
-// ensureEach settles each resource present before the next, a later resource winning a key both produce, once the block-level handler has ensured the whole block.
+// ensureEach observes each resource once, after the block-level handler has ensured the whole block, and answers pending at the first not yet present, since the platform's settle check observes it from there; a later resource wins a key both produce.
 func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 	var outputs, secretOutputs map[string]string
 	for _, nr := range r.resources {
@@ -92,7 +92,7 @@ func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 			return http.StatusOK, contract.Response{Pending: true, StatusDetail: r.notReached(nr.name), Resources: r.outcomes, SecretOutputs: secretOutputs, ResourceSecretOutputs: r.resourceSecretOutputs}
 		}
 		entry := r.outcomes[nr.name]
-		obs, attempts, err := r.settle(ctx, nr, contract.Present, &entry)
+		obs, err := r.observeOnce(ctx, nr, &entry)
 		if err != nil {
 			return r.fail(nr.name, &entry, &entry.Observe, err)
 		}
@@ -100,7 +100,7 @@ func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 		if obs.State != contract.Present {
 			return http.StatusOK, contract.Response{
 				Pending:               true,
-				StatusDetail:          safe.Scrub(fmt.Sprintf("resource %q still %s after %d attempts", nr.name, obs.State, attempts), r.secrets...),
+				StatusDetail:          safe.Scrub(fmt.Sprintf("resource %q observed %s, not yet present", nr.name, obs.State), r.secrets...),
 				Resources:             r.outcomes,
 				SecretOutputs:         secretOutputs,
 				ResourceSecretOutputs: r.resourceSecretOutputs,
@@ -119,7 +119,7 @@ func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 	return http.StatusOK, resp
 }
 
-// deleteEach settles each resource absent in reverse creation order, once the block-level handler has deleted the whole block, observes none whose type ends with its subscription, skips one the engine recorded absent, and merges the delete's outputs over the observed ones on absent:true.
+// deleteEach observes each resource once in reverse creation order, after the block-level handler has deleted the whole block, and answers absent:false at the first not yet absent; it observes none whose type ends with its subscription, skips one the engine recorded absent, and merges the delete's outputs over the observed ones on absent:true.
 func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	var outputs map[string]string
 	for i := len(r.resources) - 1; i >= 0; i-- {
@@ -139,7 +139,7 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 			continue
 		}
 
-		obs, attempts, err := r.settle(ctx, nr, contract.Absent, &entry)
+		obs, err := r.observeOnce(ctx, nr, &entry)
 		if err != nil {
 			return r.fail(nr.name, &entry, &entry.Observe, err)
 		}
@@ -148,7 +148,7 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 			absent := false
 			return http.StatusOK, contract.Response{
 				Absent:       &absent,
-				StatusDetail: safe.Scrub(fmt.Sprintf("resource %q observed %s after %d attempts", nr.name, obs.State, attempts), r.secrets...),
+				StatusDetail: safe.Scrub(fmt.Sprintf("resource %q observed %s, not yet absent", nr.name, obs.State), r.secrets...),
 				Resources:    r.outcomes,
 			}
 		}
@@ -192,15 +192,10 @@ func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response)
 			return http.StatusOK, contract.Response{Pending: true, StatusDetail: r.notReached(nr.name), Resources: r.outcomes, SecretOutputs: secretOutputs, ResourceSecretOutputs: r.resourceSecretOutputs}
 		}
 		var entry contract.ResourceOutcome
-		obs, err := r.observe(ctx, nr)
+		obs, err := r.observeOnce(ctx, nr, &entry)
 		if err != nil {
 			return r.fail(nr.name, &entry, &entry.Observe, err)
 		}
-		call, err := r.observed(nr, obs)
-		if err != nil {
-			return r.fail(nr.name, &entry, &entry.Observe, err)
-		}
-		entry.Observe = call
 		r.outcomes[nr.name] = entry
 
 		switch obs.State {
@@ -242,36 +237,18 @@ func (r *declaredRun) notReached(name string) string {
 	return safe.Scrub(fmt.Sprintf("resource %q not reached: the request ended before the verb got to it", name), r.secrets...)
 }
 
-// settle checks the context before every attempt, because defaultSleep returns at once on a done context and a cancelled request would otherwise spend its budget on unpaced calls to the provider, and records no observe outcome when no attempt ran.
-func (r *declaredRun) settle(ctx context.Context, nr namedResource, want contract.State, entry *contract.ResourceOutcome) (contract.Observation, int, error) {
-	var last contract.Observation
-	attempts := 0
-	for attempts < r.h.verbBudget {
-		if ctx.Err() != nil {
-			break
-		}
-		obs, err := r.observe(ctx, nr)
-		if err != nil {
-			return last, attempts, err
-		}
-		attempts++
-		last = obs
-		if obs.State == want {
-			break
-		}
-		if attempts < r.h.verbBudget {
-			r.h.sleep(ctx, r.h.pollInterval)
-		}
-	}
-	if attempts == 0 {
-		return last, attempts, nil
-	}
-	call, err := r.observed(nr, last)
+// observeOnce records what one observation of nr reports as its observe outcome.
+func (r *declaredRun) observeOnce(ctx context.Context, nr namedResource, entry *contract.ResourceOutcome) (contract.Observation, error) {
+	obs, err := r.observe(ctx, nr)
 	if err != nil {
-		return last, attempts, err
+		return obs, err
+	}
+	call, err := r.observed(nr, obs)
+	if err != nil {
+		return obs, err
 	}
 	entry.Observe = call
-	return last, attempts, nil
+	return obs, nil
 }
 
 func (r *declaredRun) observe(ctx context.Context, nr namedResource) (contract.Observation, error) {

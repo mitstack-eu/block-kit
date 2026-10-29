@@ -59,30 +59,29 @@ func TestServe_EmitsOneTerminalEventPerVerb(t *testing.T) {
 		name   string
 		op     string
 		f      *kittest.FakeResource
-		budget int
 		status int
 		want   []string
 		detail string
 	}{
-		{"a validate observed present emits nothing", "validate", &kittest.FakeResource{ObserveState: stateOf(contract.Present)}, 3, http.StatusOK, nil, ""},
-		{"a validate observed unknown emits nothing", "validate", &kittest.FakeResource{ObserveState: stateOf(contract.Unknown)}, 3, http.StatusOK, nil, ""},
-		{"a validate whose Observe fails emits nothing", "validate", &kittest.FakeResource{ObserveErr: errors.New("observe backend unavailable")}, 3,
+		{"a validate observed present emits nothing", "validate", &kittest.FakeResource{ObserveState: stateOf(contract.Present)}, http.StatusOK, nil, ""},
+		{"a validate observed unknown emits nothing", "validate", &kittest.FakeResource{ObserveState: stateOf(contract.Unknown)}, http.StatusOK, nil, ""},
+		{"a validate whose Observe fails emits nothing", "validate", &kittest.FakeResource{ObserveErr: errors.New("observe backend unavailable")},
 			http.StatusInternalServerError, nil, ""},
-		{"a settled subscribe emits completed alone", "subscribe", withOutputs(), 3, http.StatusOK, completed, ""},
-		{"a settled upgrade emits completed alone", "upgrade", withOutputs(), 3, http.StatusOK, completed, ""},
-		{"a settled unsubscribe emits completed alone", "unsubscribe", &kittest.FakeResource{Count: 1}, 3, http.StatusOK, completed, ""},
-		{"an unsubscribe not yet absent emits progress", "unsubscribe", &kittest.FakeResource{ObserveState: stateOf(contract.Present)}, 2, http.StatusOK, progress, "after 2 attempts"},
-		{"a pending subscribe emits progress, not completed", "subscribe", &kittest.FakeResource{ObserveState: stateOf(contract.Absent)}, 2, http.StatusOK, progress, ""},
-		{"a pending upgrade emits progress, not completed", "upgrade", &kittest.FakeResource{ObserveState: stateOf(contract.Absent)}, 2, http.StatusOK, progress, ""},
-		{"a failing subscribe emits failed with the error", "subscribe", &kittest.FakeResource{EnsureErr: errors.New("resource backend unavailable")}, 3,
+		{"a settled subscribe emits completed alone", "subscribe", withOutputs(), http.StatusOK, completed, ""},
+		{"a settled upgrade emits completed alone", "upgrade", withOutputs(), http.StatusOK, completed, ""},
+		{"a settled unsubscribe emits completed alone", "unsubscribe", &kittest.FakeResource{Count: 1}, http.StatusOK, completed, ""},
+		{"an unsubscribe not yet absent emits progress", "unsubscribe", &kittest.FakeResource{ObserveState: stateOf(contract.Present)}, http.StatusOK, progress, "not yet absent"},
+		{"a pending subscribe emits progress, not completed", "subscribe", &kittest.FakeResource{ObserveState: stateOf(contract.Absent)}, http.StatusOK, progress, ""},
+		{"a pending upgrade emits progress, not completed", "upgrade", &kittest.FakeResource{ObserveState: stateOf(contract.Absent)}, http.StatusOK, progress, ""},
+		{"a failing subscribe emits failed with the error", "subscribe", &kittest.FakeResource{EnsureErr: errors.New("resource backend unavailable")},
 			http.StatusInternalServerError, failed, "resource backend unavailable"},
-		{"a refused subscribe emits failed with the class", "subscribe", &kittest.FakeResource{EnsureErr: handler.Refuse("quota-exceeded", "org quota exhausted")}, 3,
+		{"a refused subscribe emits failed with the class", "subscribe", &kittest.FakeResource{EnsureErr: handler.Refuse("quota-exceeded", "org quota exhausted")},
 			http.StatusBadRequest, failed, "quota-exceeded"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			events := newFakeEventsServer(t)
-			x := newHarness(t, tc.f, withBudget(tc.budget))
+			x := newHarness(t, tc.f)
 
 			status, resp := x.answer(map[string]any{"operation": tc.op, "eventsCallback": map[string]any{"url": events.URL, "token": "events-tok"}})
 
