@@ -164,3 +164,63 @@ func TestUnsubscribe_AnswersAnUnreadableRepositoryUnknownWithNoWrite(t *testing.
 		})
 	}
 }
+
+func TestUnsubscribe_RebuildsItsRemovalOntoMainWhenTheAppChangesAFileWhileItWaits(t *testing.T) {
+	f := landingtest.New(t, repo)
+	rec := land(t, f, threeFiles, landing.Record{})
+	f.RequireCheck("managed-ci")
+	_, err := remove(client(f), rec)
+	waiting(t, err, "managed-ci")
+
+	f.Edit("index.html", "<h1>my weather</h1>\n")
+	f.ReportCheck("managed-ci", "success")
+	got, err := remove(client(f), rec)
+	if err != nil {
+		t.Fatalf("Remove after main moved: %v, want the removal rebuilt onto main's new head and merged", err)
+	}
+	if want := map[string]string{"index.html": "<h1>my weather</h1>\n"}; !reflect.DeepEqual(f.Main(), want) {
+		t.Errorf("main = %v, want only the file the app changed while the removal waited, %v", f.Main(), want)
+	}
+	if want := []landing.Kept{{Repository: repo, Path: "index.html", Reason: "changed"}}; !reflect.DeepEqual(got.Kept, want) {
+		t.Errorf("Kept = %+v, want %+v", got.Kept, want)
+	}
+}
+
+func TestUnsubscribe_WaitsWhileGitHubRefusesTheMerge(t *testing.T) {
+	for _, status := range []int{http.StatusMethodNotAllowed, http.StatusConflict} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			f := landingtest.New(t, repo)
+			rec := land(t, f, threeFiles, landing.Record{})
+			f.Answer(http.MethodPut, "/repos/"+repo+"/pulls/1/merge", status)
+
+			_, err := remove(client(f), rec)
+			waiting(t, err, "#1")
+			if pulls := f.Pulls(); len(pulls) != 1 || !pulls[0].Open {
+				t.Errorf("pull requests = %+v, want the removal left open", pulls)
+			}
+			if want := []string{"mitstack/" + subscription + "/remove"}; !reflect.DeepEqual(f.Branches(), want) {
+				t.Errorf("branches = %v, want the removal's branch kept while it waits, %v", f.Branches(), want)
+			}
+		})
+	}
+}
+
+func TestUnsubscribe_OpensTheRemovalAgainWhenSomeoneClosedIt(t *testing.T) {
+	f := landingtest.New(t, repo)
+	rec := land(t, f, threeFiles, landing.Record{})
+	f.RequireCheck("managed-ci")
+	_, err := remove(client(f), rec)
+	waiting(t, err, "managed-ci")
+	f.ClosePull(1)
+	f.ReportCheck("managed-ci", "success")
+
+	if _, err := remove(client(f), rec); err != nil {
+		t.Fatalf("Remove after the removal was closed: %v", err)
+	}
+	if pulls := f.Pulls(); len(pulls) != 2 || pulls[0].Merged || !pulls[1].Merged {
+		t.Errorf("pull requests = %+v, want the closed one left and a second merged", pulls)
+	}
+	if len(f.Main()) != 0 {
+		t.Errorf("main = %v, want every landed file removed", f.Main())
+	}
+}

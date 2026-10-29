@@ -112,6 +112,13 @@ func (f *Fake) Branches() []string {
 	return out
 }
 
+// ClosePull closes pull request number unmerged, as a person on GitHub can.
+func (f *Fake) ClosePull(number int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pulls[number-1].Open = false
+}
+
 func (f *Fake) Pulls() []Pull {
 	f.mu.Lock()
 	defer f.mu.Unlock()
