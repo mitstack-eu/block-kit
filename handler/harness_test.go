@@ -21,8 +21,6 @@ import (
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
-func noopSleep(context.Context, time.Duration) {}
-
 var oneResourceManifest = v1betaManifest("test-block", []string{"{ name: r, type: aws.vpc }"}, "r")
 
 type selfObserver interface {
@@ -38,7 +36,7 @@ func (o observedThrough) ObserveResource(ctx context.Context, r contract.Resourc
 
 func baseConfig(t *testing.T, r handler.Resource, s *kittest.Signer) handler.Config {
 	t.Helper()
-	cfg := handler.Config{Resource: r, Manifest: []byte(oneResourceManifest), JWKSURL: s.JWKSServer(t), VerbBudget: 3, PollInterval: time.Millisecond, Sleep: noopSleep}
+	cfg := handler.Config{Resource: r, Manifest: []byte(oneResourceManifest), JWKSURL: s.JWKSServer(t)}
 	if o, ok := r.(selfObserver); ok {
 		cfg.Observers = map[string]handler.Observer{"r": observedThrough{o}}
 	}
@@ -158,10 +156,6 @@ func captureLog(t *testing.T) *bytes.Buffer {
 
 func withManifest[M string | []byte](manifest M) func(*handler.Config) {
 	return func(c *handler.Config) { c.Manifest = []byte(manifest) }
-}
-
-func withBudget(n int) func(*handler.Config) {
-	return func(c *handler.Config) { c.VerbBudget = n }
 }
 
 const oldVersionManifest = "apiVersion: mitstack/v1alpha\nkind: Block\nmetadata:\n  id: test-block\n  name: Test Block\nspec:\n  layer: infra\n"

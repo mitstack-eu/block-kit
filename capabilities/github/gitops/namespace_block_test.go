@@ -70,14 +70,11 @@ func serveNamespace(t *testing.T, b *gitopsBlock, logs *webhook.LogBuffer) (*han
 	t.Helper()
 	s := kittest.NewSigner(t, "gitops-test-key", 7)
 	h, err := handler.New(handler.Config{
-		Resource:     namespaceBlock{b},
-		Manifest:     readNamespaceManifest(t),
-		Observers:    map[string]handler.Observer{resourceName: b.resource},
-		JWKSURL:      s.JWKSServer(t),
-		Logs:         logs,
-		VerbBudget:   3,
-		PollInterval: time.Millisecond,
-		Sleep:        func(context.Context, time.Duration) {},
+		Resource:  namespaceBlock{b},
+		Manifest:  readNamespaceManifest(t),
+		Observers: map[string]handler.Observer{resourceName: b.resource},
+		JWKSURL:   s.JWKSServer(t),
+		Logs:      logs,
 	})
 	if err != nil {
 		t.Fatalf("handler.New: %v", err)

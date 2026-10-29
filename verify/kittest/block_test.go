@@ -497,30 +497,22 @@ func TestAssertBlock_FailsTheTestWithEveryProblem(t *testing.T) {
 	}
 }
 
-// The volume's delete leaves it standing, so the unsubscribe observes it until the budget runs out.
-func TestAssertBlock_ObservesAResourceAtMostTheBlocksVerbBudgetTimesPerVerb(t *testing.T) {
-	for _, budget := range []int{1, 2} {
-		t.Run(fmt.Sprintf("VerbBudget %d", budget), func(t *testing.T) {
-			b, in := hostBlock(t)
-			counts := &observeCounts{most: map[string]int{}}
-			b.counts, b.leaveOnDelete = counts, "aws.ebs-volume"
-			in.Config.VerbBudget = budget
-			in.Config.Observers = map[string]handler.Observer{
-				"aws.ec2-instance": providerObserver{p: b.p, counts: counts},
-				"aws.ebs-volume":   providerObserver{p: b.p, counts: counts},
-			}
+// The volume's delete leaves it standing, so every unsubscribe observes it present.
+func TestAssertBlock_ObservesAResourceOncePerVerb(t *testing.T) {
+	b, in := hostBlock(t)
+	counts := &observeCounts{most: map[string]int{}}
+	b.counts, b.leaveOnDelete = counts, "aws.ebs-volume"
+	in.Config.Observers = map[string]handler.Observer{
+		"aws.ec2-instance": providerObserver{p: b.p, counts: counts},
+		"aws.ebs-volume":   providerObserver{p: b.p, counts: counts},
+	}
 
-			runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
+	runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
 
-			for name, most := range counts.most {
-				if most > budget {
-					t.Errorf("one verb observed %s %d times; want at most the block's VerbBudget, %d", name, most, budget)
-				}
-			}
-			if got := counts.most["aws.ebs-volume"]; got != budget {
-				t.Errorf("the unsubscribe observed the volume its delete left standing %d times; want the block's VerbBudget, %d", got, budget)
-			}
-		})
+	for _, name := range []string{"aws.ec2-instance", "aws.ebs-volume"} {
+		if most := counts.most[name]; most != 1 {
+			t.Errorf("one verb observed %s at most %d times; want once", name, most)
+		}
 	}
 }
 
@@ -852,7 +844,7 @@ func TestCheckBlock(t *testing.T) {
 		return func(b *fakeBlock, in *kittest.Block) {
 			inFlight := 1
 			observer := byTypeObserver{p: b.p, report: report, inFlight: &inFlight}
-			in.Config.Resource, in.Config.VerbBudget = unnamedBlock{b}, 1
+			in.Config.Resource = unnamedBlock{b}
 			in.Config.Observers = map[string]handler.Observer{"aws.ec2-instance": observer, "aws.ebs-volume": observer}
 		}
 	}
@@ -862,7 +854,7 @@ func TestCheckBlock(t *testing.T) {
 			for _, name := range hostGone {
 				bt.hostGone[name] = true
 			}
-			in.Config.Resource, in.Config.VerbBudget = bt, 1
+			in.Config.Resource = bt
 			in.Config.Observers = map[string]handler.Observer{
 				"aws.ec2-instance": teardownObserver{b: bt, name: "aws.ec2-instance"},
 				"aws.ebs-volume":   teardownObserver{b: bt, name: "aws.ebs-volume"},

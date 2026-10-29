@@ -353,7 +353,7 @@ func TestBlockLevel_EachObserveIsHandedTheIdentityAndTypeOfItsResource(t *testin
 	}
 }
 
-func TestBlockLevel_APendingSubscribeOrUpgradeNamesTheResourceNotPresentWithinTheBudgetAndCarriesEveryReportedIdentity(t *testing.T) {
+func TestBlockLevel_APendingSubscribeOrUpgradeNamesTheResourceNotPresentAndCarriesEveryReportedIdentity(t *testing.T) {
 	reported := []contract.CreatedResource{
 		{Name: "aws.vpc", Type: "aws.vpc", Identity: map[string]string{"vpcId": "vpc-new"}},
 		{Name: "b", Type: "aws.iam-role", Identity: map[string]string{"roleName": "b-new"}},
@@ -366,8 +366,8 @@ func TestBlockLevel_APendingSubscribeOrUpgradeNamesTheResourceNotPresentWithinTh
 
 			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: op})
 
-			if want := `resource "aws.ec2-instance" still absent after 3 attempts`; status != http.StatusOK || !resp.Pending || resp.StatusDetail != want || len(obs["aws.ec2-instance"].calls()) != 3 {
-				t.Fatalf("status, pending, statusDetail = %d, %v, %q after %d observes of aws.ec2-instance; want 200, pending, %q after the verb budget of 3",
+			if want := `resource "aws.ec2-instance" observed absent, not yet present`; status != http.StatusOK || !resp.Pending || resp.StatusDetail != want || len(obs["aws.ec2-instance"].calls()) != 1 {
+				t.Fatalf("status, pending, statusDetail = %d, %v, %q after %d observes of aws.ec2-instance; want 200, pending, %q after one observe",
 					status, resp.Pending, resp.StatusDetail, len(obs["aws.ec2-instance"].calls()), want)
 			}
 			for _, c := range reported {
@@ -483,12 +483,14 @@ func TestBlockLevel_AnUnsubscribeLeavingAResourceStandingAnswersAbsentFalseNamin
 	cloud.standing["b"] = true
 	block := &blockResource{cloud: cloud, deleteOutputs: map[string]string{"dataSnapshotId": "snap-0abc"}}
 
-	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: "unsubscribe", fields: recordedAll()})
+	obs := blockObservers(cloud)
+
+	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: "unsubscribe", fields: recordedAll()})
 
 	wantOK(t, status, resp)
 	wantAbsent(t, resp, false)
-	if want := `resource "b" observed present after 3 attempts`; resp.StatusDetail != want || len(resp.Outputs) != 0 {
-		t.Errorf("statusDetail = %q with outputs %v, want %q and no output until the block settles absent", resp.StatusDetail, resp.Outputs, want)
+	if want := `resource "b" observed present, not yet absent`; resp.StatusDetail != want || len(resp.Outputs) != 0 || len(obs["b"].calls()) != 1 {
+		t.Errorf("statusDetail = %q with outputs %v after %d observes of b, want %q after one observe and no output until the block settles absent", resp.StatusDetail, resp.Outputs, len(obs["b"].calls()), want)
 	}
 }
 
@@ -849,7 +851,7 @@ func TestBlockLevel_UnsubscribeStillAnswersAbsentFalseNamingAnUnmarkedResourceOb
 
 	wantOK(t, status, resp)
 	wantAbsent(t, resp, false)
-	if want := `resource "aws.ec2-instance" observed present after 3 attempts`; resp.StatusDetail != want {
+	if want := `resource "aws.ec2-instance" observed present, not yet absent`; resp.StatusDetail != want {
 		t.Errorf("statusDetail = %q, want %q", resp.StatusDetail, want)
 	}
 	if o := resp.Resources["aws.ec2-instance"].Observe; o == nil || o.State != contract.Present {

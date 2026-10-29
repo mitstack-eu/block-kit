@@ -62,13 +62,10 @@ func TestEC2Instance_ServedThroughTheHandlerObservesTheInstanceTheBlockReported(
 	api := &fakeEC2{}
 	s := kittest.NewSigner(t, "kid-observe", 31)
 	h, err := handler.New(handler.Config{
-		Resource:     hostBlock{api: api},
-		Manifest:     []byte(hostBlockManifest),
-		Observers:    map[string]handler.Observer{"aws.ec2-instance": observe.EC2Instance{API: api}},
-		JWKSURL:      s.JWKSServer(t),
-		VerbBudget:   3,
-		PollInterval: time.Millisecond,
-		Sleep:        func(context.Context, time.Duration) {},
+		Resource:  hostBlock{api: api},
+		Manifest:  []byte(hostBlockManifest),
+		Observers: map[string]handler.Observer{"aws.ec2-instance": observe.EC2Instance{API: api}},
+		JWKSURL:   s.JWKSServer(t),
 	})
 	if err != nil {
 		t.Fatalf("handler.New: %v", err)
