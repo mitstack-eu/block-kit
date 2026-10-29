@@ -74,7 +74,7 @@ type Payload struct {
 	ImageDigest      string      `json:"imageDigest"`
 	Manifest         string      `json:"manifest"`       // base64 std encoding of manifest.yaml's raw bytes
 	ManifestSha256   string      `json:"manifestSha256"` // "sha256:<hex>" over those same raw bytes
-	KitVersion       string      `json:"kitVersion"`     // the kit version the block's go.mod requires
+	KitVersion       string      `json:"kitVersion"`     // the kit version the block's go.mod requires, or its operator image was built with
 	Conformance      Conformance `json:"conformance"`
 	SourceRepository string      `json:"sourceRepository"`
 	SourceCommit     string      `json:"sourceCommit"`

@@ -8,7 +8,17 @@
 # publish, and `blockprov build` refuses a non-pass verdict a second time
 # regardless.
 #
-# `conformance`, `secrets` and `scripts` run on every event. `publish` runs
+# An OpenTofu-only block, a module with no go.mod whose image builds on the
+# opentofu-operator image, sets `opentofu-only`. Its checks then run in the
+# `opentofu-conformance` job in place of `conformance`, under the same check
+# name. That job assumes the caller's AWS_BLOCK_VERIFY_ROLE_ARN role to pull
+# the operator image, builds the block's image once, and runs `tofu fmt`,
+# `tofu test` and the operator's block-verify inside it. The publish job runs
+# block-verify again in the image it pushed and signs that result into the
+# provenance record, with the kit version the operator binary was built with.
+#
+# The block type's conformance job, `secrets` and `scripts` run on every
+# event. `publish` runs
 # only on a push to the caller's default branch, so a pull-request run of a
 # caller gets the three checks with the publish job skipped. A caller whose
 # calling job is named `block` reports them as `block / conformance`,
@@ -61,6 +71,10 @@ on:
         required: false
         type: string
         default: '["ubicloud-standard-2"]'
+      opentofu-only:
+        required: false
+        type: boolean
+        default: false
       platform-verdict:
         required: false
         type: boolean
@@ -86,7 +100,11 @@ permissions:
   id-token: write
 
 jobs:
+  # A branch protection rule names one conformance check for every block type,
+  # so whichever of the two conformance jobs runs takes the name.
   conformance:
+    name: ${{ inputs.opentofu-only && 'go conformance' || 'conformance' }}
+    if: ${{ !inputs.opentofu-only }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:
       contents: read
@@ -181,6 +199,58 @@ jobs:
         with:
           name: blockverify-report
           path: blockverify-report.json
+
+  # The only check job with an identity token, which the verify role needs to
+  # pull the private operator image, the one thing that role grants. The
+  # block's own code runs only inside the image, which receives no token.
+  opentofu-conformance:
+    name: ${{ inputs.opentofu-only && 'conformance' || 'opentofu conformance' }}
+    if: inputs.opentofu-only
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials for the verify role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_VERIFY_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # The verify role sits in the account whose registry holds the operator image.
+      - name: Log in to the operator image's registry
+        run: |
+          set -euo pipefail
+          REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ inputs.aws-region }}.amazonaws.com"
+          aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Build the block image
+        id: image
+        run: |
+          set -euo pipefail
+          DOCKER_BUILDKIT=1 docker build --iidfile "$RUNNER_TEMP/block.iid" .
+          echo "id=$(cat "$RUNNER_TEMP/block.iid")" >> "$GITHUB_OUTPUT"
+
+      - name: tofu fmt -check
+        env:
+          IMAGE_ID: ${{ steps.image.outputs.id }}
+        run: docker run --rm --entrypoint tofu "$IMAGE_ID" fmt -check -diff -recursive -no-color /module
+
+      - name: tofu test
+        env:
+          IMAGE_ID: ${{ steps.image.outputs.id }}
+        run: |
+          docker run --rm --entrypoint sh "$IMAGE_ID" -c \
+            'tofu -chdir=/module init -backend=false -input=false -no-color > /dev/null && tofu -chdir=/module test -no-color'
+
+      - name: block-verify
+        env:
+          IMAGE_ID: ${{ steps.image.outputs.id }}
+        run: docker run --rm --entrypoint block-verify "$IMAGE_ID" -test.v
 
   secrets:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
@@ -344,9 +414,12 @@ jobs:
           fi
           echo "The platform signed the attestation: $body"
 
+  # One of the two conformance jobs is always skipped, and GitHub skips a job
+  # with a skipped need unless its if: calls a status function. So this if:
+  # asks that no need failed or was cancelled.
   publish:
-    needs: [conformance, secrets, scripts]
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: [conformance, opentofu-conformance, secrets, scripts]
+    if: ${{ !cancelled() && !failure() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:
       contents: read
@@ -499,7 +572,7 @@ jobs:
       # block compiles against, so the record's kitVersion comes from the
       # block-kit pin in go.mod.
       - name: Determine the kit version pinned in go.mod
-        if: steps.existing.outputs.record == 'false'
+        if: steps.existing.outputs.record == 'false' && !inputs.opentofu-only
         run: |
           set -euo pipefail
           # `|| true` keeps a no-match grep from tripping `set -e` under
@@ -513,18 +586,49 @@ jobs:
           fi
           echo "KIT_VERSION=$KIT_VERSION" >> "$GITHUB_ENV"
 
+      # An OpenTofu-only block has no go.mod, so the record's kitVersion is the
+      # block-kit version the operator binary in its image was built with,
+      # which the binary's Go build information names.
+      - name: Determine the kit version the operator image was built with
+        if: steps.existing.outputs.record == 'false' && inputs.opentofu-only
+        run: |
+          set -euo pipefail
+          container=$(docker create "${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST}")
+          docker cp "$container:/usr/local/bin/opentofu-operator" "$RUNNER_TEMP/opentofu-operator"
+          docker rm "$container" > /dev/null
+          KIT_VERSION=$(go version -m "$RUNNER_TEMP/opentofu-operator" | awk '$1 == "dep" && $2 == "github.com/mitstack-eu/block-kit" {print $3}')
+          if [ -z "$KIT_VERSION" ]; then
+            echo "the operator binary in ${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST} names no block-kit module" >&2
+            exit 1
+          fi
+          echo "KIT_VERSION=$KIT_VERSION" >> "$GITHUB_ENV"
+
       # A second gate over the same fact `needs: conformance` already
       # enforces: blockprov build refuses to sign anything but a fresh pass.
       - name: blockverify (standalone, for blockprov build's report)
-        if: steps.existing.outputs.record == 'false'
+        if: steps.existing.outputs.record == 'false' && !inputs.opentofu-only
         run: ./blockverify --standalone --json . > blockverify-report.json
+
+      # Like blockverify above, block-verify runs again here, in the very image
+      # the record describes, so blockprov build signs a fresh pass from it.
+      - name: block-verify inside the image, for blockprov build's result
+        if: steps.existing.outputs.record == 'false' && inputs.opentofu-only
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint block-verify "${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST}" -test.v | tee block-verify.txt
 
       - name: blockprov build
         if: steps.existing.outputs.record == 'false'
+        env:
+          OPENTOFU_ONLY: ${{ inputs.opentofu-only }}
         run: |
+          result=(--report blockverify-report.json)
+          if [ "$OPENTOFU_ONLY" = "true" ]; then
+            result=(--block-verify block-verify.txt)
+          fi
           ./blockprov build \
             --manifest manifest.yaml \
-            --report blockverify-report.json \
+            "${result[@]}" \
             --block-id ${{ inputs.block-id }} \
             --block-version "$(awk '$1=="version:"{print $2; exit}' manifest.yaml)" \
             --image-ref "${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST}" \

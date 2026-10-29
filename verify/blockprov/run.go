@@ -9,7 +9,8 @@ import (
 const usageMessage = `blockprov: builds and pushes a block's publisher-signed provenance record.
 
 Usage:
-  blockprov build   --manifest <path> --report <blockverify --json report> \
+  blockprov build   --manifest <path> \
+                    (--report <blockverify --json report> | --block-verify <block-verify -test.v output>) \
                     --block-id <id> --block-version <v> \
                     --image-ref <ref> --image-digest sha256:... \
                     --kit-version <v> --repository <owner/name> --commit <sha> \

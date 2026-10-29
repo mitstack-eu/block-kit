@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mitstack-eu/block-kit/verify/provenance"
@@ -25,11 +26,12 @@ func runBuild(args []string, stdout io.Writer) int {
 	fs.SetOutput(io.Discard)
 	manifestPath := fs.String("manifest", "", "path to the block's manifest.yaml")
 	reportPath := fs.String("report", "", "path to a blockverify --json report")
+	blockVerifyPath := fs.String("block-verify", "", "path to an OpenTofu block's block-verify -test.v output, in place of --report")
 	blockID := fs.String("block-id", "", "the block's id")
 	blockVersion := fs.String("block-version", "", "the block's version")
 	imageRef := fs.String("image-ref", "", "the full pushed image reference")
 	imageDigest := fs.String("image-digest", "", "the pushed image digest, sha256:...")
-	kitVersion := fs.String("kit-version", "", "the kit version the block's go.mod requires")
+	kitVersion := fs.String("kit-version", "", "the kit version the block's go.mod requires, or its operator image was built with")
 	repository := fs.String("repository", "", "the publishing repository, owner/name")
 	commit := fs.String("commit", "", "the source commit sha")
 	runURL := fs.String("run-url", "", "the workflow run's URL")
@@ -42,8 +44,7 @@ func runBuild(args []string, stdout io.Writer) int {
 	}
 
 	required := []struct{ name, value string }{
-		{"manifest", *manifestPath}, {"report", *reportPath},
-		{"block-id", *blockID}, {"block-version", *blockVersion},
+		{"manifest", *manifestPath}, {"block-id", *blockID}, {"block-version", *blockVersion},
 		{"image-ref", *imageRef}, {"image-digest", *imageDigest},
 		{"kit-version", *kitVersion}, {"repository", *repository},
 		{"commit", *commit}, {"run-url", *runURL},
@@ -56,25 +57,38 @@ func runBuild(args []string, stdout io.Writer) int {
 			return 2
 		}
 	}
+	if (*reportPath == "") == (*blockVerifyPath == "") {
+		fmt.Fprintln(stdout, "blockprov build: exactly one of --report and --block-verify is required")
+		return 2
+	}
 
 	manifestBytes, err := os.ReadFile(*manifestPath)
 	if err != nil {
 		fmt.Fprintf(stdout, "blockprov build: reading manifest: %v\n", err)
 		return 1
 	}
-	reportBytes, err := os.ReadFile(*reportPath)
-	if err != nil {
-		fmt.Fprintf(stdout, "blockprov build: reading report: %v\n", err)
-		return 1
-	}
 	var report blockverifyReport
-	if err := json.Unmarshal(reportBytes, &report); err != nil {
-		fmt.Fprintf(stdout, "blockprov build: report is not valid JSON: %v\n", err)
-		return 1
+	if *blockVerifyPath != "" {
+		output, err := os.ReadFile(*blockVerifyPath)
+		if err != nil {
+			fmt.Fprintf(stdout, "blockprov build: reading block-verify output: %v\n", err)
+			return 1
+		}
+		report = blockVerifyReport(output, *kitVersion)
+	} else {
+		reportBytes, err := os.ReadFile(*reportPath)
+		if err != nil {
+			fmt.Fprintf(stdout, "blockprov build: reading report: %v\n", err)
+			return 1
+		}
+		if err := json.Unmarshal(reportBytes, &report); err != nil {
+			fmt.Fprintf(stdout, "blockprov build: report is not valid JSON: %v\n", err)
+			return 1
+		}
 	}
-	// The last gate before a token is requested, in case a stale or hand-edited failing report reaches this command.
+	// The last gate before a token is requested, in case a stale or hand-edited failing result reaches this command.
 	if report.Verdict != "pass" {
-		fmt.Fprintf(stdout, "blockprov build: refusing to sign — blockverify verdict was %q, not \"pass\"\n", report.Verdict)
+		fmt.Fprintf(stdout, "blockprov build: refusing to sign — the conformance verdict was %q, not \"pass\"\n", report.Verdict)
 		return 1
 	}
 
@@ -119,4 +133,15 @@ func runBuild(args []string, stdout io.Writer) int {
 
 	fmt.Fprintf(stdout, "blockprov build: wrote %s\n", *out)
 	return 0
+}
+
+// blockVerifyReport reads block-verify's go test -test.v output as a pass only when a test passed, none failed and the run closed on PASS.
+func blockVerifyReport(output []byte, kitVersion string) blockverifyReport {
+	text := string(output)
+	verdict := "fail"
+	if strings.Contains(text, "--- PASS: ") && !strings.Contains(text, "--- FAIL: ") && strings.HasSuffix(strings.TrimSpace(text), "\nPASS") {
+		verdict = "pass"
+	}
+	sum := sha256.Sum256(output)
+	return blockverifyReport{SuiteVersion: "block-verify@" + kitVersion, Verdict: verdict, ResultsDigest: "sha256:" + hex.EncodeToString(sum[:])}
 }

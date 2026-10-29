@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -120,54 +121,79 @@ func buildArgs(t *testing.T, dir, tokenURL, outPath string) []string {
 }
 
 const (
-	passReport = `{"suiteVersion":"1.0.0","kitVersion":"v0.1.0","mode":"standalone","manifestDigest":"sha256:aa","verdict":"pass","resultsDigest":"sha256:bb","suites":[]}`
-	failReport = `{"suiteVersion":"1.0.0","kitVersion":"v0.1.0","mode":"standalone","manifestDigest":"sha256:aa","verdict":"fail","resultsDigest":"sha256:bb","suites":[]}`
+	passReport      = `{"suiteVersion":"1.0.0","kitVersion":"v0.1.0","mode":"standalone","manifestDigest":"sha256:aa","verdict":"pass","resultsDigest":"sha256:bb","suites":[]}`
+	failReport      = `{"suiteVersion":"1.0.0","kitVersion":"v0.1.0","mode":"standalone","manifestDigest":"sha256:aa","verdict":"fail","resultsDigest":"sha256:bb","suites":[]}`
+	passBlockVerify = "=== RUN   TestDeclaredResources\n--- PASS: TestDeclaredResources (0.02s)\nPASS\n"
+	failBlockVerify = "=== RUN   TestDeclaredResources\n    blockcheck_test.go:20: aws_s3_bucket is declared but the module never creates it\n--- FAIL: TestDeclaredResources (0.02s)\nFAIL\n"
 )
 
-func TestRun_Build_FailedReportExitsNonZeroAndWritesNoFile(t *testing.T) {
-	dir := t.TempDir()
-	outPath := filepath.Join(dir, "record.json")
-	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("blockprov build minted a token for a report whose verdict is not pass")
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer tokenSrv.Close()
-	args := append(buildArgs(t, dir, tokenSrv.URL, outPath), "--report", writeFile(t, dir, "report.json", failReport))
+func TestRun_Build_AFailedResultExitsNonZeroAndWritesNoFile(t *testing.T) {
+	for _, tc := range [][3]string{
+		{"--report", "report.json", failReport},
+		{"--block-verify", "block-verify.txt", failBlockVerify},
+		{"--block-verify", "empty.txt", ""},
+		{"--block-verify", "all-skipped.txt", "=== RUN   TestDeclaredResources\n--- SKIP: TestDeclaredResources (0.00s)\nPASS\n"},
+		{"--block-verify", "a-failure-then-pass.txt", "--- FAIL: TestNoSecretLeak (0.01s)\n--- PASS: TestDeclaredResources (0.02s)\nPASS\n"},
+		{"--block-verify", "no-closing-pass.txt", "--- PASS: TestDeclaredResources (0.02s)\n"},
+	} {
+		t.Run(tc[1], func(t *testing.T) {
+			dir := t.TempDir()
+			outPath := filepath.Join(dir, "record.json")
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("blockprov build minted a token for a result whose verdict is not pass")
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer tokenSrv.Close()
+			args := append(buildArgs(t, dir, tokenSrv.URL, outPath), tc[0], writeFile(t, dir, tc[1], tc[2]))
 
-	stdout, exit := runBlockprov(t, args...)
+			stdout, exit := runBlockprov(t, args...)
 
-	if exit == 0 {
-		t.Fatalf("exit = 0 for a failed blockverify report, want non-zero\nstdout:\n%s", stdout)
-	}
-	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
-		t.Errorf("os.Stat(record) = %v, want no record written for a report that is not a pass", err)
+			if exit != 1 {
+				t.Fatalf("exit = %d for a failed %s result, want 1\nstdout:\n%s", exit, tc[0], stdout)
+			}
+			if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+				t.Errorf("os.Stat(record) = %v, want no record written for a result that is not a pass", err)
+			}
+		})
 	}
 }
 
-func TestRun_Build_PassingReportWritesARecordProvenanceVerifyAccepts(t *testing.T) {
-	dir := t.TempDir()
-	outPath := filepath.Join(dir, "record.json")
-	tokenURL, resolve := mintServer(t, testRepository, testCommit)
-	args := append(buildArgs(t, dir, tokenURL, outPath), "--report", writeFile(t, dir, "report.json", passReport))
+func TestRun_Build_APassingResultIsTheConformanceOfARecordProvenanceVerifyAccepts(t *testing.T) {
+	sum := sha256.Sum256([]byte(passBlockVerify))
+	for _, tc := range []struct {
+		flag, file, content string
+		want                provenance.Conformance
+	}{
+		{"--report", "report.json", passReport, provenance.Conformance{SuiteVersion: "1.0.0", Verdict: "pass", ResultsDigest: "sha256:bb"}},
+		{"--block-verify", "block-verify.txt", passBlockVerify, provenance.Conformance{SuiteVersion: "block-verify@v0.1.0", Verdict: "pass", ResultsDigest: "sha256:" + hex.EncodeToString(sum[:])}},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			dir := t.TempDir()
+			outPath := filepath.Join(dir, "record.json")
+			tokenURL, resolve := mintServer(t, testRepository, testCommit)
+			args := append(buildArgs(t, dir, tokenURL, outPath), tc.flag, writeFile(t, dir, tc.file, tc.content))
 
-	stdout, exit := runBlockprov(t, args...)
+			stdout, exit := runBlockprov(t, args...)
 
-	if exit != 0 {
-		t.Fatalf("exit = %d for a passing report, want 0\nstdout:\n%s", exit, stdout)
-	}
-	raw, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("reading written record: %v", err)
-	}
-	var rec provenance.Record
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		t.Fatalf("written record is not valid JSON: %v", err)
-	}
-	if err := provenance.Verify(rec, resolve, provenance.Expect{Repository: testRepository}); err != nil {
-		t.Errorf("provenance.Verify on the written record: %v", err)
-	}
-	if got, want := [2]string{rec.Payload.Conformance.RunURL, rec.Payload.SourceRepository}, [2]string{"https://github.com/mitstack-eu/sample-block/actions/runs/1", testRepository}; got != want {
-		t.Errorf("runUrl, sourceRepository = %q, want the flags' values %q", got, want)
+			if exit != 0 {
+				t.Fatalf("exit = %d for a passing %s result, want 0\nstdout:\n%s", exit, tc.flag, stdout)
+			}
+			raw, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("reading written record: %v", err)
+			}
+			var rec provenance.Record
+			if err := json.Unmarshal(raw, &rec); err != nil {
+				t.Fatalf("written record is not valid JSON: %v", err)
+			}
+			if err := provenance.Verify(rec, resolve, provenance.Expect{Repository: testRepository}); err != nil {
+				t.Errorf("provenance.Verify on the written record: %v", err)
+			}
+			tc.want.RunURL = "https://github.com/mitstack-eu/sample-block/actions/runs/1"
+			if got := rec.Payload.Conformance; got != tc.want || rec.Payload.SourceRepository != testRepository {
+				t.Errorf("conformance = %+v, sourceRepository %q; want %+v and %q", got, rec.Payload.SourceRepository, tc.want, testRepository)
+			}
+		})
 	}
 }
 

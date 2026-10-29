@@ -270,10 +270,14 @@ func TestWorkflow_Structure(t *testing.T) {
 		{"it is a reusable workflow", field("on.workflow_call"), ""},
 		{"it has a conformance job", field("jobs.conformance"), ""},
 		{"it has a publish job", field("jobs.publish"), ""},
-		{"publish needs conformance and both scans, so a red check never starts it", field("jobs.publish.needs"), "[conformance, secrets, scripts]"},
-		{"publish runs only on a push to the default branch, so a pull request gets conformance alone", ifOf(field("jobs.publish.if")),
-			"github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"},
-		{"conformance runs on every event", field("jobs.conformance.if"), "<absent>"},
+		{"publish needs both conformance jobs and both scans, so a red check never starts it", field("jobs.publish.needs"), "[conformance, opentofu-conformance, secrets, scripts]"},
+		{"publish runs only on a push to the default branch once no check failed, so a pull request gets conformance alone", ifOf(field("jobs.publish.if")),
+			"!cancelled() && !failure() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"},
+		{"the Go conformance job runs on every event unless the block is OpenTofu-only", ifOf(field("jobs.conformance.if")), "!inputs.opentofu-only"},
+		{"the OpenTofu conformance job runs on every event for an OpenTofu-only block alone", ifOf(field("jobs.opentofu-conformance.if")), "inputs.opentofu-only"},
+		{"whichever conformance job runs reports as conformance", field("jobs.conformance.name") + " | " + field("jobs.opentofu-conformance.name"),
+			"${{ inputs.opentofu-only && 'go conformance' || 'conformance' }} | ${{ inputs.opentofu-only && 'conformance' || 'opentofu conformance' }}"},
+		{"the OpenTofu conformance job may assume the verify role that pulls the operator image", field("jobs.opentofu-conformance.permissions.id-token"), "write"},
 		{"publish grants the id-token the record's OIDC token is minted with", field("jobs.publish.permissions.id-token"), "write"},
 		{"conformance runs go vet", of(conformance, "go vet", "run"), "go vet ./..."},
 		{"conformance runs go test", of(conformance, "go test", "run"), "go test ./..."},
@@ -301,6 +305,10 @@ func TestWorkflow_EachJobRunsItsCommands(t *testing.T) {
 		{"conformance runs blockverify standalone with its JSON report", "conformance", "blockverify (standalone contract check)", []string{"./blockverify --standalone --json"}},
 		{"conformance hands blockverify the base manifest on a pull request", "conformance", "blockverify (standalone contract check)", []string{`if [ "$EVENT_NAME" = "pull_request" ]`, "--base-manifest"}},
 		{"conformance fetches the base commit a shallow clone does not hold", "conformance", "Write the base commit's manifest and the changed files", []string{`git fetch --depth=1 origin "$BASE_SHA"`}},
+		{"OpenTofu conformance checks the module's format inside the block's image", "opentofu-conformance", "tofu fmt -check", []string{`--entrypoint tofu "$IMAGE_ID" fmt -check`}},
+		{"OpenTofu conformance runs the module's tests inside the block's image", "opentofu-conformance", "tofu test", []string{"tofu -chdir=/module test"}},
+		{"OpenTofu conformance runs the operator's block-verify inside the block's image", "opentofu-conformance", "block-verify", []string{`--entrypoint block-verify "$IMAGE_ID" -test.v`}},
+		{"publish runs block-verify inside the image it pushed", "publish", "block-verify inside the image, for blockprov build's result", []string{`--entrypoint block-verify "${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST}" -test.v`}},
 		{"publish pushes the image", "publish", "Build and push image", []string{"docker push"}},
 		{"publish builds the record", "publish", "blockprov build", []string{"./blockprov build"}},
 		{"publish pushes the record", "publish", "blockprov push", []string{"./blockprov push"}},
@@ -322,7 +330,7 @@ func TestWorkflow_ConformanceNeverPushesOrWritesARecord(t *testing.T) {
 	all := allFields(t)
 
 	for path, v := range all {
-		if !strings.HasPrefix(path, "jobs.conformance.") {
+		if !strings.HasPrefix(path, "jobs.conformance.") && !strings.HasPrefix(path, "jobs.opentofu-conformance.") {
 			continue
 		}
 		for _, forbidden := range []string{"docker push", "blockprov push", "blockprov build"} {
@@ -380,23 +388,26 @@ var (
 		"Fetch ECR password",
 		"blockprov push",
 	}
-	writeSteps = []string{"Build and push image", "blockprov build", "Fetch ECR password", "blockprov push"}
+	opentofuRecordSteps = []string{"Determine the kit version the operator image was built with", "block-verify inside the image, for blockprov build's result"}
+	writeSteps          = []string{"Build and push image", "blockprov build", "Fetch ECR password", "blockprov push"}
 )
 
 func TestWorkflow_WriteStepsGateOnTheProbe(t *testing.T) {
 	steps := publishSteps(t)
+	mode := map[string]string{recordSteps[0]: " && !inputs.opentofu-only", recordSteps[1]: " && !inputs.opentofu-only",
+		opentofuRecordSteps[0]: " && inputs.opentofu-only", opentofuRecordSteps[1]: " && inputs.opentofu-only"}
 	for _, tc := range []struct {
 		names  []string
 		wantIf string
 	}{
 		{imageSteps, "steps.existing.outputs.published == 'false'"},
-		{recordSteps, "steps.existing.outputs.record == 'false'"},
+		{append(slices.Clone(recordSteps), opentofuRecordSteps...), "steps.existing.outputs.record == 'false'"},
 	} {
 		for _, name := range tc.names {
 			i := indexOf(steps, name)
 
-			if i < 0 || ifOf(steps[i]["if"]) != tc.wantIf {
-				t.Errorf("step %q (index %d) is not gated on %q", name, i, tc.wantIf)
+			if i < 0 || ifOf(steps[i]["if"]) != tc.wantIf+mode[name] {
+				t.Errorf("%q (index %d) is not gated on %q", name, i, tc.wantIf+mode[name])
 			}
 		}
 	}
@@ -559,18 +570,18 @@ func sortedPairs(m map[string]string) []string {
 	return out
 }
 
-// stepRuns fails the test on any if: form it does not know, so a new gate cannot pass unexamined.
+// stepRuns evaluates an if: for a Go block, and fails the test on any form it does not know, so a new gate cannot pass unexamined.
 func stepRuns(t *testing.T, s step, outputs map[string]string) bool {
 	t.Helper()
 	switch expr := ifOf(s["if"]); expr {
 	case "", "always()":
 		return true
 	default:
-		m := regexp.MustCompile(`^steps\.existing\.outputs\.(\w+) == '([^']*)'$`).FindStringSubmatch(expr)
+		m := regexp.MustCompile(`^steps\.existing\.outputs\.(\w+) == '([^']*)'( && !?inputs\.opentofu-only)?$`).FindStringSubmatch(expr)
 		if m == nil {
 			t.Fatalf("step if: %q is not a form this evaluator knows", expr)
 		}
-		return outputs[m[1]] == m[2]
+		return outputs[m[1]] == m[2] && m[3] != " && inputs.opentofu-only"
 	}
 }
 
@@ -666,8 +677,12 @@ func TestWorkflow_ARerunBuildsAndPushesTheRecordForThePublishedDigest(t *testing
 	}
 
 	build, push := runStepBody(t, "blockprov build", env), runStepBody(t, "blockprov push", env)
+	env["OPENTOFU_ONLY"] = "true"
+	opentofu := runStepBody(t, "blockprov build", env)
 
 	for _, want := range []struct{ argv, flag string }{
+		{build, "--report blockverify-report.json"},
+		{opentofu, "--block-verify block-verify.txt"},
 		{build, "--image-digest " + testDigest},
 		{build, "--image-ref " + env["REGISTRY"] + "/mitstack-postgres-db@" + testDigest},
 		{push, "--image-digest " + testDigest},
@@ -740,7 +755,8 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		{"publish", "write", []string{
 			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Configure AWS credentials", "Checkout block-kit",
 			"Build blockverify and blockprov", "Remove the kit checkout from the block tree", "Log in to ECR", "Probe the version tag and its provenance record",
-			"Install Trivy", "Build and push image", "Determine the kit version pinned in go.mod", "blockverify (standalone, for blockprov build's report)",
+			"Install Trivy", "Build and push image", "Determine the kit version pinned in go.mod", "Determine the kit version the operator image was built with",
+			"blockverify (standalone, for blockprov build's report)", "block-verify inside the image, for blockprov build's result",
 			"blockprov build", "Fetch ECR password", "blockprov push",
 		}},
 	} {
@@ -763,7 +779,7 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 				t.Errorf("%s kit checkout passes token %q, want none, so the public kit is read with the run's default token", tc.job, token)
 			}
 			if idToken != tc.idToken {
-				t.Errorf("%s id-token permission = %q, want %q, since only the publish job assumes an AWS role and mints the record's OIDC token", tc.job, idToken, tc.idToken)
+				t.Errorf("%s id-token permission = %q, want %q, since among these jobs only publish assumes an AWS role and mints the record's OIDC token", tc.job, idToken, tc.idToken)
 			}
 			if i := indexOf(steps, "Build and push image"); i >= 0 && strings.Contains(steps[i]["run"], "--secret") {
 				t.Errorf("%s image build run =\n%s\nwant no --secret, so the image fetches the public kit with no credential", tc.job, steps[i]["run"])
@@ -855,5 +871,20 @@ func TestWorkflow_KitVersionStepReadsTheKitPinFromGoMod(t *testing.T) {
 				t.Errorf("exit %d, KIT_VERSION set %v, stderr %q; want exit 1, no KIT_VERSION and the step's failure message", res.exitCode, set, res.stderr)
 			}
 		})
+	}
+}
+
+func TestWorkflow_AnOpenTofuBlocksKitVersionIsTheOneItsOperatorImageWasBuiltWith(t *testing.T) {
+	tmp := t.TempDir()
+	writeExecutable(t, filepath.Join(tmp, "docker"), "#!/bin/sh\necho docker \"$@\" >&2\n[ \"$1\" = create ] && echo c0ntainer\nexit 0\n")
+	writeExecutable(t, filepath.Join(tmp, "go"), "#!/bin/sh\nprintf '%s: go1.27.3\\n\\tdep\\tgithub.com/mitstack-eu/block-kit-extras\\tv9.9.9\\n\\tdep\\tgithub.com/mitstack-eu/block-kit\\tv0.5.1\\th1:x=\\n' \"$3\"\n")
+	writeExecutable(t, filepath.Join(tmp, "kit-version.sh"), strings.ReplaceAll(script(t, "publish", opentofuRecordSteps[0]).Run, "${{ inputs.ecr-repository }}", "repo"))
+	envFile := filepath.Join(tmp, "github-env")
+
+	res := runBash(t, filepath.Join(tmp, "kit-version.sh"), tmp, "PATH="+tmp+":"+os.Getenv("PATH"), "RUNNER_TEMP="+tmp, "REGISTRY=r", "IMAGE_DIGEST="+testDigest, "GITHUB_ENV="+envFile)
+
+	env, _ := os.ReadFile(envFile)
+	if got := keyValues(string(env))["KIT_VERSION"]; res.exitCode != 0 || got != "v0.5.1" || !strings.Contains(res.stderr, "docker create r/repo@"+testDigest) {
+		t.Errorf("exit %d, KIT_VERSION %q; want 0 and v0.5.1 read from the operator binary in r/repo@%s; output:\n%s", res.exitCode, got, testDigest, res.combined)
 	}
 }
