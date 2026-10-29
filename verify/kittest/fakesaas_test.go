@@ -102,7 +102,6 @@ func fixture(name, method, path string, headers map[string]string, resp kittest.
 	return kittest.SaaSFixture{Name: name, Request: kittest.SaaSFixtureRequest{Method: method, Path: path, Headers: headers}, Response: resp}
 }
 
-// send makes one request to f and returns its status, headers and body.
 func send(t *testing.T, f *kittest.FakeSaaS, method, path string, headers map[string]string) (int, http.Header, []byte) {
 	t.Helper()
 	req, _ := http.NewRequest(method, f.URL+path, strings.NewReader("{}"))

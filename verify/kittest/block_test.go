@@ -342,7 +342,6 @@ func (s silentBlock) Delete(ctx context.Context, d contract.Desired) (map[string
 	return s.b.Delete(ctx, d)
 }
 
-// rememberingObserver never asks the provider.
 type rememberingObserver struct {
 	b    *fakeBlock
 	name string
@@ -537,7 +536,6 @@ spec:
     contract: kit/v1
 `
 
-// markedSnapshot is the platform's snapshot with each of ids marked endsWithSubscription.
 func markedSnapshot(t *testing.T, ids ...string) contract.TypeSnapshot {
 	t.Helper()
 	snap := typeSnapshot(t)
@@ -589,7 +587,6 @@ func TestAssertBlock_PassesAMarkedResourceLeftPresentAndFailsAnUnmarkedOne(t *te
 	}
 }
 
-// partlessSnapshot is the platform's snapshot with every type's parts removed.
 func partlessSnapshot(t *testing.T) contract.TypeSnapshot {
 	t.Helper()
 	snap := typeSnapshot(t)
@@ -712,7 +709,6 @@ spec:
     contract: kit/v1
 `
 
-// recordingLister is a kit lister over the fake provider that keeps each Desired it is handed.
 type recordingLister struct {
 	p    *fakeProvider
 	seen *[]contract.Desired
@@ -1015,7 +1011,6 @@ func deleteFiles(ctx context.Context, c *ghapi.Client, rec landing.Record) error
 	return err
 }
 
-// repositoryProvider lists the landing by its repository, and loses it by deleting every landed file.
 type repositoryProvider struct{ b *landingBlock }
 
 func (p repositoryProvider) Repository() *landingtest.Fake { return p.b.repo }
