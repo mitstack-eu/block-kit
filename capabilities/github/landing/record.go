@@ -31,10 +31,10 @@ const (
 
 var blobHash = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// LandsFiles reports whether a resource of type typ keeps a Record in its identity and reads absent from main, as the file-landing types of the type catalogue do.
+// LandsFiles reports whether a resource of type typ lands files on an app's main, so it keeps a Record in its identity and its unsubscribe removes every file main still carries unchanged.
 func LandsFiles(typ string) bool {
 	switch typ {
-	case "github.scaffold-commit", "github.scaffold-contribution", "github.workflow-file":
+	case "github.commit", "github.scaffold-commit", "github.scaffold-contribution", "github.workflow-file":
 		return true
 	}
 	return false
