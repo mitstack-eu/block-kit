@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/observe"
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
@@ -45,6 +46,11 @@ type ReplacementPlanner interface {
 	PlanReplacements(ctx context.Context, d contract.Desired) ([]string, error)
 }
 
+// FullReadChecker, when a block-level Resource implements it, is handed each full read in which the kit observer found a resource to be the subscription's, and a non-empty problem answers that resource unhealthy.
+type FullReadChecker interface {
+	CheckFullRead(ctx context.Context, r contract.ResourceRef, read observe.FullRead) (problem string, err error)
+}
+
 // CredentialIssuer, when a capability's block-level Resource implements it, answers an issue with the named app's credential and when it expires.
 type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)
@@ -54,8 +60,11 @@ type CredentialIssuer interface {
 type Config struct {
 	Resource Resource
 
-	// Observers needs one Observer for each resource the manifest declares.
+	// Observers needs one Observer for each resource the manifest declares, except one whose every type carries an observe spec, which KitObserver reads instead.
 	Observers map[string]Observer
+
+	// KitObserver reads each resource whose type in Types carries an observe spec: a probe at each health check, and a full read when the last is six hours old or unrecorded.
+	KitObserver observe.KitObserver
 
 	// TypeObservers is keyed by resource-type id and serves a validate naming a resource the manifest no longer declares.
 	TypeObservers map[string]Observer
@@ -87,6 +96,10 @@ type Handler struct {
 
 	types      contract.TypeSnapshot
 	capability bool
+
+	kit             observe.KitObserver
+	fullReads       *fullReadClock
+	fullReadChecker FullReadChecker
 
 	audience  string
 	jwksURL   string
@@ -136,7 +149,10 @@ func New(cfg Config) (*Handler, error) {
 		logs:          cfg.Logs,
 		now:           cfg.Now,
 		idempotency:   newIdempotencyCache(),
+		kit:           cfg.KitObserver,
+		fullReads:     newFullReadClock(),
 	}
+	h.fullReadChecker, _ = cfg.Resource.(FullReadChecker)
 
 	if h.now == nil {
 		h.now = time.Now

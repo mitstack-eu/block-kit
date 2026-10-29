@@ -54,7 +54,11 @@ func observedResources(cfg Config, declared manifestDeclarations) ([]namedResour
 	for _, decl := range declared.resources {
 		declaredSet[decl.Name] = true
 		o := cfg.Observers[decl.Name]
-		if o == nil {
+		kitObserved, err := kitObservedDeclaration(cfg, decl)
+		if err != nil {
+			return nil, err
+		}
+		if o == nil && !kitObserved {
 			return nil, fmt.Errorf("handler: the manifest declares resource %q, but Config.Observers has no observe for it; every declared resource is observed through its own Observer", decl.Name)
 		}
 		out = append(out, namedResource{name: decl.Name, observer: o, declaration: decl})
