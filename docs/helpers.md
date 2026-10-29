@@ -163,17 +163,23 @@ its own, as [Running the block checks](block-checks.md) describes.
 
 ## Removing the files a block landed
 
-`capabilities/github/landing` keeps the rule of the platform's ADR 0107: at
-unsubscribe, a block removes every file it landed that the app has not changed
-since, and keeps the rest.
+`capabilities/github/landing` serves a block that writes files into an app's
+GitHub repository, such as a starter or a workflow file. It keeps the rule of
+the platform's
+[ADR 0107](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0107-unsubscribe-removes-every-file-a-block-landed-that-main-still-carries-unchanged.md):
+at unsubscribe the block removes every file it wrote that the app has not
+changed since, and keeps the rest. Here main is the repository's `main`
+branch, and a landing is one commit of the block's files onto it.
 
-`landing.Land(ctx, client, landing.Landing{...})` commits the files onto main
-in one commit and returns a `landing.Record`. For each path the record holds
-the repository, the git blob hash of what was written, and `created`, which is
-true only when main lacked the path before the block's first landing. Pass the
-earlier record as `Prior` on a repeated landing, so a path the block created
-stays recorded created. `Record.Identity()` turns the record into the
-resource's identity, with the files as one JSON list:
+`landing.Land(ctx, client, l)` takes a `*ghapi.Client` and a `landing.Landing`
+of `Repository`, `Message`, `Files` (each path and its content) and `Prior`.
+It commits the files straight onto main in one commit and returns a
+`landing.Record`. For each path the record holds the git blob hash of what was
+written and `created`, which is true only when main lacked the path before the
+block's first landing. Pass the record of an earlier landing as `Prior`, so a
+path the block created stays recorded created. `Record.Identity()` turns the
+record into the identity of the resource that landed the files, with the files
+as one JSON list:
 
 ```json
 {"repository": "acme/weather",
@@ -181,33 +187,42 @@ resource's identity, with the files as one JSON list:
 ```
 
 The platform stores that identity and sends it back at unsubscribe, where
-`landing.RecordFromIdentity` reads it. `landing.Remove(ctx, client,
-landing.Removal{Subscription: d.SubscriptionID, Records: records})` then reads
-main and, per repository, opens one pull request from the branch
-`mitstack/<subscription>/remove`. That pull request deletes each `created`
-path main still carries at its recorded blob, and its description names the
-files kept. The result's `Kept` lists each file the app changed, with the
-reason `changed`. A path main held before the landing is never removed.
+`landing.RecordFromIdentity` reads it. A file is unchanged when main carries
+it at the recorded blob hash, and changed when main carries it with any other
+content. `landing.Remove(ctx, client, landing.Removal{Subscription:
+d.SubscriptionID, Records: records})` reads main and, per repository, opens
+one pull request from the branch `mitstack/<subscription>/remove`. That pull
+request deletes each unchanged file recorded `created`, and its description
+names the changed files it keeps. The result's `Kept` lists those, each with
+the reason `changed`. A path main held before the landing is never removed.
 
 The pull request merges on the checks main requires, by branch protection or
 by a ruleset, and never past them. Until each required check reports success
-on it, `Remove` returns a `handler.Waiting`, so the unsubscribe answers
-`absent: false` and the platform calls it again. Each later call reuses the
-same branch and pull request while main has not moved. Once the merge lands,
-`Remove` deletes every branch under `landing.BranchPrefix(subscription)`, so a
-block that lands through a pull request names its branches under that prefix.
+on it, and while GitHub refuses the merge, `Remove` returns a
+`*handler.Waiting`, the error `handler.Wait` builds. Returned from `Delete`, it
+makes the unsubscribe answer `absent:false`, and the platform sends the
+unsubscribe again, as
+[Serving lifecycle calls](handler.md#what-the-handler-calls-for-each-call)
+describes. A later call reuses the branch and pull request while main has not
+moved, and rebuilds the removal onto main's new head when it has. Once the
+merge lands, `Remove` deletes every branch whose name starts with
+`landing.BranchPrefix(subscription)`, `mitstack/<subscription>/`. A block that
+also opens pull requests of its own names their branches under that prefix,
+so the removal clears them too.
 
 `landing.Observer` reads such a resource from main. It is present while main
-carries one created file at its recorded blob. It is absent once main carries
-none, or once the repository is proven deleted: the repository answers 404,
-and the token's own installation lists a repository of the same owner with
-`repository_selection` `all`. Any read that fails, such as a 403, a 5xx, a
-rate limit or a missing token, reads unknown, and `Remove` then waits with no
-write sent.
+carries at least one file recorded `created` at its recorded blob, and absent
+once main carries none. It also reads a repository proven deleted absent:
+the repository answers 404, and the installation the token belongs to lists
+its repositories as `repository_selection: "all"`, which means every
+repository of the owner, with one of the same owner. Any read that fails,
+such as a 403, a 5xx, a rate limit or a missing token, reads unknown, and
+`Remove` then waits with no write sent.
 
 `capabilities/github/landing/landingtest` is a fake of the GitHub routes the
 package calls, holding one repository's main, branches, pull requests and
 checks.
+
 
 ## Adopting a Hetzner dedicated server
 

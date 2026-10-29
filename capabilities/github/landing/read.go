@@ -20,9 +20,6 @@ type mainState struct {
 
 // readMain reads main for each file rec created; a read that fails is an error and never absence.
 func readMain(ctx context.Context, c *ghapi.Client, rec Record) (mainState, error) {
-	if _, err := ghapi.SafeRepo(rec.Repository); err != nil {
-		return mainState{}, err
-	}
 	if c.Token == "" {
 		return mainState{}, errors.New("no GitHub token was given to read it with")
 	}

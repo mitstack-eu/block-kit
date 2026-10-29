@@ -65,7 +65,7 @@ func Remove(ctx context.Context, c *ghapi.Client, r Removal) (Result, error) {
 	return result, nil
 }
 
-// byRepository joins records of one repository, keeping the first record of a path.
+// byRepository joins records of one repository; when two record one path, the first record's blob and created flag decide it.
 func byRepository(records []Record) []Record {
 	var out []Record
 	index := map[string]int{}
@@ -88,6 +88,9 @@ func byRepository(records []Record) []Record {
 }
 
 func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription string) ([]Kept, error) {
+	if _, err := ghapi.SafeRepo(rec.Repository); err != nil {
+		return nil, fmt.Errorf("landing: remove from %q: %w", rec.Repository, err)
+	}
 	st, err := readMain(ctx, c, rec)
 	if err != nil {
 		return nil, handler.Wait("%s cannot be read, so nothing is removed from it yet: %v", rec.Repository, err)
@@ -135,18 +138,35 @@ func (a api) removalCommit(ctx context.Context, st mainState, branch, message st
 		return "", err
 	}
 	if current != "" {
-		var c struct {
-			Parents []struct {
-				SHA string `json:"sha"`
-			} `json:"parents"`
-		}
-		if err := a.repos(ctx, http.MethodGet, "/git/commits/"+current, nil, &c); err != nil {
-			return "", err
-		}
-		if len(c.Parents) == 1 && c.Parents[0].SHA == st.head {
-			return current, nil
+		onHead, err := a.parentIs(ctx, current, st.head)
+		if err != nil || onHead {
+			return current, err
 		}
 	}
+	commit, err := a.commitDeletions(ctx, st, message)
+	if err != nil {
+		return "", err
+	}
+	if current == "" {
+		return commit, a.repos(ctx, http.MethodPost, "/git/refs", map[string]any{"ref": "refs/heads/" + branch, "sha": commit}, nil)
+	}
+	return commit, a.repos(ctx, http.MethodPatch, "/git/refs/heads/"+branch, map[string]any{"sha": commit, "force": true}, nil)
+}
+
+func (a api) parentIs(ctx context.Context, commit, parent string) (bool, error) {
+	var c struct {
+		Parents []struct {
+			SHA string `json:"sha"`
+		} `json:"parents"`
+	}
+	if err := a.repos(ctx, http.MethodGet, "/git/commits/"+commit, nil, &c); err != nil {
+		return false, err
+	}
+	return len(c.Parents) == 1 && c.Parents[0].SHA == parent, nil
+}
+
+// commitDeletions builds a commit on main's head that deletes every path main still carries unchanged.
+func (a api) commitDeletions(ctx context.Context, st mainState, message string) (string, error) {
 	baseTree, err := a.c.CommitTree(ctx, a.repo, st.head)
 	if err != nil {
 		return "", err
@@ -161,13 +181,8 @@ func (a api) removalCommit(ctx context.Context, st mainState, branch, message st
 	if err := a.repos(ctx, http.MethodPost, "/git/trees", map[string]any{"base_tree": baseTree, "tree": entries}, &tree); err != nil {
 		return "", err
 	}
-	if err := a.repos(ctx, http.MethodPost, "/git/commits", map[string]any{"message": message, "tree": tree.SHA, "parents": []string{st.head}}, &commit); err != nil {
-		return "", err
-	}
-	if current == "" {
-		return commit.SHA, a.repos(ctx, http.MethodPost, "/git/refs", map[string]any{"ref": "refs/heads/" + branch, "sha": commit.SHA}, nil)
-	}
-	return commit.SHA, a.repos(ctx, http.MethodPatch, "/git/refs/heads/"+branch, map[string]any{"sha": commit.SHA, "force": true}, nil)
+	err = a.repos(ctx, http.MethodPost, "/git/commits", map[string]any{"message": message, "tree": tree.SHA, "parents": []string{st.head}}, &commit)
+	return commit.SHA, err
 }
 
 // branchCommit returns "" for a branch that does not exist.
