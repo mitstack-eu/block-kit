@@ -212,7 +212,6 @@ func TestDeliverableSuite(t *testing.T) {
 	})
 }
 
-// resourcesBlock drives the fixture's assertBlock with misbehave and container as Go literals.
 func resourcesBlock(manifestSource, misbehave, container string) dirFunc {
 	return moduleBlock(
 		withSource(manifestFile, manifestSource),
@@ -230,7 +229,6 @@ func withTypeSnapshot(t *testing.T, files map[string]string) {
 	files["type-snapshot.json"] = string(raw)
 }
 
-// kitObservedBlock drives the full block's one aws.s3-bucket through the kit observer, ownObserver a Go literal saying whether the block registers its own too.
 func kitObservedBlock(ownObserver string) dirFunc {
 	return fullBlock(withSource("s3_block_test.go", "resources-s3-block_test.go"), withTypeSnapshot,
 		with("resources_test.go", "package main\n\nimport \"testing\"\n\nfunc TestDeclaredResources(t *testing.T) {\n\tassertS3Block(t, "+ownObserver+")\n}\n"))

@@ -16,10 +16,8 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-// exitNotJudged marks a case that pins a suite's verdict without the run's exit code.
 const exitNotJudged = -1
 
-// standaloneInvocation is the command a block author runs from the block's own directory.
 const standaloneInvocation = "blockverify --standalone ."
 
 var jsonStandalone = []string{"--json", "--standalone", "$DIR"}
@@ -45,7 +43,6 @@ type runCase struct {
 
 var humanStatus = map[string]string{"✓": "pass", "✗": "fail", "○": "skipped"}
 
-// humanSuites reads each suite line of the human-readable report, a mark, the suite name and its detail.
 func humanSuites(stdout string) map[string]reportSuite {
 	out := map[string]reportSuite{}
 	for _, line := range strings.Split(stdout, "\n") {
