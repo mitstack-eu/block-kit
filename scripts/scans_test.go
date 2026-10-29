@@ -1,8 +1,10 @@
 package scripts_test
 
-// scan-secrets.sh and lint-scripts.sh fail a throwaway repository holding what they guard against, and pass it once that is gone.
+// scan-secrets.sh and lint-scripts.sh fail a throwaway repository holding what they guard against, pass it once that is gone, and run only a scanner whose sha256 matches its pin.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/exec"
@@ -48,6 +50,16 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // gitRepo commits each change in turn to a new repository and returns it with each commit's sha.
 func gitRepo(t *testing.T, changes ...change) (dir string, shas []string) {
 	t.Helper()
@@ -55,13 +67,7 @@ func gitRepo(t *testing.T, changes ...change) (dir string, shas []string) {
 	git(t, dir, "init", "-q", "-b", "main")
 	for i, c := range changes {
 		for path, content := range c.write {
-			full := filepath.Join(dir, path)
-			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(full, []byte(content), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			writeFile(t, filepath.Join(dir, path), content)
 		}
 		for _, path := range c.remove {
 			git(t, dir, "rm", "-q", path)
@@ -73,11 +79,11 @@ func gitRepo(t *testing.T, changes ...change) (dir string, shas []string) {
 	return dir, shas
 }
 
-// runScan returns the script's combined output and exit code.
-func runScan(t *testing.T, script, repo string) (string, int) {
+// runBash returns bash's combined output and exit code for args, with env added to hermeticEnv.
+func runBash(t *testing.T, env []string, args ...string) (string, int) {
 	t.Helper()
-	cmd := exec.Command("bash", script, repo)
-	cmd.Env = hermeticEnv()
+	cmd := exec.Command("bash", args...)
+	cmd.Env = append(hermeticEnv(), env...)
 	out, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
 	switch {
@@ -86,7 +92,7 @@ func runScan(t *testing.T, script, repo string) (string, int) {
 	case errors.As(err, &exit):
 		return string(out), exit.ExitCode()
 	}
-	t.Fatalf("running %s on %s: %v\n%s", script, repo, err, out)
+	t.Fatalf("running bash %s: %v\n%s", strings.Join(args, " "), err, out)
 	return "", 0
 }
 
@@ -96,7 +102,7 @@ func TestScanSecrets_FailsNamingTheCommitThatAddedAKey(t *testing.T) {
 		writes("config.env", "aws_access_key_id = "+fakeAWSKey+"\n"),
 		removes("config.env"))
 
-	out, exit := runScan(t, "scan-secrets.sh", repo)
+	out, exit := runBash(t, nil, "scan-secrets.sh", repo)
 
 	if exit != 1 {
 		t.Errorf("scan-secrets.sh exit = %d; want 1\n%s", exit, out)
@@ -117,7 +123,7 @@ func TestScanSecrets_PassesTheSameHistoryWithoutTheKey(t *testing.T) {
 		writes("config.env", "aws_region = eu-central-1\n"),
 		removes("config.env"))
 
-	out, exit := runScan(t, "scan-secrets.sh", repo)
+	out, exit := runBash(t, nil, "scan-secrets.sh", repo)
 
 	if exit != 0 {
 		t.Errorf("scan-secrets.sh exit = %d; want 0\n%s", exit, out)
@@ -143,7 +149,7 @@ func TestLintScripts(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			repo, _ := gitRepo(t, c.repo...)
 
-			out, exit := runScan(t, "lint-scripts.sh", repo)
+			out, exit := runBash(t, nil, "lint-scripts.sh", repo)
 
 			if exit != c.exit {
 				t.Errorf("lint-scripts.sh exit = %d; want %d\n%s", exit, c.exit, out)
@@ -152,6 +158,52 @@ func TestLintScripts(t *testing.T) {
 				if !strings.Contains(out, want) {
 					t.Errorf("lint-scripts.sh output does not name %q:\n%s", want, out)
 				}
+			}
+		})
+	}
+}
+
+func TestPinnedTool(t *testing.T) {
+	const member, good = "fake-1.0.0/fake", "#!/bin/sh\necho fake 1.0.0\n"
+	goodSum, otherSum := sha256.Sum256([]byte(good)), sha256.Sum256([]byte("another binary"))
+	src, release := t.TempDir(), filepath.Join(t.TempDir(), "fake.tar.gz")
+	writeFile(t, filepath.Join(src, member), good)
+	if out, err := exec.Command("tar", "-czf", release, "-C", src, member).CombinedOutput(); err != nil {
+		t.Fatalf("building the release archive: %v\n%s", err, out)
+	}
+	cases := []struct {
+		name, url, sha256, cached, refusal, wantCached string
+	}{
+		{name: "a release matching its pin is fetched into the cache", url: "file://" + release, sha256: hex.EncodeToString(goodSum[:]), wantCached: good},
+		{name: "a release whose binary does not match its pin is refused and never cached", url: "file://" + release, sha256: hex.EncodeToString(otherSum[:]),
+			refusal: "does not match sha256"},
+		{name: "a corrupt cached binary is fetched again and replaced", url: "file://" + release, sha256: hex.EncodeToString(goodSum[:]), cached: "junk", wantCached: good},
+		{name: "a cached binary matching its pin runs with no fetch", url: "file:///nowhere/fake.tar.gz", sha256: hex.EncodeToString(goodSum[:]), cached: good, wantCached: good},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cache := t.TempDir()
+			bin := filepath.Join(cache, "block-kit", "fake-1.0.0", "fake")
+			if c.cached != "" {
+				writeFile(t, bin, c.cached)
+			}
+
+			out, exit := runBash(t, []string{"XDG_CACHE_HOME=" + cache},
+				"-c", `. ./pinned-tool.sh && pinned_tool fake 1.0.0 "$1" "$2" "$3"`, "pinned-tool", c.url, member, c.sha256)
+
+			want, wantExit := bin, 0
+			if c.refusal != "" {
+				want, wantExit = c.refusal, 1
+			}
+			if exit != wantExit || !strings.Contains(out, want) {
+				t.Errorf("pinned_tool exit = %d, output %q; want %d and %q", exit, out, wantExit, want)
+			}
+			got, err := os.ReadFile(bin)
+			if c.wantCached == "" && !errors.Is(err, os.ErrNotExist) || c.wantCached != "" && string(got) != c.wantCached {
+				t.Errorf("cached binary = %q (err %v); want %q", got, err, c.wantCached)
+			}
+			if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(bin), "fetch.*")); len(leftovers) > 0 {
+				t.Errorf("pinned_tool left %v in the cache", leftovers)
 			}
 		})
 	}
