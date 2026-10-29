@@ -957,14 +957,14 @@ spec:
 
 // landingBlock lands two files and a branch through the landing package, and removes them through landing.Remove unless teardown names a fault.
 type landingBlock struct {
-	repo     *landingtest.Fake
-	teardown string
+	repo          *landingtest.Fake
+	typ, teardown string
 }
 
 func (b *landingBlock) client() *ghapi.Client { return ghapi.NewClient(b.repo.URL, "ghs_kittest", nil) }
 
 func (b *landingBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
-	prior, _ := landing.RecordFromIdentity(d.RecordedResources[landingType].Identity)
+	prior, _ := landing.RecordFromIdentity(d.RecordedResources[b.typ].Identity)
 	files := map[string]string{"CLAUDE.md": "# weather\n", "Dockerfile": "FROM nginx:1.27\n"}
 	rec, err := landing.Land(ctx, b.client(), landing.Landing{Repository: b.repo.Repo, Message: "land", Files: files, Prior: prior})
 	if err != nil {
@@ -972,7 +972,7 @@ func (b *landingBlock) EnsureResources(ctx context.Context, d contract.Desired) 
 	}
 	b.repo.Branch(landing.BranchPrefix(d.SubscriptionID) + "land")
 	identity, err := rec.Identity()
-	return []contract.CreatedResource{{Name: landingType, Type: landingType, Identity: identity}}, err
+	return []contract.CreatedResource{{Name: b.typ, Type: b.typ, Identity: identity}}, err
 }
 
 func (b *landingBlock) Ensure(ctx context.Context, d contract.Desired) error {
@@ -986,7 +986,7 @@ func (b *landingBlock) Delete(ctx context.Context, d contract.Desired) (map[stri
 }
 
 func (b *landingBlock) DeleteKeeping(ctx context.Context, d contract.Desired) (map[string]string, map[string][]contract.Kept, error) {
-	rec, err := landing.RecordFromIdentity(d.RecordedResources[landingType].Identity)
+	rec, err := landing.RecordFromIdentity(d.RecordedResources[b.typ].Identity)
 	if err != nil || b.teardown == "leaves its files" {
 		return nil, nil, nil
 	}
@@ -1003,7 +1003,7 @@ func (b *landingBlock) DeleteKeeping(ctx context.Context, d contract.Desired) (m
 	if b.teardown == "reports nothing kept" {
 		return nil, nil, err
 	}
-	return nil, map[string][]contract.Kept{landingType: res.Kept}, err
+	return nil, map[string][]contract.Kept{b.typ: res.Kept}, err
 }
 
 func deleteFiles(ctx context.Context, c *ghapi.Client, rec landing.Record) error {
@@ -1024,7 +1024,7 @@ type repositoryProvider struct{ b *landingBlock }
 func (p repositoryProvider) Repository() *landingtest.Fake { return p.b.repo }
 
 func (p repositoryProvider) ListTagged(context.Context, string) ([]observe.Tagged, error) {
-	return []observe.Tagged{{Type: landingType, ID: p.b.repo.Repo}}, nil
+	return []observe.Tagged{{Type: p.b.typ, ID: p.b.repo.Repo}}, nil
 }
 
 func (p repositoryProvider) Lose(ctx context.Context, r contract.CreatedResource) error {
@@ -1032,20 +1032,20 @@ func (p repositoryProvider) Lose(ctx context.Context, r contract.CreatedResource
 	return deleteFiles(ctx, p.b.client(), rec)
 }
 
-func landingBlockThat(t *testing.T, teardown string) kittest.Block {
+func landingBlockThat(t *testing.T, typ, teardown string) kittest.Block {
 	t.Helper()
-	b := &landingBlock{repo: landingtest.New(t, "acme/weather"), teardown: teardown}
+	b := &landingBlock{repo: landingtest.New(t, "acme/weather"), typ: typ, teardown: teardown}
 	types := typeSnapshot(t)
 	if teardown == "leaves its files" {
-		types = markedSnapshot(t, landingType)
+		types = markedSnapshot(t, typ)
 	}
 	observer := landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return b.client(), nil }}
 	return kittest.Block{
 		Config: handler.Config{
 			Resource:  b,
-			Manifest:  []byte(landingBlockManifest),
+			Manifest:  []byte(strings.Replace(landingBlockManifest, landingType, typ, 1)),
 			Types:     types,
-			Observers: map[string]handler.Observer{landingType: observer},
+			Observers: map[string]handler.Observer{typ: observer},
 		},
 		Provider: repositoryProvider{b: b},
 		Desired:  blockDesired(""),
@@ -1055,17 +1055,18 @@ func landingBlockThat(t *testing.T, teardown string) kittest.Block {
 // The check changes CLAUDE.md, the first file the landing created, before it unsubscribes, which leaves Dockerfile unchanged.
 func TestAssertBlock_ReadsMainAfterUnsubscribingABlockThatLandsFiles(t *testing.T) {
 	for _, tc := range []struct {
-		teardown string
-		want     []string
+		typ, teardown string
+		want          []string
 	}{
-		{"", nil},
-		{"leaves its files", []string{"Dockerfile", "unchanged"}},
-		{"removes under another prefix", []string{"branch mitstack/sub-block/land"}},
-		{"deletes every file", []string{"CLAUDE.md", "changed"}},
-		{"reports nothing kept", []string{"CLAUDE.md", "delete outcome"}},
+		{landingType, "", nil},
+		{landingType, "leaves its files", []string{"Dockerfile", "unchanged"}},
+		{landingType, "removes under another prefix", []string{"branch mitstack/sub-block/land"}},
+		{landingType, "deletes every file", []string{"CLAUDE.md", "changed"}},
+		{landingType, "reports nothing kept", []string{"CLAUDE.md", "delete outcome"}},
+		{"github.commit", "leaves its files", []string{"Dockerfile", "unchanged"}},
 	} {
-		t.Run("a block that "+cmp.Or(tc.teardown, "removes through the landing package"), func(t *testing.T) {
-			in := landingBlockThat(t, tc.teardown)
+		t.Run("a "+tc.typ+" block that "+cmp.Or(tc.teardown, "removes through the landing package"), func(t *testing.T) {
+			in := landingBlockThat(t, tc.typ, tc.teardown)
 
 			got := runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
 
