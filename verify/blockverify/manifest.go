@@ -92,7 +92,7 @@ func compareVersion(m contract.Manifest, base, changedFiles string) (note, probl
 func keptVersion(version, changedFiles string) (note, problem string, err error) {
 	unchanged := fmt.Sprintf("spec.version %s is unchanged from the base manifest", version)
 	if changedFiles == "" {
-		return unchanged, "", nil
+		return unchanged + "; no --changed-files given, so the changed files were not judged", "", nil
 	}
 	files, err := imageFilesChanged(changedFiles)
 	if err != nil {

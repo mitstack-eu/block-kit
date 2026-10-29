@@ -41,21 +41,25 @@ in your block would drift from the contract, so the suite refuses one by name.
 
 The platform reads a release class as `correctness-fix`, `feature` or
 `breaking`, and the release note says in one paragraph what the version
-changes. In CI the reusable workflow passes the base branch's manifest and
-the list of files the pull request changes to blockverify. On your machine
-`--base-manifest <path>` and `--changed-files <path>` do, as in this run
-against `origin/main`:
+changes. In CI the kit's reusable workflow, described in [Where CI runs
+it](#where-ci-runs-it), passes the base branch's manifest and the list of
+files the pull request changes to blockverify. The list holds each changed
+path ended by a NUL byte, as `git diff -z --name-only` writes it. On your
+machine `--base-manifest <path>` and `--changed-files <path>` do the same,
+as in this run against `origin/main`, where `<tag>` is a kit release as in
+[Run it locally](#run-it-locally):
 
 ```sh
 git show origin/main:manifest.yaml > /tmp/base-manifest.yaml
 git diff --no-renames -z --name-only origin/main > /tmp/changed-files
-blockverify --standalone --base-manifest /tmp/base-manifest.yaml --changed-files /tmp/changed-files .
+go run github.com/mitstack-eu/block-kit/verify/blockverify@<tag> --standalone \
+  --base-manifest /tmp/base-manifest.yaml --changed-files /tmp/changed-files .
 ```
 
-A version bump is what publishes a change, because the publish job never
-pushes over a version tag already in the registry. So a code or dependency
-change that keeps the base's version would merge green and never ship, and
-the `manifest` suite fails it instead.
+A version bump is what publishes a change, because the workflow's publish
+job never pushes over a version tag already in your image registry. So a
+code or dependency change that keeps the base's version would merge green
+and never ship, and the `manifest` suite fails it instead.
 
 ## How a block reports each resource's identity
 
@@ -172,21 +176,28 @@ no image ships without a pass. The job then runs `blockprov`, which builds a
 provenance record naming your repository, commit and CI run, signs it with
 the run's GitHub Actions identity token and pushes it beside the image.
 
-Two scan jobs also run on every event, and `publish` waits for both. The
-`secrets` job runs `scripts/scan-secrets.sh`, which scans every commit your
-`HEAD` reaches with gitleaks 8.21.2 and names the commit that added a secret.
-The `scripts` job runs `scripts/lint-scripts.sh`, which runs shellcheck 0.11.0
-over every shell script your repository tracks. Both scripts come from the
-kit at `kit-ref` and check their scanner's sha256 before running it, and you
-can run either on your own checkout:
+Two scan jobs also run on every event your CI calls the workflow for, and
+`publish` waits for both. The `secrets` job runs `scripts/scan-secrets.sh`,
+which scans your whole history, every commit your `HEAD` reaches, with the
+secret scanner gitleaks 8.21.2, and names the commit that added a secret. The
+`scripts` job runs `scripts/lint-scripts.sh`, which runs the shell-script
+linter shellcheck 0.11.0 over every shell script your repository tracks. Both
+scripts come from the kit at `kit-ref`. Each pins its scanner's sha256 in the
+script and refuses to run a download whose sha256 differs.
+
+To run either on your own checkout, clone the kit beside your block at the
+tag your `kit-ref` names, shown as `<tag>`, and run it from your block's
+directory:
 
 ```sh
+git clone --branch <tag> https://github.com/mitstack-eu/block-kit ../block-kit
 bash ../block-kit/scripts/scan-secrets.sh .
 bash ../block-kit/scripts/lint-scripts.sh .
 ```
 
-With the calling job named `block`, as above, the checks to require on your
-`main` are `block / conformance`, `block / secrets` and `block / scripts`.
+With the calling job named `block`, as above, the checks to require in your
+repository's branch protection for `main` are `block / conformance`,
+`block / secrets` and `block / scripts`.
 
 When the platform creates a block's repository from its templates, which it
 calls scaffolding, the repository also carries
