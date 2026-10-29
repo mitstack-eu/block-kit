@@ -134,8 +134,8 @@ func fakePlatform(t *testing.T, status int, answer string) (string, *[]platformC
 	return srv.URL, &calls
 }
 
-// runNamed runs the run script job names name, in dir, against the platform at apiURL.
-func runNamed(t *testing.T, job, name, dir, apiURL string) (string, int) {
+// runNamed runs the run script job names name, in dir, against the platform at apiURL, with override added last to its environment.
+func runNamed(t *testing.T, job, name, dir, apiURL string, override ...string) (string, int) {
 	t.Helper()
 	all := publishWorkflow(t)
 	prefix := stepOf(all, job, "name", name)
@@ -146,8 +146,34 @@ func runNamed(t *testing.T, job, name, dir, apiURL string) (string, int) {
 	if err := os.WriteFile(script, []byte(all[prefix+"run"]), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"API_URL=" + apiURL, "MITSTACK_API_TOKEN=mitstack_pat_sealed", "BLOCK_ID=@acme/billing-db"}
+	env := append([]string{"API_URL=" + apiURL, "MITSTACK_API_TOKEN=mitstack_pat_sealed", "BLOCK_ID=@acme/billing-db"}, override...)
 	return runBash(t, env, "-c", `cd "$1" && bash -e "$2"`, "named", dir, script)
+}
+
+// A caller that turns a job on without passing the secret, as a fork's pull request does, learns which secret is missing before any call.
+func TestPublishBlockWorkflow_EveryPlatformCallFailsNamingAMissingSecret(t *testing.T) {
+	targets := []struct{ job, name string }{
+		{"platform-verdict", "Ask the platform for its verdict on manifest.yaml"},
+		{"attest", "Fetch the platform's manifest"},
+		{"attest", "Post the attestation"},
+	}
+	for _, target := range targets {
+		t.Run(target.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "manifest.yaml"), "spec:\n  version: 1.0.0\n")
+			writeFile(t, filepath.Join(dir, "attestation-report.json"), `{"verdict":"pass"}`)
+			apiURL, calls := fakePlatform(t, 200, "{}")
+
+			out, exit := runNamed(t, target.job, target.name, dir, apiURL, "MITSTACK_API_TOKEN=")
+
+			if exit == 0 || !strings.Contains(out, "needs the MITSTACK_API_TOKEN secret") {
+				t.Errorf("%q exit %d, output:\n%s\nwant a failure naming the missing MITSTACK_API_TOKEN secret", target.name, exit, out)
+			}
+			if len(*calls) != 0 {
+				t.Errorf("platform calls = %+v, want none without a token", *calls)
+			}
+		})
+	}
 }
 
 func TestPublishBlockWorkflow_ThePlatformVerdictJobFailsOnARefusalAndPassesAnAcceptance(t *testing.T) {
