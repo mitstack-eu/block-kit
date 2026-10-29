@@ -102,7 +102,11 @@ each file the app changed, and report the kept files.
 
 For a block declaring one of these types, `kittest.AssertBlock` reads the fake
 repository's main after unsubscribe. Before the unsubscribe it changes the first
-file a landing record created, as an app editing a landed file would. After it,
+file a landing record created, as an app editing a landed file would. For a
+`github.scaffold-contribution`, the check first writes each file the
+`scaffoldContribution` output offers onto the fake main, as app-scaffold
+commits it. It fails an offered file that the landing record does not name at
+its blob hash, since unsubscribe could not remove it. After the unsubscribe,
 the check fails the block on each of these, naming the path or branch:
 
 | What the check finds | The problem it reports |
@@ -116,7 +120,7 @@ A block holds all four when its `DeleteKeeping` calls `landing.Remove` and
 returns the `Result.Kept` it gets back under the resource's name, as
 [Serving lifecycle calls](handler.md#what-the-handler-calls-for-each-call)
 describes. The check lives in `verify/kittest/block.go`, in
-`changeALandedFile` and `readMain`.
+`commitContributions`, `changeALandedFile` and `readMain`.
 
 ## Proving teardown after a broken setup
 

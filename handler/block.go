@@ -56,6 +56,10 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		r.deleteOutputs = outputs
 		r.d.VerbAt = r.h.now()
 		r.setRefs(nil)
+		for name, ref := range r.refs {
+			ref.Unsubscribing = true
+			r.refs[name] = ref
+		}
 		return r.deleteEach(ctx)
 	case "validate":
 		replaces, err := r.planReplacements(ctx)

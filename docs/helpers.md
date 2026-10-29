@@ -222,6 +222,23 @@ repository of the owner, with one of the same owner. Any read that fails,
 such as a 403, a 5xx, a rate limit or a missing token, reads unknown, and
 `Remove` then waits with no write sent.
 
+A scaffold contribution reaches main through app-scaffold's commit, so the
+contributing block lands nothing itself. Its `EnsureResources` calls
+`landing.Offer(ctx, client, l)`, which reads main and returns the record
+`Land` would, and commits nothing. The record names each offered path, the
+blob hash of the block's own content, and `created` for a path main lacked
+when the block first offered it. Pass the earlier record as `Prior`, so a path
+stays recorded created after app-scaffold commits it.
+
+`landing.OfferObserver` observes such a contribution. Before app-scaffold
+commits the files, main carries none of them, yet the contribution must read
+present so its outputs reach app-scaffold. So outside an unsubscribe it reads
+present while the repository can be read. When the handler observes it after
+an unsubscribe's delete, where `contract.ResourceRef.Unsubscribing` is true,
+it answers as `landing.Observer` does. A record that lists no files reads
+absent then. A repository proven deleted reads absent either way, and an
+unreadable one reads unknown.
+
 `capabilities/github/landing/landingtest` is a fake of the GitHub routes the
 package calls, holding one repository's main, branches, pull requests and
 checks.
