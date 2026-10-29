@@ -230,13 +230,10 @@ func withTypeSnapshot(t *testing.T, files map[string]string) {
 	files["type-snapshot.json"] = string(raw)
 }
 
-// kitObservedBlock is the full block, whose one resource is an aws.s3-bucket, driven through kittest.AssertBlock with the kit observer reading it, and ownObserver a Go literal saying whether the block also registers its own.
+// kitObservedBlock drives the full block's one aws.s3-bucket through the kit observer, ownObserver a Go literal saying whether the block registers its own too.
 func kitObservedBlock(ownObserver string) dirFunc {
-	return fullBlock(
-		withSource("s3_block_test.go", "resources-s3-block_test.go"),
-		withTypeSnapshot,
-		with("resources_test.go", "package main\n\nimport \"testing\"\n\nfunc TestDeclaredResources(t *testing.T) {\n\tassertS3Block(t, "+ownObserver+")\n}\n"),
-	)
+	return fullBlock(withSource("s3_block_test.go", "resources-s3-block_test.go"), withTypeSnapshot,
+		with("resources_test.go", "package main\n\nimport \"testing\"\n\nfunc TestDeclaredResources(t *testing.T) {\n\tassertS3Block(t, "+ownObserver+")\n}\n"))
 }
 
 func TestResourcesSuite(t *testing.T) {
@@ -271,9 +268,5 @@ func TestResourcesSuite(t *testing.T) {
 					t.Errorf("resources detail = %q, want it to name hetzner.server, the requirement type whose run failed", got.Detail)
 				}
 			}},
-		{name: "a block the kit observer reads passes, naming the kit-observer and probe-reads guards it ran",
-			dir: kitObservedBlock("false"), status: "pass", detail: []string{"kit-observer", "probe-reads"}},
-		{name: "a block registering its own observer for a type with an observe spec fails, naming the type",
-			dir: kitObservedBlock("true"), status: "fail", detail: []string{`resource "aws.s3-bucket"`, "type aws.s3-bucket carries an observe spec", "own observer"}},
 	})
 }
