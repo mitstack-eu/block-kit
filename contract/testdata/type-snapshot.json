@@ -711,7 +711,23 @@
       },
       "category": "storage",
       "outputs": [],
-      "version": 1
+      "version": 1,
+      "observeSpec": {
+        "find": {
+          "tag": "mitstack:subscription",
+          "identity": "bucket"
+        },
+        "probe": {
+          "reads": [
+            "tags",
+            "existence"
+          ],
+          "maxReads": 4
+        },
+        "fullRead": {
+          "cloudControl": "AWS::S3::Bucket"
+        }
+      }
     },
     {
       "id": "aws.security-group",

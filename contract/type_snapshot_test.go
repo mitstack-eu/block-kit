@@ -94,6 +94,17 @@ func TestParseTypeSnapshot_ReadsThePlatformsSnapshot(t *testing.T) {
 				}
 			}
 		}},
+		{"aws.s3-bucket's observe spec, which makes it kit-observed", func(t *testing.T, snap contract.TypeSnapshot) {
+			bucket := lookup(t, snap, "aws.s3-bucket")
+			wantField(t, "aws.s3-bucket ObserveSpec", bucket.ObserveSpec, &contract.SnapshotObserve{
+				Find:     &contract.SnapshotFind{Tag: "mitstack:subscription", Identity: "bucket"},
+				Probe:    &contract.SnapshotProbe{Reads: []string{"tags", "existence"}, MaxReads: 4},
+				FullRead: &contract.SnapshotFullRead{CloudControl: "AWS::S3::Bucket"},
+			})
+			if !bucket.KitObserved() || lookup(t, snap, "aws.vpc").KitObserved() {
+				t.Error("KitObserved: want aws.s3-bucket, which carries a spec, and not aws.vpc, which carries none")
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -108,6 +119,10 @@ func TestParseTypeSnapshot_ReadsThePlatformsSnapshot(t *testing.T) {
 const iamRoleType = `{"id": "aws.iam-role", "capability": "aws", "kind": "iam-role", "scope": "per-app", "version": 1}`
 
 const instanceHead = `{"id": "aws.ec2-instance", "capability": "aws", "kind": "host", "scope": "per-app", "version": 1,`
+
+func bucketSpec(spec string) string {
+	return `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app", "version": 1, "observeSpec": {` + spec + `}}]}`
+}
 
 func TestParseTypeSnapshot_RefusesASnapshotItCannotUse(t *testing.T) {
 	cases := []struct {
@@ -126,6 +141,14 @@ func TestParseTypeSnapshot_RefusesASnapshotItCannotUse(t *testing.T) {
 			iamRoleType + `]}`, []string{"aws.ec2-instance", "type"}},
 		{"a part whose type the snapshot does not hold", `{"version": 1, "types": [` + instanceHead +
 			` "parts": [{"type": "aws.iam-instance-profile", "count": 1}]}, ` + iamRoleType + `]}`, []string{"aws.ec2-instance", "aws.iam-instance-profile"}},
+		{"an observe spec with find but no probe", bucketSpec(`"find": {"tag": "t", "identity": "bucket"}, "fullRead": {"cloudControl": "AWS::S3::Bucket"}`),
+			[]string{"aws.s3-bucket", "probe"}},
+		{"an observe spec naming a check beside find", bucketSpec(`"named": "NodeReported", "find": {"tag": "t", "identity": "bucket"}`),
+			[]string{"aws.s3-bucket", "NodeReported"}},
+		{"an observe spec whose fullRead names both", bucketSpec(`"find": {"tag": "t", "identity": "bucket"}, "probe": {"reads": ["tags"], "maxReads": 1},` +
+			` "fullRead": {"cloudControl": "AWS::S3::Bucket", "collection": "/buckets/{id}"}`), []string{"aws.s3-bucket", "exactly one"}},
+		{"an observe spec whose maxReads is below one", bucketSpec(`"find": {"tag": "t", "identity": "bucket"}, "probe": {"reads": ["tags"], "maxReads": 0},` +
+			` "fullRead": {"cloudControl": "AWS::S3::Bucket"}`), []string{"aws.s3-bucket", "maxReads"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
