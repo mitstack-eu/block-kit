@@ -16,6 +16,7 @@ package has [a page of its own](gitops.md).
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
+| `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
@@ -159,6 +160,54 @@ commits files and sets Actions variables, each idempotently.
 blockverify holds a block that calls the GitHub API to this rule: it must
 resolve the host through `ghapi.Base`, `ghapi.BaseFromEnv` or an allowlist of
 its own, as [Running the block checks](block-checks.md) describes.
+
+## Removing the files a block landed
+
+`capabilities/github/landing` keeps the rule of the platform's ADR 0107: at
+unsubscribe, a block removes every file it landed that the app has not changed
+since, and keeps the rest.
+
+`landing.Land(ctx, client, landing.Landing{...})` commits the files onto main
+in one commit and returns a `landing.Record`. For each path the record holds
+the repository, the git blob hash of what was written, and `created`, which is
+true only when main lacked the path before the block's first landing. Pass the
+earlier record as `Prior` on a repeated landing, so a path the block created
+stays recorded created. `Record.Identity()` turns the record into the
+resource's identity, with the files as one JSON list:
+
+```json
+{"repository": "acme/weather",
+ "files": "[{\"path\":\"Dockerfile\",\"blob\":\"c901703072104919a085c3bba881ebf634c4728c\",\"created\":true}]"}
+```
+
+The platform stores that identity and sends it back at unsubscribe, where
+`landing.RecordFromIdentity` reads it. `landing.Remove(ctx, client,
+landing.Removal{Subscription: d.SubscriptionID, Records: records})` then reads
+main and, per repository, opens one pull request from the branch
+`mitstack/<subscription>/remove`. That pull request deletes each `created`
+path main still carries at its recorded blob, and its description names the
+files kept. The result's `Kept` lists each file the app changed, with the
+reason `changed`. A path main held before the landing is never removed.
+
+The pull request merges on the checks main requires, by branch protection or
+by a ruleset, and never past them. Until each required check reports success
+on it, `Remove` returns a `handler.Waiting`, so the unsubscribe answers
+`absent: false` and the platform calls it again. Each later call reuses the
+same branch and pull request while main has not moved. Once the merge lands,
+`Remove` deletes every branch under `landing.BranchPrefix(subscription)`, so a
+block that lands through a pull request names its branches under that prefix.
+
+`landing.Observer` reads such a resource from main. It is present while main
+carries one created file at its recorded blob. It is absent once main carries
+none, or once the repository is proven deleted: the repository answers 404,
+and the token's own installation lists a repository of the same owner with
+`repository_selection` `all`. Any read that fails, such as a 403, a 5xx, a
+rate limit or a missing token, reads unknown, and `Remove` then waits with no
+write sent.
+
+`capabilities/github/landing/landingtest` is a fake of the GitHub routes the
+package calls, holding one repository's main, branches, pull requests and
+checks.
 
 ## Adopting a Hetzner dedicated server
 
