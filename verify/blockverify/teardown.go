@@ -34,22 +34,27 @@ func teardownSuite(target string) SuiteResult {
 	}
 
 	detail := fmt.Sprintf("%s rule: %s; the kit's handler asks the provider again after a delete", kitV1Contract, teardownDeletesDetail)
+	status, detail := readsMainAfterUnsubscribe(target, detail)
+	return SuiteResult{name, status, detail}
+}
+
+// readsMainAfterUnsubscribe runs TestDeclaredResources for a block declaring a file-landing type and passes any other block with detail.
+func readsMainAfterUnsubscribe(target, detail string) (status, out string) {
 	landed, err := landingTypes(target)
 	if err != nil {
-		return SuiteResult{name, "fail", err.Error()}
+		return "fail", err.Error()
 	}
 	if len(landed) == 0 {
-		return SuiteResult{name, "pass", detail}
+		return "pass", detail
 	}
 	if !strings.Contains(concatGoTestFiles(target), resourcesTestNeedle) {
-		return SuiteResult{name, "fail", fmt.Sprintf(
-			"%s declares file-landing type %s but has no TestDeclaredResources test, so no kittest.AssertBlock reads main after unsubscribe", target, landed[0])}
+		return "fail", fmt.Sprintf(
+			"%s declares file-landing type %s but has no TestDeclaredResources test, so no kittest.AssertBlock reads main after unsubscribe", target, landed[0])
 	}
 	if ok, output := runGoTest(target, "TestDeclaredResources", "-v"); !ok {
-		return SuiteResult{name, "fail", unsubscribeProblemLine(output)}
+		return "fail", unsubscribeProblemLine(output)
 	}
-	return SuiteResult{name, "pass", fmt.Sprintf(
-		"%s; TestDeclaredResources read main after unsubscribe for file-landing type %s", detail, strings.Join(landed, ", "))}
+	return "pass", fmt.Sprintf("%s; TestDeclaredResources read main after unsubscribe for file-landing type %s", detail, strings.Join(landed, ", "))
 }
 
 // landingTypes lists each declared resource type that lands files, none for a block with no manifest.
