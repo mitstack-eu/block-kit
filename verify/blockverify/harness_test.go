@@ -68,7 +68,6 @@ func readTxtar(t *testing.T, path string) (comment string, files map[string]stri
 	return comment, files
 }
 
-// source returns one file of testdata/fixtures/sources.txtar.
 func source(t *testing.T, name string) string {
 	t.Helper()
 	_, files := readTxtar(t, filepath.Join(fixturesDir, "sources.txtar"))
@@ -98,7 +97,6 @@ func replaced(t *testing.T, s, old, new string) string {
 	return strings.Replace(s, old, new, 1)
 }
 
-// option edits a fixture's files before they are written.
 type option func(t *testing.T, files map[string]string)
 
 func with(name, content string) option {
@@ -117,7 +115,6 @@ func without(names ...string) option {
 	}
 }
 
-// dirFunc builds a fixture directory for one case.
 type dirFunc func(t *testing.T) string
 
 func fixture(base func(t *testing.T) map[string]string, opts ...option) dirFunc {
