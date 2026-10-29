@@ -1,0 +1,20 @@
+{
+  "name": "contents-app-json",
+  "request": {"method": "GET", "path": "/repos/acme/weather/contents/mitstack-app.json?ref=7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 200,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {
+      "type": "file",
+      "encoding": "base64",
+      "size": 22,
+      "name": "mitstack-app.json",
+      "path": "mitstack-app.json",
+      "content": "eyJuYW1lIjoibXktd2VhdGhlciJ9Cg==\n",
+      "sha": "691d3b201ce34840728cb1f658ba4bd5f6273d5c",
+      "url": "https://api.github.com/repos/acme/weather/contents/mitstack-app.json?ref=7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d",
+      "git_url": "https://api.github.com/repos/acme/weather/git/blobs/691d3b201ce34840728cb1f658ba4bd5f6273d5c",
+      "download_url": null
+    }
+  }
+}

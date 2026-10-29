@@ -1,0 +1,14 @@
+{
+  "name": "create-branch",
+  "request": {"method": "POST", "path": "/repos/acme/weather/git/refs", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 201,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {
+      "ref": "refs/heads/mitstack/sub_641d1fee2774/remove",
+      "node_id": "REF_kwDOLandingtest",
+      "url": "https://api.github.com/repos/acme/weather/git/refs/heads/mitstack/sub_641d1fee2774/remove",
+      "object": {"sha": "6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b", "type": "commit", "url": "https://api.github.com/repos/acme/weather/git/commits/6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b"}
+    }
+  }
+}

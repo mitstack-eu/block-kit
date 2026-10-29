@@ -1,0 +1,18 @@
+{
+  "name": "protection",
+  "request": {"method": "GET", "path": "/repos/acme/weather/branches/main", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 200,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {
+      "name": "main",
+      "commit": {"sha": "7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d"},
+      "protected": true,
+      "protection": {
+        "enabled": true,
+        "required_status_checks": {"enforcement_level": "everyone", "contexts": ["managed-ci"], "checks": [{"context": "managed-ci", "app_id": null}]}
+      },
+      "protection_url": "https://api.github.com/repos/acme/weather/branches/main/protection"
+    }
+  }
+}

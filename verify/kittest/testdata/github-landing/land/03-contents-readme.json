@@ -1,0 +1,20 @@
+{
+  "name": "contents-readme",
+  "request": {"method": "GET", "path": "/repos/acme/weather/contents/README.md?ref=3f1e8b2c0a9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 200,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {
+      "type": "file",
+      "encoding": "base64",
+      "size": 10,
+      "name": "README.md",
+      "path": "README.md",
+      "content": "IyB3ZWF0aGVyCg==\n",
+      "sha": "c3242822052ae35a13313988cc45e585460c95cd",
+      "url": "https://api.github.com/repos/acme/weather/contents/README.md?ref=3f1e8b2c0a9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f",
+      "git_url": "https://api.github.com/repos/acme/weather/git/blobs/c3242822052ae35a13313988cc45e585460c95cd",
+      "download_url": null
+    }
+  }
+}

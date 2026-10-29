@@ -1,0 +1,9 @@
+{
+  "name": "create-tree",
+  "request": {"method": "POST", "path": "/repos/acme/weather/git/trees", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 201,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {"sha": "0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a", "url": "https://api.github.com/repos/acme/weather/git/trees/0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a", "truncated": false}
+  }
+}

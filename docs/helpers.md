@@ -16,6 +16,7 @@ package has [a page of its own](gitops.md).
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
+| `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
@@ -159,6 +160,69 @@ commits files and sets Actions variables, each idempotently.
 blockverify holds a block that calls the GitHub API to this rule: it must
 resolve the host through `ghapi.Base`, `ghapi.BaseFromEnv` or an allowlist of
 its own, as [Running the block checks](block-checks.md) describes.
+
+## Removing the files a block landed
+
+`capabilities/github/landing` serves a block that writes files into an app's
+GitHub repository, such as a starter or a workflow file. It keeps the rule of
+the platform's
+[ADR 0107](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0107-unsubscribe-removes-every-file-a-block-landed-that-main-still-carries-unchanged.md):
+at unsubscribe the block removes every file it wrote that the app has not
+changed since, and keeps the rest. Here main is the repository's `main`
+branch, and a landing is one commit of the block's files onto it.
+
+`landing.Land(ctx, client, l)` takes a `*ghapi.Client` and a `landing.Landing`
+of `Repository`, `Message`, `Files` (each path and its content) and `Prior`.
+It commits the files straight onto main in one commit and returns a
+`landing.Record`. For each path the record holds the git blob hash of what was
+written and `created`, which is true only when main lacked the path before the
+block's first landing. Pass the record of an earlier landing as `Prior`, so a
+path the block created stays recorded created. `Record.Identity()` turns the
+record into the identity of the resource that landed the files, with the files
+as one JSON list:
+
+```json
+{"repository": "acme/weather",
+ "files": "[{\"path\":\"Dockerfile\",\"blob\":\"c901703072104919a085c3bba881ebf634c4728c\",\"created\":true}]"}
+```
+
+The platform stores that identity and sends it back at unsubscribe, where
+`landing.RecordFromIdentity` reads it. A file is unchanged when main carries
+it at the recorded blob hash, and changed when main carries it with any other
+content. `landing.Remove(ctx, client, landing.Removal{Subscription:
+d.SubscriptionID, Records: records})` reads main and, per repository, opens
+one pull request from the branch `mitstack/<subscription>/remove`. That pull
+request deletes each unchanged file recorded `created`, and its description
+names the changed files it keeps. The result's `Kept` lists those, each with
+the reason `changed`. A path main held before the landing is never removed.
+
+The pull request merges on the checks main requires, by branch protection or
+by a ruleset, and never past them. Until each required check reports success
+on it, and while GitHub refuses the merge, `Remove` returns a
+`*handler.Waiting`, the error `handler.Wait` builds. Returned from `Delete`, it
+makes the unsubscribe answer `absent:false`, and the platform sends the
+unsubscribe again, as
+[Serving lifecycle calls](handler.md#what-the-handler-calls-for-each-call)
+describes. A later call reuses the branch and pull request while main has not
+moved, and rebuilds the removal onto main's new head when it has. Once the
+merge lands, `Remove` deletes every branch whose name starts with
+`landing.BranchPrefix(subscription)`, `mitstack/<subscription>/`. A block that
+also opens pull requests of its own names their branches under that prefix,
+so the removal clears them too.
+
+`landing.Observer` reads such a resource from main. It is present while main
+carries at least one file recorded `created` at its recorded blob, and absent
+once main carries none. It also reads a repository proven deleted absent:
+the repository answers 404, and the installation the token belongs to lists
+its repositories as `repository_selection: "all"`, which means every
+repository of the owner, with one of the same owner. Any read that fails,
+such as a 403, a 5xx, a rate limit or a missing token, reads unknown, and
+`Remove` then waits with no write sent.
+
+`capabilities/github/landing/landingtest` is a fake of the GitHub routes the
+package calls, holding one repository's main, branches, pull requests and
+checks.
+
 
 ## Adopting a Hetzner dedicated server
 
