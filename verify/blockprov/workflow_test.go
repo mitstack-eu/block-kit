@@ -394,6 +394,8 @@ var (
 
 func TestWorkflow_WriteStepsGateOnTheProbe(t *testing.T) {
 	steps := publishSteps(t)
+	mode := map[string]string{recordSteps[0]: " && !inputs.opentofu-only", recordSteps[1]: " && !inputs.opentofu-only",
+		opentofuRecordSteps[0]: " && inputs.opentofu-only", opentofuRecordSteps[1]: " && inputs.opentofu-only"}
 	for _, tc := range []struct {
 		names  []string
 		wantIf string
@@ -404,8 +406,8 @@ func TestWorkflow_WriteStepsGateOnTheProbe(t *testing.T) {
 		for _, name := range tc.names {
 			i := indexOf(steps, name)
 
-			if i < 0 || !strings.HasPrefix(ifOf(steps[i]["if"]), tc.wantIf) {
-				t.Errorf("step %q (index %d) is not gated on %q", name, i, tc.wantIf)
+			if i < 0 || ifOf(steps[i]["if"]) != tc.wantIf+mode[name] {
+				t.Errorf("%q (index %d) is not gated on %q", name, i, tc.wantIf+mode[name])
 			}
 		}
 	}
@@ -568,7 +570,7 @@ func sortedPairs(m map[string]string) []string {
 	return out
 }
 
-// stepRuns evaluates a step's if: for a Go block, and fails the test on any form it does not know, so a new gate cannot pass unexamined.
+// stepRuns evaluates an if: for a Go block, and fails the test on any form it does not know, so a new gate cannot pass unexamined.
 func stepRuns(t *testing.T, s step, outputs map[string]string) bool {
 	t.Helper()
 	switch expr := ifOf(s["if"]); expr {
@@ -777,7 +779,7 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 				t.Errorf("%s kit checkout passes token %q, want none, so the public kit is read with the run's default token", tc.job, token)
 			}
 			if idToken != tc.idToken {
-				t.Errorf("%s id-token permission = %q, want %q, since only the publish job assumes an AWS role and mints the record's OIDC token", tc.job, idToken, tc.idToken)
+				t.Errorf("%s id-token permission = %q, want %q, since among these jobs only publish assumes an AWS role and mints the record's OIDC token", tc.job, idToken, tc.idToken)
 			}
 			if i := indexOf(steps, "Build and push image"); i >= 0 && strings.Contains(steps[i]["run"], "--secret") {
 				t.Errorf("%s image build run =\n%s\nwant no --secret, so the image fetches the public kit with no credential", tc.job, steps[i]["run"])
@@ -876,10 +878,10 @@ func TestWorkflow_AnOpenTofuBlocksKitVersionIsTheOneItsOperatorImageWasBuiltWith
 	tmp := t.TempDir()
 	writeExecutable(t, filepath.Join(tmp, "docker"), "#!/bin/sh\necho docker \"$@\" >&2\n[ \"$1\" = create ] && echo c0ntainer\nexit 0\n")
 	writeExecutable(t, filepath.Join(tmp, "go"), "#!/bin/sh\nprintf '%s: go1.27.3\\n\\tdep\\tgithub.com/mitstack-eu/block-kit-extras\\tv9.9.9\\n\\tdep\\tgithub.com/mitstack-eu/block-kit\\tv0.5.1\\th1:x=\\n' \"$3\"\n")
-	writeExecutable(t, filepath.Join(tmp, "step.sh"), strings.ReplaceAll(script(t, "publish", opentofuRecordSteps[0]).Run, "${{ inputs.ecr-repository }}", "repo"))
+	writeExecutable(t, filepath.Join(tmp, "kit-version.sh"), strings.ReplaceAll(script(t, "publish", opentofuRecordSteps[0]).Run, "${{ inputs.ecr-repository }}", "repo"))
 	envFile := filepath.Join(tmp, "github-env")
 
-	res := runBash(t, filepath.Join(tmp, "step.sh"), tmp, "PATH="+tmp+":"+os.Getenv("PATH"), "RUNNER_TEMP="+tmp, "REGISTRY=r", "IMAGE_DIGEST="+testDigest, "GITHUB_ENV="+envFile)
+	res := runBash(t, filepath.Join(tmp, "kit-version.sh"), tmp, "PATH="+tmp+":"+os.Getenv("PATH"), "RUNNER_TEMP="+tmp, "REGISTRY=r", "IMAGE_DIGEST="+testDigest, "GITHUB_ENV="+envFile)
 
 	env, _ := os.ReadFile(envFile)
 	if got := keyValues(string(env))["KIT_VERSION"]; res.exitCode != 0 || got != "v0.5.1" || !strings.Contains(res.stderr, "docker create r/repo@"+testDigest) {

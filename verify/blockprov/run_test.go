@@ -128,8 +128,15 @@ const (
 )
 
 func TestRun_Build_AFailedResultExitsNonZeroAndWritesNoFile(t *testing.T) {
-	for _, tc := range [][3]string{{"--report", "report.json", failReport}, {"--block-verify", "block-verify.txt", failBlockVerify}} {
-		t.Run(tc[0], func(t *testing.T) {
+	for _, tc := range [][3]string{
+		{"--report", "report.json", failReport},
+		{"--block-verify", "block-verify.txt", failBlockVerify},
+		{"--block-verify", "empty.txt", ""},
+		{"--block-verify", "all-skipped.txt", "=== RUN   TestDeclaredResources\n--- SKIP: TestDeclaredResources (0.00s)\nPASS\n"},
+		{"--block-verify", "a-failure-then-pass.txt", "--- FAIL: TestNoSecretLeak (0.01s)\n--- PASS: TestDeclaredResources (0.02s)\nPASS\n"},
+		{"--block-verify", "no-closing-pass.txt", "--- PASS: TestDeclaredResources (0.02s)\n"},
+	} {
+		t.Run(tc[1], func(t *testing.T) {
 			dir := t.TempDir()
 			outPath := filepath.Join(dir, "record.json")
 			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
