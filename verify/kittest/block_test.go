@@ -1015,23 +1015,17 @@ func deleteFiles(ctx context.Context, c *ghapi.Client, rec landing.Record) error
 	return err
 }
 
-// repositoryProvider lists the landing while main carries a file, and loses it by deleting every landed file.
+// repositoryProvider lists the landing by its repository, and loses it by deleting every landed file.
 type repositoryProvider struct{ b *landingBlock }
 
 func (p repositoryProvider) Repository() *landingtest.Fake { return p.b.repo }
 
 func (p repositoryProvider) ListTagged(context.Context, string) ([]observe.Tagged, error) {
-	if len(p.b.repo.Main()) == 0 {
-		return nil, nil
-	}
 	return []observe.Tagged{{Type: landingType, ID: p.b.repo.Repo}}, nil
 }
 
 func (p repositoryProvider) Lose(ctx context.Context, r contract.CreatedResource) error {
-	rec, err := landing.RecordFromIdentity(r.Identity)
-	if err != nil {
-		return err
-	}
+	rec, _ := landing.RecordFromIdentity(r.Identity)
 	return deleteFiles(ctx, p.b.client(), rec)
 }
 
@@ -1042,13 +1036,13 @@ func landingBlockThat(t *testing.T, teardown string) kittest.Block {
 	if teardown == "leaves its files" {
 		types = markedSnapshot(t, landingType)
 	}
-	client := func(context.Context, contract.Desired) (*ghapi.Client, error) { return b.client(), nil }
+	observer := landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return b.client(), nil }}
 	return kittest.Block{
 		Config: handler.Config{
 			Resource:  b,
 			Manifest:  []byte(landingBlockManifest),
 			Types:     types,
-			Observers: map[string]handler.Observer{landingType: landing.Observer{Client: client}},
+			Observers: map[string]handler.Observer{landingType: observer},
 		},
 		Provider: repositoryProvider{b: b},
 		Desired:  blockDesired(""),
@@ -1074,9 +1068,7 @@ func TestAssertBlock_ReadsMainAfterUnsubscribingABlockThatLandsFiles(t *testing.
 			if got.failed != (tc.want != nil) {
 				t.Fatalf("AssertBlock failed = %v; want %v, naming %q: %q", got.failed, tc.want != nil, tc.want, got.logs)
 			}
-			if tc.want != nil {
-				wantProblemNaming(t, got.logs, tc.want...)
-			}
+			wantProblemNaming(t, got.logs, tc.want...)
 		})
 	}
 }
