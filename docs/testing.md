@@ -102,11 +102,16 @@ each file the app changed, and report the kept files.
 
 For a block declaring one of these types, `kittest.AssertBlock` reads the fake
 repository's main after unsubscribe. Before the unsubscribe it changes the first
-file a landing record created, as an app editing a landed file would. For a
-`github.scaffold-contribution`, the check first writes each file the
-`scaffoldContribution` output offers onto the fake main, as app-scaffold
-commits it. It fails an offered file that the landing record does not name at
-its blob hash, since unsubscribe could not remove it. After the unsubscribe,
+file a landing record created, as an app editing a landed file would.
+
+A `github.scaffold-contribution` lands nothing itself, because the app-scaffold
+block commits its files, as
+[Removing the files a block landed](helpers.md#removing-the-files-a-block-landed)
+describes. So for such a resource the check first writes each file its
+`scaffoldContribution` output offers onto the fake main. It fails an offered
+file whose content's git blob hash the resource's landing record does not
+name, since unsubscribe could not recognise the file to remove it. After the
+unsubscribe,
 the check fails the block on each of these, naming the path or branch:
 
 | What the check finds | The problem it reports |
