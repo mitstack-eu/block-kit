@@ -158,7 +158,7 @@ was created as, the identity that addresses it, such as
 | Call | What the handler does |
 |---|---|
 | `subscribe`, `upgrade` | Runs one `EnsureResources`, then observes each declared resource once, in manifest order, and stops at the first not yet `present` |
-| `unsubscribe` | Runs one `Delete`, then observes each declared resource once, in reverse order, stops at the first not yet `absent`, and adds the outputs `Delete` returned to the answer once all are absent |
+| `unsubscribe` | Runs one `Delete`, or `DeleteKeeping` for a block that implements `handler.KeptReporter`, then observes each declared resource once, in reverse order, stops at the first not yet `absent`, and adds the outputs `Delete` returned to the answer once all are absent |
 | `validate` | Observes each declared resource once, and for a block that implements `handler.ReplacementPlanner` names the resources an upgrade would replace |
 
 The handler never waits inside a call. A resource short of the state the call
@@ -177,6 +177,24 @@ On an unsubscribe the handler skips a resource whose recorded state is
 and your `Delete` reads the same record to leave it alone. It also skips the
 observation of a resource whose type `Config.Types` marks
 `endsWithSubscription`, and counts it absent once `Delete` succeeds.
+
+A block that lands files in an app's repository reports the files its
+unsubscribe left because the app changed them. It implements
+`handler.KeptReporter`, whose `DeleteKeeping` replaces `Delete` and returns,
+beside the outputs, those kept files keyed by the declared resource that landed
+them. The handler answers them on that resource's delete outcome, and the
+platform reads them from `resources.<name>.delete.kept`:
+
+```json
+{"absent": true,
+ "resources": {"github.scaffold-contribution": {"delete": {"kept": [
+   {"repository": "acme/weather", "path": "CLAUDE.md", "reason": "changed"}]}}}}
+```
+
+A kept file never carries its content. The handler answers 400 when
+`DeleteKeeping` names a resource the manifest does not declare, and a block
+implementing only `Delete` is served as before. The code is `deleteBlock` in
+`handler/block.go`, and `landing.Remove` returns the list in its `Result.Kept`.
 
 Each observer is handed the identity and type `EnsureResources` reported for
 its resource. When nothing was reported, it gets what the engine recorded,

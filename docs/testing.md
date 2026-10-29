@@ -43,7 +43,7 @@ func TestDeclaredResources(t *testing.T) {
 | Field | What you supply |
 |---|---|
 | `Config` | The `handler.Config` your `main` hands `handler.New`, of which the check replaces only the signing key and the JWKS address |
-| `Provider` | Your fake provider, which lists everything carrying the subscription's id and can lose one resource behind the block's back |
+| `Provider` | Your fake provider, which lists everything carrying the subscription's id and can lose one resource behind the block's back. A block declaring a file-landing type passes a `kittest.RepositoryProvider`, whose `Repository` method hands the check the `landingtest` fake its config lands on |
 | `Desired` | The subscription, with a `SubscriptionID`, a `BlockID`, an `OrgID` and the secrets your code reads |
 | `Upgrade` | The `Desired` of an upgrade, the call that brings a subscription to a new version of the block, which the check sends after subscribe. It is required when a declared type is stateful |
 | `Requirements` | For each requirement and each type that may meet it, the outputs the check binds, keyed by requirement and then type |
@@ -87,6 +87,33 @@ A requirement listing more than one type runs the check once per listed type,
 with `Requirements` giving each type's outputs, and each problem names the
 type. `kittest.CheckBlock` does the same work and returns the problems as
 strings.
+
+## Proving a block that lands files
+
+A file-landing type is one whose resource keeps a landing record in its
+identity, the record `capabilities/github/landing` writes. The types are
+`github.scaffold-commit`, `github.scaffold-contribution` and
+`github.workflow-file`, as `landing.LandsFiles` lists them. Unsubscribe must
+remove every file such a block created that main still carries unchanged, keep
+each file the app changed, and report the kept files.
+
+For a block declaring one of these types, `kittest.AssertBlock` reads the fake
+repository's main after unsubscribe. Before the unsubscribe it changes the first
+file a landing record created, as an app editing a landed file would. After it,
+the check fails the block on each of these, naming the path or branch:
+
+| What the check finds | The problem it reports |
+|---|---|
+| A created file still at its landed blob | `main of acme/weather still carries Dockerfile unchanged after unsubscribe, want it removed` |
+| The changed file gone or rewritten | `unsubscribe deleted or rewrote CLAUDE.md, which the app changed after the landing, want it kept` |
+| The changed file kept, with no delete outcome naming it kept | `unsubscribe kept CLAUDE.md, which the app changed, but no delete outcome answers it kept with reason changed` |
+| A branch under `mitstack/<subscription>/` | `branch mitstack/sub-block/land under the subscription's prefix remains on acme/weather after unsubscribe, want it deleted` |
+
+A block holds all four when its `DeleteKeeping` calls `landing.Remove` and
+returns the `Result.Kept` it gets back under the resource's name, as
+[Serving lifecycle calls](handler.md#what-the-handler-calls-for-each-call)
+describes. The check lives in `verify/kittest/block.go`, in
+`changeALandedFile` and `readMain`.
 
 ## Proving teardown after a broken setup
 
