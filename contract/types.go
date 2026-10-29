@@ -134,8 +134,7 @@ type CallOutcome struct {
 	StatusDetail string            `json:"statusDetail,omitempty"`
 	Identity     map[string]string `json:"identity,omitempty"`
 	Type         string            `json:"type,omitempty"`
-	// Kept is reported by a delete alone.
-	Kept []Kept `json:"kept,omitempty"`
+	Kept         []Kept            `json:"kept,omitempty"`
 }
 
 // Kept is a file an unsubscribe left in an app's repository, naming no content, and Reason is "changed" when the app changed it after the landing.
