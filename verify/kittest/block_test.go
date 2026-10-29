@@ -981,9 +981,14 @@ func (b *landingBlock) Ensure(ctx context.Context, d contract.Desired) error {
 }
 
 func (b *landingBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
+	_, _, err := b.DeleteKeeping(ctx, d)
+	return nil, err
+}
+
+func (b *landingBlock) DeleteKeeping(ctx context.Context, d contract.Desired) (map[string]string, map[string][]contract.Kept, error) {
 	rec, err := landing.RecordFromIdentity(d.RecordedResources[landingType].Identity)
 	if err != nil || b.teardown == "leaves its files" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	subscription := d.SubscriptionID
 	switch b.teardown {
@@ -991,11 +996,14 @@ func (b *landingBlock) Delete(ctx context.Context, d contract.Desired) (map[stri
 		subscription += "-other"
 	case "deletes every file":
 		if err := deleteFiles(ctx, b.client(), rec); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	_, err = landing.Remove(ctx, b.client(), landing.Removal{Subscription: subscription, Records: []landing.Record{rec}})
-	return nil, err
+	res, err := landing.Remove(ctx, b.client(), landing.Removal{Subscription: subscription, Records: []landing.Record{rec}})
+	if b.teardown == "reports nothing kept" {
+		return nil, nil, err
+	}
+	return nil, map[string][]contract.Kept{landingType: res.Kept}, err
 }
 
 func deleteFiles(ctx context.Context, c *ghapi.Client, rec landing.Record) error {
@@ -1054,6 +1062,7 @@ func TestAssertBlock_ReadsMainAfterUnsubscribingABlockThatLandsFiles(t *testing.
 		{"leaves its files", []string{"Dockerfile", "unchanged"}},
 		{"removes under another prefix", []string{"branch mitstack/sub-block/land"}},
 		{"deletes every file", []string{"CLAUDE.md", "changed"}},
+		{"reports nothing kept", []string{"CLAUDE.md", "delete outcome"}},
 	} {
 		t.Run("a block that "+cmp.Or(tc.teardown, "removes through the landing package"), func(t *testing.T) {
 			in := landingBlockThat(t, tc.teardown)
