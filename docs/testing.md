@@ -90,10 +90,13 @@ strings.
 
 ## Proving a block that lands files
 
-A file-landing type is one whose resource keeps a landing record in its
-identity, the record `capabilities/github/landing` writes. The types are
+A file-landing type is one whose resource lands files on an app's main, so it
+keeps a landing record in its identity, the record
+`capabilities/github/landing` writes. The types are `github.commit`,
 `github.scaffold-commit`, `github.scaffold-contribution` and
-`github.workflow-file`, as `landing.LandsFiles` lists them. Unsubscribe must
+`github.workflow-file`, as `landing.LandsFiles` lists them. A type's
+`endsWithSubscription` mark in the catalogue does not change whether the check
+runs. Unsubscribe must
 remove every file such a block created that main still carries unchanged, keep
 each file the app changed, and report the kept files.
 
