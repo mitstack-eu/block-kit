@@ -17,7 +17,8 @@
 # block-verify again in the image it pushed and signs that result into the
 # provenance record, with the kit version the operator binary was built with.
 #
-# `conformance`, `secrets` and `scripts` run on every event. `publish` runs
+# The block type's conformance job, `secrets` and `scripts` run on every
+# event. `publish` runs
 # only on a push to the caller's default branch, so a pull-request run of a
 # caller gets the three checks with the publish job skipped. A caller whose
 # calling job is named `block` reports them as `block / conformance`,
@@ -199,8 +200,8 @@ jobs:
           name: blockverify-report
           path: blockverify-report.json
 
-  # The only check job granted an identity token, because the verify role it
-  # assumes pulls the private operator image and grants nothing else. The
+  # The only check job with an identity token, which the verify role needs to
+  # pull the private operator image, the one thing that role grants. The
   # block's own code runs only inside the image, which receives no token.
   opentofu-conformance:
     name: ${{ inputs.opentofu-only && 'conformance' || 'opentofu conformance' }}
@@ -413,8 +414,9 @@ jobs:
           fi
           echo "The platform signed the attestation: $body"
 
-  # One conformance job is always skipped, and a skipped need skips publish
-  # unless its if: asks only that no check failed.
+  # One of the two conformance jobs is always skipped, and GitHub skips a job
+  # with a skipped need unless its if: calls a status function. So this if:
+  # asks that no need failed or was cancelled.
   publish:
     needs: [conformance, opentofu-conformance, secrets, scripts]
     if: ${{ !cancelled() && !failure() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -584,8 +586,9 @@ jobs:
           fi
           echo "KIT_VERSION=$KIT_VERSION" >> "$GITHUB_ENV"
 
-      # An OpenTofu-only block has no go.mod, so its kit is the one whose
-      # version the build information of the operator binary in its image names.
+      # An OpenTofu-only block has no go.mod, so the record's kitVersion is the
+      # block-kit version the operator binary in its image was built with,
+      # which the binary's Go build information names.
       - name: Determine the kit version the operator image was built with
         if: steps.existing.outputs.record == 'false' && inputs.opentofu-only
         run: |
@@ -606,8 +609,8 @@ jobs:
         if: steps.existing.outputs.record == 'false' && !inputs.opentofu-only
         run: ./blockverify --standalone --json . > blockverify-report.json
 
-      # The record carries the result of the block-verify that ran in the very
-      # image it describes, run here again for the same reason as above.
+      # Like blockverify above, block-verify runs again here, in the very image
+      # the record describes, so blockprov build signs a fresh pass from it.
       - name: block-verify inside the image, for blockprov build's result
         if: steps.existing.outputs.record == 'false' && inputs.opentofu-only
         run: |

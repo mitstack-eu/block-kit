@@ -7,8 +7,9 @@ block's CI reports to the platform. The page covers what each check judges,
 how you run it from your block's repository, and where CI runs it for you.
 
 A block is a managed service defined by its `manifest.yaml`, and its operator
-is the Go program in the block's repository that answers the platform's
-lifecycle calls. An attestation is the platform's signed record that a block
+is the Go program that answers the platform's lifecycle calls, built in the
+block's repository or, for an OpenTofu-only block, taken from
+opentofu-operator. An attestation is the platform's signed record that a block
 passed every check, which the catalog shows as a verified badge.
 
 ## What blockverify judges
@@ -86,7 +87,8 @@ The check repeats the unsubscribe as the engine repeats a teardown. While the
 answer is not `absent:true`, it sends the unsubscribe again, with each resource
 an earlier answer observed absent recorded absent, so a block whose teardown
 runs in the background passes once that teardown finishes. A resource still
-standing when the check's time for re-sending runs out fails, named as in
+standing after the check has re-sent the unsubscribe for 10 seconds fails,
+named as in
 `resource "aws.ebs-volume": observed present after unsubscribe re-sent for 10s, want absent`.
 
 A block's test builds the block as production does, with the settings its
@@ -222,9 +224,12 @@ each push to `main` that workflow does three things with the token:
 
 ### Checks for an OpenTofu-only block
 
-An OpenTofu-only block is an OpenTofu module with no `go.mod`. Its image builds
-on the opentofu-operator image and copies the module to `/module`. Your CI
-sets `opentofu-only: true`:
+An OpenTofu-only block has no Go code of its own. It is an OpenTofu module, a
+directory of `.tf` files that OpenTofu, the open-source infrastructure tool,
+plans and applies. Its operator is opentofu-operator, a Go program built on
+this kit that runs the module for each lifecycle call. The block's
+`Dockerfile` builds on opentofu-operator's image, pinned by digest, and copies
+the module to `/module`. Your CI sets `opentofu-only: true`:
 
 ```yaml
 jobs:
@@ -237,32 +242,48 @@ jobs:
       opentofu-only: true
 ```
 
-The `opentofu-conformance` job then runs in place of the Go `conformance` job
-and reports under the same check name. So `block / conformance` stays the
-check your `main` requires. The operator image is private, so the job assumes
-the role your repository variable `AWS_BLOCK_VERIFY_ROLE_ARN` names, which
-may pull that image and nothing else. The job builds your block's image once
-and runs three checks inside it:
+The workflow assumes two AWS roles, which two variables on your block's GitHub
+repository name by their ARN, Amazon's identifier for a role. The platform
+repository, mitstack-eu/mitstack, creates both roles in
+`deploy/tofu/block_publish.tf` for each block that file lists in
+`block_base_images`. A mitstack maintainer adds your block there and sets the
+two variables.
+
+| Variable | What its role may do | Which runs may assume it |
+|---|---|---|
+| `AWS_BLOCK_VERIFY_ROLE_ARN` | Pull the operator image, and nothing else | Your pull requests and pushes to `main` |
+| `AWS_BLOCK_PUBLISH_ROLE_ARN` | Push your block's image, and pull the operator image | Pushes to `main` |
+
+The `opentofu-conformance` job runs in place of the Go `conformance` job and
+reports under the same check name, so `block / conformance` stays the check
+your `main` requires. The operator image is private, so the job assumes the
+verify role to pull it. The job builds your block's image once and runs three
+checks inside it:
 
 | Check | What it runs |
 |---|---|
 | `tofu fmt -check` | `tofu fmt -check -diff -recursive /module`, which fails on a file OpenTofu would reformat and prints the change |
 | `tofu test` | `tofu init` with no backend, then `tofu test` over the module's `.tftest.hcl` files |
-| `block-verify` | The operator's guards over the module, such as `TestDeclaredResources`, which fails when `manifest.yaml` declares a type the module never creates |
+| `block-verify` | The test binary the operator image carries, which runs the kit's guards over the module. Its `TestDeclaredResources` fails, for example, when `manifest.yaml` declares a resource that `resources.json` does not map to the module |
+
+block-verify judges an OpenTofu-only block as blockverify judges a Go block's
+code. It comes from the operator image, while the Go job builds blockverify
+from the kit at `kit-ref`.
 
 On a push to your default branch, the `publish` job builds, scans and pushes
-the image as it does for a Go block. The role `AWS_BLOCK_PUBLISH_ROLE_ARN`
-names must therefore also pull the operator image. The job runs block-verify
-again in the image it pushed and hands that output to
-`blockprov build --block-verify`. The provenance record then carries
-block-verify's verdict, the sha256 of its output, and `block-verify@<kit
-version>` as its suite version. Its kit version is the block-kit version the
-operator binary in the image was built with, because the block has no
-`go.mod` to read it from.
+the image as it does for a Go block. The job runs block-verify again in the
+image it pushed and hands that output to `blockprov build --block-verify`.
+The provenance record's `conformance` then carries block-verify's verdict and
+the sha256 of its output. Its `suiteVersion`, the field naming the checks that
+judged the block, reads `block-verify@<kit version>`. The record's kit version
+is the block-kit version the operator binary in the image was built with,
+because the block has no `go.mod` to read it from.
 
-The platform creates both roles for each block listed in `block_base_images`
-in its repository's `deploy/tofu/block_publish.tf`. The `attest` job
-needs the Go `conformance` job, so it does not run for an OpenTofu-only block.
+Because block-verify and the operator binary both come from your block's
+image, the record trusts what that image carries. A `Dockerfile` that builds
+on another image, or replaces `/usr/local/bin/block-verify`, changes the
+verdict and the kit version the record carries. So review a change to the
+`Dockerfile` as you would a change to the checks themselves.
 
 ### Asking the platform from the shared workflow
 
@@ -300,7 +321,8 @@ With `post-attestation: true`, the `attest` job runs on a push to your default
 branch once `conformance`, `secrets` and `scripts` pass. It fetches the
 platform's manifest, runs blockverify on it, and posts the report to the
 attestations route, as the scaffolded workflow does. A block on the shared
-workflow then drops its own `block-verify.yml`.
+workflow then drops its own `block-verify.yml`. The `attest` job needs the Go
+`conformance` job, so it does not run for an OpenTofu-only block.
 
 Both inputs default to `false`, and `api-url` names the platform, which
 defaults to `https://api.mitstack.dev`. A block whose repository you created
