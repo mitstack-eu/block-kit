@@ -29,16 +29,14 @@ spec:
     contract: kit/v1
 `
 
-// heldProvider holds each item it created under the subscription that created it.
 type heldProvider struct {
 	mu     sync.Mutex
 	held   map[string]string
 	faults *kittest.Faults
 	// findsOnTeardown makes Delete remove everything the subscription holds instead of what its own process created.
 	findsOnTeardown bool
-	// ignoresFaults makes every side effect skip the Faults it was handed.
-	ignoresFaults bool
-	refusesWrites bool
+	ignoresFaults   bool
+	refusesWrites   bool
 }
 
 func (p *heldProvider) create(item, subscriptionID, what string) error {

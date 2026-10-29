@@ -3,6 +3,7 @@ package kittest_test
 // Each fakeBlock misbehaviour breaks one of ADR 0085's guards, and every problem names its resource as resource "<name>".
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/capabilities/github/landing"
+	"github.com/mitstack-eu/block-kit/capabilities/github/landing/landingtest"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/observe"
@@ -338,7 +342,6 @@ func (s silentBlock) Delete(ctx context.Context, d contract.Desired) (map[string
 	return s.b.Delete(ctx, d)
 }
 
-// rememberingObserver never asks the provider.
 type rememberingObserver struct {
 	b    *fakeBlock
 	name string
@@ -516,24 +519,23 @@ func TestAssertBlock_ObservesAResourceOncePerVerb(t *testing.T) {
 	}
 }
 
-const contributionBlockManifest = `apiVersion: mitstack/v1beta
+const pullRequestBlockManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
-  id: contribution-block
-  name: Contribution Block
+  id: pull-request-block
+  name: Pull Request Block
 spec:
   version: 1.0.0
   resources:
     - aws.ec2-instance
-    - github.scaffold-contribution
+    - github.pull-request
   provides: [aws.ec2-instance]
   lifecycle:
-    endpoint: https://contribution-block.example/hook
+    endpoint: https://pull-request-block.example/hook
     operations: [subscribe, unsubscribe, upgrade, validate]
     contract: kit/v1
 `
 
-// markedSnapshot is the platform's snapshot with each of ids marked endsWithSubscription.
 func markedSnapshot(t *testing.T, ids ...string) contract.TypeSnapshot {
 	t.Helper()
 	snap := typeSnapshot(t)
@@ -546,22 +548,22 @@ func markedSnapshot(t *testing.T, ids ...string) contract.TypeSnapshot {
 	return snap
 }
 
-// contributionBlock leaves its scaffold contribution in the provider on unsubscribe, as a contribution to an app repository the platform keeps does.
-func contributionBlock(t *testing.T) (*fakeBlock, kittest.Block) {
+// pullRequestBlock leaves its pull request in the provider on unsubscribe, as a merged pull request stays.
+func pullRequestBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 	t.Helper()
 	p := newFakeProvider()
 	b := &fakeBlock{p: p, resources: map[string]string{
-		"aws.ec2-instance":             "aws.ec2-instance",
-		"github.scaffold-contribution": "github.scaffold-contribution",
-	}, leaveOnDelete: "github.scaffold-contribution"}
+		"aws.ec2-instance":    "aws.ec2-instance",
+		"github.pull-request": "github.pull-request",
+	}, leaveOnDelete: "github.pull-request"}
 	return b, kittest.Block{
 		Config: handler.Config{
 			Resource: b,
-			Manifest: []byte(contributionBlockManifest),
-			Types:    markedSnapshot(t, "github.scaffold-contribution"),
+			Manifest: []byte(pullRequestBlockManifest),
+			Types:    markedSnapshot(t, "github.pull-request"),
 			Observers: map[string]handler.Observer{
-				"aws.ec2-instance":             providerObserver{p: p},
-				"github.scaffold-contribution": providerObserver{p: p},
+				"aws.ec2-instance":    providerObserver{p: p},
+				"github.pull-request": providerObserver{p: p},
 			},
 		},
 		Provider: p,
@@ -570,8 +572,8 @@ func contributionBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 }
 
 func TestAssertBlock_PassesAMarkedResourceLeftPresentAndFailsAnUnmarkedOne(t *testing.T) {
-	_, marked := contributionBlock(t)
-	b, unmarked := contributionBlock(t)
+	_, marked := pullRequestBlock(t)
+	b, unmarked := pullRequestBlock(t)
 	b.leaveOnDelete = "aws.ec2-instance"
 
 	passing := runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, marked) })
@@ -585,7 +587,6 @@ func TestAssertBlock_PassesAMarkedResourceLeftPresentAndFailsAnUnmarkedOne(t *te
 	}
 }
 
-// partlessSnapshot is the platform's snapshot with every type's parts removed.
 func partlessSnapshot(t *testing.T) contract.TypeSnapshot {
 	t.Helper()
 	snap := typeSnapshot(t)
@@ -708,7 +709,6 @@ spec:
     contract: kit/v1
 `
 
-// recordingLister is a kit lister over the fake provider that keeps each Desired it is handed.
 type recordingLister struct {
 	p    *fakeProvider
 	seen *[]contract.Desired
@@ -818,9 +818,9 @@ func TestCheckBlock(t *testing.T) {
 			return in
 		}
 	}
-	contribution := func(leave string, marked ...string) func(t *testing.T) kittest.Block {
+	pullRequest := func(leave string, marked ...string) func(t *testing.T) kittest.Block {
 		return func(t *testing.T) kittest.Block {
-			b, in := contributionBlock(t)
+			b, in := pullRequestBlock(t)
 			if leave != "" {
 				b.leaveOnDelete, in.Config.Types = leave, markedSnapshot(t, marked...)
 			}
@@ -898,9 +898,9 @@ func TestCheckBlock(t *testing.T) {
 		{"a provided resource missing only an optional output passes", host(func(b *fakeBlock, in *kittest.Block) {
 			in.Config.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "publicIp"}
 		}), nil, true},
-		{"a resource of a marked type left present after unsubscribe passes", contribution(""), nil, true},
-		{"an unmarked resource left present beside a marked one fails", contribution("aws.ec2-instance", "github.scaffold-contribution"), [][]string{{`resource "aws.ec2-instance"`, "unsubscribe"}}, false},
-		{"a contribution whose snapshot leaves its type unmarked fails", contribution("github.scaffold-contribution"), [][]string{{`resource "github.scaffold-contribution"`, "unsubscribe"}}, false},
+		{"a resource of a marked type left present after unsubscribe passes", pullRequest(""), nil, true},
+		{"an unmarked resource left present beside a marked one fails", pullRequest("aws.ec2-instance", "github.pull-request"), [][]string{{`resource "aws.ec2-instance"`, "unsubscribe"}}, false},
+		{"a pull request whose snapshot leaves its type unmarked fails", pullRequest("github.pull-request"), [][]string{{`resource "github.pull-request"`, "unsubscribe"}}, false},
 		{"tagged parts of types the recorded resources' types list pass", host(withParts(hostParts()...)), nil, true},
 		{"a tagged instance profile the recorded instance's type lists as a part passes", host(withParts(observe.Tagged{Type: "aws.iam-instance-profile", ID: "mitstack-app-myapp-profile"})), nil, true},
 		{"a second tagged instance profile beyond the instance's part room fails alone", host(withParts(
@@ -934,6 +934,145 @@ func TestCheckBlock(t *testing.T) {
 			if tc.exact && len(problems) != len(tc.want) {
 				t.Errorf("CheckBlock problems = %q; want exactly %d", problems, len(tc.want))
 			}
+		})
+	}
+}
+
+const landingType = "github.scaffold-contribution"
+
+const landingBlockManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: landing-block
+  name: Landing Block
+spec:
+  version: 1.0.0
+  resources:
+    - ` + landingType + `
+  lifecycle:
+    endpoint: https://landing-block.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
+// landingBlock lands two files and a branch through the landing package, and removes them through landing.Remove unless teardown names a fault.
+type landingBlock struct {
+	repo     *landingtest.Fake
+	teardown string
+}
+
+func (b *landingBlock) client() *ghapi.Client { return ghapi.NewClient(b.repo.URL, "ghs_kittest", nil) }
+
+func (b *landingBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	prior, _ := landing.RecordFromIdentity(d.RecordedResources[landingType].Identity)
+	files := map[string]string{"CLAUDE.md": "# weather\n", "Dockerfile": "FROM nginx:1.27\n"}
+	rec, err := landing.Land(ctx, b.client(), landing.Landing{Repository: b.repo.Repo, Message: "land", Files: files, Prior: prior})
+	if err != nil {
+		return nil, err
+	}
+	b.repo.Branch(landing.BranchPrefix(d.SubscriptionID) + "land")
+	identity, err := rec.Identity()
+	return []contract.CreatedResource{{Name: landingType, Type: landingType, Identity: identity}}, err
+}
+
+func (b *landingBlock) Ensure(ctx context.Context, d contract.Desired) error {
+	_, err := b.EnsureResources(ctx, d)
+	return err
+}
+
+func (b *landingBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
+	_, _, err := b.DeleteKeeping(ctx, d)
+	return nil, err
+}
+
+func (b *landingBlock) DeleteKeeping(ctx context.Context, d contract.Desired) (map[string]string, map[string][]contract.Kept, error) {
+	rec, err := landing.RecordFromIdentity(d.RecordedResources[landingType].Identity)
+	if err != nil || b.teardown == "leaves its files" {
+		return nil, nil, nil
+	}
+	subscription := d.SubscriptionID
+	switch b.teardown {
+	case "removes under another prefix":
+		subscription += "-other"
+	case "deletes every file":
+		if err := deleteFiles(ctx, b.client(), rec); err != nil {
+			return nil, nil, err
+		}
+	}
+	res, err := landing.Remove(ctx, b.client(), landing.Removal{Subscription: subscription, Records: []landing.Record{rec}})
+	if b.teardown == "reports nothing kept" {
+		return nil, nil, err
+	}
+	return nil, map[string][]contract.Kept{landingType: res.Kept}, err
+}
+
+func deleteFiles(ctx context.Context, c *ghapi.Client, rec landing.Record) error {
+	head, err := c.HeadCommit(ctx, rec.Repository)
+	if err != nil {
+		return err
+	}
+	changes := map[string]*string{}
+	for _, f := range rec.Files {
+		changes[f.Path] = nil
+	}
+	_, err = c.CommitChanges(ctx, rec.Repository, head, "delete", changes)
+	return err
+}
+
+type repositoryProvider struct{ b *landingBlock }
+
+func (p repositoryProvider) Repository() *landingtest.Fake { return p.b.repo }
+
+func (p repositoryProvider) ListTagged(context.Context, string) ([]observe.Tagged, error) {
+	return []observe.Tagged{{Type: landingType, ID: p.b.repo.Repo}}, nil
+}
+
+func (p repositoryProvider) Lose(ctx context.Context, r contract.CreatedResource) error {
+	rec, _ := landing.RecordFromIdentity(r.Identity)
+	return deleteFiles(ctx, p.b.client(), rec)
+}
+
+func landingBlockThat(t *testing.T, teardown string) kittest.Block {
+	t.Helper()
+	b := &landingBlock{repo: landingtest.New(t, "acme/weather"), teardown: teardown}
+	types := typeSnapshot(t)
+	if teardown == "leaves its files" {
+		types = markedSnapshot(t, landingType)
+	}
+	observer := landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return b.client(), nil }}
+	return kittest.Block{
+		Config: handler.Config{
+			Resource:  b,
+			Manifest:  []byte(landingBlockManifest),
+			Types:     types,
+			Observers: map[string]handler.Observer{landingType: observer},
+		},
+		Provider: repositoryProvider{b: b},
+		Desired:  blockDesired(""),
+	}
+}
+
+// The check changes CLAUDE.md, the first file the landing created, before it unsubscribes, which leaves Dockerfile unchanged.
+func TestAssertBlock_ReadsMainAfterUnsubscribingABlockThatLandsFiles(t *testing.T) {
+	for _, tc := range []struct {
+		teardown string
+		want     []string
+	}{
+		{"", nil},
+		{"leaves its files", []string{"Dockerfile", "unchanged"}},
+		{"removes under another prefix", []string{"branch mitstack/sub-block/land"}},
+		{"deletes every file", []string{"CLAUDE.md", "changed"}},
+		{"reports nothing kept", []string{"CLAUDE.md", "delete outcome"}},
+	} {
+		t.Run("a block that "+cmp.Or(tc.teardown, "removes through the landing package"), func(t *testing.T) {
+			in := landingBlockThat(t, tc.teardown)
+
+			got := runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
+
+			if got.failed != (tc.want != nil) {
+				t.Fatalf("AssertBlock failed = %v; want %v, naming %q: %q", got.failed, tc.want != nil, tc.want, got.logs)
+			}
+			wantProblemNaming(t, got.logs, tc.want...)
 		})
 	}
 }

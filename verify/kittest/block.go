@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mitstack-eu/block-kit/capabilities/github/landing"
+	"github.com/mitstack-eu/block-kit/capabilities/github/landing/landingtest"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/observe"
@@ -64,7 +66,8 @@ type desiredLister interface {
 // Block is what a block served through one block-level handler supplies to have its guards checked.
 type Block struct {
 	// Config is the handler.Config the block serves, of which the check replaces only the signing key and the JWKS address.
-	Config   handler.Config
+	Config handler.Config
+	// Provider is a RepositoryProvider when a declared type lands files, so the check can read main after unsubscribe.
 	Provider Provider
 	// Desired needs its SubscriptionID, BlockID and OrgID.
 	Desired contract.Desired
@@ -248,6 +251,7 @@ type blockCheck struct {
 	desired  contract.Desired
 	ran      map[string]bool
 	problems []string
+	kept     map[string][]contract.Kept
 }
 
 func (c *blockCheck) problem(format string, args ...any) {
@@ -273,7 +277,89 @@ func (c *blockCheck) run() {
 	if !c.upgrade() || !c.observesTheProvider() {
 		return
 	}
+	landed := c.changeALandedFile()
 	c.unsubscribe()
+	c.readMain(landed)
+}
+
+// RepositoryProvider is the Provider of a block declaring a file-landing type, which hands the check the fake repository the block's Config lands on.
+type RepositoryProvider interface {
+	Provider
+	Repository() *landingtest.Fake
+}
+
+type landedFiles struct {
+	repo             *landingtest.Fake
+	records          map[string]landing.Record
+	changed, content string
+}
+
+// changeALandedFile reads each file-landing resource's record and changes the first file a record created, as an app edits a landed file; it returns nil for a block that lands no files.
+func (c *blockCheck) changeALandedFile() *landedFiles {
+	var names []string
+	for _, entry := range c.spec.Resources {
+		if landing.LandsFiles(c.desired.RecordedResources[entry.Name].Type) {
+			names = append(names, entry.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	p, ok := c.in.Provider.(RepositoryProvider)
+	if !ok {
+		c.resourceProblem(names[0], "its type lands files, but Provider is no kittest.RepositoryProvider, so the check cannot read main after unsubscribe")
+		return nil
+	}
+	l := &landedFiles{repo: p.Repository(), records: map[string]landing.Record{}}
+	for _, name := range names {
+		rec, err := landing.RecordFromIdentity(c.desired.RecordedResources[name].Identity)
+		if err != nil {
+			c.resourceProblem(name, "its type lands files, but its identity holds no landing record: %v", err)
+			continue
+		}
+		if rec.Repository != l.repo.Repo {
+			c.resourceProblem(name, "it landed files in %s, but the Provider's fake repository is %s", rec.Repository, l.repo.Repo)
+			continue
+		}
+		l.records[name] = rec
+		for _, f := range rec.Files {
+			if l.changed == "" && f.Created {
+				l.changed = f.Path
+			}
+		}
+	}
+	if l.changed != "" {
+		l.content = l.repo.Main()[l.changed] + "\nchanged by the app\n"
+		l.repo.Edit(l.changed, l.content)
+	}
+	return l
+}
+
+// readMain fails a landed file main still carries unchanged, the changed file gone or rewritten, and a branch left under the subscription's prefix.
+func (c *blockCheck) readMain(l *landedFiles) {
+	if l == nil {
+		return
+	}
+	main := l.repo.Main()
+	for _, name := range sortedKeys(l.records) {
+		for _, f := range l.records[name].Files {
+			content, held := main[f.Path]
+			switch {
+			case f.Path == l.changed && content != l.content:
+				c.resourceProblem(name, "unsubscribe deleted or rewrote %s, which the app changed after the landing, want it kept", f.Path)
+			case f.Path == l.changed && !slices.Contains(c.kept[name], contract.Kept{Repository: l.repo.Repo, Path: f.Path, Reason: "changed"}):
+				c.resourceProblem(name, "unsubscribe kept %s, which the app changed, but no delete outcome answers it kept with reason changed", f.Path)
+			case f.Path != l.changed && f.Created && held && landing.BlobHash([]byte(content)) == f.Blob:
+				c.resourceProblem(name, "main of %s still carries %s unchanged after unsubscribe, want it removed", l.repo.Repo, f.Path)
+			}
+		}
+	}
+	prefix := landing.BranchPrefix(c.desired.SubscriptionID)
+	for _, branch := range l.repo.Branches() {
+		if strings.HasPrefix(branch, prefix) {
+			c.problem("branch %s under the subscription's prefix remains on %s after unsubscribe, want it deleted", branch, l.repo.Repo)
+		}
+	}
 }
 
 // settleBudget bounds how long converge and unsubscribe settle a pending answer, as the engine's settle budget bounds its own, and settlePause spaces the calls so work the block left in flight can finish.
@@ -556,6 +642,7 @@ func (c *blockCheck) unsubscribe() {
 			return
 		}
 		c.ran[guardAbsence] = true
+		c.keepKept(resp)
 		if resp.Absent != nil && *resp.Absent {
 			return
 		}
@@ -571,6 +658,17 @@ func (c *blockCheck) unsubscribe() {
 			}
 		}
 		time.Sleep(settlePause)
+	}
+}
+
+func (c *blockCheck) keepKept(resp contract.Response) {
+	for name, o := range resp.Resources {
+		if o.Delete != nil && len(o.Delete.Kept) > 0 {
+			if c.kept == nil {
+				c.kept = map[string][]contract.Kept{}
+			}
+			c.kept[name] = o.Delete.Kept
+		}
 	}
 }
 

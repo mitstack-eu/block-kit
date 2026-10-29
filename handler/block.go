@@ -45,7 +45,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		r.ensured(reported)
 		return r.ensureEach(ctx)
 	case "unsubscribe":
-		outputs, err := r.h.resource.Delete(ctx, r.d)
+		outputs, err := r.deleteBlock(ctx)
 		if w, ok := waiting(err); ok {
 			absent := false
 			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
@@ -116,6 +116,25 @@ func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.Crea
 		reported[c.Name] = c
 	}
 	return reported, nil
+}
+
+func (r *declaredRun) deleteBlock(ctx context.Context) (map[string]string, error) {
+	reporter, ok := r.h.resource.(KeptReporter)
+	if !ok {
+		return r.h.resource.Delete(ctx, r.d)
+	}
+	outputs, kept, err := reporter.DeleteKeeping(ctx, r.d)
+	if err != nil {
+		return nil, err
+	}
+	for name := range kept {
+		if _, ok := r.h.declaredResource(name); !ok {
+			return nil, Refuse(classUndeclaredResource,
+				"the block kept files of resource %q, which the manifest's spec.resources does not declare", name)
+		}
+	}
+	r.deleteKept = kept
+	return outputs, nil
 }
 
 func (r *declaredRun) planReplacements(ctx context.Context) ([]string, error) {

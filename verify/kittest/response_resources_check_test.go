@@ -9,8 +9,6 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
-// wellFormedResources reports an ensure with an identity and published
-// outputs, an observe, a delete, and keys the contract does not name.
 const wellFormedResources = `{
   "outputs": {"groupId": "sg-0abc"},
   "resources": {

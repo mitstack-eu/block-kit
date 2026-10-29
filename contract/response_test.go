@@ -178,6 +178,10 @@ func TestDecodeResponse_ReadsEachResourceOutcomeByName(t *testing.T) {
 			contract.Response{Resources: map[string]contract.ResourceOutcome{
 				"firewall": {Ensure: &contract.CallOutcome{Identity: map[string]string{"groupId": "sg-0abc"}, Outputs: map[string]string{"groupArn": "arn:sg"}}},
 			}}},
+		{"the files a delete kept", `{"resources":{"starter":{"delete":{"kept":[{"repository":"acme/weather","path":"CLAUDE.md","reason":"changed"}]}}}}`,
+			contract.Response{Resources: map[string]contract.ResourceOutcome{
+				"starter": {Delete: &contract.CallOutcome{Kept: []contract.Kept{{Repository: "acme/weather", Path: "CLAUDE.md", Reason: "changed"}}}},
+			}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {

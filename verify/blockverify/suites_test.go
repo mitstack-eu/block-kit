@@ -173,7 +173,19 @@ func TestSecretSafetySuite(t *testing.T) {
 }
 
 func TestTeardownSuite(t *testing.T) {
+	landingManifest := replaced(t, fixtureFile(t, "kit-v1-block.txtar", manifestFile), "[aws.s3-bucket]", "[github.scaffold-contribution]")
+	landing := func(test string) dirFunc {
+		return kitV1Block(with(manifestFile, landingManifest), withSource("teardown_test.go", "teardown-deletes-test-empty.go"),
+			with("resources_test.go", "package main\n\nimport \"testing\"\n\n"+test))
+	}
 	runSuites(t, []string{"teardown"}, []suiteCase{
+		{name: "a block landing files whose TestDeclaredResources finds a landed file on main fails, naming the path",
+			dir:    landing("func TestDeclaredResources(t *testing.T) {\n\tt.Error(`resource \"github.scaffold-contribution\": main of acme/weather still carries Dockerfile unchanged after unsubscribe`)\n}\n"),
+			status: "fail", detail: []string{"Dockerfile"}},
+		{name: "a block landing files with no TestDeclaredResources fails, naming it", dir: landing("var _ testing.TB\n"),
+			status: "fail", detail: []string{"TestDeclaredResources"}},
+		{name: "a block landing files whose TestDeclaredResources passes passes, naming main", dir: landing("func TestDeclaredResources(t *testing.T) {}\n"),
+			status: "pass", detail: []string{"main"}},
 		{name: "a block whose teardown test passes passes, naming the kit/v1 rule", dir: fullBlock(),
 			status: "pass", detail: []string{"kit/v1", "TestUnsubscribeDeletes"}},
 		{name: "a block with no teardown test fails, naming TestUnsubscribeDeletes", dir: fullBlock(without("teardown_test.go")),

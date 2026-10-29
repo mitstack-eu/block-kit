@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 )
 
@@ -19,12 +20,8 @@ type Removal struct {
 	Records      []Record
 }
 
-// Kept is a file a removal left on main because the app changed it.
-type Kept struct {
-	Repository string `json:"repository"`
-	Path       string `json:"path"`
-	Reason     string `json:"reason"`
-}
+// Kept is a file a removal left on main because the app changed it, the type a delete's outcome answers it in.
+type Kept = contract.Kept
 
 type Result struct {
 	Kept []Kept

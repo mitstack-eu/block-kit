@@ -194,7 +194,10 @@ d.SubscriptionID, Records: records})` reads main and, per repository, opens
 one pull request from the branch `mitstack/<subscription>/remove`. That pull
 request deletes each unchanged file recorded `created`, and its description
 names the changed files it keeps. The result's `Kept` lists those, each with
-the reason `changed`. A path main held before the landing is never removed.
+the reason `changed`, as `contract.Kept` values. Your block's `DeleteKeeping`
+returns them under the resource's name, so the unsubscribe answer reports
+them, as [Serving lifecycle calls](handler.md#what-the-handler-calls-for-each-call)
+describes. A path main held before the landing is never removed.
 
 The pull request merges on the checks main requires, by branch protection or
 by a ruleset, and never past them. Until each required check reports success

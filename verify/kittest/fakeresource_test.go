@@ -33,7 +33,6 @@ func TestFakeResource(t *testing.T) {
 		name  string
 		fake  *kittest.FakeResource
 		calls []call
-		// check sees the fake, every observation and the Count after each call.
 		check func(t *testing.T, f *kittest.FakeResource, obs []contract.Observation, counts []int)
 	}{
 		{"Observe reflects Count by default, absent until Ensure and again after Delete", &kittest.FakeResource{},

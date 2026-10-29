@@ -35,6 +35,11 @@ type ResourceReporter interface {
 	EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error)
 }
 
+// KeptReporter, when a block-level Resource implements it, replaces Delete with DeleteKeeping, whose kept files, keyed by the declared resource that landed them, answer on that resource's delete outcome; a name the manifest does not declare is refused with a 400.
+type KeptReporter interface {
+	DeleteKeeping(ctx context.Context, d contract.Desired) (outputs map[string]string, kept map[string][]contract.Kept, err error)
+}
+
 // ReplacementPlanner names, on a validate, the declared resources an upgrade would replace, and a name the manifest does not declare is refused with a 400.
 type ReplacementPlanner interface {
 	PlanReplacements(ctx context.Context, d contract.Desired) ([]string, error)

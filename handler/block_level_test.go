@@ -133,6 +133,16 @@ func (r reportingBlock) EnsureResources(ctx context.Context, d contract.Desired)
 	return r.report, nil
 }
 
+type keepingBlock struct {
+	*blockResource
+	kept map[string][]contract.Kept
+}
+
+func (k keepingBlock) DeleteKeeping(ctx context.Context, d contract.Desired) (map[string]string, map[string][]contract.Kept, error) {
+	outputs, err := k.Delete(ctx, d)
+	return outputs, k.kept, err
+}
+
 type planningBlock struct {
 	*blockResource
 	replaces []string
@@ -447,6 +457,32 @@ func TestBlockLevel_UnsubscribeRunsOneDeleteHandedTheRequestThenProvesEachResour
 	if got := resp.Outputs["dataSnapshotId"]; got != "snap-0abc" {
 		t.Errorf(`outputs["dataSnapshotId"] = %q, want the snap-0abc the block's Delete returned; outputs %v`, got, resp.Outputs)
 	}
+}
+
+func TestBlockLevel_UnsubscribeAnswersEachFileTheBlocksDeleteKeptOnTheDeleteOfTheResourceThatLandedIt(t *testing.T) {
+	cloud := standingCloud()
+	kept := []contract.Kept{{Repository: "acme/weather", Path: "CLAUDE.md", Reason: "changed"}}
+	block := keepingBlock{&blockResource{cloud: cloud}, map[string][]contract.Kept{"b": kept}}
+
+	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: "unsubscribe", fields: recordedAll()})
+
+	wantOK(t, status, resp)
+	wantAbsent(t, resp, true)
+	if d := resp.Resources["b"].Delete; d == nil || !reflect.DeepEqual(d.Kept, kept) {
+		t.Errorf("resource \"b\" delete = %+v, want kept %+v", d, kept)
+	}
+	if d := resp.Resources["a"].Delete; d != nil {
+		t.Errorf("resource \"a\" delete = %+v, want none, since the block kept nothing of it", d)
+	}
+}
+
+func TestBlockLevel_RefusesAKeptFileOfAResourceTheManifestDoesNotDeclare(t *testing.T) {
+	cloud := standingCloud()
+	block := keepingBlock{&blockResource{cloud: cloud}, map[string][]contract.Kept{"ghost": {{Repository: "acme/weather", Path: "CLAUDE.md", Reason: "changed"}}}}
+
+	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: "unsubscribe", fields: recordedAll()})
+
+	wantRefusal(t, status, resp, "undeclared-resource", "ghost")
 }
 
 func TestBlockLevel_UnsubscribeLeavesAResourceRecordedAbsentUnobservedAndHandsTheBlockItsState(t *testing.T) {
