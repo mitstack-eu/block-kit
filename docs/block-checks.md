@@ -201,9 +201,10 @@ repository's branch protection for `main` are `block / conformance`,
 
 When the platform creates a block's repository from its templates, which it
 calls scaffolding, the repository also carries
-`.github/workflows/block-verify.yml` and an org API token as the repository
-secret `MITSTACK_API_TOKEN`. On each push to `main` that workflow does three
-things with the token:
+`.github/workflows/block-verify.yml` and a token sealed to the block as the
+repository secret `MITSTACK_API_TOKEN`. The token opens three routes, each for
+that block alone: its manifest, its attestations and the dry-run apply. On
+each push to `main` that workflow does three things with the token:
 
 1. It fetches the platform's copy of the manifest from
    `GET https://api.mitstack.dev/v1/blocks/{id}/manifest` and writes it over
@@ -212,6 +213,45 @@ things with the token:
 3. It posts the report to `POST https://api.mitstack.dev/v1/blocks/{id}/attestations`,
    and the platform signs a passing report as the block's attestation.
 
-A block whose repository you created yourself runs the same three commands in
-a workflow of its own, with an org API token in the same secret. You mint that
-token on the API Tokens page of the mitstack console.
+### Asking the platform from the shared workflow
+
+The reusable workflow runs the same calls itself when your caller sets two
+inputs and passes the secret:
+
+```yaml
+jobs:
+  block:
+    uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
+    with:
+      block-id: "@acme/billing-db"
+      ecr-repository: mitstack-billing-db
+      kit-ref: <tag>
+      platform-verdict: true
+      post-attestation: true
+    secrets: inherit
+```
+
+With `platform-verdict: true`, the `platform-verdict` job runs on a pull
+request. It posts `manifest.yaml` to
+`POST https://api.mitstack.dev/v1/blocks/apply?dryRun=true`. The platform runs
+every check a real apply runs, the ones that read its own records included,
+and writes nothing. A refusal fails the job with the platform's status and
+reason, such as `HTTP 400: {"error":"spec.params is not a field of a
+mitstack/v1beta manifest"}`. Add `block / platform-verdict` to the checks
+your `main` requires, so a refused manifest cannot merge.
+
+GitHub hands no secret to a pull request from a fork, so on such a pull
+request the job fails with `platform-verdict needs the MITSTACK_API_TOKEN
+secret`. A maintainer then pushes the branch to the block's own repository to
+get the verdict.
+
+With `post-attestation: true`, the `attest` job runs on a push to your default
+branch once `conformance`, `secrets` and `scripts` pass. It fetches the
+platform's manifest, runs blockverify on it, and posts the report to the
+attestations route, as the scaffolded workflow does. A block on the shared
+workflow then drops its own `block-verify.yml`.
+
+Both inputs default to `false`, and `api-url` names the platform, which
+defaults to `https://api.mitstack.dev`. A block whose repository you created
+yourself mints its token on the API Tokens page of the mitstack console and
+stores it in the same secret.
