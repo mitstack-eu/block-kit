@@ -73,7 +73,6 @@ func TestGolden_PortableOutsideMonorepo(t *testing.T) {
 func TestAssertDecodesEveryValidGolden_PortableOutsideMonorepo(t *testing.T) {
 	chdirOutsideMonorepo(t)
 
-	// This call, made from outside the checkout, must not abort the test.
 	kittest.AssertDecodesEveryValidGolden(t, func(raw []byte) error {
 		var v map[string]any
 		return json.Unmarshal(raw, &v)
