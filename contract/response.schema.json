@@ -80,7 +80,8 @@
               "outputs": { "description": "The outputs the ensure published.", "type": "object", "additionalProperties": { "type": "string" } },
               "statusDetail": { "description": "Human-readable detail the call left, scrubbed of request secrets.", "type": "string" },
               "identity": { "description": "The identity the ensure stored for its resource, the values that address the resource where it lives.", "type": "object", "additionalProperties": { "type": "string" } },
-              "type": { "description": "A type the call reported. Only an observe reports one.", "type": "string" }
+              "type": { "description": "A type the call reported. Only an observe reports one.", "type": "string" },
+              "kept": { "description": "The files an unsubscribe left in an app's repository, each naming its repository, its path and why it stayed. Only a delete reports them.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["repository", "path", "reason"], "properties": { "repository": { "type": "string" }, "path": { "type": "string" }, "reason": { "description": "changed, when the app changed the file after it was landed.", "type": "string" } } } }
             }
           },
           "observe": {
@@ -93,7 +94,8 @@
               "outputs": { "description": "The outputs the observe found.", "type": "object", "additionalProperties": { "type": "string" } },
               "statusDetail": { "description": "Human-readable detail the observe left, scrubbed of request secrets.", "type": "string" },
               "identity": { "description": "The identity the observe addressed the resource by, when it was known.", "type": "object", "additionalProperties": { "type": "string" } },
-              "type": { "description": "The exact type the observe observed the resource as.", "type": "string" }
+              "type": { "description": "The exact type the observe observed the resource as.", "type": "string" },
+              "kept": { "description": "The files an unsubscribe left in an app's repository, each naming its repository, its path and why it stayed. Only a delete reports them.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["repository", "path", "reason"], "properties": { "repository": { "type": "string" }, "path": { "type": "string" }, "reason": { "description": "changed, when the app changed the file after it was landed.", "type": "string" } } } }
             }
           },
           "delete": {
@@ -106,7 +108,8 @@
               "outputs": { "description": "The outputs an observe found.", "type": "object", "additionalProperties": { "type": "string" } },
               "statusDetail": { "description": "Human-readable detail the call left, scrubbed of request secrets.", "type": "string" },
               "identity": { "description": "An identity the call reported. Only an ensure or an observe reports one.", "type": "object", "additionalProperties": { "type": "string" } },
-              "type": { "description": "A type the call reported. Only an observe reports one.", "type": "string" }
+              "type": { "description": "A type the call reported. Only an observe reports one.", "type": "string" },
+              "kept": { "description": "The files an unsubscribe left in an app's repository, each naming its repository, its path and why it stayed. Only a delete reports them.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["repository", "path", "reason"], "properties": { "repository": { "type": "string" }, "path": { "type": "string" }, "reason": { "description": "changed, when the app changed the file after it was landed.", "type": "string" } } } }
             }
           }
         }

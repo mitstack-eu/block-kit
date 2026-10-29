@@ -251,6 +251,7 @@ type blockCheck struct {
 	desired  contract.Desired
 	ran      map[string]bool
 	problems []string
+	kept     map[string][]contract.Kept
 }
 
 func (c *blockCheck) problem(format string, args ...any) {
@@ -288,10 +289,9 @@ type RepositoryProvider interface {
 }
 
 type landedFiles struct {
-	repo    *landingtest.Fake
-	records map[string]landing.Record
-	changed string
-	content string
+	repo             *landingtest.Fake
+	records          map[string]landing.Record
+	changed, content string
 }
 
 // changeALandedFile reads each file-landing resource's record and changes the first file a record created, as an app edits a landed file; it returns nil for a block that lands no files.
@@ -347,6 +347,8 @@ func (c *blockCheck) readMain(l *landedFiles) {
 			switch {
 			case f.Path == l.changed && content != l.content:
 				c.resourceProblem(name, "unsubscribe deleted or rewrote %s, which the app changed after the landing, want it kept", f.Path)
+			case f.Path == l.changed && !slices.Contains(c.kept[name], contract.Kept{Repository: l.repo.Repo, Path: f.Path, Reason: "changed"}):
+				c.resourceProblem(name, "unsubscribe kept %s, which the app changed, but no delete outcome answers it kept with reason changed", f.Path)
 			case f.Path != l.changed && f.Created && held && landing.BlobHash([]byte(content)) == f.Blob:
 				c.resourceProblem(name, "main of %s still carries %s unchanged after unsubscribe, want it removed", l.repo.Repo, f.Path)
 			}
@@ -640,6 +642,7 @@ func (c *blockCheck) unsubscribe() {
 			return
 		}
 		c.ran[guardAbsence] = true
+		c.keepKept(resp)
 		if resp.Absent != nil && *resp.Absent {
 			return
 		}
@@ -655,6 +658,17 @@ func (c *blockCheck) unsubscribe() {
 			}
 		}
 		time.Sleep(settlePause)
+	}
+}
+
+func (c *blockCheck) keepKept(resp contract.Response) {
+	for name, o := range resp.Resources {
+		if o.Delete != nil && len(o.Delete.Kept) > 0 {
+			if c.kept == nil {
+				c.kept = map[string][]contract.Kept{}
+			}
+			c.kept[name] = o.Delete.Kept
+		}
 	}
 }
 

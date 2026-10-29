@@ -55,7 +55,7 @@ func (h *Handler) declaredResource(name string) (namedResource, bool) {
 	return namedResource{}, false
 }
 
-// declaredRun's refs hold what each observer is handed, provided limits the answer's outputs, and deleteOutputs are what the block-level Delete returned.
+// declaredRun's refs hold what each observer is handed, provided limits the answer's outputs, and deleteOutputs and deleteKept are what the block-level delete returned.
 type declaredRun struct {
 	h             *Handler
 	d             contract.Desired
@@ -65,6 +65,7 @@ type declaredRun struct {
 	refs          map[string]contract.ResourceRef
 	provided      map[string]bool
 	deleteOutputs map[string]string
+	deleteKept    map[string][]contract.Kept
 
 	resourceSecretOutputs map[string]map[string]string
 }
@@ -119,9 +120,14 @@ func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 	return http.StatusOK, resp
 }
 
-// deleteEach observes each resource once in reverse creation order, after the block-level handler has deleted the whole block, and answers absent:false at the first not yet absent; it observes none whose type ends with its subscription, skips one the engine recorded absent, and merges the delete's outputs over the observed ones on absent:true.
+// deleteEach observes each resource once in reverse creation order, after the block-level handler has deleted the whole block, and answers absent:false at the first not yet absent; it observes none whose type ends with its subscription, skips one the engine recorded absent, merges the delete's outputs over the observed ones on absent:true, and answers each resource's kept files on its delete outcome.
 func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	var outputs map[string]string
+	for name, kept := range r.deleteKept {
+		if len(kept) > 0 {
+			r.outcomes[name] = contract.ResourceOutcome{Delete: &contract.CallOutcome{Kept: kept}}
+		}
+	}
 	for i := len(r.resources) - 1; i >= 0; i-- {
 		nr := r.resources[i]
 		if ctx.Err() != nil {
@@ -132,8 +138,11 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 		if r.d.RecordedResources[nr.name].State == contract.Absent {
 			continue
 		}
-		var entry contract.ResourceOutcome
+		entry := r.outcomes[nr.name]
 		if ended, ok := r.endedWithSubscription(nr); ok {
+			if entry.Delete != nil {
+				ended.Kept = entry.Delete.Kept
+			}
 			entry.Delete = ended
 			r.outcomes[nr.name] = entry
 			continue
