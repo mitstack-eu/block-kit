@@ -17,6 +17,11 @@
 # The scan jobs run the kit's own scripts at kit-ref, so a scanner pin
 # changes in one place for every block.
 #
+# Two more jobs call the platform with the MITSTACK_API_TOKEN secret, each
+# only when the caller sets its input. `platform-verdict` asks for a dry-run
+# apply of manifest.yaml on a pull request, and `attest` posts blockverify's
+# report on a push to the default branch.
+#
 # A version tag already in the registry is never pushed over. The probe asks
 # two questions, whether the tag is published and whether its provenance
 # record sits beside it. A rerun that finds the tag published but no
@@ -56,6 +61,23 @@ on:
         required: false
         type: string
         default: '["ubicloud-standard-2"]'
+      platform-verdict:
+        required: false
+        type: boolean
+        default: false
+      post-attestation:
+        required: false
+        type: boolean
+        default: false
+      api-url:
+        required: false
+        type: string
+        default: https://api.mitstack.dev
+    # The token the platform's scaffold seals into the block's repository,
+    # which opens that block's manifest, attestations and dry-run apply alone.
+    secrets:
+      MITSTACK_API_TOKEN:
+        required: false
 
 # A workflow-level default is a ceiling rather than a floor: each job below
 # re-grants what it actually needs.
@@ -202,6 +224,116 @@ jobs:
 
       - name: Lint every tracked shell script with shellcheck
         run: bash block-kit/scripts/lint-scripts.sh block
+
+  # The platform runs every check a real apply runs on manifest.yaml, the ones
+  # that read its own records included, and writes nothing, so a pull request
+  # shows the platform's own verdict before anything is published.
+  platform-verdict:
+    if: inputs.platform-verdict && github.event_name == 'pull_request'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ask the platform for its verdict on manifest.yaml
+        env:
+          API_URL: ${{ inputs.api-url }}
+          MITSTACK_API_TOKEN: ${{ secrets.MITSTACK_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MITSTACK_API_TOKEN" ]; then
+            echo "::error::platform-verdict needs the MITSTACK_API_TOKEN secret; pass it with secrets: inherit"
+            exit 1
+          fi
+          status=$(curl -sS -o verdict.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $MITSTACK_API_TOKEN" \
+            -H "Content-Type: application/yaml" \
+            --data-binary @manifest.yaml \
+            "$API_URL/v1/blocks/apply?dryRun=true")
+          body=$(tr -d '\r' < verdict.json | tr '\n' ' ')
+          if [ "${status:0:1}" != "2" ]; then
+            echo "::error::The platform refused manifest.yaml with HTTP $status: $body"
+            exit 1
+          fi
+          echo "The platform accepts manifest.yaml: $body"
+
+  # The attestation route digests the platform's own copy of the manifest, so
+  # blockverify judges that copy, and the platform signs a passing report as
+  # the attestation the catalogue badge reads.
+  attest:
+    needs: [conformance, secrets, scripts]
+    if: inputs.post-attestation && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Checkout block-kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mitstack-eu/block-kit
+          ref: ${{ inputs.kit-ref }}
+          path: block-kit
+          persist-credentials: false
+
+      - name: Build blockverify
+        working-directory: block-kit
+        run: go build -o ../blockverify ./verify/blockverify
+
+      - name: Remove the kit checkout from the block tree
+        run: |
+          rm -rf block-kit
+
+      - name: Fetch the platform's manifest
+        env:
+          API_URL: ${{ inputs.api-url }}
+          MITSTACK_API_TOKEN: ${{ secrets.MITSTACK_API_TOKEN }}
+          BLOCK_ID: ${{ inputs.block-id }}
+        run: |
+          set -euo pipefail
+          id=$(jq -rn --arg id "$BLOCK_ID" '$id | @uri')
+          status=$(curl -sS -o platform-manifest.yaml -w '%{http_code}' \
+            -H "Authorization: Bearer $MITSTACK_API_TOKEN" \
+            "$API_URL/v1/blocks/$id/manifest")
+          if [ "${status:0:1}" != "2" ]; then
+            body=$(tr -d '\r' < platform-manifest.yaml | tr '\n' ' ')
+            echo "::error::Fetching the platform's manifest failed with HTTP $status: $body"
+            exit 1
+          fi
+          mv platform-manifest.yaml manifest.yaml
+
+      - name: blockverify (standalone, for the attestation)
+        run: ./blockverify --standalone --json . > attestation-report.json
+
+      - name: Post the attestation
+        env:
+          API_URL: ${{ inputs.api-url }}
+          MITSTACK_API_TOKEN: ${{ secrets.MITSTACK_API_TOKEN }}
+          BLOCK_ID: ${{ inputs.block-id }}
+        run: |
+          set -euo pipefail
+          id=$(jq -rn --arg id "$BLOCK_ID" '$id | @uri')
+          status=$(curl -sS -o attestation.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $MITSTACK_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @attestation-report.json \
+            "$API_URL/v1/blocks/$id/attestations")
+          body=$(tr -d '\r' < attestation.json | tr '\n' ' ')
+          if [ "${status:0:1}" != "2" ]; then
+            echo "::error::Posting the attestation failed with HTTP $status: $body"
+            exit 1
+          fi
+          echo "The platform signed the attestation: $body"
 
   publish:
     needs: [conformance, secrets, scripts]
