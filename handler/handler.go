@@ -61,9 +61,7 @@ type Config struct {
 	Resource Resource
 
 	// Observers needs one Observer for each resource the manifest declares, except one whose every type carries an observe spec, which KitObserver reads instead.
-	Observers map[string]Observer
-
-	// KitObserver reads each resource whose type in Types carries an observe spec: a probe at each health check, and a full read when the last is six hours old or unrecorded.
+	Observers   map[string]Observer
 	KitObserver observe.KitObserver
 
 	// TypeObservers is keyed by resource-type id and serves a validate naming a resource the manifest no longer declares.

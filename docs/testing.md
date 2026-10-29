@@ -62,8 +62,7 @@ declared resource reads present or ten seconds pass. Every declared resource
 must then report present with an identity, from its ensure or its observer, as
 [Running the block checks](block-checks.md#how-a-block-reports-each-resources-identity)
 explains. The check then
-holds the block to five guards, the rules below, and logs the name of every
-guard that ran:
+holds the block to the guards below and logs the name of every guard that ran:
 
 | Guard | What the block must do |
 |---|---|
@@ -72,6 +71,8 @@ guard that ran:
 | `replacement` | With `Upgrade` set, a resource the upgrade replaces is named in `replaces` by the validate before it |
 | `observe-asks-the-provider` | Each resource the check loses through `Provider.Lose` then reports not present |
 | `absence-after-unsubscribe` | After unsubscribe every declared resource reports absent, except one whose type `Config.Types` marks `endsWithSubscription` |
+| `kit-observer` | A resource whose type carries an observe spec has no observer of the block's own in `Config.Observers` or `Config.TypeObservers`, since `Config.KitObserver` reads it |
+| `probe-reads` | A probe of such a resource makes no more provider reads than its type's `maxReads`, counted by a `Provider` that implements `kittest.ReadCounter` |
 
 The tagging guard checks both directions. Everything the provider lists must
 match, by type and count, a recorded resource or one of its parts, the objects

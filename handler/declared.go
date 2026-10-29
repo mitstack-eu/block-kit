@@ -39,7 +39,7 @@ func (h *Handler) typeObserved(operation string, d contract.Desired) (namedResou
 		return namedResource{}, false
 	}
 	o, ok := h.typeObservers[d.ResourceType]
-	if t, spec := h.types.Lookup(d.ResourceType); spec && t.KitObserved() && h.kit.Serves(t) == nil {
+	if t, known := h.types.Lookup(d.ResourceType); known && t.KitObserved() && h.kit.Serves(t) == nil {
 		o, ok = nil, true
 	}
 	if !ok {

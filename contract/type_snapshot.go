@@ -51,19 +51,16 @@ type SnapshotObserve struct {
 	Named    string            `json:"named,omitempty"`
 }
 
-// SnapshotFind names the ownership tag a resource carries and the key of its recorded identity that names it.
 type SnapshotFind struct {
 	Tag      string `json:"tag"`
 	Identity string `json:"identity"`
 }
 
-// SnapshotProbe names what a probe reads and the most provider reads it may make.
 type SnapshotProbe struct {
 	Reads    []string `json:"reads"`
 	MaxReads int      `json:"maxReads"`
 }
 
-// SnapshotFullRead names an AWS Cloud Control resource type or a Hetzner API collection path, exactly one of the two.
 type SnapshotFullRead struct {
 	CloudControl string `json:"cloudControl,omitempty"`
 	Collection   string `json:"collection,omitempty"`
