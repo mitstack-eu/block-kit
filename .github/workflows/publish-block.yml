@@ -14,10 +14,8 @@
 # calling job is named `block` reports them as `block / conformance`,
 # `block / secrets` and `block / scripts`, the contexts its main requires.
 #
-# `secrets` runs scripts/scan-secrets.sh, gitleaks over every commit the
-# caller's HEAD reaches, and `scripts` runs scripts/lint-scripts.sh,
-# shellcheck over every shell script the caller tracks. Both scripts come
-# from the kit at kit-ref and pin their scanner by sha256.
+# The scan jobs run the kit's own scripts at kit-ref, so a scanner pin
+# changes in one place for every block.
 #
 # A version tag already in the registry is never pushed over. The probe asks
 # two questions, whether the tag is published and whether its provenance
@@ -110,15 +108,13 @@ jobs:
         run: |
           rm -rf block-kit
 
-      # On a pull request blockverify compares spec.version with the base
-      # commit's manifest.yaml, and fails a kept version when the pull
-      # request changes a file the image is built from. The checkout is
-      # shallow, so the base commit is fetched first. Both files go to
-      # RUNNER_TEMP, outside the tree blockverify judges, and a base with no
-      # manifest.yaml writes no manifest, which blockverify reads as a block
-      # new on this branch. HEAD is the pull request's merge commit, so its
-      # diff with the base is exactly what the merge changes, and --no-renames
-      # lists a moved file under both paths.
+      # On a pull request blockverify judges spec.version against the base
+      # commit's manifest.yaml and the files the pull request changes. The
+      # checkout is shallow, so the base commit is fetched first. Both files
+      # go to RUNNER_TEMP, outside the tree blockverify judges, and a base
+      # with no manifest.yaml writes no manifest, which blockverify reads as a
+      # block new on this branch. HEAD is the merge commit, so its diff with
+      # the base is what the merge changes.
       - name: Write the base commit's manifest and the changed files
         if: github.event_name == 'pull_request'
         env:

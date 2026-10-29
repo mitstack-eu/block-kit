@@ -12,17 +12,14 @@
 
 pinned_tool() {
   local name="$1" version="$2" url="$3" member="$4" sha256="$5"
-  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/block-kit/$name-$version"
-  local bin="$dir/$name"
+  local bin="${XDG_CACHE_HOME:-$HOME/.cache}/block-kit/$name-$version/$name"
   if [ "$(uname -sm)" != "Linux x86_64" ]; then
     echo "pinned-tool: $name $version is pinned for Linux x86_64, and this is $(uname -sm)" >&2
     return 1
   fi
-  if sha256_matches "$bin" "$sha256"; then
-    printf '%s\n' "$bin"
-    return 0
+  if ! sha256_matches "$bin" "$sha256"; then
+    fetch_member "$url" "$member" "$bin" "$sha256" || return 1
   fi
-  fetch_member "$url" "$member" "$bin" "$sha256" || return 1
   printf '%s\n' "$bin"
 }
 
@@ -32,22 +29,27 @@ sha256_matches() {
 
 # fetch_member moves the archive member into place only once its sha256 matched, so the cache never holds an unchecked binary.
 fetch_member() {
-  local url="$1" member="$2" bin="$3" sha256="$4" dir work
-  dir=$(dirname "$bin")
-  mkdir -p "$dir" || return 1
-  work=$(mktemp -d "$dir/fetch.XXXXXX") || return 1
+  local url="$1" member="$2" bin="$3" sha256="$4" work status=0
+  mkdir -p "$(dirname "$bin")" || return 1
+  work=$(mktemp -d "$(dirname "$bin")/fetch.XXXXXX") || return 1
+  if extract_checked "$url" "$member" "$work" "$sha256"; then
+    mv -f "$work/$member" "$bin" || status=1
+  else
+    status=1
+  fi
+  rm -rf "$work"
+  return "$status"
+}
+
+extract_checked() {
+  local url="$1" member="$2" work="$3" sha256="$4"
   if ! curl -fsSL "$url" -o "$work/archive.tar.gz" || ! tar -xzf "$work/archive.tar.gz" -C "$work" "$member"; then
     echo "pinned-tool: could not fetch $member from $url" >&2
-    rm -rf "$work"
     return 1
   fi
   if ! sha256_matches "$work/$member" "$sha256"; then
     echo "pinned-tool: $member from $url does not match sha256 $sha256, so it is not run" >&2
-    rm -rf "$work"
     return 1
   fi
-  chmod +x "$work/$member" && mv -f "$work/$member" "$bin"
-  local moved=$?
-  rm -rf "$work"
-  return "$moved"
+  chmod +x "$work/$member"
 }
