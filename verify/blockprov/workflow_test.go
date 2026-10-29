@@ -272,7 +272,7 @@ func TestWorkflow_Structure(t *testing.T) {
 		{"it is a reusable workflow", field("on.workflow_call"), ""},
 		{"it has a conformance job", field("jobs.conformance"), ""},
 		{"it has a publish job", field("jobs.publish"), ""},
-		{"publish needs conformance, so a red conformance run never starts it", field("jobs.publish.needs"), "conformance"},
+		{"publish needs conformance and both scans, so a red check never starts it", field("jobs.publish.needs"), "[conformance, secrets, scripts]"},
 		{"publish runs only on a push to the default branch, so a pull request gets conformance alone", ifOf(field("jobs.publish.if")),
 			"github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"},
 		{"conformance runs on every event", field("jobs.conformance.if"), "<absent>"},
@@ -737,6 +737,8 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 			"Remove the kit checkout from the block tree", "Write the base commit's manifest", "Judge the comments this pull request adds",
 			"blockverify (standalone contract check)", "Upload blockverify report",
 		}},
+		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks"}},
+		{"scripts", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Lint every tracked shell script with shellcheck"}},
 		{"publish", "write", []string{
 			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Configure AWS credentials", "Checkout block-kit",
 			"Build blockverify and blockprov", "Remove the kit checkout from the block tree", "Log in to ECR", "Probe the version tag and its provenance record",
