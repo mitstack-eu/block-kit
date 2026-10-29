@@ -159,6 +159,22 @@ no image ships without a pass. The job then runs `blockprov`, which builds a
 provenance record naming your repository, commit and CI run, signs it with
 the run's GitHub Actions identity token and pushes it beside the image.
 
+Two scan jobs also run on every event, and `publish` waits for both. The
+`secrets` job runs `scripts/scan-secrets.sh`, which scans every commit your
+`HEAD` reaches with gitleaks 8.21.2 and names the commit that added a secret.
+The `scripts` job runs `scripts/lint-scripts.sh`, which runs shellcheck 0.11.0
+over every shell script your repository tracks. Both scripts come from the
+kit at `kit-ref` and check their scanner's sha256 before running it, and you
+can run either on your own checkout:
+
+```sh
+bash ../block-kit/scripts/scan-secrets.sh .
+bash ../block-kit/scripts/lint-scripts.sh .
+```
+
+With the calling job named `block`, as above, the checks to require on your
+`main` are `block / conformance`, `block / secrets` and `block / scripts`.
+
 When the platform creates a block's repository from its templates, which it
 calls scaffolding, the repository also carries
 `.github/workflows/block-verify.yml` and an org API token as the repository

@@ -1,15 +1,23 @@
 # Reusable block-publish workflow. A block's own ci.yml calls this with
 # `uses:` on every event it wants verified, rather than inlining its own
-# conformance and publish jobs, so the provenance record every block writes
-# beside its image comes from one implementation.
+# conformance, scan and publish jobs, so the provenance record every block
+# writes beside its image comes from one implementation.
 #
-# Two jobs, and the ordering IS the acceptance criterion: `publish` needs
-# `conformance`, so a red conformance run never starts a publish, and
-# `blockprov build` refuses a non-pass verdict a second time regardless.
+# Four jobs, and the ordering IS the acceptance criterion: `publish` needs
+# `conformance`, `secrets` and `scripts`, so a red check never starts a
+# publish, and `blockprov build` refuses a non-pass verdict a second time
+# regardless.
 #
-# `conformance` runs on every event. `publish` runs only on a push to the
-# caller's default branch, so a pull-request run of a caller gets
-# conformance with the publish job skipped.
+# `conformance`, `secrets` and `scripts` run on every event. `publish` runs
+# only on a push to the caller's default branch, so a pull-request run of a
+# caller gets the three checks with the publish job skipped. A caller whose
+# calling job is named `block` reports them as `block / conformance`,
+# `block / secrets` and `block / scripts`, the contexts its main requires.
+#
+# `secrets` runs scripts/scan-secrets.sh, gitleaks over every commit the
+# caller's HEAD reaches, and `scripts` runs scripts/lint-scripts.sh,
+# shellcheck over every shell script the caller tracks. Both scripts come
+# from the kit at kit-ref and pin their scanner by sha256.
 #
 # A version tag already in the registry is never pushed over. The probe asks
 # two questions, whether the tag is published and whether its provenance
@@ -151,8 +159,51 @@ jobs:
           name: blockverify-report
           path: blockverify-report.json
 
+  secrets:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: block
+          fetch-depth: 0 # the scan reads every commit HEAD reaches
+          persist-credentials: false
+
+      - name: Checkout block-kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mitstack-eu/block-kit
+          ref: ${{ inputs.kit-ref }}
+          path: block-kit
+          persist-credentials: false
+
+      - name: Scan every commit for secrets with gitleaks
+        run: bash block-kit/scripts/scan-secrets.sh block
+
+  scripts:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: block
+          persist-credentials: false
+
+      - name: Checkout block-kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mitstack-eu/block-kit
+          ref: ${{ inputs.kit-ref }}
+          path: block-kit
+          persist-credentials: false
+
+      - name: Lint every tracked shell script with shellcheck
+        run: bash block-kit/scripts/lint-scripts.sh block
+
   publish:
-    needs: conformance
+    needs: [conformance, secrets, scripts]
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:
