@@ -82,11 +82,11 @@ answer with `validate` calls, as the engine does. It then fails each resource
 observed present with no identity, naming it, as in
 `resource "aws.ebs-volume": observed present after subscribe with no identity`.
 
-The check settles the unsubscribe as the engine settles a teardown. While the
+The check repeats the unsubscribe as the engine repeats a teardown. While the
 answer is not `absent:true`, it sends the unsubscribe again, with each resource
 an earlier answer observed absent recorded absent, so a block whose teardown
 runs in the background passes once that teardown finishes. A resource still
-standing when the settle budget runs out fails, named as in
+standing when the check's time for re-sending runs out fails, named as in
 `resource "aws.ebs-volume": observed present after unsubscribe re-sent for 10s, want absent`.
 
 A block's test builds the block as production does, with the settings its
@@ -219,6 +219,50 @@ each push to `main` that workflow does three things with the token:
 2. It runs `blockverify --standalone --json .` into `report.json`.
 3. It posts the report to `POST https://api.mitstack.dev/v1/blocks/{id}/attestations`,
    and the platform signs a passing report as the block's attestation.
+
+### Checks for an OpenTofu-only block
+
+An OpenTofu-only block is an OpenTofu module with no `go.mod`. Its image builds
+on the opentofu-operator image and copies the module to `/module`. Your CI
+sets `opentofu-only: true`:
+
+```yaml
+jobs:
+  block:
+    uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
+    with:
+      block-id: opentofu-s3-bucket
+      ecr-repository: mitstack-opentofu-s3-bucket
+      kit-ref: <tag>
+      opentofu-only: true
+```
+
+The `opentofu-conformance` job then runs in place of the Go `conformance` job
+and reports under the same check name. So `block / conformance` stays the
+check your `main` requires. The operator image is private, so the job assumes
+the role your repository variable `AWS_BLOCK_VERIFY_ROLE_ARN` names, which
+may pull that image and nothing else. The job builds your block's image once
+and runs three checks inside it:
+
+| Check | What it runs |
+|---|---|
+| `tofu fmt -check` | `tofu fmt -check -diff -recursive /module`, which fails on a file OpenTofu would reformat and prints the change |
+| `tofu test` | `tofu init` with no backend, then `tofu test` over the module's `.tftest.hcl` files |
+| `block-verify` | The operator's guards over the module, such as `TestDeclaredResources`, which fails when `manifest.yaml` declares a type the module never creates |
+
+On a push to your default branch, the `publish` job builds, scans and pushes
+the image as it does for a Go block. The role `AWS_BLOCK_PUBLISH_ROLE_ARN`
+names must therefore also pull the operator image. The job runs block-verify
+again in the image it pushed and hands that output to
+`blockprov build --block-verify`. The provenance record then carries
+block-verify's verdict, the sha256 of its output, and `block-verify@<kit
+version>` as its suite version. Its kit version is the block-kit version the
+operator binary in the image was built with, because the block has no
+`go.mod` to read it from.
+
+The platform creates both roles for each block listed in `block_base_images`
+in its repository's `deploy/tofu/block_publish.tf`. The `attest` job
+needs the Go `conformance` job, so it does not run for an OpenTofu-only block.
 
 ### Asking the platform from the shared workflow
 
