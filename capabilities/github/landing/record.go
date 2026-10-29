@@ -31,6 +31,15 @@ const (
 
 var blobHash = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
+// LandsFiles reports whether a resource of type typ keeps a Record in its identity and reads absent from main, as the file-landing types of the type catalogue do.
+func LandsFiles(typ string) bool {
+	switch typ {
+	case "github.scaffold-commit", "github.scaffold-contribution", "github.workflow-file":
+		return true
+	}
+	return false
+}
+
 // Identity encodes r as a resource identity, its files as one JSON list, since an identity holds strings alone.
 func (r Record) Identity() (map[string]string, error) {
 	files, err := json.Marshal(r.Files)
