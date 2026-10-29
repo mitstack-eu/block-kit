@@ -1,0 +1,9 @@
+{
+  "name": "removal-branch",
+  "request": {"method": "GET", "path": "/repos/acme/weather/git/ref/heads/mitstack/sub_641d1fee2774/remove", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 404,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {"message": "Not Found", "documentation_url": "https://docs.github.com/rest/git/refs#get-a-reference", "status": "404"}
+  }
+}

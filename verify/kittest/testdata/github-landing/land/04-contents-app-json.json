@@ -1,0 +1,9 @@
+{
+  "name": "contents-app-json",
+  "request": {"method": "GET", "path": "/repos/acme/weather/contents/mitstack-app.json?ref=3f1e8b2c0a9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 404,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {"message": "Not Found", "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content", "status": "404"}
+  }
+}

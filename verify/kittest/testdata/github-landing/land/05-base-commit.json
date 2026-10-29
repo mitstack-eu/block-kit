@@ -1,0 +1,15 @@
+{
+  "name": "base-commit",
+  "request": {"method": "GET", "path": "/repos/acme/weather/git/commits/3f1e8b2c0a9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 200,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {
+      "sha": "3f1e8b2c0a9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f",
+      "url": "https://api.github.com/repos/acme/weather/git/commits/3f1e8b2c0a9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f",
+      "message": "Initial commit",
+      "tree": {"sha": "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b", "url": "https://api.github.com/repos/acme/weather/git/trees/9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b"},
+      "parents": []
+    }
+  }
+}

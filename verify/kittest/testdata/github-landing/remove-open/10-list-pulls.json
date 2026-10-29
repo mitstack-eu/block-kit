@@ -1,0 +1,9 @@
+{
+  "name": "list-pulls",
+  "request": {"method": "GET", "path": "/repos/acme/weather/pulls?head=acme%3Amitstack%2Fsub_641d1fee2774%2Fremove&state=open", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 200,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": []
+  }
+}

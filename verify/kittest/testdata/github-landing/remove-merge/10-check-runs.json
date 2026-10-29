@@ -1,0 +1,14 @@
+{
+  "name": "check-runs",
+  "request": {"method": "GET", "path": "/repos/acme/weather/commits/6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b/check-runs?per_page=100", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 200,
+    "headers": {"Content-Type": "application/json; charset=utf-8"},
+    "body": {
+      "total_count": 1,
+      "check_runs": [
+        {"id": 30123, "name": "managed-ci", "head_sha": "6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b", "status": "completed", "conclusion": "success", "app": {"slug": "mitstack-ci"}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "delete-branch",
+  "request": {"method": "DELETE", "path": "/repos/acme/weather/git/refs/heads/mitstack/sub_641d1fee2774/remove", "headers": {"Authorization": "*"}},
+  "response": {
+    "status": 204,
+    "headers": {}
+  }
+}
