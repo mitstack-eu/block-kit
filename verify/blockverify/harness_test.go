@@ -229,6 +229,21 @@ func baseManifest(content string) func(t *testing.T) string {
 	}
 }
 
+// changedFiles writes paths as `git diff -z --name-only` lists them, each ended by a NUL byte.
+func changedFiles(paths ...string) func(t *testing.T) string {
+	return func(t *testing.T) string {
+		var list strings.Builder
+		for _, p := range paths {
+			list.WriteString(p + "\x00")
+		}
+		path := filepath.Join(t.TempDir(), "changed-files")
+		if err := os.WriteFile(path, []byte(list.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+}
+
 // refusal fails the test when the parser accepts content, and returns the parser's message.
 func refusal(t *testing.T, content, path string) string {
 	t.Helper()
@@ -242,24 +257,25 @@ func refusal(t *testing.T, content, path string) string {
 	return err.Error()
 }
 
-// suiteCase is one input to one or more suites; $DIR and $BASE in detail and not stand for the case's paths.
+// suiteCase is one input to one or more suites; $DIR, $BASE and $CHANGED in detail and not stand for the case's paths.
 type suiteCase struct {
-	name   string
-	dir    dirFunc
-	base   func(t *testing.T) string
-	status string
-	detail []string
-	not    []string
-	check  func(t *testing.T, got SuiteResult)
+	name    string
+	dir     dirFunc
+	base    func(t *testing.T) string
+	changed func(t *testing.T) string
+	status  string
+	detail  []string
+	not     []string
+	check   func(t *testing.T, got SuiteResult)
 }
 
-var suitesByName = map[string]func(target, base string) SuiteResult{
-	"trust-plumbing": func(d, _ string) SuiteResult { return trustPlumbingSuite(d) },
-	"contract":       func(d, _ string) SuiteResult { return contractSuite(d) },
-	"secret-safety":  func(d, _ string) SuiteResult { return secretSafetySuite(d) },
-	"teardown":       func(d, _ string) SuiteResult { return teardownSuite(d) },
-	"resources":      func(d, _ string) SuiteResult { return resourcesSuite(d) },
-	"deliverable":    func(d, _ string) SuiteResult { return deliverableSuite(d) },
+var suitesByName = map[string]func(target, base, changed string) SuiteResult{
+	"trust-plumbing": func(d, _, _ string) SuiteResult { return trustPlumbingSuite(d) },
+	"contract":       func(d, _, _ string) SuiteResult { return contractSuite(d) },
+	"secret-safety":  func(d, _, _ string) SuiteResult { return secretSafetySuite(d) },
+	"teardown":       func(d, _, _ string) SuiteResult { return teardownSuite(d) },
+	"resources":      func(d, _, _ string) SuiteResult { return resourcesSuite(d) },
+	"deliverable":    func(d, _, _ string) SuiteResult { return deliverableSuite(d) },
 	"manifest":       manifestSuite,
 }
 
@@ -267,14 +283,17 @@ func runSuites(t *testing.T, suites []string, cases []suiteCase) {
 	t.Helper()
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dir, base := c.dir(t), ""
+			dir, base, changed := c.dir(t), "", ""
 			if c.base != nil {
 				base = c.base(t)
 			}
-			expand := strings.NewReplacer("$DIR", dir, "$BASE", base).Replace
+			if c.changed != nil {
+				changed = c.changed(t)
+			}
+			expand := strings.NewReplacer("$DIR", dir, "$BASE", base, "$CHANGED", changed).Replace
 
 			for _, name := range suites {
-				got := suitesByName[name](dir, base)
+				got := suitesByName[name](dir, base, changed)
 
 				if got.Name != name || got.Status != c.status || got.Detail == "" {
 					t.Errorf("%s(%s) = %q %q, detail %q; want %q %q with a detail", name, dir, got.Name, got.Status, got.Detail, name, c.status)

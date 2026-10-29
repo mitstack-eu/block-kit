@@ -279,8 +279,8 @@ func TestWorkflow_Structure(t *testing.T) {
 		{"publish grants the id-token the record's OIDC token is minted with", field("jobs.publish.permissions.id-token"), "write"},
 		{"conformance runs go vet", of(conformance, "go vet", "run"), "go vet ./..."},
 		{"conformance runs go test", of(conformance, "go test", "run"), "go test ./..."},
-		{"the base manifest is fetched only on a pull request", ifOf(of(conformance, "Write the base commit's manifest", "if")), "github.event_name == 'pull_request'"},
-		{"the base manifest is fetched at the pull request's base sha", of(conformance, "Write the base commit's manifest", "env.BASE_SHA"), "${{ github.event.pull_request.base.sha }}"},
+		{"the base manifest is fetched only on a pull request", ifOf(of(conformance, "Write the base commit's manifest and the changed files", "if")), "github.event_name == 'pull_request'"},
+		{"the base manifest is fetched at the pull request's base sha", of(conformance, "Write the base commit's manifest and the changed files", "env.BASE_SHA"), "${{ github.event.pull_request.base.sha }}"},
 		{"the report is uploaded as an artifact", strings.SplitN(of(conformance, "Upload blockverify report", "uses"), "@", 2)[0], "actions/upload-artifact"},
 		{"the report is uploaded whatever the verdict, since a failing run's report must not be lost", ifOf(of(conformance, "Upload blockverify report", "if")), "always()"},
 		{"the version probe runs before the image is built", strconv.FormatBool(indexOfID(publish, "existing") >= 0 && indexOfID(publish, "existing") < indexOf(publish, "Build and push image")), "true"},
@@ -302,7 +302,7 @@ func TestWorkflow_EachJobRunsItsCommands(t *testing.T) {
 	}{
 		{"conformance runs blockverify standalone with its JSON report", "conformance", "blockverify (standalone contract check)", []string{"./blockverify --standalone --json"}},
 		{"conformance hands blockverify the base manifest on a pull request", "conformance", "blockverify (standalone contract check)", []string{`if [ "$EVENT_NAME" = "pull_request" ]`, "--base-manifest"}},
-		{"conformance fetches the base commit a shallow clone does not hold", "conformance", "Write the base commit's manifest", []string{`git fetch --depth=1 origin "$BASE_SHA"`}},
+		{"conformance fetches the base commit a shallow clone does not hold", "conformance", "Write the base commit's manifest and the changed files", []string{`git fetch --depth=1 origin "$BASE_SHA"`}},
 		{"publish pushes the image", "publish", "Build and push image", []string{"docker push"}},
 		{"publish builds the record", "publish", "blockprov build", []string{"./blockprov build"}},
 		{"publish pushes the record", "publish", "blockprov push", []string{"./blockprov push"}},
@@ -734,7 +734,7 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 	}{
 		{"conformance", "<absent>", []string{
 			"actions/checkout", "actions/setup-go", "go vet", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck",
-			"Remove the kit checkout from the block tree", "Write the base commit's manifest", "Judge the comments this pull request adds",
+			"Remove the kit checkout from the block tree", "Write the base commit's manifest and the changed files", "Judge the comments this pull request adds",
 			"blockverify (standalone contract check)", "Upload blockverify report",
 		}},
 		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks"}},
