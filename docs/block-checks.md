@@ -82,6 +82,13 @@ answer with `validate` calls, as the engine does. It then fails each resource
 observed present with no identity, naming it, as in
 `resource "aws.ebs-volume": observed present after subscribe with no identity`.
 
+The check settles the unsubscribe as the engine settles a teardown. While the
+answer is not `absent:true`, it sends the unsubscribe again, with each resource
+an earlier answer observed absent recorded absent, so a block whose teardown
+runs in the background passes once that teardown finishes. A resource still
+standing when the settle budget runs out fails, named as in
+`resource "aws.ebs-volume": observed present after unsubscribe re-sent for 10s, want absent`.
+
 A block's test builds the block as production does, with the settings its
 `main` uses. A setting only the test changes, such as a wait for the work to
 finish before the subscribe answers, lets the check pass while production
