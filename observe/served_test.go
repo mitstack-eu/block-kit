@@ -1,10 +1,7 @@
 package observe_test
 
-// served_test.go drives the shared aws.ec2-instance observer the way an
-// operator runs it: a fixture block served through handler.New with the
-// observer under Config.Observers, whose block-level ensure reports the
-// instance it created. The observer reads that reported identity against a
-// fake EC2 API, so the answer's entry is what the API holds.
+// The shared aws.ec2-instance observer, served through handler.New for a block
+// whose ensure reports its instance, answers with what the fake EC2 API holds.
 
 import (
 	"context"
