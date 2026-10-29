@@ -87,10 +87,11 @@ type RecordedResource struct {
 }
 
 type ResourceRef struct {
-	Name     string
-	Type     string
-	Identity map[string]string
-	Desired  Desired
+	Name          string
+	Type          string
+	Identity      map[string]string
+	Desired       Desired
+	Unsubscribing bool
 }
 
 type CreatedResource struct {

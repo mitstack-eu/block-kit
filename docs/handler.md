@@ -153,7 +153,9 @@ resource your manifest declares through that resource's observer. An observer
 asks the provider what stands right now, and never answers from what an ensure
 remembered. Its `contract.ResourceRef` carries the resource's name, the type it
 was created as, the identity that addresses it, such as
-`{"firewallId": "38"}`, and the call's `Desired`.
+`{"firewallId": "38"}`, and the call's `Desired`. Its `Unsubscribing` field is
+true only in the observe that follows an unsubscribe's `Delete`, so an observer
+whose answer depends on the verb can tell that pass apart.
 
 | Call | What the handler does |
 |---|---|

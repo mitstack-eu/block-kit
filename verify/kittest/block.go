@@ -273,6 +273,7 @@ func (c *blockCheck) run() {
 		}
 	}
 	c.requiredOutputs(resp, "subscribe")
+	c.commitContributions(resp)
 	c.taggedMatchDeclared()
 	if !c.upgrade() || !c.observesTheProvider() {
 		return
@@ -286,6 +287,46 @@ func (c *blockCheck) run() {
 type RepositoryProvider interface {
 	Provider
 	Repository() *landingtest.Fake
+}
+
+// commitContributions writes each file a scaffold contribution offers onto the fake main, as app-scaffold commits it, and fails an offered file the contribution's landing record does not name at its blob, since unsubscribe could not remove it.
+func (c *blockCheck) commitContributions(resp contract.Response) {
+	p, ok := c.in.Provider.(RepositoryProvider)
+	if !ok {
+		return
+	}
+	for _, entry := range c.spec.Resources {
+		o := resp.Resources[entry.Name].Observe
+		if o == nil || o.Type != "github.scaffold-contribution" {
+			continue
+		}
+		var offer struct {
+			Files map[string]string `json:"files"`
+		}
+		if err := json.Unmarshal([]byte(o.Outputs["scaffoldContribution"]), &offer); err != nil || len(offer.Files) == 0 {
+			continue
+		}
+		rec, err := landing.RecordFromIdentity(c.desired.RecordedResources[entry.Name].Identity)
+		if err != nil {
+			continue
+		}
+		blobs := map[string]string{}
+		for _, f := range rec.Files {
+			blobs[f.Path] = f.Blob
+		}
+		main, commit := p.Repository().Main(), map[string]string{}
+		for _, path := range sortedKeys(offer.Files) {
+			if blob := landing.BlobHash([]byte(offer.Files[path])); blobs[path] != blob {
+				c.resourceProblem(entry.Name, "it offers %s with blob %s, but its landing record does not name it at that blob, so unsubscribe cannot remove it", path, blob)
+			}
+			if _, held := main[path]; !held {
+				commit[path] = offer.Files[path]
+			}
+		}
+		if len(commit) > 0 {
+			p.Repository().Seed(commit)
+		}
+	}
 }
 
 type landedFiles struct {

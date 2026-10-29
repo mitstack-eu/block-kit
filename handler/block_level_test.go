@@ -623,7 +623,7 @@ func (c *tickingClock) advance() time.Time {
 }
 
 // Each observe is handed the clock's reading once the block-level call returned, since it settles that verb, and a validate the settlesAt it is sent.
-func TestBlockLevel_ObservesAreHandedTheTimeOfTheVerbTheySettle(t *testing.T) {
+func TestBlockLevel_ObservesAreHandedTheTimeOfTheVerbTheySettleAndWhetherItIsAnUnsubscribe(t *testing.T) {
 	settles := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	for _, op := range []string{"subscribe", "upgrade", "unsubscribe", "validate"} {
 		t.Run(op, func(t *testing.T) {
@@ -647,6 +647,11 @@ func TestBlockLevel_ObservesAreHandedTheTimeOfTheVerbTheySettle(t *testing.T) {
 			for name, o := range obs {
 				if refs := o.calls(); len(refs) == 0 || !refs[0].Desired.VerbAt.Equal(want) {
 					t.Errorf("resource %q observer handed %+v, want VerbAt %v", name, refs, want)
+				}
+				for _, r := range o.calls() {
+					if r.Unsubscribing != (op == "unsubscribe") {
+						t.Errorf("resource %q observed on %s with Unsubscribing %v, want it true on unsubscribe alone", name, op, r.Unsubscribing)
+					}
 				}
 			}
 		})

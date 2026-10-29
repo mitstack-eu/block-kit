@@ -24,7 +24,9 @@ behind the block's back. It returns a `contract.Observation`:
 | `Redrive` | Read only beside `Unknown`, as [Serving lifecycle calls](handler.md#work-that-outlasts-one-call) explains |
 
 The `contract.ResourceRef` an observer receives carries the resource's name,
-its type, its identity and the call's `contract.Desired`. A resource's identity
+its type, its identity and the call's `contract.Desired`. Its `Unsubscribing`
+field is true only when the handler observes the resource to prove it absent
+after an unsubscribe's delete. A resource's identity
 is the set of values that address it at the provider, such as
 `{"instanceId": "i-0abc"}`, which `EnsureResources` reported when it created
 the resource. Every shared observer answers `Unknown` without calling the
