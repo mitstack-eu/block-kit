@@ -89,7 +89,6 @@ func allFields(t *testing.T) map[string]string {
 	return workflowFields(string(readWorkflow(t)))
 }
 
-// step is one step's fields, keyed relative to the step.
 type step map[string]string
 
 func jobSteps(t *testing.T, all map[string]string, job string) []step {
@@ -139,7 +138,6 @@ func indexOfID(steps []step, id string) int {
 	return slices.IndexFunc(steps, func(s step) bool { return s["id"] == id })
 }
 
-// ifOf returns a step's or job's if: expression with any ${{ }} wrapper removed.
 func ifOf(expr string) string {
 	expr = strings.TrimSpace(expr)
 	expr = strings.TrimSuffix(strings.TrimPrefix(expr, "${{"), "}}")
