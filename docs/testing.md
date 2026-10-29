@@ -42,7 +42,7 @@ func TestDeclaredResources(t *testing.T) {
 
 | Field | What you supply |
 |---|---|
-| `Config` | The `handler.Config` your `main` hands `handler.New`, of which the check replaces only the signing key, the JWKS address and the wait between observations |
+| `Config` | The `handler.Config` your `main` hands `handler.New`, of which the check replaces only the signing key and the JWKS address |
 | `Provider` | Your fake provider, which lists everything carrying the subscription's id and can lose one resource behind the block's back |
 | `Desired` | The subscription, with a `SubscriptionID`, a `BlockID`, an `OrgID` and the secrets your code reads |
 | `Upgrade` | The `Desired` of an upgrade, the call that brings a subscription to a new version of the block, which the check sends after subscribe. It is required when a declared type is stateful |
@@ -54,10 +54,9 @@ telling the block. `kittest.ListerProvider` builds one from a lister in the
 `observe` package and your fake's `Lose`, and hands the lister the
 subscription's `Desired`, which carries the requirement bindings.
 
-The check keeps the block's own `VerbBudget`, the most times a call observes
-one resource while it waits for it, so a block that needs more observations
-than its budget allows fails here as it would in production. A subscribe that
-answers pending is settled the way the engine settles it: the check sends
+The handler observes each resource once per call and never waits, so a
+subscribe whose resources are still on their way answers pending. The check
+settles that answer the way the engine settles it: it sends
 `validate` calls, and a fresh subscribe when one answers `redrive`, until every
 declared resource reads present or ten seconds pass. Every declared resource
 must then report present with an identity, from its ensure or its observer, as

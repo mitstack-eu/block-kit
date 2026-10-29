@@ -36,9 +36,7 @@ server := &http.Server{Addr: listenAddr, Handler: h, ReadHeaderTimeout: readHead
 | `Types` | Yes, for the checks | The type snapshot your manifest names its types from, which `kittest.AssertBlock` and the unsubscribe of an `endsWithSubscription` type read |
 | `TypeObservers` | No | Observers keyed by type id, for a resource an earlier version of the block declared |
 | `Logs` | No | The `*webhook.LogBuffer` that `GET /logs` serves, which answers 404 without one |
-| `VerbBudget` | No | The most times one call observes one resource while it waits for it, 20 by default |
-| `PollInterval` | No | The wait between two observations of a resource, 500 milliseconds by default |
-| `PublicKey`, `Replay`, `Sleep`, `Now` | No | Replacements a test supplies for the key lookup, the nonce store, the wait and the clock |
+| `PublicKey`, `Replay`, `Now` | No | Replacements a test supplies for the key lookup, the nonce store and the clock |
 
 `handler.New` returns an error for a configuration it cannot serve safely: no
 `Resource`, no `Manifest`, no `JWKSURL`, a manifest the parser refuses, a
@@ -159,15 +157,19 @@ was created as, the identity that addresses it, such as
 
 | Call | What the handler does |
 |---|---|
-| `subscribe`, `upgrade` | Runs one `EnsureResources`, then observes each declared resource in manifest order until it reports `present` |
-| `unsubscribe` | Runs one `Delete`, then observes each declared resource in reverse order until it reports `absent`, and adds the outputs `Delete` returned to the answer |
+| `subscribe`, `upgrade` | Runs one `EnsureResources`, then observes each declared resource once, in manifest order, and stops at the first not yet `present` |
+| `unsubscribe` | Runs one `Delete`, then observes each declared resource once, in reverse order, stops at the first not yet `absent`, and adds the outputs `Delete` returned to the answer once all are absent |
 | `validate` | Observes each declared resource once, and for a block that implements `handler.ReplacementPlanner` names the resources an upgrade would replace |
 
-To settle means this wait for the state a call asked for. The handler
-observes a resource at most `VerbBudget` times, `PollInterval` apart, and a
-resource still short of that state answers `pending:true` on a subscribe or
-upgrade and `absent:false` on an unsubscribe. The engine then asks again, with
-the same call or with `validate`, until the block's settle budget runs out.
+The handler never waits inside a call. A resource short of the state the call
+asked for answers `pending:true` on a subscribe or upgrade and `absent:false`
+on an unsubscribe, with a detail such as
+`resource "hetzner.firewall" observed absent, not yet present`. The engine's settle
+check (its polling of a pending subscription until the state is reached) then
+carries on. It sends `validate` until every resource reads present, and sends
+the call again when a validate answers `redrive`, until the block's settle
+budget runs out. A teardown answered `absent:false` is sent again in the
+same way.
 
 On an unsubscribe the handler skips a resource whose recorded state is
 `absent`, such as a database whose host's own teardown was already verified,

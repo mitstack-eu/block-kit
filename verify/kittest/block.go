@@ -156,7 +156,6 @@ func newBlockServer(cfg handler.Config) (*blockServer, error) {
 	}
 	cfg.JWKSURL = "https://kittest.invalid/jwks"
 	cfg.PublicKey = func(string) (ed25519.PublicKey, error) { return pub, nil }
-	cfg.Sleep = func(context.Context, time.Duration) {}
 	h, err := handler.New(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("the block cannot be served: %v", err)
