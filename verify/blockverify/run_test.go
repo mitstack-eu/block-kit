@@ -29,11 +29,12 @@ type suiteWant struct {
 	detail []string
 }
 
-// runCase reads stdout as a JSON report when verdict is set; $DIR and $BASE in args and wants stand for the case's paths.
+// runCase reads stdout as a JSON report when verdict is set; $DIR, $BASE and $CHANGED in args and wants stand for the case's paths.
 type runCase struct {
 	name    string
 	dir     dirFunc
 	base    func(t *testing.T) string
+	changed func(t *testing.T) string
 	args    []string
 	exit    int
 	stdout  []string
@@ -116,6 +117,10 @@ func TestRun(t *testing.T) {
 		{name: "--base-manifest before the target names the base and not the target", dir: fullBlock(), base: baseManifest(replaced(t, full, "version: 1.0.0", "version: 0.9.0")),
 			args: []string{"--base-manifest", "$BASE", "--json", "--standalone", "$DIR"}, exit: 1, verdict: "fail",
 			suites: map[string]suiteWant{"trust-plumbing": {status: "pass"}, "manifest": {"fail", []string{"spec.releaseClass"}}}},
+		{name: "--changed-files with no path is a usage error", dir: fullBlock(), args: []string{"--json", "--standalone", "$DIR", "--changed-files"}, exit: 2},
+		{name: "--changed-files names the files a pull request changes, so a kept version fails the manifest suite", dir: fullBlock(), base: baseManifest(full),
+			changed: changedFiles("resource.go"), args: []string{"--json", "--standalone", "--base-manifest", "$BASE", "--changed-files", "$CHANGED", "$DIR"}, exit: 1, verdict: "fail",
+			suites: map[string]suiteWant{"trust-plumbing": {status: "pass"}, "manifest": {"fail", []string{"resource.go", "version bump"}}}},
 		{name: "a kubernetes.namespace block on a hetzner.k3s-cluster passes the manifest suite", dir: testdataDir("manifest-kubernetes-namespace-on-cluster"),
 			args: jsonStandalone, exit: exitNotJudged, verdict: "fail", suites: map[string]suiteWant{"manifest": {status: "pass"}}},
 		{name: "a block that needs credential refresh passes the manifest suite", dir: testdataDir("manifest-needs-credential-refresh"),
@@ -142,11 +147,14 @@ func TestRun(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dir, base := c.dir(t), ""
+			dir, base, changed := c.dir(t), "", ""
 			if c.base != nil {
 				base = c.base(t)
 			}
-			expand := strings.NewReplacer("$DIR", dir, "$BASE", base).Replace
+			if c.changed != nil {
+				changed = c.changed(t)
+			}
+			expand := strings.NewReplacer("$DIR", dir, "$BASE", base, "$CHANGED", changed).Replace
 			args := make([]string, len(c.args))
 			for i, a := range c.args {
 				args[i] = expand(a)

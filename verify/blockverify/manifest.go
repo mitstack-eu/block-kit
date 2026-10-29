@@ -11,8 +11,8 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-// manifestSuite fails a manifest the kit's parser refuses, a metadata.id that is no block id, and a changed spec.version without a release class and note.
-func manifestSuite(target, baseManifest string) SuiteResult {
+// manifestSuite fails a manifest the kit's parser refuses, a metadata.id that is no block id, a changed spec.version without a release class and note, and a kept spec.version on a pull request changing a file the image is built from.
+func manifestSuite(target, baseManifest, changedFiles string) SuiteResult {
 	const name = "manifest"
 
 	path := filepath.Join(target, manifestFile)
@@ -31,7 +31,7 @@ func manifestSuite(target, baseManifest string) SuiteResult {
 			problems = append(problems, "metadata.id: "+err.Error())
 		}
 	}
-	note, problem, err := compareVersion(m, baseManifest)
+	note, problem, err := compareVersion(m, baseManifest, changedFiles)
 	switch {
 	case err != nil:
 		problems = append(problems, err.Error())
@@ -57,7 +57,7 @@ func readManifest(path string) (contract.Manifest, error) {
 }
 
 // compareVersion treats an unreadable base as an error, never an absence, and an unparsable base as an unknown version so a pull request fixing it is not held back.
-func compareVersion(m contract.Manifest, base string) (note, problem string, err error) {
+func compareVersion(m contract.Manifest, base, changedFiles string) (note, problem string, err error) {
 	if base == "" {
 		return "no --base-manifest given, so spec.version was not compared", "", nil
 	}
@@ -80,13 +80,29 @@ func compareVersion(m contract.Manifest, base string) (note, problem string, err
 	}
 	baseVersion := parsed.Version()
 	if baseVersion == version {
-		return fmt.Sprintf("spec.version %s is unchanged from the base manifest", version), "", nil
+		return keptVersion(version, changedFiles)
 	}
 	if len(missing) > 0 {
 		return "", fmt.Sprintf("spec.version changed from %q in the base manifest to %q, which needs %s",
 			baseVersion, version, strings.Join(missing, " and ")), nil
 	}
 	return fmt.Sprintf("spec.version changed from %s to %s with a release class and note", baseVersion, version), "", nil
+}
+
+func keptVersion(version, changedFiles string) (note, problem string, err error) {
+	unchanged := fmt.Sprintf("spec.version %s is unchanged from the base manifest", version)
+	if changedFiles == "" {
+		return unchanged + "; no --changed-files given, so the changed files were not judged", "", nil
+	}
+	files, err := imageFilesChanged(changedFiles)
+	if err != nil {
+		return "", "", err
+	}
+	if len(files) == 0 {
+		return unchanged + ", and the pull request changes no file the image is built from", "", nil
+	}
+	return "", fmt.Sprintf("the pull request changes %s, which the image is built from, but spec.version %s equals the base branch's, "+
+		"so the change needs a version bump, with spec.releaseClass and spec.releaseNote, before it publishes", namedFiles(files), version), nil
 }
 
 func missingRelease(m contract.Manifest) []string {
