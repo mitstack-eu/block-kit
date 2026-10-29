@@ -36,12 +36,18 @@ const usageMessage = `blockverify: standalone conformance runner for a mitstack 
 external repository.
 
 Usage:
-  blockverify [--json] --standalone [--base-manifest <path>] <dir>
+  blockverify [--json] --standalone [--base-manifest <path>] [--changed-files <path>] <dir>
 
 --base-manifest names the base branch's manifest.yaml. When the file exists,
 a spec.version that differs from the base's needs spec.releaseClass and
 spec.releaseNote. A path that does not exist is a block new on this branch,
 and no version is compared.
+
+--changed-files names the list of files the pull request changes,
+NUL-separated as git diff -z --name-only prints it. When spec.version equals
+the base's, a changed file other than Markdown, a file under .github/ or
+LICENSE fails the manifest suite, because the image it changes publishes
+only under a new version.
 
 This command supports ONLY standalone mode: one block's directory, scanned
 in isolation. It refuses to run without --standalone and a target directory.
@@ -58,7 +64,7 @@ func Run(args []string, stdout io.Writer) int {
 		return 2
 	}
 
-	report := runStandalone(a.target, a.baseManifest)
+	report := runStandalone(a.target, a.baseManifest, a.changedFiles)
 
 	if a.jsonOut {
 		raw, err := json.Marshal(report)
@@ -81,9 +87,10 @@ type cliArgs struct {
 	jsonOut, standalone bool
 	target              string
 	baseManifest        string
+	changedFiles        string
 }
 
-// parseArgs lets the last non-flag argument win as the target, and reports ok false when --base-manifest has no path.
+// parseArgs lets the last non-flag argument win as the target, and reports ok false when --base-manifest or --changed-files has no path.
 func parseArgs(args []string) (a cliArgs, ok bool) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -97,6 +104,12 @@ func parseArgs(args []string) (a cliArgs, ok bool) {
 			}
 			i++
 			a.baseManifest = args[i]
+		case "--changed-files":
+			if i+1 == len(args) {
+				return a, false
+			}
+			i++
+			a.changedFiles = args[i]
 		default:
 			a.target = args[i]
 		}
@@ -105,7 +118,7 @@ func parseArgs(args []string) (a cliArgs, ok bool) {
 }
 
 // runStandalone runs the suites in the fixed contract order.
-func runStandalone(target, baseManifest string) Report {
+func runStandalone(target, baseManifest, changedFiles string) Report {
 	suites := []SuiteResult{
 		trustPlumbingSuite(target),
 		contractSuite(target),
@@ -113,7 +126,7 @@ func runStandalone(target, baseManifest string) Report {
 		teardownSuite(target),
 		resourcesSuite(target),
 		deliverableSuite(target),
-		manifestSuite(target, baseManifest),
+		manifestSuite(target, baseManifest, changedFiles),
 	}
 
 	verdict := "pass"

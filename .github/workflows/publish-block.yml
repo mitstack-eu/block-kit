@@ -111,11 +111,15 @@ jobs:
           rm -rf block-kit
 
       # On a pull request blockverify compares spec.version with the base
-      # commit's manifest.yaml. The checkout is shallow, so the base commit is
-      # fetched first. The file goes to RUNNER_TEMP, outside the tree
-      # blockverify judges, and a base with no manifest.yaml writes no file,
-      # which blockverify reads as a block new on this branch.
-      - name: Write the base commit's manifest
+      # commit's manifest.yaml, and fails a kept version when the pull
+      # request changes a file the image is built from. The checkout is
+      # shallow, so the base commit is fetched first. Both files go to
+      # RUNNER_TEMP, outside the tree blockverify judges, and a base with no
+      # manifest.yaml writes no manifest, which blockverify reads as a block
+      # new on this branch. HEAD is the pull request's merge commit, so its
+      # diff with the base is exactly what the merge changes, and --no-renames
+      # lists a moved file under both paths.
+      - name: Write the base commit's manifest and the changed files
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -127,6 +131,7 @@ jobs:
           else
             echo "the base commit $BASE_SHA has no manifest.yaml, so the block is new on this branch"
           fi
+          git diff --no-renames -z --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"
 
       - name: Judge the comments this pull request adds
         if: github.event_name == 'pull_request'
@@ -139,11 +144,11 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          base_flag=()
+          pr_flags=()
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            base_flag=(--base-manifest "$RUNNER_TEMP/base-manifest.yaml")
+            pr_flags=(--base-manifest "$RUNNER_TEMP/base-manifest.yaml" --changed-files "$RUNNER_TEMP/changed-files")
           fi
-          ./blockverify --standalone --json "${base_flag[@]}" . > blockverify-report.json
+          ./blockverify --standalone --json "${pr_flags[@]}" . > blockverify-report.json
           cat blockverify-report.json
           verdict=$(jq -r .verdict blockverify-report.json)
           if [ "$verdict" != "pass" ]; then

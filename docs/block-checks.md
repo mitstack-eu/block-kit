@@ -26,7 +26,7 @@ reason.
 | `teardown` | A test whose name starts `TestUnsubscribeDeletes` exists and passes. It proves that an unsubscribe deletes what a subscribe made, by checking that your fake provider holds nothing for the subscription afterwards |
 | `resources` | `TestDeclaredResources` exists, calls `kittest.AssertBlock` and passes, and the pass names the guards that ran |
 | `deliverable` | The block has its own `Dockerfile`, and it copies nothing from `examples/operator-kit`, the folder of the platform's repository where the kit once lived, which a block's own build cannot reach |
-| `manifest` | The manifest parses strictly as `mitstack/v1beta` and its `metadata.id` is a block id. On a pull request, a `spec.version` that differs from the base branch's manifest needs both `spec.releaseClass` and `spec.releaseNote` |
+| `manifest` | The manifest parses strictly as `mitstack/v1beta` and its `metadata.id` is a block id. On a pull request, a `spec.version` that differs from the base branch's manifest needs both `spec.releaseClass` and `spec.releaseNote`. A `spec.version` equal to the base branch's fails when the pull request changes any file other than Markdown, a file under `.github/` or `LICENSE`, and the message names the files and the missing version bump |
 
 A file holding a `TestNoSecretLeak` or `TestUnsubscribeDeletes` test must not
 build `kittest.FakeResource`, the kit's own stand-in block, because a test over
@@ -41,8 +41,21 @@ in your block would drift from the contract, so the suite refuses one by name.
 
 The platform reads a release class as `correctness-fix`, `feature` or
 `breaking`, and the release note says in one paragraph what the version
-changes. In CI the reusable workflow passes the base branch's manifest to
-blockverify, and on your machine `--base-manifest <path>` does.
+changes. In CI the reusable workflow passes the base branch's manifest and
+the list of files the pull request changes to blockverify. On your machine
+`--base-manifest <path>` and `--changed-files <path>` do, as in this run
+against `origin/main`:
+
+```sh
+git show origin/main:manifest.yaml > /tmp/base-manifest.yaml
+git diff --no-renames -z --name-only origin/main > /tmp/changed-files
+blockverify --standalone --base-manifest /tmp/base-manifest.yaml --changed-files /tmp/changed-files .
+```
+
+A version bump is what publishes a change, because the publish job never
+pushes over a version tag already in the registry. So a code or dependency
+change that keeps the base's version would merge green and never ship, and
+the `manifest` suite fails it instead.
 
 ## How a block reports each resource's identity
 
