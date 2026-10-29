@@ -65,8 +65,10 @@ exists, and empty output is unknown. A script that exits nonzero is an error.
 
 ## Observing a type that carries an observe spec
 
-Some types in the type snapshot carry an `observeSpec`, the catalogue's
-machine-readable account of how to find and read a resource of the type. For
+The type snapshot is the list of resource types the platform serves, which a
+block commits as `type-snapshot.json` and hands the handler as `Config.Types`.
+Some types in it carry an `observeSpec`, the catalogue's machine-readable
+account of how to find and read a resource of the type. For
 such a type you write no observer. `observe.KitObserver` runs the spec, and the
 handler hands it every resource of the type. It reads three things only: the
 type, the identity the block recorded and the subscription's id. A bucket made
@@ -92,10 +94,14 @@ A health check is a probe, which reads the resource the recorded identity names
 and the tag on it, within the type's `maxReads`. When that resource's last full
 read is six hours old, or the handler holds no time for it, the check is a full
 read instead. The handler keeps those times in memory, so a restarted operator
-reads each resource fully at its next check. A block-level `Resource` that
-implements `handler.FullReadChecker` is handed each full read that found the
-resource, with the provider's whole document, and a problem it returns answers
-the resource unhealthy.
+reads each resource fully at its next check.
+
+To check attributes the probe cannot see, such as a bucket's versioning, give
+the `Resource` you pass as `Config.Resource` a method
+`CheckFullRead(ctx, ref, read)`, which makes it a `handler.FullReadChecker`.
+The handler calls it with each full read that found the resource, holding the
+provider's whole document in `read.Properties`. A non-empty problem it returns
+answers the resource unhealthy.
 
 The answer follows from whether the tag and the recorded identity agree:
 
@@ -104,12 +110,17 @@ The answer follows from whether the tag and the recorded identity agree:
 | The recorded identity exists and carries the subscription's tag | Present |
 | It exists but lacks the tag, or carries another subscription's | Unknown, with a status detail that names the tag and says the resource is unhealthy |
 | It does not exist, and nothing else carries the tag | Absent |
-| It does not exist, but an object no recorded identity names carries the tag | Unknown, naming that object as unrecorded, so the unsubscribe stays open until a person removes it |
+| It does not exist, but an object no recorded identity names carries the tag | Unknown, naming that object as unrecorded. An unsubscribe then cannot finish, and the platform keeps asking until a person removes the object |
 | The block recorded no identity | Unknown, with no provider call |
 
-A full read also lists what carries the tag and names each unrecorded object
-in the status detail beside a present answer. The kit observer only reads, so
-it never deletes an object it found by tag.
+To find unrecorded objects, the observer lists what carries the tag, which is
+one more provider call. It lists on every full read, and on any check that
+finds the recorded identity gone, a probe included, because only the listing
+can keep an absent answer from ending the subscription. A check finds a
+resource gone mostly during an unsubscribe. ADR 0108 leaves this listing out of
+a probe's reads, so it does not count against `maxReads`. A full read names
+each unrecorded object in the status detail beside a present answer. The kit
+observer only reads, so it never deletes an object it found by tag.
 
 ## Observing a resource the platform cannot reach
 
