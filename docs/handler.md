@@ -167,9 +167,10 @@ on an unsubscribe, with a detail such as
 `resource "hetzner.firewall" observed absent, not yet present`. The engine's settle
 check (its polling of a pending subscription until the state is reached) then
 carries on. It sends `validate` until every resource reads present, and sends
-the call again when a validate answers `redrive`, until the block's settle
-budget runs out. A teardown answered `absent:false` is sent again in the
-same way.
+the call again when a validate answers `redrive`, the flag a block sets once
+work left in flight has finished. It stops when the block's settle budget, the
+total time its manifest allows, runs out. A teardown answered `absent:false`
+is sent again in the same way.
 
 On an unsubscribe the handler skips a resource whose recorded state is
 `absent`, such as a database whose host's own teardown was already verified,

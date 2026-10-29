@@ -63,7 +63,7 @@ type desiredLister interface {
 
 // Block is what a block served through one block-level handler supplies to have its guards checked.
 type Block struct {
-	// Config is the handler.Config the block serves, of which the check replaces only the signing key, the JWKS address and the sleep, so the guards run at the block's own VerbBudget.
+	// Config is the handler.Config the block serves, of which the check replaces only the signing key and the JWKS address.
 	Config   handler.Config
 	Provider Provider
 	// Desired needs its SubscriptionID, BlockID and OrgID.
