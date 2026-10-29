@@ -277,11 +277,10 @@ func (c *blockCheck) run() {
 	c.unsubscribe()
 }
 
-// settleBudget bounds how long converge settles a pending answer, as the engine's settle budget bounds its own, and settlePause spaces the calls so work the block left in flight can finish.
-const (
-	settleBudget = 10 * time.Second
-	settlePause  = 20 * time.Millisecond
-)
+// settleBudget bounds how long converge and unsubscribe settle a pending answer, as the engine's settle budget bounds its own, and settlePause spaces the calls so work the block left in flight can finish.
+var settleBudget = 10 * time.Second
+
+const settlePause = 20 * time.Millisecond
 
 // converge settles operation as the engine does: while the answer leaves a declared resource not present, it validates with what every answer so far reported of each resource, and sends operation again when a validate asks for a re-drive.
 func (c *blockCheck) converge(operation string) (contract.Response, bool) {
@@ -546,23 +545,45 @@ func (c *blockCheck) observesTheProvider() bool {
 	return ok
 }
 
+// unsubscribe settles the teardown as the engine re-drives one: it sends unsubscribe again, with each resource an answer observed absent recorded absent, until the answer is absent:true or the settle budget runs out.
 func (c *blockCheck) unsubscribe() {
-	_, resp, ok := c.sendOK("unsubscribe", c.desired)
-	if !ok {
-		return
+	d := c.desired
+	d.RecordedResources = make(map[string]contract.RecordedResource, len(c.desired.RecordedResources))
+	maps.Copy(d.RecordedResources, c.desired.RecordedResources)
+	deadline := time.Now().Add(settleBudget)
+	for {
+		_, resp, ok := c.sendOK("unsubscribe", d)
+		if !ok {
+			return
+		}
+		c.ran[guardAbsence] = true
+		if resp.Absent != nil && *resp.Absent {
+			return
+		}
+		if time.Now().After(deadline) {
+			c.notAbsent(resp)
+			return
+		}
+		for _, entry := range c.spec.Resources {
+			if o := resp.Resources[entry.Name].Observe; o != nil && o.State == contract.Absent {
+				rec := d.RecordedResources[entry.Name]
+				rec.State = contract.Absent
+				d.RecordedResources[entry.Name] = rec
+			}
+		}
+		time.Sleep(settlePause)
 	}
-	c.ran[guardAbsence] = true
-	if resp.Absent != nil && *resp.Absent {
-		return
-	}
+}
+
+func (c *blockCheck) notAbsent(resp contract.Response) {
 	named := false
 	for _, entry := range c.spec.Resources {
 		if o := resp.Resources[entry.Name].Observe; o != nil && o.State != contract.Absent {
-			c.resourceProblem(entry.Name, "observed %s after unsubscribe, want absent", o.State)
+			c.resourceProblem(entry.Name, "observed %s after unsubscribe re-sent for %s, want absent", o.State, settleBudget)
 			named = true
 		}
 	}
 	if !named {
-		c.problem("unsubscribe did not prove every declared resource absent: %s", resp.StatusDetail)
+		c.problem("unsubscribe did not prove every declared resource absent within %s: %s", settleBudget, resp.StatusDetail)
 	}
 }

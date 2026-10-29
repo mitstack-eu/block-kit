@@ -353,6 +353,41 @@ func (o rememberingObserver) ObserveResource(_ context.Context, r contract.Resou
 	return contract.Observation{State: contract.Absent}, nil
 }
 
+// backgroundTeardown answers its unsubscribe before its teardown finishes: once deleted, each resource in inFlight reads unknown for that many observes, and each in hostGone fails any observe after it first reads absent.
+type backgroundTeardown struct {
+	*fakeBlock
+	deleted  bool
+	inFlight map[string]int
+	hostGone map[string]bool
+	gone     map[string]bool
+}
+
+func (b *backgroundTeardown) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
+	b.deleted = true
+	return b.fakeBlock.Delete(ctx, d)
+}
+
+type teardownObserver struct {
+	b    *backgroundTeardown
+	name string
+}
+
+func (o teardownObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	b := o.b
+	if b.deleted && b.inFlight[o.name] > 0 {
+		b.inFlight[o.name]--
+		return contract.Observation{State: contract.Unknown, StatusDetail: "converging: the teardown is running"}, nil
+	}
+	if b.gone[o.name] {
+		return contract.Observation{}, fmt.Errorf("the host of %s is gone, so it cannot be observed", o.name)
+	}
+	obs, err := providerObserver{p: b.p}.ObserveResource(ctx, r)
+	if b.deleted && b.hostGone[o.name] && obs.State == contract.Absent {
+		b.gone[o.name] = true
+	}
+	return obs, err
+}
+
 func blockDesired(volumeSize string) contract.Desired {
 	return contract.Desired{
 		Identity: contract.Identity{SubscriptionID: "sub-block", BlockID: "host-block", OrgID: "org-1"},
@@ -821,6 +856,19 @@ func TestCheckBlock(t *testing.T) {
 			in.Config.Observers = map[string]handler.Observer{"aws.ec2-instance": observer, "aws.ebs-volume": observer}
 		}
 	}
+	tearingDown := func(inFlight map[string]int, hostGone ...string) mutation {
+		return func(b *fakeBlock, in *kittest.Block) {
+			bt := &backgroundTeardown{fakeBlock: b, inFlight: inFlight, hostGone: map[string]bool{}, gone: map[string]bool{}}
+			for _, name := range hostGone {
+				bt.hostGone[name] = true
+			}
+			in.Config.Resource, in.Config.VerbBudget = bt, 1
+			in.Config.Observers = map[string]handler.Observer{
+				"aws.ec2-instance": teardownObserver{b: bt, name: "aws.ec2-instance"},
+				"aws.ebs-volume":   teardownObserver{b: bt, name: "aws.ebs-volume"},
+			}
+		}
+	}
 	withParts := func(parts ...observe.Tagged) mutation {
 		return func(b *fakeBlock, _ *kittest.Block) { b.parts = parts }
 	}
@@ -839,6 +887,8 @@ func TestCheckBlock(t *testing.T) {
 		{"an observe still reporting a resource the provider lost fails", host(remembering), [][]string{{`resource "aws.ec2-instance"`, "provider"}}, false},
 		{"a tagged resource the manifest does not declare fails", host(func(b *fakeBlock, _ *kittest.Block) { b.extraTagged = true }), [][]string{{`resource "state-bucket"`, "aws.s3-bucket"}}, false},
 		{"a declared resource left present after unsubscribe fails", host(func(b *fakeBlock, _ *kittest.Block) { b.leaveOnDelete = "aws.ebs-volume" }), [][]string{{`resource "aws.ebs-volume"`, "unsubscribe"}}, false},
+		{"an unsubscribe answered converging, then absent on a later observe, passes", host(tearingDown(map[string]int{"aws.ebs-volume": 2})), nil, true},
+		{"a resource proven absent is not observed again while the teardown settles", host(tearingDown(map[string]int{"aws.ec2-instance": 2}, "aws.ebs-volume")), nil, true},
 		{"a validate hiding the replacement of a stateful resource fails", host(func(b *fakeBlock, _ *kittest.Block) { b.hideReplacement = true }), [][]string{{`resource "aws.ebs-volume"`, "stateful"}}, false},
 		{"a block run once per listed requirement type passes", func(t *testing.T) kittest.Block { _, in := containerBlock(t); return in }, nil, true},
 		{"declared resources with no identity after subscribe fail", host(func(b *fakeBlock, in *kittest.Block) {
