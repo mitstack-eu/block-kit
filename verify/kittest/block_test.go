@@ -5,7 +5,10 @@ package kittest_test
 import (
 	"cmp"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -955,24 +958,48 @@ spec:
     contract: kit/v1
 `
 
-// landingBlock lands two files and a branch through the landing package, and removes them through landing.Remove unless teardown names a fault.
+var starterFiles = map[string]string{"CLAUDE.md": "# weather\n", "Dockerfile": "FROM nginx:1.27\n"}
+
+// landingBlock lands two files and a branch through the landing package, or with offer records them through landing.Offer for another block to commit, and removes them through landing.Remove unless teardown names a fault.
 type landingBlock struct {
 	repo          *landingtest.Fake
 	typ, teardown string
+	offer, lost   bool
 }
 
 func (b *landingBlock) client() *ghapi.Client { return ghapi.NewClient(b.repo.URL, "ghs_kittest", nil) }
 
+func (b *landingBlock) reachableClient(context.Context, contract.Desired) (*ghapi.Client, error) {
+	if b.lost {
+		return nil, errors.New("the installation no longer reaches the repository")
+	}
+	return b.client(), nil
+}
+
 func (b *landingBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
 	prior, _ := landing.RecordFromIdentity(d.RecordedResources[b.typ].Identity)
-	files := map[string]string{"CLAUDE.md": "# weather\n", "Dockerfile": "FROM nginx:1.27\n"}
-	rec, err := landing.Land(ctx, b.client(), landing.Landing{Repository: b.repo.Repo, Message: "land", Files: files, Prior: prior})
+	rec, err := b.record(ctx, d, prior)
 	if err != nil {
 		return nil, err
 	}
-	b.repo.Branch(landing.BranchPrefix(d.SubscriptionID) + "land")
 	identity, err := rec.Identity()
 	return []contract.CreatedResource{{Name: b.typ, Type: b.typ, Identity: identity}}, err
+}
+
+func (b *landingBlock) record(ctx context.Context, d contract.Desired, prior landing.Record) (landing.Record, error) {
+	if !b.offer {
+		rec, err := landing.Land(ctx, b.client(), landing.Landing{Repository: b.repo.Repo, Message: "land", Files: starterFiles, Prior: prior})
+		if err == nil {
+			b.repo.Branch(landing.BranchPrefix(d.SubscriptionID) + "land")
+		}
+		return rec, err
+	}
+	b.lost = false
+	files := maps.Clone(starterFiles)
+	if b.teardown == "records one file" {
+		delete(files, "Dockerfile")
+	}
+	return landing.Offer(ctx, b.client(), landing.Landing{Repository: b.repo.Repo, Files: files, Prior: prior})
 }
 
 func (b *landingBlock) Ensure(ctx context.Context, d contract.Desired) error {
@@ -1028,18 +1055,38 @@ func (p repositoryProvider) ListTagged(context.Context, string) ([]observe.Tagge
 }
 
 func (p repositoryProvider) Lose(ctx context.Context, r contract.CreatedResource) error {
+	if p.b.offer {
+		p.b.lost = true
+		return nil
+	}
 	rec, _ := landing.RecordFromIdentity(r.Identity)
 	return deleteFiles(ctx, p.b.client(), rec)
 }
 
-func landingBlockThat(t *testing.T, typ, teardown string) kittest.Block {
+// offerObserver adds the offered files as the scaffoldContribution output that app-scaffold reads.
+type offerObserver struct{ b *landingBlock }
+
+func (o offerObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	obs, err := landing.OfferObserver{Client: o.b.reachableClient}.ObserveResource(ctx, r)
+	if err != nil || obs.State != contract.Present {
+		return obs, err
+	}
+	fragment, err := json.Marshal(map[string]any{"files": starterFiles})
+	obs.Outputs = map[string]string{"scaffoldContribution": string(fragment)}
+	return obs, err
+}
+
+func landingBlockThat(t *testing.T, typ, teardown string, offer bool) kittest.Block {
 	t.Helper()
-	b := &landingBlock{repo: landingtest.New(t, "acme/weather"), typ: typ, teardown: teardown}
+	b := &landingBlock{repo: landingtest.New(t, "acme/weather"), typ: typ, teardown: teardown, offer: offer}
 	types := typeSnapshot(t)
 	if teardown == "leaves its files" {
 		types = markedSnapshot(t, typ)
 	}
-	observer := landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return b.client(), nil }}
+	var observer handler.Observer = landing.Observer{Client: b.reachableClient}
+	if offer {
+		observer = offerObserver{b: b}
+	}
 	return kittest.Block{
 		Config: handler.Config{
 			Resource:  b,
@@ -1066,7 +1113,30 @@ func TestAssertBlock_ReadsMainAfterUnsubscribingABlockThatLandsFiles(t *testing.
 		{"github.commit", "leaves its files", []string{"Dockerfile", "unchanged"}},
 	} {
 		t.Run("a "+tc.typ+" block that "+cmp.Or(tc.teardown, "removes through the landing package"), func(t *testing.T) {
-			in := landingBlockThat(t, tc.typ, tc.teardown)
+			in := landingBlockThat(t, tc.typ, tc.teardown, false)
+
+			got := runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
+
+			if got.failed != (tc.want != nil) {
+				t.Fatalf("AssertBlock failed = %v; want %v, naming %q: %q", got.failed, tc.want != nil, tc.want, got.logs)
+			}
+			wantProblemNaming(t, got.logs, tc.want...)
+		})
+	}
+}
+
+// The check commits the offered files onto main as app-scaffold would, then changes CLAUDE.md, which leaves Dockerfile unchanged.
+func TestAssertBlock_CommitsAContributionsOfferedFilesBeforeReadingMainAfterUnsubscribe(t *testing.T) {
+	for _, tc := range []struct {
+		teardown string
+		want     []string
+	}{
+		{"", nil},
+		{"leaves its files", []string{"Dockerfile", "unchanged"}},
+		{"records one file", []string{"Dockerfile", "landing record"}},
+	} {
+		t.Run("a contribution that "+cmp.Or(tc.teardown, "removes through the landing package"), func(t *testing.T) {
+			in := landingBlockThat(t, landingType, tc.teardown, true)
 
 			got := runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
 
