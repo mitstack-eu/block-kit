@@ -109,7 +109,7 @@ provider and in `capabilities` per provider:
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
-| `helpers/reportproof` | A cluster or host block whose nodes report to mitstack | The proof that signs each report, and the check mitstack runs on it |
+| `helpers/reportproof` | A cluster or server block whose nodes report to mitstack | The proof that signs each report, and the check that verifies it |
 | `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials for the AWS account a call names |
 | `capabilities/github/ghapi` | A block that calls the GitHub API | A GitHub REST client whose host the operator decides |
 | `capabilities/github/gitops` | A block that deploys to Kubernetes through Argo CD | Commits the block's files to a GitOps repository and judges the deploy, with test fakes in `capabilities/github/gitops/gitopstest` |

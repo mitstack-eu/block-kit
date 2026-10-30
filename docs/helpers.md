@@ -14,7 +14,7 @@ package has [a page of its own](gitops.md).
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
-| `helpers/reportproof` | Sends node reports to mitstack, which a cluster or a host must sign |
+| `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
@@ -138,41 +138,77 @@ trust alone, since it proves the app's edge is up.
 
 ## Signing a node report
 
-A node report is the JSON body a cluster or host posts to mitstack's
-`/v1/cluster-reports` with its report token. Mitstack treats an object
-missing from a report as gone only when the report is signed, once the node
-has sent one signed report. A leaked report token alone therefore cannot tell
-mitstack a subscription's objects are gone. `helpers/reportproof` holds both
-halves, so every block signs one way and mitstack checks with the same code.
+This section is for the author of a block whose machines report to mitstack,
+such as a Kubernetes cluster block or a block that runs one Docker server.
+A node is one machine of that cluster or that server. A node report is the
+JSON body a node posts to mitstack's `/v1/cluster-reports` on a schedule,
+saying what it finds, such as its nodes and the objects labelled with a
+subscription's id. The node sends it with its report token, a secret the block
+writes onto the node for that one subscription.
 
-The proof is a signed JSON Web Token, sent in the `Mitstack-Report-Proof`
-header (`reportproof.Header`). It names two audiences, the parties it is for:
-mitstack's origin, such as `https://api.mitstack.dev`, and
-`reportproof.Audience(body)`, which is `report-sha256:` followed by the
-lowercase hex SHA-256 of the exact bytes posted. It expires ten minutes after
-it is made. The report's `jwks` member carries the public keys, and mitstack
-records the set from the first report.
+A report token alone proves only that the sender holds the token. Whoever
+holds a leaked one could post a report claiming a subscription's objects are
+gone. A report proof ties each report to a key that only the node's own side
+holds, so mitstack can tell the node's report from a forged one.
+`helpers/reportproof` holds the signing and the check, so every block and
+mitstack share one implementation.
 
-A node signs in one of two ways:
+### What a proof is
 
-| Node | How it signs | Key it reports as `jwks` |
-|---|---|---|
-| A Kubernetes node | It runs `reportproof.TokenRequestScript` with the body file, the report URL, its namespace and its service account. The script asks the API server for a token through the TokenRequest API, so the private key stays with the API server | The API server's own set, read from `/openid/v1/jwks` |
-| A host with no Kubernetes, such as a Docker server | It holds an Ed25519 key and calls `reportproof.Sign(key, kid, body, origin, time.Now())` | `reportproof.KeySet(kid, publicKey)` |
+A proof is a JSON Web Token, or JWT: three base64url parts joined by dots, a
+header, the claims and a signature. The header names the signing algorithm as
+`alg`, either `RS256` for an RSA key or `EdDSA` for an Ed25519 key, and the
+key's id as `kid`. The claims hold:
 
-The script needs `create` on `serviceaccounts/token` for its own service
-account by name, and nothing more:
+| Claim | What it holds |
+|---|---|
+| `aud` | The audiences the token is for: mitstack's origin, such as `https://api.mitstack.dev`, and `reportproof.Audience(body)`, which is `report-sha256:` followed by the lowercase hex SHA-256 of the exact bytes posted |
+| `exp` | When it expires, ten minutes after it is made |
+| `nbf` | When it starts to hold |
+
+The node sends the proof in the `Mitstack-Report-Proof` header, named by
+`reportproof.Header`. The public keys a proof is checked against travel in
+the report's `jwks` member, a JSON Web Key Set or JWKS: an object whose `keys`
+array holds one public key per entry, each named by its `kid`.
+
+### What the block does and what the node does
+
+Your block puts the signing onto its nodes, and each node then signs every
+report it posts. A node signs in one of two ways:
+
+| Node | What your block gives it | What the node does for each report | The `jwks` member it reports |
+|---|---|---|---|
+| A Kubernetes node | `reportproof.TokenRequestScript`, a Go string holding the script `scripts/token-request.sh`, written into the node's job, for example as an environment variable it runs with `bash -c`. Also a Role that grants the report's service account `create` on `serviceaccounts/token` for its own name alone | It runs the script, which asks the Kubernetes API server to mint a token through the TokenRequest API. The API server signs it with its own service-account key, so the node holds no private key | The API server's key set, read from `/openid/v1/jwks` |
+| A server with no Kubernetes, such as a Docker host | An Ed25519 key it generates on the server and keeps there, with a `kid` you choose, such as the server's name | It calls `reportproof.Sign(key, kid, body, "https://api.mitstack.dev", time.Now())`, which returns the proof as a string | `reportproof.KeySet(kid, publicKey)` |
+
+The script takes the body file, the report URL, the namespace and the
+service account, in that order, and prints the token on its standard output:
 
 ```bash
-bash token-request.sh body.json https://api.mitstack.dev/v1/cluster-reports mitstack-node mitstack-node-report
+bash token-request.sh /tmp/body.json https://api.mitstack.dev/v1/cluster-reports mitstack-node mitstack-node-report
 ```
 
-Mitstack runs `reportproof.Verify(proof, body, keySet, origin, now)`. It
-answers nil for an RS256 or EdDSA token signed by a key of the recorded set
-under the kid its header names, naming both audiences, inside its `exp` and
-`nbf` give or take `reportproof.Leeway` of one minute. Otherwise it answers
-an error naming the first check that failed, such as
-`the proof was minted for another body`.
+That runs `kubectl create token mitstack-node-report -n mitstack-node
+--audience https://api.mitstack.dev --audience report-sha256:<digest>
+--duration 10m`. The script refuses a report URL that is not https.
+
+### How a proof is checked
+
+Your block does not call `Verify`. It is the check the receiving side runs:
+`reportproof.Verify(proof, body, keySet, origin, now)` answers nil when every
+condition below holds, and otherwise an error naming the first that fails,
+such as `the proof was minted for another body`:
+
+1. The key set parses, and no `kid` in it is empty or repeated.
+2. The header's `kid` names a key of the set, and the header's `alg` is the
+   one that key's type signs with, so an RSA key accepts only `RS256` and an
+   Ed25519 key only `EdDSA`.
+3. That key verifies the signature.
+4. `aud` holds both the origin and `reportproof.Audience(body)`.
+5. `exp` is present and not past, `nbf` if present has come, and `exp` is no
+   more than ten minutes away. Each time allows `reportproof.Leeway`, one
+   minute, for clocks that drift.
+
 
 ## Getting AWS credentials from the request
 

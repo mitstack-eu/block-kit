@@ -77,6 +77,8 @@ func Verify(proof string, body, keySet []byte, platformOrigin string, now time.T
 		return errors.New("the proof has expired")
 	case claims.NotBefore != nil && now.Before(time.Unix(*claims.NotBefore, 0).Add(-Leeway)):
 		return errors.New("the proof is not valid yet")
+	case time.Unix(*claims.ExpiresAt, 0).After(now.Add(lifetime + Leeway)):
+		return errors.New("the proof expires more than ten minutes from now")
 	}
 	return nil
 }
@@ -122,7 +124,12 @@ func publicKeys(keySet []byte) (map[string]crypto.PublicKey, error) {
 		return nil, err
 	}
 	keys := map[string]crypto.PublicKey{}
+	kids := map[string]bool{}
 	for _, k := range set.Keys {
+		if k.Kid == "" || kids[k.Kid] {
+			return nil, errors.New("a kid is empty or repeated")
+		}
+		kids[k.Kid] = true
 		n, errN := base64.RawURLEncoding.DecodeString(k.N)
 		e, errE := base64.RawURLEncoding.DecodeString(k.E)
 		x, errX := base64.RawURLEncoding.DecodeString(k.X)
