@@ -212,20 +212,26 @@ func TestDeliverableSuite(t *testing.T) {
 	})
 }
 
-// resourcesBlock drives the fixture's assertBlock with misbehave and container as Go literals.
 func resourcesBlock(manifestSource, misbehave, container string) dirFunc {
 	return moduleBlock(
 		withSource(manifestFile, manifestSource),
 		withSource("block_test.go", "resources-block_test.go"),
-		func(t *testing.T, files map[string]string) {
-			raw, err := os.ReadFile(filepath.Join(kitModuleDir(t), "contract", "testdata", "type-snapshot.json"))
-			if err != nil {
-				t.Fatalf("reading the platform's type snapshot fixture: %v", err)
-			}
-			files["type-snapshot.json"] = string(raw)
-		},
+		withTypeSnapshot,
 		with("resources_test.go", "package main\n\nimport \"testing\"\n\nfunc TestDeclaredResources(t *testing.T) {\n\tassertBlock(t, misbehave{"+misbehave+"}, "+container+")\n}\n"),
 	)
+}
+
+func withTypeSnapshot(t *testing.T, files map[string]string) {
+	raw, err := os.ReadFile(filepath.Join(kitModuleDir(t), "contract", "testdata", "type-snapshot.json"))
+	if err != nil {
+		t.Fatalf("reading the platform's type snapshot fixture: %v", err)
+	}
+	files["type-snapshot.json"] = string(raw)
+}
+
+func kitObservedBlock(ownObserver string) dirFunc {
+	return fullBlock(withSource("s3_block_test.go", "resources-s3-block_test.go"), withTypeSnapshot,
+		with("resources_test.go", "package main\n\nimport \"testing\"\n\nfunc TestDeclaredResources(t *testing.T) {\n\tassertS3Block(t, "+ownObserver+")\n}\n"))
 }
 
 func TestResourcesSuite(t *testing.T) {

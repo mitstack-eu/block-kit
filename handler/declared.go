@@ -39,11 +39,34 @@ func (h *Handler) typeObserved(operation string, d contract.Desired) (namedResou
 		return namedResource{}, false
 	}
 	o, ok := h.typeObservers[d.ResourceType]
+	if t, known := h.types.Lookup(d.ResourceType); known && t.KitObserved() && h.kit.Serves(t) == nil {
+		o, ok = nil, true
+	}
 	if !ok {
 		return namedResource{}, false
 	}
 	decl := contract.ManifestResource{Name: d.Resource, Type: d.ResourceType, Types: []string{d.ResourceType}}
 	return namedResource{name: d.Resource, observer: o, declaration: decl}, true
+}
+
+// kitObservedDeclaration reports whether every type decl lists carries an observe spec, so the block needs no observer of its own for it, and refuses one the KitObserver cannot serve.
+func kitObservedDeclaration(cfg Config, decl contract.ManifestResource) (bool, error) {
+	types := decl.Types
+	if len(types) == 0 {
+		types = []string{decl.Type}
+	}
+	all := true
+	for _, typ := range types {
+		t, ok := cfg.Types.Lookup(typ)
+		if !ok || !t.KitObserved() {
+			all = false
+			continue
+		}
+		if err := cfg.KitObserver.Serves(t); err != nil {
+			return false, fmt.Errorf("handler: the manifest declares resource %q of type %s, which the kit observer reads: %w", decl.Name, typ, err)
+		}
+	}
+	return all, nil
 }
 
 func (h *Handler) declaredResource(name string) (namedResource, bool) {
@@ -66,6 +89,8 @@ type declaredRun struct {
 	provided      map[string]bool
 	deleteOutputs map[string]string
 	deleteKept    map[string][]contract.Kept
+	// healthCheck is set on a validate, the only verb whose kit observation may be a full read.
+	healthCheck bool
 
 	resourceSecretOutputs map[string]map[string]string
 }
@@ -195,6 +220,7 @@ func (r *declaredRun) endedWithSubscription(nr namedResource) (*contract.CallOut
 func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response) {
 	var outputs, secretOutputs map[string]string
 	present, absent, finished := 0, 0, false
+	r.healthCheck = true
 	states := make([]string, 0, len(r.resources))
 	for _, nr := range r.resources {
 		if ctx.Err() != nil {
@@ -260,8 +286,39 @@ func (r *declaredRun) observeOnce(ctx context.Context, nr namedResource, entry *
 	return obs, nil
 }
 
+// observe hands a resource whose type carries an observe spec to the kit observer, and any other to the block's own observer.
 func (r *declaredRun) observe(ctx context.Context, nr namedResource) (contract.Observation, error) {
-	return nr.observer.ObserveResource(ctx, r.refs[nr.name])
+	ref := r.refs[nr.name]
+	t, ok := r.h.types.Lookup(ref.Type)
+	if !ok || !t.KitObserved() {
+		if nr.observer == nil {
+			return contract.Observation{}, Refuse(classUndeclaredType,
+				"resource %q is of type %q, which carries no observe spec, and the block registers no observer for it", nr.name, ref.Type)
+		}
+		return nr.observer.ObserveResource(ctx, ref)
+	}
+	key := fullReadKey{subscriptionID: r.d.SubscriptionID, resource: nr.name}
+	now := r.h.now()
+	if !r.healthCheck || !r.h.fullReads.due(key, now) {
+		return r.h.kit.Probe(ctx, t, ref)
+	}
+	obs, read, err := r.h.kit.FullRead(ctx, t, ref)
+	if err != nil {
+		return obs, err
+	}
+	r.h.fullReads.record(key, now)
+	if read == nil || obs.State != contract.Present || r.h.fullReadChecker == nil {
+		return obs, nil
+	}
+	problem, err := r.h.fullReadChecker.CheckFullRead(ctx, ref, *read)
+	if err != nil {
+		return contract.Observation{}, err
+	}
+	if problem != "" {
+		return contract.Observation{State: contract.Unknown, Identity: ref.Identity,
+			StatusDetail: fmt.Sprintf("resource %q: unhealthy: the full read found %s", nr.name, problem)}, nil
+	}
+	return obs, nil
 }
 
 // observed refuses outputs or an identity carrying a request secret rather than reporting them, and keeps the identity the observer was handed when it reports none.

@@ -36,7 +36,6 @@ func kitGoMod(t *testing.T) string {
 		"replace github.com/mitstack-eu/block-kit => " + kitModuleDir(t) + "\n"
 }
 
-// readTxtar returns an archive's leading comment and its files by name.
 func readTxtar(t *testing.T, path string) (comment string, files map[string]string) {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -137,7 +136,6 @@ func fullBlock(opts ...option) dirFunc {
 	}, opts...)
 }
 
-// passingBlock is a capability on the kit/v1 contract that passes every suite.
 func passingBlock(opts ...option) dirFunc {
 	return kitV1Block(append([]option{without("main.go"), withDir("testdata/capability-without-issue-handler")}, opts...)...)
 }
@@ -166,7 +164,6 @@ func kitV1Block(opts ...option) dirFunc {
 	}, opts...)
 }
 
-// moduleBlock is a bare compiling module that the options give a manifest and tests.
 func moduleBlock(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
 		return map[string]string{"go.mod": kitGoMod(t), "main.go": source(t, "main-without-handler.go")}
@@ -241,7 +238,6 @@ func changedFiles(paths ...string) func(t *testing.T) string {
 	}
 }
 
-// refusal fails the test when the parser accepts content, and returns the parser's message.
 func refusal(t *testing.T, content, path string) string {
 	t.Helper()
 	_, err := contract.ParseManifest([]byte(content))

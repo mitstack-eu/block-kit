@@ -468,3 +468,147 @@ func trustedGitHubBase(c githubCreds) (string, error) {
 	}
 	return "https://" + u.Host, nil
 }
+-- resources-s3-block_test.go --
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"sync"
+	"testing"
+
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/observe"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
+)
+
+// s3Provider stands in for AWS, holding each bucket's tags by name and counting every read the block's code makes.
+type s3Provider struct {
+	mu      sync.Mutex
+	buckets map[string]map[string]string
+	reads   int
+}
+
+func (p *s3Provider) bucket(name string) (map[string]string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reads++
+	tags, ok := p.buckets[name]
+	return tags, ok
+}
+
+func (p *s3Provider) Reads() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.reads
+}
+
+func (p *s3Provider) Exists(_ context.Context, _ contract.Desired, _, name string) (bool, error) {
+	_, ok := p.bucket(name)
+	return ok, nil
+}
+
+func (p *s3Provider) Tags(_ context.Context, _ contract.Desired, _, name string) (map[string]string, bool, error) {
+	tags, ok := p.bucket(name)
+	return tags, ok, nil
+}
+
+func (p *s3Provider) GetResource(_ context.Context, _ contract.Desired, _, name string) ([]byte, bool, error) {
+	tags, ok := p.bucket(name)
+	if !ok {
+		return nil, false, nil
+	}
+	raw, err := json.Marshal(map[string]any{"BucketName": name, "Tags": []map[string]string{{"Key": observe.AWSSubscriptionTag, "Value": tags[observe.AWSSubscriptionTag]}}})
+	return raw, true, err
+}
+
+func (p *s3Provider) BucketExists(ctx context.Context, d contract.Desired, name string) (bool, error) {
+	return p.Exists(ctx, d, "AWS::S3::Bucket", name)
+}
+
+func (p *s3Provider) ResourceARNs(_ context.Context, _ contract.Desired, key, value string) ([]string, error) {
+	tagged, _ := p.ListTagged(context.Background(), value)
+	arns := make([]string, 0, len(tagged))
+	for _, t := range tagged {
+		arns = append(arns, "arn:aws:s3:::"+t.ID)
+	}
+	return arns, nil
+}
+
+func (p *s3Provider) ListTagged(_ context.Context, sub string) ([]observe.Tagged, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reads++
+	var out []observe.Tagged
+	for name, tags := range p.buckets {
+		if tags[observe.AWSSubscriptionTag] == sub {
+			out = append(out, observe.Tagged{Type: "aws.s3-bucket", ID: name})
+		}
+	}
+	return out, nil
+}
+
+func (p *s3Provider) put(name, sub string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.buckets[name] = map[string]string{observe.AWSSubscriptionTag: sub}
+}
+
+func (p *s3Provider) remove(name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.buckets, name)
+}
+
+func (p *s3Provider) Lose(_ context.Context, r contract.CreatedResource) error {
+	p.remove(r.Identity["bucket"])
+	return nil
+}
+
+type s3Block struct{ p *s3Provider }
+
+func (b s3Block) EnsureResources(_ context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	name := "bucket-" + d.SubscriptionID
+	b.p.put(name, d.SubscriptionID)
+	return []contract.CreatedResource{{Name: "aws.s3-bucket", Type: "aws.s3-bucket", Identity: map[string]string{"bucket": name}}}, nil
+}
+
+func (b s3Block) Ensure(ctx context.Context, d contract.Desired) error {
+	_, err := b.EnsureResources(ctx, d)
+	return err
+}
+
+func (b s3Block) Delete(_ context.Context, d contract.Desired) (map[string]string, error) {
+	b.p.remove("bucket-" + d.SubscriptionID)
+	return nil, nil
+}
+
+func assertS3Block(t *testing.T, ownObserver bool) {
+	manifest, err := os.ReadFile("manifest.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("type-snapshot.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := contract.ParseTypeSnapshot(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &s3Provider{buckets: map[string]map[string]string{}}
+	in := kittest.Block{
+		Config:   handler.Config{Resource: s3Block{p: p}, Manifest: manifest, Types: snap, KitObserver: observe.KitObserver{AWS: p}},
+		Provider: p,
+		Desired:  contract.Desired{Identity: contract.Identity{SubscriptionID: "sub-fixture", BlockID: "blockverify-fixture", OrgID: "org-fixture"}},
+	}
+	upgrade := in.Desired
+	upgrade.Params = map[string]string{"versioning": "on"}
+	in.Upgrade = &upgrade
+	if ownObserver {
+		in.Config.Observers = map[string]handler.Observer{"aws.s3-bucket": observe.S3Bucket{API: p}}
+	}
+	kittest.AssertBlock(t, in)
+}

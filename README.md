@@ -39,7 +39,10 @@ the call's `contract.Desired` in a `contract.ResourceRef`, and asks the
 provider about it. It returns a `contract.Observation`: `contract.Present`,
 `contract.Absent` or `contract.Unknown`, and the resource's outputs. The kit's
 `observe` package has observers for common resource types, and you write one
-for any other type. `handler.New` takes a `handler.Config` holding your code,
+for any other type. A type whose snapshot entry carries an observe spec needs
+no observer, because `observe.KitObserver` runs the spec, as
+[Observing resources](docs/observe.md#observing-a-type-that-carries-an-observe-spec)
+explains. `handler.New` takes a `handler.Config` holding your code,
 the observers, your manifest and the address of mitstack's public keys. It
 returns the HTTP handler your operator serves, which answers calls on
 `POST /hook`, the path your manifest's endpoint ends in:

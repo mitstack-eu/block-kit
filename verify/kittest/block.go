@@ -83,6 +83,8 @@ const (
 	guardReplacement = "replacement"
 	guardAbsence     = "absence-after-unsubscribe"
 	guardOutputs     = "required-outputs"
+	guardKitObserver = "kit-observer"
+	guardProbeReads  = "probe-reads"
 )
 
 // CheckBlock serves the block through handler.New from its Config, as the engine reaches it, and returns one problem per violation.
@@ -111,13 +113,14 @@ func checkBlock(in Block) ([]string, []string) {
 		return []string{err.Error()}, nil
 	}
 	ran := map[string]bool{}
+	problems = append(problems, ownObservers(in, spec, ran)...)
 	for _, run := range blockRuns(spec, in) {
 		c := &blockCheck{in: in, spec: spec, server: server, label: run.label, desired: run.desired, ran: ran}
 		c.run()
 		problems = append(problems, c.problems...)
 	}
 	var names []string
-	for _, g := range []string{guardTagging, guardProvider, guardReplacement, guardAbsence, guardOutputs} {
+	for _, g := range []string{guardTagging, guardProvider, guardReplacement, guardAbsence, guardOutputs, guardKitObserver, guardProbeReads} {
 		if ran[g] {
 			names = append(names, g)
 		}
@@ -181,6 +184,7 @@ func (s *blockServer) send(operation string, d contract.Desired) (int, contract.
 		SecretInputs: d.SecretInputs, AppSecrets: d.AppSecrets, Bindings: d.Bindings, BindingsAll: d.BindingsAll,
 		CloudIdentity: d.CloudIdentity, CreatedAt: now, Nonce: freshToken(), PriorOutputs: d.PriorOutputs,
 		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
+		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity,
 	})
 	if err != nil {
 		return 0, contract.Response{}, err
@@ -275,6 +279,7 @@ func (c *blockCheck) run() {
 	c.requiredOutputs(resp, "subscribe")
 	c.commitContributions(resp)
 	c.taggedMatchDeclared()
+	c.probeReads()
 	if !c.upgrade() || !c.observesTheProvider() {
 		return
 	}

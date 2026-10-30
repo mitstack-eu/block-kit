@@ -686,7 +686,6 @@ func TestManifestReadGuard_CatchesEveryHandReaderAndPassesAParserRead(t *testing
 	}
 }
 
-// readerImports are the packages a text reader is built from.
 var readerImports = map[string]bool{
 	"bufio": true, "bytes": true, "regexp": true, "strconv": true,
 	"text/scanner": true, "unicode": true, "unicode/utf8": true,

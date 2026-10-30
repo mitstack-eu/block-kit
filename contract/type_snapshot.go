@@ -38,6 +38,37 @@ type SnapshotType struct {
 
 	// Parts are the objects that exist only to serve one resource of the type, which the tag guard accounts to that resource.
 	Parts []SnapshotPart `json:"parts,omitempty"`
+
+	// ObserveSpec is served apart from Observe, since every earlier kit reads observe as a string.
+	ObserveSpec *SnapshotObserve `json:"observeSpec,omitempty"`
+}
+
+// SnapshotObserve says how the kit observer finds and reads a resource of the type: find, probe and fullRead together, or a named kit check alone.
+type SnapshotObserve struct {
+	Find     *SnapshotFind     `json:"find,omitempty"`
+	Probe    *SnapshotProbe    `json:"probe,omitempty"`
+	FullRead *SnapshotFullRead `json:"fullRead,omitempty"`
+	Named    string            `json:"named,omitempty"`
+}
+
+type SnapshotFind struct {
+	Tag      string `json:"tag"`
+	Identity string `json:"identity"`
+}
+
+type SnapshotProbe struct {
+	Reads    []string `json:"reads"`
+	MaxReads int      `json:"maxReads"`
+}
+
+type SnapshotFullRead struct {
+	CloudControl string `json:"cloudControl,omitempty"`
+	Collection   string `json:"collection,omitempty"`
+}
+
+// KitObserved reports whether the kit observer reads the type's resources, which a spec that finds them makes so.
+func (t SnapshotType) KitObserved() bool {
+	return t.ObserveSpec != nil && t.ObserveSpec.Find != nil
 }
 
 // SnapshotPart names a type the snapshot holds whose objects serve one resource of the owning type, and the most of them one resource holds.
@@ -83,8 +114,31 @@ func ParseTypeSnapshot(raw []byte) (TypeSnapshot, error) {
 		if err := checkParts(t, held); err != nil {
 			return TypeSnapshot{}, err
 		}
+		if err := checkObserveSpec(t); err != nil {
+			return TypeSnapshot{}, err
+		}
 	}
 	return snap, nil
+}
+
+// checkObserveSpec refuses a spec the kit observer could not run, as the platform's catalogue refuses it.
+func checkObserveSpec(t SnapshotType) error {
+	s := t.ObserveSpec
+	switch {
+	case s == nil:
+		return nil
+	case s.Named != "" && s.Find != nil:
+		return fmt.Errorf("contract: type %q names the check %s in its observe spec, so the spec carries no find", t.ID, s.Named)
+	case s.Named == "" && (s.Find == nil || s.Probe == nil || s.FullRead == nil):
+		return fmt.Errorf("contract: type %q has an observe spec that needs find, probe and fullRead, or a named check", t.ID)
+	case s.Find != nil && (s.Find.Tag == "" || s.Find.Identity == ""):
+		return fmt.Errorf("contract: type %q has an observe spec whose find needs a tag and an identity", t.ID)
+	case s.Probe != nil && (len(s.Probe.Reads) == 0 || s.Probe.MaxReads < 1):
+		return fmt.Errorf("contract: type %q has an observe spec whose probe needs a read and a maxReads of at least one", t.ID)
+	case s.FullRead != nil && (s.FullRead.CloudControl == "") == (s.FullRead.Collection == ""):
+		return fmt.Errorf("contract: type %q has an observe spec whose fullRead names exactly one of cloudControl and collection", t.ID)
+	}
+	return nil
 }
 
 // checkParts refuses a part with no type, a type the snapshot does not hold, or a count below one, since the tag guard gives room by part type.
