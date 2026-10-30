@@ -131,6 +131,7 @@ func fixture(base func(t *testing.T) map[string]string, opts ...option) dirFunc 
 func fullBlock(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
 		_, files := readTxtar(t, filepath.Join(fixturesDir, "full-block.txtar"))
+		withTypeSnapshot(t, files)
 		files["go.mod"] = kitGoMod(t)
 		return files
 	}, opts...)
@@ -159,6 +160,7 @@ func withDir(dir string) option {
 func kitV1Block(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
 		_, files := readTxtar(t, filepath.Join(fixturesDir, "kit-v1-block.txtar"))
+		withTypeSnapshot(t, files)
 		files["go.mod"] = kitGoMod(t)
 		return files
 	}, opts...)

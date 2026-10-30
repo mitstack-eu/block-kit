@@ -109,7 +109,7 @@ func TestRun(t *testing.T) {
 			suites: map[string]suiteWant{"trust-plumbing": everyReader, "contract": everyReader, "manifest": everyReader}},
 		{name: "the human-readable report fails the manifest suite, naming an unknown spec field", dir: fullBlock(with(manifestFile, unknownField)),
 			args: []string{"--standalone", "$DIR"}, exit: 1, human: map[string]suiteWant{"manifest": {"fail", []string{"spec.frobnicate"}}}},
-		manifestCase("a private metadata.id passes the manifest suite", replaced(t, full, "  id: blockverify-fixture\n", "  id: \"@acme/billing-db\"\n"), suiteWant{status: "pass"}),
+		manifestCase("a private metadata.id passes the manifest suite", replaced(t, full, "  id: blockverify-fixture\n", "  id: \"@blockverify-tests/billing-db\"\n"), suiteWant{status: "pass"}),
 		manifestCase("an uppercase metadata.id namespace fails the manifest suite", replaced(t, full, "  id: blockverify-fixture\n", "  id: \"@Acme/x\"\n"),
 			suiteWant{"fail", []string{"metadata.id"}}),
 		{name: "--base-manifest after the target names the base and not the target", dir: fullBlock(), base: baseManifest(replaced(t, full, "version: 1.0.0", "version: 0.9.0")),
@@ -122,9 +122,9 @@ func TestRun(t *testing.T) {
 		{name: "--changed-files names the files a pull request changes, so a kept version fails the manifest suite", dir: fullBlock(), base: baseManifest(full),
 			changed: changedFiles("resource.go"), args: []string{"--json", "--standalone", "--base-manifest", "$BASE", "--changed-files", "$CHANGED", "$DIR"}, exit: 1, verdict: "fail",
 			suites: map[string]suiteWant{"trust-plumbing": {status: "pass"}, "manifest": {"fail", []string{"resource.go", "version bump"}}}},
-		{name: "a kubernetes.namespace block on a hetzner.k3s-cluster passes the manifest suite", dir: testdataDir("manifest-kubernetes-namespace-on-cluster"),
+		{name: "a kubernetes.namespace block on a hetzner.k3s-cluster passes the manifest suite", dir: manifestWithSnapshot(readFixtureManifest(t, "manifest-kubernetes-namespace-on-cluster")),
 			args: jsonStandalone, exit: exitNotJudged, verdict: "fail", suites: map[string]suiteWant{"manifest": {status: "pass"}}},
-		{name: "a block that needs credential refresh passes the manifest suite", dir: testdataDir("manifest-needs-credential-refresh"),
+		{name: "a block that needs credential refresh passes the manifest suite", dir: manifestWithSnapshot(readFixtureManifest(t, "manifest-needs-credential-refresh")),
 			args: jsonStandalone, exit: exitNotJudged, verdict: "fail", suites: map[string]suiteWant{"manifest": {status: "pass"}}},
 	}
 	for dir, wants := range map[string][]string{

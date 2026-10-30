@@ -3,6 +3,7 @@ type: block
 metadata:
   id: app-namespace
   name: App Namespace
+  owner: blockverify-tests
 spec:
   version: 1.0.0
   description: >

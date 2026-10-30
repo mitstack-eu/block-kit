@@ -11,7 +11,9 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-// manifestSuite fails a manifest the kit's parser refuses, a metadata.id that is no block id, a changed spec.version without a release class and note, and a kept spec.version on a pull request changing a file the image is built from.
+const typeSnapshotFile = "type-snapshot.json"
+
+// manifestSuite fails a manifest the kit's parser refuses, one the platform's checks refuse against the block's type snapshot, a changed spec.version without a release class and note, and a kept spec.version on a pull request changing a file the image is built from.
 func manifestSuite(target, baseManifest, changedFiles string) SuiteResult {
 	const name = "manifest"
 
@@ -26,10 +28,8 @@ func manifestSuite(target, baseManifest, changedFiles string) SuiteResult {
 	}
 
 	var problems []string
-	if id := m.ID(); id != "" {
-		if _, _, err := contract.ParseBlockID(id); err != nil {
-			problems = append(problems, "metadata.id: "+err.Error())
-		}
+	if err := checkAgainstSnapshot(m, target); err != nil {
+		problems = append(problems, err.Error())
 	}
 	note, problem, err := compareVersion(m, baseManifest, changedFiles)
 	switch {
@@ -41,7 +41,20 @@ func manifestSuite(target, baseManifest, changedFiles string) SuiteResult {
 	if len(problems) > 0 {
 		return SuiteResult{name, "fail", path + ": " + strings.Join(problems, "; ")}
 	}
-	return SuiteResult{name, "pass", "the " + m.APIVersion + " manifest parses; " + note}
+	return SuiteResult{name, "pass", "the " + m.APIVersion + " manifest parses and passes the platform's checks against " + typeSnapshotFile + "; " + note}
+}
+
+// checkAgainstSnapshot runs the checks the platform runs when the block is applied, judging its types by the snapshot the block commits.
+func checkAgainstSnapshot(m contract.Manifest, target string) error {
+	raw, err := os.ReadFile(filepath.Join(target, typeSnapshotFile))
+	if err != nil {
+		return fmt.Errorf("%s could not be read, so the types the manifest names cannot be checked: %v", typeSnapshotFile, err)
+	}
+	snap, err := contract.ParseTypeSnapshot(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %v", typeSnapshotFile, err)
+	}
+	return contract.CheckManifest(m.Block, snap.Holds, contract.CheckOptions{})
 }
 
 func readManifest(path string) (contract.Manifest, error) {

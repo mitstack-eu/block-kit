@@ -7,26 +7,7 @@ import (
 
 // CheckManifestTypes refuses a requirement or resource of spec listing a type snap does not hold.
 func CheckManifestTypes(spec ManifestSpec, snap TypeSnapshot) error {
-	for i, q := range spec.Requires {
-		if err := checkTypesHeld(fmt.Sprintf("spec.requires[%d]", i), q.Types, snap); err != nil {
-			return err
-		}
-	}
-	for i, r := range spec.Resources {
-		if err := checkTypesHeld(fmt.Sprintf("spec.resources[%d]", i), r.Types, snap); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkTypesHeld(path string, types []string, snap TypeSnapshot) error {
-	for _, id := range types {
-		if _, ok := snap.Lookup(id); !ok {
-			return fmt.Errorf("%s: type %s is not in the platform's type snapshot version %d", path, id, snap.Version)
-		}
-	}
-	return nil
+	return checkTypes(spec, snap.Holds, fmt.Sprintf("the platform's type snapshot version %d", snap.Version))
 }
 
 // bindingOutputs splits at the first occurrence because a reference and an output may each hold dots.

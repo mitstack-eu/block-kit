@@ -186,6 +186,11 @@ func (s TypeSnapshot) Lookup(id string) (SnapshotType, bool) {
 	return s.Types[i], true
 }
 
+func (s TypeSnapshot) Holds(id string) bool {
+	_, ok := s.Lookup(id)
+	return ok
+}
+
 func (t SnapshotType) Output(name string) (SnapshotOutput, bool) {
 	i := slices.IndexFunc(t.Outputs, func(o SnapshotOutput) bool { return o.Name == name })
 	if i < 0 {

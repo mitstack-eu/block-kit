@@ -3,6 +3,7 @@ type: block
 metadata:
   id: hetzner-firewall
   name: Hetzner firewall
+  owner: acme
 spec:
   version: 0.1.0
   description: Keeps one empty Hetzner Cloud firewall for each subscription.
