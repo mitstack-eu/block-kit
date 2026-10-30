@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -72,7 +73,6 @@ func (a *recordingAWS) probed(maxReads int) []string {
 	return reads
 }
 
-// checkingBlock is a block-level Resource whose full-read hook records each read and answers problem.
 type checkingBlock struct {
 	*blockResource
 	problem string
@@ -111,6 +111,15 @@ func (c *tickingClock) set(at time.Time) {
 // healthCheck signs the validate at the clock's time, since the handler judges a request's age and its OBO token by that clock.
 func healthCheck(t *testing.T, x *harness, clock *tickingClock) contract.Response {
 	t.Helper()
+	status, resp := validateAt(t, x, clock)
+	if status != 200 {
+		t.Fatalf("validate answered %d: %+v", status, resp)
+	}
+	return resp
+}
+
+func validateAt(t *testing.T, x *harness, clock *tickingClock) (int, contract.Response) {
+	t.Helper()
 	at := clock.Now()
 	obo, err := webhook.MintOBO(x.s.Private, x.s.Kid, webhook.OBOClaims{Audience: x.audience, OrgID: "org-1", SubscriptionID: "sub-1"}, time.Hour, at)
 	if err != nil {
@@ -118,10 +127,7 @@ func healthCheck(t *testing.T, x *harness, clock *tickingClock) contract.Respons
 	}
 	status, resp := x.answer(map[string]any{"operation": "validate", "createdAt": at.Format(time.RFC3339Nano), "obo": obo, "recordedResources": map[string]any{
 		"data": map[string]any{"type": "aws.s3-bucket", "identity": map[string]string{"bucket": "acme-data"}}}})
-	if status != 200 {
-		t.Fatalf("validate answered %d: %+v", status, resp)
-	}
-	return resp
+	return status, resp
 }
 
 func TestKitObserver_AHealthCheckIsAProbeWithinSixHoursOfAFullRead(t *testing.T) {
@@ -191,5 +197,57 @@ func TestKitObserver_ADeclaredResourceOfASpeccedTypeNeedsNoObserverButAnAPI(t *t
 	cfg.KitObserver = observe.KitObserver{AWS: &recordingAWS{t: t}}
 	if _, err := handler.New(cfg); err != nil {
 		t.Errorf("handler.New with KitObserver.AWS and no Observers = %v, want it served", err)
+	}
+}
+
+type convergingBlock struct {
+	reportingBlock
+	detail   string
+	finished bool
+	err      error
+}
+
+func (c convergingBlock) Converging(context.Context, contract.Desired) (string, bool, error) {
+	return c.detail, c.finished, c.err
+}
+
+func TestKitObserver_AValidateReadsNothingWhileTheBlocksWorkRunsAndAsksForTheSubscribeOnceItFinishes(t *testing.T) {
+	snap, err := contract.ParseTypeSnapshot([]byte(s3Snapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		block   convergingBlock
+		status  int
+		state   contract.State
+		redrive bool
+		reads   int
+		detail  string
+	}{
+		{"while the work runs", convergingBlock{detail: "converging: the apply runs"}, 200, contract.Unknown, false, 0, "converging: the apply runs"},
+		{"once the work finished unreported", convergingBlock{finished: true}, 200, contract.Unknown, true, 0, "has finished"},
+		{"once the work failed", convergingBlock{err: errors.New("the apply failed")}, 500, "", false, 0, "the apply failed"},
+		{"with no work in flight", convergingBlock{}, 200, contract.Present, false, 2, ""},
+	} {
+		aws := &recordingAWS{t: t, tags: map[string]string{"mitstack:subscription": "sub-1"}}
+		clock := &tickingClock{now: time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)}
+		tc.block.reportingBlock = reportingBlock{blockResource: &blockResource{}}
+		x := newHarness(t, tc.block, withManifest(s3Manifest), func(c *handler.Config) {
+			c.Observers, c.Types, c.KitObserver, c.Now = nil, snap, observe.KitObserver{AWS: aws}, clock.Now
+		})
+
+		status, resp := validateAt(t, x, clock)
+
+		state, detail := contract.State(""), resp.Error
+		if o := resp.Resources["data"].Observe; o != nil {
+			state, detail = o.State, o.StatusDetail
+			if o.Type != "aws.s3-bucket" || o.Identity["bucket"] != "acme-data" {
+				t.Errorf("%s: observe %+v dropped the type or identity the request recorded", tc.name, o)
+			}
+		}
+		if status != tc.status || state != tc.state || resp.Pending != (state == contract.Unknown) || resp.Redrive != tc.redrive || len(aws.reads) != tc.reads || !strings.Contains(detail, tc.detail) {
+			t.Errorf("%s: %d, %s %q, pending %t, redrive %t after reads %q; want %d, %s naming %q, redrive %t after %d reads", tc.name, status, state, detail, resp.Pending, resp.Redrive, aws.reads, tc.status, tc.state, tc.detail, tc.redrive, tc.reads)
+		}
 	}
 }

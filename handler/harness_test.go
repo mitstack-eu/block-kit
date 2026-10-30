@@ -27,7 +27,6 @@ type selfObserver interface {
 	Observe(ctx context.Context, d contract.Desired) (contract.Observation, error)
 }
 
-// observedThrough serves a test Resource that observes itself as the observer of oneResourceManifest's resource.
 type observedThrough struct{ selfObserver }
 
 func (o observedThrough) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
@@ -114,7 +113,6 @@ func (x *harness) postContext(ctx context.Context, fields ...map[string]any) (in
 	return x.serve(x.request(fields...).WithContext(ctx))
 }
 
-// answer posts fields and returns the response once it conforms to the lifecycle webhook response contract.
 func (x *harness) answer(fields map[string]any) (int, contract.Response) {
 	x.t.Helper()
 	status, raw := x.post(fields)
@@ -178,7 +176,6 @@ func withManifestEdit(t *testing.T, raw []byte, old, new string) []byte {
 	return []byte(edited)
 }
 
-// resource is kittest.FakeResource plus what the kit's fake leaves out: it keeps every request and answers SecretOutputs.
 type resource struct {
 	*kittest.FakeResource
 	secretOutputs map[string]string

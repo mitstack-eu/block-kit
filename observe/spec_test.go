@@ -29,7 +29,6 @@ var hetznerServer = contract.SnapshotType{ID: "hetzner.server", ObserveSpec: &co
 	FullRead: &contract.SnapshotFullRead{Collection: "/servers/{id}"},
 }}
 
-// fakeAWS holds buckets by name and records every call, each one AWS read.
 type fakeAWS struct {
 	buckets map[string]map[string]string
 	calls   []string

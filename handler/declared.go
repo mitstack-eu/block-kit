@@ -218,6 +218,15 @@ func (r *declaredRun) endedWithSubscription(nr namedResource) (*contract.CallOut
 
 // validateEach never polls, answers redrive when any resource observed Unknown reports its work finished, and an Observe error is classified, never folded into pending, and stops the probe there.
 func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response) {
+	if c, ok := r.h.resource.(Converger); ok {
+		detail, done, err := c.Converging(ctx, r.d)
+		if err != nil {
+			return r.h.errorResponse(err, r.secrets)
+		}
+		if detail != "" || done {
+			return r.converging(detail, done)
+		}
+	}
 	var outputs, secretOutputs map[string]string
 	present, absent, finished := 0, 0, false
 	r.healthCheck = true
@@ -266,6 +275,19 @@ func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response)
 	resp.Resources = r.outcomes
 	resp.ResourceSecretOutputs = r.resourceSecretOutputs
 	return http.StatusOK, resp
+}
+
+// converging answers every resource unknown with the block's detail, and redrive once its work finished, keeping the identity each was handed.
+func (r *declaredRun) converging(detail string, done bool) (int, contract.Response) {
+	if detail == "" {
+		detail = "the work the last subscribe left running has finished, so the next subscribe reports what it made"
+	}
+	detail = safe.Scrub(detail, r.secrets...)
+	for _, nr := range r.resources {
+		ref := r.refs[nr.name]
+		r.outcomes[nr.name] = contract.ResourceOutcome{Observe: &contract.CallOutcome{State: contract.Unknown, StatusDetail: detail, Identity: ref.Identity, Type: ref.Type}}
+	}
+	return http.StatusOK, contract.Response{Pending: true, Redrive: done, StatusDetail: detail, Resources: r.outcomes}
 }
 
 func (r *declaredRun) notReached(name string) string {

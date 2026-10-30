@@ -17,7 +17,6 @@ import (
 
 var _ gitops.Repository = (*gitops.GitHubRepository)(nil)
 
-// newGitHubRepo serves f and returns a GitHubRepository over it.
 func newGitHubRepo(t *testing.T, f *fakeGitHub) *gitops.GitHubRepository {
 	t.Helper()
 	srv := httptest.NewServer(f)
@@ -198,7 +197,6 @@ func TestGitHubRepository_ErrorsNeverCarryTheTokenEvenWhenGitHubEchoesIt(t *test
 	}
 }
 
-// githubDesired is a Desired carrying the github instance at endpoint and the github token.
 func githubDesired(endpoint string) contract.Desired {
 	d := desiredFor("app-alpha")
 	d.Instances = map[string]contract.InstanceConfig{"github": {Name: "github", Endpoint: endpoint}}

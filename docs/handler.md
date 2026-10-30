@@ -161,7 +161,7 @@ whose answer depends on the verb can tell that pass apart.
 |---|---|
 | `subscribe`, `upgrade` | Runs one `EnsureResources`, then observes each declared resource once, in manifest order, and stops at the first not yet `present` |
 | `unsubscribe` | Runs one `Delete`, or `DeleteKeeping` for a block that implements `handler.KeptReporter`, then observes each declared resource once, in reverse order, stops at the first not yet `absent`, and adds the outputs `Delete` returned to the answer once all are absent |
-| `validate` | Observes each declared resource once, and for a block that implements `handler.ReplacementPlanner` names the resources an upgrade would replace |
+| `validate` | Asks a block that implements `handler.Converger` whether its work still runs, and while it does or until a subscribe reports it, answers without observing; otherwise observes each declared resource once. For a block that implements `handler.ReplacementPlanner` it names the resources an upgrade would replace |
 
 The handler never waits inside a call. A resource short of the state the call
 asked for answers `pending:true` on a subscribe or upgrade and `absent:false`
@@ -328,6 +328,20 @@ the next piece of work from what it observes at the provider, and running it
 against finished work changes nothing. Report `Redrive` from the provider's
 state alone, never from a clock or a count of calls. The handler reads it only
 beside `Unknown`, and a subscribe's own pending answer never carries it.
+
+A resource the kit observer reads has no observer of yours to report this. Give
+your `Resource` a method `Converging(ctx, d)` instead, which makes it a
+`handler.Converger`. The handler asks it at the start of every validate. While
+your work runs, return a detail such as `converging: the apply is running`, and
+the validate answers every resource unknown with that detail and reads no
+provider. Once the work has finished and no subscribe has reported what it
+made, return `finished`, and the validate answers `redrive` beside `pending`.
+The subscribe that follows reports the identities the work produced, which the
+kit observer needs before it can read a resource. Return an error once the work
+failed, and the validate answers it as the block's error, with no resource
+outcomes. While nothing is in flight, return an empty detail, false and no error,
+and the validate observes as usual. An OpenTofu module's apply is
+such work, since the bucket it makes is named only once the apply has run.
 
 ## What the answer carries
 

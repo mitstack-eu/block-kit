@@ -56,7 +56,6 @@ func hashOf(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// storeTreeLocked stores files and returns their content-addressed sha.
 func (f *fakeGitHub) storeTreeLocked(files map[string]string) string {
 	paths := make([]string, 0, len(files))
 	for p := range files {
@@ -94,7 +93,6 @@ func (f *fakeGitHub) landLocked(changes map[string]string, message string) strin
 	return f.tip
 }
 
-// filesAt returns the files commit holds.
 func (f *fakeGitHub) filesAt(commit string) map[string]string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

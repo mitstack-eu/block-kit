@@ -21,8 +21,7 @@ type Resource interface {
 	// Ensure may be called more than once for the same subscription and must converge rather than duplicate.
 	Ensure(ctx context.Context, d contract.Desired) error
 
-	// Delete must not error when nothing was ever provisioned, and must be idempotent, since a settle timeout's redrive calls it again after it may already have destroyed the resource.
-	// Its outputs are merged into the unsubscribe answer once the block settles absent and reach the wire unscrubbed, so they must never carry secret material.
+	// Delete must not error when nothing was ever provisioned and must be idempotent, since a settle timeout's redrive calls it again, and its outputs reach the unsubscribe answer unscrubbed, so they must never carry secret material.
 	Delete(ctx context.Context, d contract.Desired) (outputs map[string]string, err error)
 }
 
@@ -49,6 +48,11 @@ type ReplacementPlanner interface {
 // FullReadChecker, when a block-level Resource implements it, is handed each full read in which the kit observer found a resource to be the subscription's, and a non-empty problem answers that resource unhealthy.
 type FullReadChecker interface {
 	CheckFullRead(ctx context.Context, r contract.ResourceRef, read observe.FullRead) (problem string, err error)
+}
+
+// Converger, when a block-level Resource implements it, is asked on a validate about work its EnsureResources left running: a non-empty detail answers every resource unknown with it, and finished answers redrive, so the engine sends the subscribe that reports what the work made; either way no observer runs.
+type Converger interface {
+	Converging(ctx context.Context, d contract.Desired) (detail string, finished bool, err error)
 }
 
 // CredentialIssuer, when a capability's block-level Resource implements it, answers an issue with the named app's credential and when it expires.
