@@ -11,8 +11,8 @@ b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 mode=${1:-} key=${2:-} kid=${3:-}
 [[ $kid =~ ^[A-Za-z0-9._-]+$ ]] || { echo "sign: kid $kid is not letters, digits, dots, underscores and hyphens" >&2; exit 2; }
 # An Ed25519 public key's DER is this fixed prefix and the key's 32 bytes, so another key type cannot pass for one.
-prefix=$(openssl pkey -in "$key" -pubout -outform DER | head -c 12 | od -An -tx1 | tr -d ' \n')
-[[ $prefix == 302a300506032b6570032100 ]] || { echo "sign: $key holds no Ed25519 key" >&2; exit 2; }
+der=$(openssl pkey -in "$key" -pubout -outform DER | od -An -v -tx1 | tr -d ' \n')
+[[ $der =~ ^302a300506032b6570032100[0-9a-f]{64}$ ]] || { echo "sign: $key holds no Ed25519 key" >&2; exit 2; }
 
 case $mode in
 keyset)
