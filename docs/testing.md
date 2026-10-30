@@ -71,7 +71,7 @@ holds the block to the guards below and logs the name of every guard that ran:
 | `replacement` | With `Upgrade` set, a resource the upgrade replaces is named in `replaces` by the validate before it |
 | `observe-asks-the-provider` | Each resource the check loses through `Provider.Lose` then reports not present |
 | `absence-after-unsubscribe` | After unsubscribe every declared resource reports absent, except one whose type `Config.Types` marks `endsWithSubscription` |
-| `kit-observer` | A resource whose type carries an observe spec has no observer of the block's own in `Config.Observers` or `Config.TypeObservers`, since `Config.KitObserver` reads it |
+| `kit-observer` | A resource whose type carries an observe spec has no observer of the block's own in `Config.Observers` or `Config.TypeObservers`, since `Config.KitObserver` reads it. The kit observer must also be able to run that spec, which needs at least one usable read, the read that proves the resource ready for use. A failure here names the resource and type, and [Observing resources](observe.md#proving-a-resource-usable) shows how to fix it |
 | `probe-reads` | A probe of such a resource makes no more provider reads than its type's `maxReads`, counted by a `Provider` that implements `kittest.ReadCounter` |
 
 The tagging guard checks both directions. Everything the provider lists must

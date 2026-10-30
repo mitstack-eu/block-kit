@@ -13,14 +13,33 @@ type ReadCounter interface {
 	Reads() int
 }
 
+func entryTypes(entry contract.ManifestResource) []string {
+	if len(entry.Types) == 0 {
+		return []string{entry.Type}
+	}
+	return entry.Types
+}
+
+// unservedKitTypes refuses each declared type the kit observer reads but cannot serve, such as one naming no usable read, before handler.New refuses the block for it.
+func unservedKitTypes(in Block, spec contract.ManifestSpec) []string {
+	var problems []string
+	for _, entry := range spec.Resources {
+		for _, typ := range entryTypes(entry) {
+			if t, ok := in.Config.Types.Lookup(typ); ok && t.KitObserved() {
+				if err := in.Config.KitObserver.Serves(t); err != nil {
+					problems = append(problems, fmt.Sprintf("resource %q: the kit observer reads its type %s but cannot serve it: %v", entry.Name, typ, err))
+				}
+			}
+		}
+	}
+	return problems
+}
+
 // ownObservers refuses a block's own observer for a resource or a type the kit observer reads, since the kit observer would never call it.
 func ownObservers(in Block, spec contract.ManifestSpec, ran map[string]bool) []string {
 	var problems []string
 	for _, entry := range spec.Resources {
-		types := entry.Types
-		if len(types) == 0 {
-			types = []string{entry.Type}
-		}
+		types := entryTypes(entry)
 		kitObserved := len(types) > 0
 		for _, typ := range types {
 			t, ok := in.Config.Types.Lookup(typ)
