@@ -140,7 +140,6 @@ func TestServe_ReplayedNonceIs401AndNeverReachesTheResource(t *testing.T) {
 	}
 }
 
-// servesBlock serves manifest, which declares plain's one container, with an observer for it.
 func servesBlock(manifest []byte) func(*handler.Config) {
 	return func(c *handler.Config) {
 		c.Manifest = manifest

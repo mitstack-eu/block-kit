@@ -103,13 +103,13 @@ func bucketRef(identity map[string]string, recorded map[string]contract.Recorded
 func TestKitObserver_AnswersEachRowOfTheAgreementTable(t *testing.T) {
 	recordedData := map[string]contract.RecordedResource{"data": {Type: "aws.s3-bucket", Identity: map[string]string{"bucket": "acme-data"}}}
 	cases := []struct {
-		name     string
-		buckets  map[string]map[string]string
-		identity map[string]string
-		full     bool
-		state    contract.State
-		detail   []string
-		calls    int
+		name                string
+		buckets             map[string]map[string]string
+		identity            map[string]string
+		full, unsubscribing bool
+		state               contract.State
+		detail              []string
+		calls               int
 	}{
 		{name: "the recorded identity exists and carries the subscription's tag: present",
 			buckets: map[string]map[string]string{"acme-data": {observe.AWSSubscriptionTag: sub}}, identity: map[string]string{"bucket": "acme-data"},
@@ -133,12 +133,15 @@ func TestKitObserver_AnswersEachRowOfTheAgreementTable(t *testing.T) {
 		{name: "the block recorded no identity: unknown, with no read",
 			buckets: map[string]map[string]string{"acme-data": {observe.AWSSubscriptionTag: sub}}, identity: nil,
 			state: contract.Unknown, detail: []string{"recorded no bucket"}, calls: 0},
+		{name: "an unsubscribe of a resource the block recorded no identity for, with nothing tagged: absent", unsubscribing: true, buckets: map[string]map[string]string{}, state: contract.Absent, calls: 1},
+		{name: "an unsubscribe of a resource the block recorded no identity for, with a tagged decoy: unknown, naming it", unsubscribing: true, buckets: map[string]map[string]string{"decoy": {observe.AWSSubscriptionTag: sub}}, state: contract.Unknown, detail: []string{"recorded no bucket", "unrecorded", "arn:aws:s3:::decoy", "never deleted"}, calls: 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			api := &fakeAWS{buckets: c.buckets}
 			k := observe.KitObserver{AWS: api}
 			ref := bucketRef(c.identity, recordedData)
+			ref.Unsubscribing = c.unsubscribing
 
 			var obs contract.Observation
 			var err error

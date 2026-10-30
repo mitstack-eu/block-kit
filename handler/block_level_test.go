@@ -472,6 +472,36 @@ func TestBlockLevel_UnsubscribeAnswersEachFileTheBlocksDeleteKeptOnTheDeleteOfTh
 	}
 }
 
+type teardownReportingBlock struct {
+	*blockResource
+	asked int
+}
+
+func (b *teardownReportingBlock) TeardownDetail(context.Context, contract.Desired) (string, error) {
+	b.asked++
+	return "left alone, since their tags name another subscription: parameter/decoy", nil
+}
+
+func TestBlockLevel_AnUnsubscribeAnswersTheBlocksTeardownDetailOnlyOnceItProvesEveryResourceAbsent(t *testing.T) {
+	for _, standing := range []bool{false, true} {
+		cloud := standingCloud()
+		cloud.standing["b"] = standing
+		block := &teardownReportingBlock{blockResource: &blockResource{cloud: cloud}}
+
+		status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: "unsubscribe", fields: recordedAll()})
+
+		wantOK(t, status, resp)
+		wantAbsent(t, resp, !standing)
+		asks := 1
+		if standing {
+			asks = 0
+		}
+		if block.asked != asks || strings.Contains(resp.StatusDetail, "parameter/decoy") == standing {
+			t.Errorf("with b standing %t, statusDetail = %q after %d ask(s), want the block's detail, asked once, only when every resource is absent", standing, resp.StatusDetail, block.asked)
+		}
+	}
+}
+
 func TestBlockLevel_RefusesAKeptFileOfAResourceTheManifestDoesNotDeclare(t *testing.T) {
 	cloud := standingCloud()
 	block := keepingBlock{&blockResource{cloud: cloud}, map[string][]contract.Kept{"ghost": {{Repository: "acme/weather", Path: "CLAUDE.md", Reason: "changed"}}}}
