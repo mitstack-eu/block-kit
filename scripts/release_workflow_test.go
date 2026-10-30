@@ -85,6 +85,8 @@ func stepWith(all map[string]string, job, key, value string) bool {
 func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const checkout, setupGo = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
 	const releaseDryRun = "bash scripts/release-block-kit.sh --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
+	const rescueSSH = "capabilities/hetzner/robot/rescuessh"
+	const moduleDryRun = "bash scripts/release-block-kit.sh --module " + rescueSSH + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
 	raw, err := os.ReadFile("../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatalf("reading ci.yml: %v", err)
@@ -117,6 +119,10 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the release job runs its script under bash, so pipefail fails a red release", strconv.FormatBool(stepWith(all, "release", "shell", "bash")), "true"},
 		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
 		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
+		{"the test job vets and tests the rescuessh module, which ./... leaves out", strconv.FormatBool(stepWith(all, "test", "run", "go -C "+rescueSSH+" vet ./...\ngo -C "+rescueSSH+" test ./...")), "true"},
+		{"the test job dry-runs the rescuessh release over a pull request's base and head, on a pull request alone",
+			field(stepOf(all, "test", "run", moduleDryRun) + "if"), "github.event_name == 'pull_request'"},
+		{"the release job releases the rescuessh module by its own tags into the job summary", field(stepOf(all, "release", "run", `bash scripts/release-block-kit.sh --module `+rescueSSH+` | tee -a "$GITHUB_STEP_SUMMARY"`) + "shell"), "bash"},
 		{"the test job reports as test, the context branch protection requires", field("jobs.test.name"), "test"},
 		{"the test job carries no if, so every event runs the check main requires", field("jobs.test.if"), "<absent>"},
 		{"the release tests carry no if, so every event runs them", field(stepOf(all, "test", "run", "bash scripts/release-block-kit_test.sh") + "if"), "<absent>"},

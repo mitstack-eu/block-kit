@@ -431,6 +431,46 @@ assert_tag_at "the pushed healing tag points at the current head" "$R" "v0.5.1" 
 OUT="$(git -C "$W" tag --list "v*" --contains "$C")"
 assert_out_contains "head is reachable from a tag afterwards" "v0.5.1"
 
+# 24. --module releases a nested module by its own path-prefixed tags: a change inside it cuts the next one, and no root tag.
+MOD="capabilities/hetzner/robot/rescuessh"
+commit_module_change() { # commit_module_change <subject> commits a change inside $MOD
+  mkdir -p "$W/$MOD"
+  printf 'package rescuessh // rev %s\n' "$RANDOM$RANDOM" >"$W/$MOD/rescuessh.go"
+  git -C "$W" add -A
+  git -C "$W" commit -q -m "$1"
+}
+setup_repo
+tag_at "v0.5.0"
+commit_module_change "feat: the module's first release"
+tag_at "$MOD/v0.1.0"
+git -C "$W" push -q origin "v0.5.0" "$MOD/v0.1.0"
+commit_module_change "fix: a change inside the module"
+H="$(head_sha)"
+run --module "$MOD" --repo "$W" --head "$H"
+check "a module change exits 0" 0 "$RC"
+assert_tag_at "a module change cuts the module's patch tag at head" "$W" "$MOD/v0.1.1" "$H"
+assert_tag "the module tag reaches the remote" "$R" "$MOD/v0.1.1"
+assert_kit_tag_count "a module release cuts no root tag" "$W" 1
+
+# 25. A change outside the module leaves the module unchanged.
+setup_repo
+commit_module_change "feat: the module's first release"
+tag_at "$MOD/v0.1.0"
+commit_change "fix: a change outside the module"
+run --module "$MOD" --repo "$W" --head "$(head_sha)"
+check "a change outside the module exits 0" 0 "$RC"
+assert_out_contains "the module reads as unchanged" "unchanged"
+assert_no_tag "no module tag for a change outside it" "$W" "$MOD/v0.1.1"
+
+# 26. A module with no tag yet cuts nothing, since its first release is tagged by hand.
+setup_repo
+tag_at "v0.5.0"
+commit_module_change "feat: the module before its first release"
+run --module "$MOD" --repo "$W" --head "$(head_sha)"
+check "a module with no tag exits 0" 0 "$RC"
+assert_out_contains "the untagged module says its first release is by hand" "tagged by hand"
+assert_no_tag "no module tag before the first" "$W" "$MOD/v0.0.1"
+
 echo "----"
 echo "release-block-kit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
