@@ -1,8 +1,7 @@
 package robot
 
-// Robot names no host key for the rescue system, so the session runs only the block's fixed rescue script with
-// arguments matched against patterns, and carries no secret. The secret reaches the server over the vSwitch from a
-// short-lived Cloud server whose TLS key the rescue script checks against a pin.
+// Robot names no host key for the rescue system, so the session runs only a fixed script with patterned arguments and no
+// secret; the secret comes over the vSwitch from a short-lived server whose TLS key the script checks against a pin.
 
 import (
 	"bufio"
@@ -67,8 +66,7 @@ type Target struct {
 	Name    string
 	VSwitch string
 	// Address lies on the vSwitch subnet, whose first address is Hetzner's vSwitch gateway.
-	Address netip.Prefix
-	// Firewall is the server's firewall once the install ends.
+	Address  netip.Prefix
 	Firewall Firewall
 }
 

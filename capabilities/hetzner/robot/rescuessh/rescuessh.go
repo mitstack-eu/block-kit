@@ -126,7 +126,6 @@ func (s *Session) Run(ctx context.Context, args ...string) (string, error) {
 
 func (s *Session) Close() error { return s.client.Close() }
 
-// output keeps the first MaxOutput bytes the script wrote, from stdout and stderr at once.
 type output struct {
 	mu  sync.Mutex
 	buf []byte
