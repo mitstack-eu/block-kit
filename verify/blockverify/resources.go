@@ -52,9 +52,12 @@ func resourcesSuite(target string) SuiteResult {
 		len(m.Block.Spec.Resources), strings.TrimSpace(ran))}
 }
 
+// kitReadLogMarker opens the line the kit observer logs for each read, which names a resource but no problem.
+const kitReadLogMarker = "observe: subscription "
+
 func resourceProblemLine(output string) string {
 	for _, l := range strings.Split(output, "\n") {
-		if strings.Contains(l, `resource "`) {
+		if strings.Contains(l, `resource "`) && !strings.Contains(l, kitReadLogMarker) {
 			return strings.TrimSpace(l)
 		}
 	}
