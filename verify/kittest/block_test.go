@@ -467,6 +467,19 @@ func containerBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 	}
 }
 
+func TestCheckBlock_FailsTheKitObserverGuardOnAFindingSpecWithNoUsableRead(t *testing.T) {
+	_, in := hostBlock(t)
+	snap := typeSnapshot(t)
+	snap.Types = slices.Clone(snap.Types)
+	i := slices.IndexFunc(snap.Types, func(st contract.SnapshotType) bool { return st.ID == "aws.ebs-volume" })
+	snap.Types[i].ObserveSpec = &contract.SnapshotObserve{Find: &contract.SnapshotFind{Tag: observe.AWSSubscriptionTag, Identity: "volumeId"},
+		Probe: &contract.SnapshotProbe{Reads: []string{"existence", "tags"}, MaxReads: 2}, FullRead: &contract.SnapshotFullRead{CloudControl: "AWS::EC2::Volume"}}
+	in.Config.Types = snap
+	delete(in.Config.Observers, "aws.ebs-volume")
+
+	wantProblemNaming(t, kittest.CheckBlock(in), `resource "aws.ebs-volume"`, "kit observer", "no usable read")
+}
+
 func TestCheckBlock_NamesTheListedTypeWhoseRunFails(t *testing.T) {
 	b, in := containerBlock(t)
 	b.failOnHostType = "hetzner.server"

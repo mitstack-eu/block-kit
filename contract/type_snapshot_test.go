@@ -3,6 +3,7 @@ package contract_test
 // contract.ParseTypeSnapshot reads the snapshot the platform serves at GET /v1/resource-types/snapshots/{version}, as the 56-type fixture under testdata holds it.
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -96,11 +97,10 @@ func TestParseTypeSnapshot_ReadsThePlatformsSnapshot(t *testing.T) {
 		}},
 		{"aws.s3-bucket's observe spec, which makes it kit-observed", func(t *testing.T, snap contract.TypeSnapshot) {
 			bucket := lookup(t, snap, "aws.s3-bucket")
-			wantField(t, "aws.s3-bucket ObserveSpec", bucket.ObserveSpec, &contract.SnapshotObserve{
-				Find:     &contract.SnapshotFind{Tag: "mitstack:subscription", Identity: "bucket"},
-				Probe:    &contract.SnapshotProbe{Reads: []string{"tags", "existence"}, MaxReads: 4},
-				FullRead: &contract.SnapshotFullRead{CloudControl: "AWS::S3::Bucket"},
-			})
+			want := `{"find":{"tag":"mitstack:subscription","identity":"bucket"},"probe":{"reads":["tags","existence"],"maxReads":4},"usable":["existence"],"fullRead":{"cloudControl":"AWS::S3::Bucket"}}`
+			if raw, err := json.Marshal(bucket.ObserveSpec); err != nil || string(raw) != want {
+				t.Errorf("aws.s3-bucket ObserveSpec = %s, %v; want %s", raw, err, want)
+			}
 			if !bucket.KitObserved() || lookup(t, snap, "aws.vpc").KitObserved() {
 				t.Error("KitObserved: want aws.s3-bucket, which carries a spec, and not aws.vpc, which carries none")
 			}

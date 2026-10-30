@@ -724,6 +724,9 @@
           ],
           "maxReads": 4
         },
+        "usable": [
+          "existence"
+        ],
         "fullRead": {
           "cloudControl": "AWS::S3::Bucket"
         }

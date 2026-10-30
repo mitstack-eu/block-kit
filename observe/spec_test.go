@@ -1,10 +1,11 @@
 package observe_test
 
-// The kit observer answers a catalogue type's observe spec as ADR 0108's agreement table sets, from the type, the recorded identity and the subscription's id alone.
+// The kit observer answers a catalogue type's observe spec as ADR 0108's agreement table and ADR 0109's usable reads set, from the type, the recorded identity and the subscription's id alone.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -17,27 +18,34 @@ import (
 
 const sub = "sub_abc"
 
-var s3Bucket = contract.SnapshotType{ID: "aws.s3-bucket", ObserveSpec: &contract.SnapshotObserve{
-	Find:     &contract.SnapshotFind{Tag: observe.AWSSubscriptionTag, Identity: "bucket"},
-	Probe:    &contract.SnapshotProbe{Reads: []string{"tags", "existence"}, MaxReads: 4},
-	FullRead: &contract.SnapshotFullRead{CloudControl: "AWS::S3::Bucket"},
-}}
+func snapshotType(raw string) contract.SnapshotType {
+	var t contract.SnapshotType
+	if err := json.Unmarshal([]byte(raw), &t); err != nil {
+		panic(err)
+	}
+	return t
+}
 
-var ecrRepository = contract.SnapshotType{ID: "aws.ecr-repository", Outputs: []contract.SnapshotOutput{{Name: "registryHost", Required: true}}, ObserveSpec: &contract.SnapshotObserve{
-	Find:     &contract.SnapshotFind{Tag: observe.AWSSubscriptionTag, Identity: "repositoryName"},
-	Probe:    &contract.SnapshotProbe{Reads: []string{"existence", "tags"}, MaxReads: 2},
-	FullRead: &contract.SnapshotFullRead{CloudControl: "AWS::ECR::Repository"},
-	Outputs:  []contract.SnapshotObserveOutput{{Name: "registryHost", Property: "RepositoryUri", Part: contract.ObservePartHost}},
-}}
+const s3BucketJSON = `{"id": "aws.s3-bucket", "observeSpec": {"find": {"tag": "mitstack:subscription", "identity": "bucket"},
+	"probe": {"reads": ["tags", "existence"], "maxReads": 4}, "usable": ["existence"], "fullRead": {"cloudControl": "AWS::S3::Bucket"}}}`
 
-var hetznerServer = contract.SnapshotType{ID: "hetzner.server", ObserveSpec: &contract.SnapshotObserve{
-	Find:     &contract.SnapshotFind{Tag: observe.HetznerSubscriptionLabel, Identity: "hostId"},
-	Probe:    &contract.SnapshotProbe{Reads: []string{"existence", "tags"}, MaxReads: 1},
-	FullRead: &contract.SnapshotFullRead{Collection: "/servers/{id}"},
-}}
+const ecrRepositoryJSON = `{"id": "aws.ecr-repository", "outputs": [{"name": "registryHost", "required": true}],
+	"observeSpec": {"find": {"tag": "mitstack:subscription", "identity": "repositoryName"}, "probe": {"reads": ["existence", "tags"], "maxReads": 2},
+	"usable": ["existence"], "fullRead": {"cloudControl": "AWS::ECR::Repository"}, "outputs": [{"name": "registryHost", "property": "RepositoryUri", "part": "host"}]}}`
+
+const ec2InstanceJSON = `{"id": "aws.ec2-instance", "outputs": [{"name": "hostId", "required": true}],
+	"observeSpec": {"find": {"tag": "mitstack:subscription", "identity": "instanceId"}, "probe": {"reads": ["existence", "tags"], "maxReads": 3},
+	"usable": ["ssmOnline"], "fullRead": {"cloudControl": "AWS::EC2::Instance"}, "outputs": [{"name": "hostId", "property": "InstanceId"}]}}`
+
+var s3Bucket, ecrRepository, ec2Instance = snapshotType(s3BucketJSON), snapshotType(ecrRepositoryJSON), snapshotType(ec2InstanceJSON)
+
+var hetznerServer = snapshotType(`{"id": "hetzner.server", "observeSpec": {"find": {"tag": "mitstack.dev/subscription", "identity": "hostId"},
+	"probe": {"reads": ["existence", "tags"], "maxReads": 1}, "usable": ["existence"], "fullRead": {"collection": "/servers/{id}"}}}`)
 
 type fakeAWS struct {
 	buckets map[string]map[string]string
+	online  map[string]bool
+	ssmErr  error
 	calls   []string
 }
 
@@ -61,10 +69,10 @@ func (f *fakeAWS) GetResource(_ context.Context, _ contract.Desired, typeName, i
 	}
 	type pair struct{ Key, Value string }
 	doc := struct {
-		BucketName    string
-		RepositoryUri string
-		Tags          []pair
-	}{BucketName: id, RepositoryUri: "123456789012.dkr.ecr.eu-central-1.amazonaws.com/" + id}
+		BucketName, InstanceId string
+		RepositoryUri          string
+		Tags                   []pair
+	}{BucketName: id, InstanceId: id, RepositoryUri: "123456789012.dkr.ecr.eu-central-1.amazonaws.com/" + id}
 	for k, v := range tags {
 		doc.Tags = append(doc.Tags, pair{k, v})
 	}
@@ -83,11 +91,16 @@ func (f *fakeAWS) ResourceARNs(_ context.Context, _ contract.Desired, key, value
 	return arns, nil
 }
 
+func (f *fakeAWS) SSMOnline(_ context.Context, _ contract.Desired, id string) (bool, error) {
+	f.calls = append(f.calls, "SSMOnline "+id)
+	return f.online[id], f.ssmErr
+}
+
 func (f *fakeAWS) onlyRead(t *testing.T) {
 	t.Helper()
 	for _, c := range f.calls {
 		method, _, _ := strings.Cut(c, " ")
-		if !slices.Contains([]string{"Exists", "Tags", "GetResource", "ResourceARNs"}, method) {
+		if !slices.Contains([]string{"Exists", "Tags", "GetResource", "ResourceARNs", "SSMOnline"}, method) {
 			t.Errorf("the observer made %q, but it may only read", c)
 		}
 	}
@@ -111,7 +124,7 @@ func TestKitObserver_AnswersEachRowOfTheAgreementTable(t *testing.T) {
 		detail              []string
 		calls               int
 	}{
-		{name: "the recorded identity exists and carries the subscription's tag: present",
+		{name: "the recorded identity exists and carries the subscription's tag: present, its usable existence read costing no call",
 			buckets: map[string]map[string]string{"acme-data": {observe.AWSSubscriptionTag: sub}}, identity: map[string]string{"bucket": "acme-data"},
 			state: contract.Present, calls: 2},
 		{name: "the recorded identity exists and lacks the tag: unhealthy, naming the tag",
@@ -276,11 +289,8 @@ func TestKitObserver_ReadsAHetznerCollectionPathInOneRequest(t *testing.T) {
 }
 
 func TestKitObserver_RefusesASpecItCannotServe(t *testing.T) {
-	tooMany, outputsUnread := s3Bucket, ecrRepository
-	tooMany.ObserveSpec = &contract.SnapshotObserve{Find: s3Bucket.ObserveSpec.Find, FullRead: s3Bucket.ObserveSpec.FullRead,
-		Probe: &contract.SnapshotProbe{Reads: []string{"tags", "existence"}, MaxReads: 1}}
-	outputsUnread.ObserveSpec = &contract.SnapshotObserve{Find: ecrRepository.ObserveSpec.Find, FullRead: ecrRepository.ObserveSpec.FullRead, Outputs: ecrRepository.ObserveSpec.Outputs,
-		Probe: &contract.SnapshotProbe{Reads: []string{"tags"}, MaxReads: 1}}
+	tooMany := snapshotType(strings.Replace(s3BucketJSON, `"maxReads": 4`, `"maxReads": 1`, 1))
+	outputsUnread := snapshotType(strings.Replace(ecrRepositoryJSON, `"reads": ["existence", "tags"], "maxReads": 2`, `"reads": ["tags"], "maxReads": 1`, 1))
 	cases := []struct {
 		name string
 		k    observe.KitObserver
@@ -289,6 +299,11 @@ func TestKitObserver_RefusesASpecItCannotServe(t *testing.T) {
 	}{
 		{"a probe planning more reads than maxReads", observe.KitObserver{AWS: &fakeAWS{}}, tooMany, "above its maxReads of 1"},
 		{"a probe with no existence read, which reads the outputs", observe.KitObserver{AWS: &fakeAWS{}}, outputsUnread, "makes no existence read"},
+		{"a spec that finds its resources and names no usable read", observe.KitObserver{AWS: &fakeAWS{}},
+			snapshotType(strings.Replace(s3BucketJSON, `"usable": ["existence"], `, "", 1)), "names no usable read"},
+		{"a usable read the kit cannot make", observe.KitObserver{AWS: &fakeAWS{}}, snapshotType(strings.Replace(s3BucketJSON, `["existence"], "fullRead"`, `["dnsResolves"], "fullRead"`, 1)), `"dnsResolves"`},
+		{"a usable read that takes the probe above maxReads", observe.KitObserver{AWS: &fakeAWS{}}, snapshotType(strings.Replace(ec2InstanceJSON, `"maxReads": 3`, `"maxReads": 2`, 1)), "above its maxReads of 2"},
+		{"ssmOnline with an AWS API that makes no SSMOnline read", observe.KitObserver{AWS: struct{ observe.AWSSpecAPI }{&fakeAWS{}}}, ec2Instance, "SSMOnline"},
 		{"an AWS type with no AWS API", observe.KitObserver{}, s3Bucket, "no AWS API"},
 		{"a Hetzner type with no Hetzner API", observe.KitObserver{}, hetznerServer, "no Hetzner API"},
 	}
@@ -297,6 +312,44 @@ func TestKitObserver_RefusesASpecItCannotServe(t *testing.T) {
 			err := c.k.Serves(c.t)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("Serves = %v, want an error naming %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestKitObserver_AnswersPresentOnlyOnceEveryUsableReadPasses(t *testing.T) {
+	cases := []struct {
+		name    string
+		owner   string
+		online  bool
+		ssmErr  error
+		state   contract.State
+		detail  string
+		outputs map[string]string
+	}{
+		{"SSM lists the instance online: present with its outputs", sub, true, nil, contract.Present, "", map[string]string{"hostId": "i-1"}},
+		{"SSM does not list it online: unknown, naming ssmOnline", sub, false, nil, contract.Unknown, "ssmOnline", nil},
+		{"the SSM read fails: unknown, naming ssmOnline", sub, true, errors.New("ThrottlingException"), contract.Unknown, "ssmOnline", nil},
+		{"another subscription's tag: unhealthy, with no SSM read", "sub_other", true, nil, contract.Unknown, "unhealthy", nil},
+	}
+	ref := contract.ResourceRef{Name: "host", Type: ec2Instance.ID, Identity: map[string]string{"instanceId": "i-1"}, Desired: contract.Desired{Identity: contract.Identity{SubscriptionID: sub}}}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			api := &fakeAWS{buckets: map[string]map[string]string{"i-1": {observe.AWSSubscriptionTag: c.owner}}, online: map[string]bool{"i-1": c.online}, ssmErr: c.ssmErr}
+			k := observe.KitObserver{AWS: api}
+
+			probe, probeErr := k.Probe(context.Background(), ec2Instance, ref)
+			probeCalls := len(api.calls)
+			full, _, fullErr := k.FullRead(context.Background(), ec2Instance, ref)
+
+			ssmRead := slices.ContainsFunc(api.calls, func(call string) bool { return strings.HasPrefix(call, "SSMOnline") })
+			if maxReads := ec2Instance.ObserveSpec.Probe.MaxReads; probeCalls > maxReads || (c.owner != sub && ssmRead) {
+				t.Errorf("calls = %q, want a probe within maxReads %d and no SSMOnline call before the tag agrees", api.calls, maxReads)
+			}
+			for _, obs := range []contract.Observation{probe, full} {
+				if probeErr != nil || fullErr != nil || obs.State != c.state || !reflect.DeepEqual(obs.Outputs, c.outputs) || !strings.Contains(obs.StatusDetail, c.detail) {
+					t.Errorf("observation = %+v, errors %v and %v; want %s naming %q with outputs %v", obs, probeErr, fullErr, c.state, c.detail, c.outputs)
+				}
 			}
 		})
 	}

@@ -491,12 +491,12 @@ spec:
   {"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app", "stateful": true, "pricing": {"priced": true, "key": "AmazonS3"},
    "category": "storage", "outputs": [], "version": 1,
    "observeSpec": {"find": {"tag": "mitstack:subscription", "identity": "bucket"}, "probe": {"reads": ["tags", "existence"], "maxReads": 4},
-     "fullRead": {"cloudControl": "AWS::S3::Bucket"}}},
+     "usable": ["existence"], "fullRead": {"cloudControl": "AWS::S3::Bucket"}}},
   {"id": "aws.ecr-repository", "capability": "aws", "kind": "container-repository", "scope": "per-app", "stateful": false, "pricing": {"priced": false},
    "category": "artifact-registry", "outputs": [{"name": "pushRoleArn", "secret": true, "required": false}, {"name": "registryHost", "secret": false, "required": true}],
    "version": 1,
    "observeSpec": {"find": {"tag": "mitstack:subscription", "identity": "repositoryName"}, "probe": {"reads": ["existence", "tags"], "maxReads": 2},
-     "fullRead": {"cloudControl": "AWS::ECR::Repository"}, "outputs": [{"name": "registryHost", "property": "RepositoryUri", "part": "host"}]}}
+     "usable": ["existence"], "fullRead": {"cloudControl": "AWS::ECR::Repository"}, "outputs": [{"name": "registryHost", "property": "RepositoryUri", "part": "host"}]}}
 ]}
 -- resources-kit-observed-block_test.go --
 package main

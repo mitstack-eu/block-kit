@@ -31,7 +31,7 @@ func TestDeclared_AValidateHandedNoIdentityAnswersTheIdentityItsObserverRead(t *
 const s3Snapshot = `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app",
 	"stateful": true, "pricing": {"priced": true}, "category": "storage", "outputs": [], "version": 1,
 	"observeSpec": {"find": {"tag": "mitstack:subscription", "identity": "bucket"}, "probe": {"reads": ["tags", "existence"], "maxReads": 4},
-	"fullRead": {"cloudControl": "AWS::S3::Bucket"}}}]}`
+	"usable": ["existence"], "fullRead": {"cloudControl": "AWS::S3::Bucket"}}}]}`
 
 var s3Manifest = v1betaManifest("s3-block", []string{"{ name: data, type: aws.s3-bucket }"})
 
@@ -196,6 +196,10 @@ func TestKitObserver_ADeclaredResourceOfASpeccedTypeNeedsNoObserverButAnAPI(t *t
 	cfg.KitObserver = observe.KitObserver{AWS: &recordingAWS{t: t}}
 	if _, err := handler.New(cfg); err != nil {
 		t.Errorf("handler.New with KitObserver.AWS and no Observers = %v, want it served", err)
+	}
+	cfg.Types, _ = contract.ParseTypeSnapshot([]byte(strings.Replace(s3Snapshot, `"usable": ["existence"], `, "", 1)))
+	if _, err := handler.New(cfg); err == nil || !strings.Contains(err.Error(), "no usable read") {
+		t.Errorf("handler.New over a spec naming no usable read = %v, want a refusal naming it", err)
 	}
 }
 
