@@ -67,7 +67,7 @@ type desiredLister interface {
 type Block struct {
 	// Config is the handler.Config the block serves, of which the check replaces only the signing key and the JWKS address.
 	Config handler.Config
-	// Provider is a RepositoryProvider when a declared type lands files, so the check can read main after unsubscribe.
+	// Provider is a RepositoryProvider when a declared type lands files, or a RepositoriesProvider when they land in more than one repository, so the check can read main after unsubscribe.
 	Provider Provider
 	// Desired needs its SubscriptionID, BlockID and OrgID.
 	Desired contract.Desired
@@ -294,9 +294,29 @@ type RepositoryProvider interface {
 	Repository() *landingtest.Fake
 }
 
+// RepositoriesProvider is the Provider of a block landing files in more than one repository, which hands the check one fake per repository, keyed by owner/name.
+type RepositoriesProvider interface {
+	Provider
+	Repositories() map[string]*landingtest.Fake
+}
+
+// repositories is every fake repository the Provider hands the check, keyed by owner/name and leaving out a nil fake, and false when it hands none.
+func (c *blockCheck) repositories() (map[string]*landingtest.Fake, bool) {
+	switch p := c.in.Provider.(type) {
+	case RepositoriesProvider:
+		repos := maps.Clone(p.Repositories())
+		maps.DeleteFunc(repos, func(_ string, f *landingtest.Fake) bool { return f == nil })
+		return repos, true
+	case RepositoryProvider:
+		repo := p.Repository()
+		return map[string]*landingtest.Fake{repo.Repo: repo}, true
+	}
+	return nil, false
+}
+
 // commitContributions writes each file a scaffold contribution offers onto the fake main, as app-scaffold commits it, and fails an offered file the contribution's landing record does not name at its blob, since unsubscribe could not remove it.
 func (c *blockCheck) commitContributions(resp contract.Response) {
-	p, ok := c.in.Provider.(RepositoryProvider)
+	repos, ok := c.repositories()
 	if !ok {
 		return
 	}
@@ -312,14 +332,15 @@ func (c *blockCheck) commitContributions(resp contract.Response) {
 			continue
 		}
 		rec, err := landing.RecordFromIdentity(c.desired.RecordedResources[entry.Name].Identity)
-		if err != nil {
+		if err != nil || repos[rec.Repository] == nil {
 			continue
 		}
 		blobs := map[string]string{}
 		for _, f := range rec.Files {
 			blobs[f.Path] = f.Blob
 		}
-		main, commit := p.Repository().Main(), map[string]string{}
+		repo := repos[rec.Repository]
+		main, commit := repo.Main(), map[string]string{}
 		for _, path := range sortedKeys(offer.Files) {
 			if blob := landing.BlobHash([]byte(offer.Files[path])); blobs[path] != blob {
 				c.resourceProblem(entry.Name, "it offers %s with blob %s, but its landing record does not name it at that blob, so unsubscribe cannot remove it", path, blob)
@@ -329,18 +350,23 @@ func (c *blockCheck) commitContributions(resp contract.Response) {
 			}
 		}
 		if len(commit) > 0 {
-			p.Repository().Seed(commit)
+			repo.Seed(commit)
 		}
 	}
 }
 
 type landedFiles struct {
-	repo             *landingtest.Fake
-	records          map[string]landing.Record
-	changed, content string
+	repos   map[string]*landingtest.Fake
+	records map[string]landing.Record
+	// changed holds, per repository, the file the check changed as the app would.
+	changed map[string]changedFile
 }
 
-// changeALandedFile reads each file-landing resource's record and changes the first file a record created, as an app edits a landed file; it returns nil for a block that lands no files.
+type changedFile struct {
+	path, content string
+}
+
+// changeALandedFile reads each file-landing resource's record and, in each repository, changes the first file a record created there, as an app edits a landed file; it returns nil for a block that lands no files.
 func (c *blockCheck) changeALandedFile() *landedFiles {
 	var names []string
 	for _, entry := range c.spec.Resources {
@@ -351,59 +377,68 @@ func (c *blockCheck) changeALandedFile() *landedFiles {
 	if len(names) == 0 {
 		return nil
 	}
-	p, ok := c.in.Provider.(RepositoryProvider)
+	repos, ok := c.repositories()
 	if !ok {
-		c.resourceProblem(names[0], "its type lands files, but Provider is no kittest.RepositoryProvider, so the check cannot read main after unsubscribe")
+		c.resourceProblem(names[0], "its type lands files, but Provider is neither a kittest.RepositoryProvider nor a kittest.RepositoriesProvider, so the check cannot read main after unsubscribe")
 		return nil
 	}
-	l := &landedFiles{repo: p.Repository(), records: map[string]landing.Record{}}
+	l := &landedFiles{repos: repos, records: map[string]landing.Record{}, changed: map[string]changedFile{}}
 	for _, name := range names {
 		rec, err := landing.RecordFromIdentity(c.desired.RecordedResources[name].Identity)
 		if err != nil {
 			c.resourceProblem(name, "its type lands files, but its identity holds no landing record: %v", err)
 			continue
 		}
-		if rec.Repository != l.repo.Repo {
-			c.resourceProblem(name, "it landed files in %s, but the Provider's fake repository is %s", rec.Repository, l.repo.Repo)
+		repo := repos[rec.Repository]
+		if repo == nil {
+			c.resourceProblem(name, "it landed files in %s, but the Provider hands the check no fake repository for it, only %s", rec.Repository, strings.Join(sortedKeys(repos), ", "))
 			continue
 		}
 		l.records[name] = rec
 		for _, f := range rec.Files {
-			if l.changed == "" && f.Created {
-				l.changed = f.Path
+			if _, done := l.changed[rec.Repository]; !done && f.Created {
+				content := repo.Main()[f.Path] + "\nchanged by the app\n"
+				repo.Edit(f.Path, content)
+				l.changed[rec.Repository] = changedFile{path: f.Path, content: content}
 			}
 		}
-	}
-	if l.changed != "" {
-		l.content = l.repo.Main()[l.changed] + "\nchanged by the app\n"
-		l.repo.Edit(l.changed, l.content)
 	}
 	return l
 }
 
-// readMain fails a landed file main still carries unchanged, the changed file gone or rewritten, and a branch left under the subscription's prefix.
+// readMain fails a landed file main still carries unchanged, a changed file gone or rewritten, and a branch left under the subscription's prefix, in each repository but one the fake shows deleted, which holds nothing.
 func (c *blockCheck) readMain(l *landedFiles) {
 	if l == nil {
 		return
 	}
-	main := l.repo.Main()
 	for _, name := range sortedKeys(l.records) {
-		for _, f := range l.records[name].Files {
+		rec := l.records[name]
+		repo := l.repos[rec.Repository]
+		if repo.Deleted() {
+			continue
+		}
+		main, changed := repo.Main(), l.changed[rec.Repository]
+		for _, f := range rec.Files {
 			content, held := main[f.Path]
 			switch {
-			case f.Path == l.changed && content != l.content:
+			case f.Path == changed.path && content != changed.content:
 				c.resourceProblem(name, "unsubscribe deleted or rewrote %s, which the app changed after the landing, want it kept", f.Path)
-			case f.Path == l.changed && !slices.Contains(c.kept[name], contract.Kept{Repository: l.repo.Repo, Path: f.Path, Reason: "changed"}):
+			case f.Path == changed.path && !slices.Contains(c.kept[name], contract.Kept{Repository: rec.Repository, Path: f.Path, Reason: "changed"}):
 				c.resourceProblem(name, "unsubscribe kept %s, which the app changed, but no delete outcome answers it kept with reason changed", f.Path)
-			case f.Path != l.changed && f.Created && held && landing.BlobHash([]byte(content)) == f.Blob:
-				c.resourceProblem(name, "main of %s still carries %s unchanged after unsubscribe, want it removed", l.repo.Repo, f.Path)
+			case f.Path != changed.path && f.Created && held && landing.BlobHash([]byte(content)) == f.Blob:
+				c.resourceProblem(name, "main of %s still carries %s unchanged after unsubscribe, want it removed", rec.Repository, f.Path)
 			}
 		}
 	}
 	prefix := landing.BranchPrefix(c.desired.SubscriptionID)
-	for _, branch := range l.repo.Branches() {
-		if strings.HasPrefix(branch, prefix) {
-			c.problem("branch %s under the subscription's prefix remains on %s after unsubscribe, want it deleted", branch, l.repo.Repo)
+	for _, name := range sortedKeys(l.repos) {
+		if l.repos[name].Deleted() {
+			continue
+		}
+		for _, branch := range l.repos[name].Branches() {
+			if strings.HasPrefix(branch, prefix) {
+				c.problem("branch %s under the subscription's prefix remains on %s after unsubscribe, want it deleted", branch, name)
+			}
 		}
 	}
 }

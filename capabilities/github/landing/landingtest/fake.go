@@ -157,6 +157,13 @@ func (f *Fake) DeleteRepository() {
 	f.deleted = true
 }
 
+// Deleted reports whether DeleteRepository was called, as a block deleting the repository whole does.
+func (f *Fake) Deleted() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleted
+}
+
 // CoverSelectedRepositories makes the installation listing answer repository_selection "selected", as a token minted for chosen repositories does.
 func (f *Fake) CoverSelectedRepositories() {
 	f.mu.Lock()

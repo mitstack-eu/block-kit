@@ -43,7 +43,7 @@ func TestDeclaredResources(t *testing.T) {
 | Field | What you supply |
 |---|---|
 | `Config` | The `handler.Config` your `main` hands `handler.New`, of which the check replaces only the signing key and the JWKS address |
-| `Provider` | Your fake provider, which lists everything carrying the subscription's id and can lose one resource behind the block's back. A block declaring a file-landing type passes a `kittest.RepositoryProvider`, whose `Repository` method hands the check the `landingtest` fake its config lands on |
+| `Provider` | Your fake provider, which lists everything carrying the subscription's id and can lose one resource behind the block's back. A block declaring a file-landing type passes a `kittest.RepositoryProvider`, whose `Repository` method hands the check the `landingtest` fake its config lands on. A block landing files in more than one repository passes a `kittest.RepositoriesProvider` instead, whose `Repositories` method hands one fake per repository, keyed by `owner/name` |
 | `Desired` | The subscription, with a `SubscriptionID`, a `BlockID`, an `OrgID` and the secrets your code reads |
 | `Upgrade` | The `Desired` of an upgrade, the call that brings a subscription to a new version of the block, which the check sends after subscribe. It is required when a declared type is stateful |
 | `Requirements` | For each requirement and each type that may meet it, the outputs the check binds, keyed by requirement and then type |
@@ -101,9 +101,18 @@ runs. Unsubscribe must
 remove every file such a block created that main still carries unchanged, keep
 each file the app changed, and report the kept files.
 
-For a block declaring one of these types, `kittest.AssertBlock` reads the fake
-repository's main after unsubscribe. Before the unsubscribe it changes the first
-file a landing record created, as an app editing a landed file would.
+For a block declaring one of these types, `kittest.AssertBlock` reads main
+after unsubscribe, in the fake repository each landing record names. Before the
+unsubscribe it changes, in each repository, the first file a landing record
+created there, as an app editing a landed file would. A record naming a
+repository the Provider hands no fake for fails the block.
+
+A repository the block deletes whole holds nothing to remove, as ADR 0107 of
+the platform says. So the check reads nothing from a fake the block deleted
+through `DeleteRepository`, and that repository's records pass. A block that
+lands workflows in a CI repository of its own and deletes that repository at
+unsubscribe passes a `kittest.RepositoriesProvider` naming both the app's
+repository and the CI repository.
 
 A `github.scaffold-contribution` lands nothing itself, because the app-scaffold
 block commits its files, as

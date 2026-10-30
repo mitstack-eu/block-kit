@@ -1125,6 +1125,162 @@ func TestAssertBlock_ReadsMainAfterUnsubscribingABlockThatLandsFiles(t *testing.
 	}
 }
 
+const twoRepositoryManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: landing-block
+  name: Landing Block
+spec:
+  version: 1.0.0
+  resources:
+    - { name: app-files, type: github.commit }
+    - { name: ci-workflows, type: github.workflow-file }
+  lifecycle:
+    endpoint: https://landing-block.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
+var ciFiles = map[string]string{"build.yml": "name: build\n", "dispatch.yml": "name: dispatch\n"}
+
+// twoRepositoryBlock lands the starter files in the app's repository and two workflows in a CI repository of its own, which its unsubscribe deletes whole unless teardown names another way.
+type twoRepositoryBlock struct {
+	app, ci  *landingtest.Fake
+	teardown string
+}
+
+func (b *twoRepositoryBlock) fakes() map[string]*landingtest.Fake {
+	return map[string]*landingtest.Fake{b.app.Repo: b.app, b.ci.Repo: b.ci}
+}
+
+// nilEntryProvider also hands a nil fake for a repository the block never lands in.
+type nilEntryProvider struct{ repositoriesProvider }
+
+func (p nilEntryProvider) Repositories() map[string]*landingtest.Fake {
+	fakes := p.b.fakes()
+	fakes["acme/unused"] = nil
+	return fakes
+}
+
+func (b *twoRepositoryBlock) client(repo string) *ghapi.Client {
+	return ghapi.NewClient(b.fakes()[repo].URL, "ghs_kittest", nil)
+}
+
+func (b *twoRepositoryBlock) observer(repo string) landing.Observer {
+	return landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return b.client(repo), nil }}
+}
+
+func (b *twoRepositoryBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	var out []contract.CreatedResource
+	for _, l := range []struct {
+		name, typ string
+		fake      *landingtest.Fake
+		files     map[string]string
+	}{{"app-files", "github.commit", b.app, starterFiles}, {"ci-workflows", "github.workflow-file", b.ci, ciFiles}} {
+		prior, _ := landing.RecordFromIdentity(d.RecordedResources[l.name].Identity)
+		rec, err := landing.Land(ctx, b.client(l.fake.Repo), landing.Landing{Repository: l.fake.Repo, Message: "land", Files: l.files, Prior: prior})
+		if err != nil {
+			return nil, err
+		}
+		identity, err := rec.Identity()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, contract.CreatedResource{Name: l.name, Type: l.typ, Identity: identity})
+	}
+	return out, nil
+}
+
+func (b *twoRepositoryBlock) Ensure(ctx context.Context, d contract.Desired) error {
+	_, err := b.EnsureResources(ctx, d)
+	return err
+}
+
+func (b *twoRepositoryBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
+	_, _, err := b.DeleteKeeping(ctx, d)
+	return nil, err
+}
+
+func (b *twoRepositoryBlock) DeleteKeeping(ctx context.Context, d contract.Desired) (map[string]string, map[string][]contract.Kept, error) {
+	kept := map[string][]contract.Kept{}
+	names := []string{"app-files"}
+	if b.teardown == "removes the CI repository's files" {
+		names = append(names, "ci-workflows")
+	}
+	for _, name := range names {
+		rec, err := landing.RecordFromIdentity(d.RecordedResources[name].Identity)
+		if err != nil {
+			continue
+		}
+		res, err := landing.Remove(ctx, b.client(rec.Repository), landing.Removal{Subscription: d.SubscriptionID, Records: []landing.Record{rec}})
+		if err != nil {
+			return nil, nil, err
+		}
+		kept[name] = res.Kept
+	}
+	if b.teardown == "" {
+		b.ci.DeleteRepository()
+	}
+	return nil, kept, nil
+}
+
+// repositoriesProvider hands the check one fake per repository and no single Repository.
+type repositoriesProvider struct{ b *twoRepositoryBlock }
+
+func (p repositoriesProvider) Repositories() map[string]*landingtest.Fake { return p.b.fakes() }
+
+func (p repositoriesProvider) ListTagged(context.Context, string) ([]observe.Tagged, error) {
+	return []observe.Tagged{{Type: "github.commit", ID: p.b.app.Repo}, {Type: "github.workflow-file", ID: p.b.ci.Repo}}, nil
+}
+
+func (p repositoriesProvider) Lose(ctx context.Context, r contract.CreatedResource) error {
+	rec, _ := landing.RecordFromIdentity(r.Identity)
+	return deleteFiles(ctx, p.b.client(rec.Repository), rec)
+}
+
+// The check changes CLAUDE.md on the app's repository and build.yml on the CI repository before it unsubscribes, which leaves Dockerfile and dispatch.yml unchanged.
+func TestAssertBlock_ReadsEachLandingRecordAgainstItsOwnRepository(t *testing.T) {
+	for _, tc := range []struct {
+		teardown string
+		nilEntry bool
+		want     []string
+	}{
+		{"", false, nil},
+		{"", true, nil},
+		{"removes the CI repository's files", false, nil},
+		{"leaves the CI repository", false, []string{"acme/weather-ci", "dispatch.yml", "unchanged"}},
+	} {
+		name := "a block that " + cmp.Or(tc.teardown, "deletes the CI repository whole")
+		if tc.nilEntry {
+			name += ", with a nil fake beside its two"
+		}
+		t.Run(name, func(t *testing.T) {
+			b := &twoRepositoryBlock{app: landingtest.New(t, "acme/weather"), ci: landingtest.New(t, "acme/weather-ci"), teardown: tc.teardown}
+			var provider kittest.Provider = repositoriesProvider{b: b}
+			if tc.nilEntry {
+				provider = nilEntryProvider{repositoriesProvider{b: b}}
+			}
+			in := kittest.Block{
+				Config: handler.Config{
+					Resource:  b,
+					Manifest:  []byte(twoRepositoryManifest),
+					Types:     typeSnapshot(t),
+					Observers: map[string]handler.Observer{"app-files": b.observer(b.app.Repo), "ci-workflows": b.observer(b.ci.Repo)},
+				},
+				Provider: provider,
+				Desired:  blockDesired(""),
+			}
+
+			got := runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
+
+			if got.failed != (tc.want != nil) {
+				t.Fatalf("AssertBlock failed = %v; want %v, naming %q: %q", got.failed, tc.want != nil, tc.want, got.logs)
+			}
+			wantProblemNaming(t, got.logs, tc.want...)
+		})
+	}
+}
+
 // The check commits the offered files onto main as app-scaffold would, then changes CLAUDE.md, which leaves Dockerfile unchanged.
 func TestAssertBlock_CommitsAContributionsOfferedFilesBeforeReadingMainAfterUnsubscribe(t *testing.T) {
 	for _, tc := range []struct {
