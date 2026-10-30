@@ -11,6 +11,16 @@ import (
 // NamePrefix starts every name a block gives a server, so a server another subscription adopted is recognised.
 const NamePrefix = "mitstack-"
 
+// Name is the name a block gives the server a subscription adopts, keeping the whole id so no other subscription's matches.
+func Name(subscriptionID string) string {
+	return NamePrefix + strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '-'
+	}, strings.ToLower(subscriptionID))
+}
+
 // Adopt names a ready server name, refusing one that is cancelled, taken, absent or without a firewall before any write.
 func (c *Client) Adopt(ctx context.Context, number int64, name string) (Server, error) {
 	if !strings.HasPrefix(name, NamePrefix) {
