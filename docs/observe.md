@@ -96,6 +96,19 @@ read is six hours old, or the handler holds no time for it, the check is a full
 read instead. The handler keeps those times in memory, so a restarted operator
 reads each resource fully at its next check.
 
+Each read the kit observer makes writes one line to the operator's log, so you
+can count a day's probes and full reads from the log alone. The line names the
+subscription, the resource, its type, whether it was a probe or a full read,
+and the state it read:
+
+```
+observe: subscription sub-1 resource "data" aws.s3-bucket probe: present
+```
+
+A read that errors logs `failed` in place of the state. The line carries no
+output or identity value, and the handler scrubs the request's secrets from it
+in `logRead` in `handler/declared.go`.
+
 To check attributes the probe cannot see, such as a bucket's versioning, give
 the `Resource` you pass as `Config.Resource` a method
 `CheckFullRead(ctx, ref, read)`, which makes it a `handler.FullReadChecker`.
