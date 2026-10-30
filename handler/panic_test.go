@@ -63,7 +63,6 @@ func (r *panickingResource) count() int {
 	return r.calls
 }
 
-// servedResult's escaped holds the panic value when ServeHTTP panicked instead of answering.
 type servedResult struct {
 	status  int
 	body    []byte

@@ -53,7 +53,6 @@ func newFakeCloud() *fakeCloud {
 	return &fakeCloud{present: map[string]bool{}, neverPresent: map[string]bool{}, standing: map[string]bool{}}
 }
 
-// standingCloud holds every declared resource, as a cloud does after a subscribe.
 func standingCloud() *fakeCloud {
 	c := newFakeCloud()
 	c.createAll()
@@ -839,7 +838,6 @@ func TestBlockLevel_APendingAnswerCarriesTheSecretOutputsAlreadyObservedPresentA
 
 const contributionType = "github.scaffold-contribution"
 
-// contributionSnapshot marks the scaffold contribution and leaves aws.ec2-instance unmarked.
 func contributionSnapshot(t *testing.T) contract.TypeSnapshot {
 	t.Helper()
 	snap, err := contract.ParseTypeSnapshot([]byte(`{"version": 2, "types": [
@@ -864,7 +862,6 @@ func unsubscribeContribution(t *testing.T, block handler.Resource, types contrac
 		config: []func(*handler.Config){withManifest(v1betaManifest("contribution-block", resources)), func(c *handler.Config) { c.Types = types }}})
 }
 
-// standing answers present on every call, as files left in a repository the platform keeps do.
 func standing() *observer { return fixed(contract.Observation{State: contract.Present}) }
 
 func TestBlockLevel_UnsubscribeCountsAResourceOfAMarkedTypeAbsentOnceTheBlocksDeleteSucceeds(t *testing.T) {

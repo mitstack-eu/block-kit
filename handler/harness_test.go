@@ -114,7 +114,6 @@ func (x *harness) postContext(ctx context.Context, fields ...map[string]any) (in
 	return x.serve(x.request(fields...).WithContext(ctx))
 }
 
-// answer posts fields and returns the response once it conforms to the lifecycle webhook response contract.
 func (x *harness) answer(fields map[string]any) (int, contract.Response) {
 	x.t.Helper()
 	status, raw := x.post(fields)
