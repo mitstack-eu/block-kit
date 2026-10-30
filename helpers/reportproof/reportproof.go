@@ -30,6 +30,11 @@ const lifetime = 10 * time.Minute
 //go:embed scripts/token-request.sh
 var TokenRequestScript string
 
+// SignScript prints, with openssl alone, the key set KeySet and the proof Sign make for a host's own Ed25519 key.
+//
+//go:embed scripts/sign.sh
+var SignScript string
+
 var errNotSigned = errors.New("the proof is not signed by a key in the recorded set")
 
 // Audience names the body a proof is for: report-sha256: and the lowercase hex SHA-256 of its exact bytes.
