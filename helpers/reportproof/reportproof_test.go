@@ -93,6 +93,7 @@ func TestVerify_RefusesAProofThatDoesNotSignThisBodyForThisPlatformNow(t *testin
 		{"expired", reportproof.Sign(key, "host-1", body, platform, now.Add(-time.Hour)), "has expired"},
 		{"with no expiry", signed(key, eddsa, map[string]any{"aud": []string{platform, reportproof.Audience(body)}}), "carries no expiry"},
 		{"not valid yet", signed(key, eddsa, claims(now.Add(time.Hour), now.Add(30*time.Minute), platform, reportproof.Audience(body))), "is not valid yet"},
+		{"expiring past its ten minutes", signed(key, eddsa, claims(now.Add(time.Hour), now, platform, reportproof.Audience(body))), "expires more than ten minutes from now"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,6 +103,25 @@ func TestVerify_RefusesAProofThatDoesNotSignThisBodyForThisPlatformNow(t *testin
 				t.Fatalf("Verify answered %v, want an error saying the proof %s", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestVerify_RefusesEveryProofAgainstAKeySetWhoseKidIsEmptyOrRepeated(t *testing.T) {
+	key := newKey(t)
+	now := time.Now()
+	jwk := func(kid string) string {
+		return `{"kty": "OKP", "crv": "Ed25519", "kid": "` + kid + `", "x": "` + base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)) + `"}`
+	}
+	cases := map[string]struct{ kid, keySet string }{
+		"an empty kid":   {"", `{"keys": [` + jwk("") + `]}`},
+		"a repeated kid": {"host-1", `{"keys": [` + jwk("host-1") + `, ` + jwk("host-1") + `]}`},
+	}
+	for name, tc := range cases {
+		err := reportproof.Verify(reportproof.Sign(key, tc.kid, body, platform, now), body, []byte(tc.keySet), platform, now)
+
+		if err == nil || !strings.Contains(err.Error(), "the recorded key set cannot be read") {
+			t.Errorf("against a key set with %s Verify answered %v, want a refusal of the key set", name, err)
+		}
 	}
 }
 
