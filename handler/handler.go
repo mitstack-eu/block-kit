@@ -51,6 +51,11 @@ type FullReadChecker interface {
 	CheckFullRead(ctx context.Context, r contract.ResourceRef, read observe.FullRead) (problem string, err error)
 }
 
+// Converger, when a block-level Resource implements it, is asked on a validate about work its EnsureResources left running: a non-empty detail answers every resource unknown with it, and finished answers redrive, so the engine sends the subscribe that reports what the work made; either way no observer runs.
+type Converger interface {
+	Converging(ctx context.Context, d contract.Desired) (detail string, finished bool, err error)
+}
+
 // CredentialIssuer, when a capability's block-level Resource implements it, answers an issue with the named app's credential and when it expires.
 type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)

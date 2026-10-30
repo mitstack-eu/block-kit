@@ -329,6 +329,18 @@ against finished work changes nothing. Report `Redrive` from the provider's
 state alone, never from a clock or a count of calls. The handler reads it only
 beside `Unknown`, and a subscribe's own pending answer never carries it.
 
+A resource the kit observer reads has no observer of yours to report this. Give
+your `Resource` a method `Converging(ctx, d)` instead, which makes it a
+`handler.Converger`. The handler asks it at the start of every validate. While
+your work runs, return a detail such as `converging: the apply is running`, and
+the validate answers every resource unknown with that detail and reads no
+provider. Once the work has finished and no subscribe has reported what it
+made, return `finished`, and the validate answers `redrive` beside `pending`.
+The subscribe that follows reports the identities the work produced, which the
+kit observer needs before it can read a resource. Return neither while nothing
+is in flight, and the validate observes as usual. An OpenTofu module's apply is
+such work, since the bucket it makes is named only once the apply has run.
+
 ## What the answer carries
 
 An answer's `resources` map holds, for each resource the call reached, the
