@@ -1,11 +1,6 @@
 package observe_test
 
-// tagged_test.go pins the tag listers blockverify's tagging guard reads:
-// each lists everything carrying the subscription's id, as AWS tags it
-// (mitstack:subscription, the key aws-app-infra writes), Hetzner labels it
-// (mitstack.dev/subscription) or GitHub marks it with a topic and a commit
-// trailer, as the type it is. An object the lister cannot type is still
-// listed, with no type, so the guard reports it rather than missing it.
+// Each tag lister lists everything carrying the subscription's id as the type it is, and an object it cannot type with no type, so the tagging guard reports it.
 
 import (
 	"context"
