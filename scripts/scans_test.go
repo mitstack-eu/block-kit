@@ -60,7 +60,6 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// gitRepo commits each change in turn to a new repository and returns it with each commit's sha.
 func gitRepo(t *testing.T, changes ...change) (dir string, shas []string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -79,7 +78,6 @@ func gitRepo(t *testing.T, changes ...change) (dir string, shas []string) {
 	return dir, shas
 }
 
-// runBash returns bash's combined output and exit code for args, with env added to hermeticEnv.
 func runBash(t *testing.T, env []string, args ...string) (string, int) {
 	t.Helper()
 	cmd := exec.Command("bash", args...)

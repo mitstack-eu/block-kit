@@ -65,7 +65,6 @@ func workflowFields(workflow string) map[string]string {
 	return fields
 }
 
-// stepOf returns the path prefix of job's first step setting key to value, or "" when none does.
 func stepOf(all map[string]string, job, key, value string) string {
 	for i := 0; ; i++ {
 		prefix := "jobs." + job + ".steps." + strconv.Itoa(i) + "."
