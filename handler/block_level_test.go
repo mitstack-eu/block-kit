@@ -480,22 +480,26 @@ func (b *teardownReportingBlock) TeardownDetail(context.Context, contract.Desire
 	return "left alone, since their tags name another subscription: parameter/decoy", nil
 }
 
-func TestBlockLevel_AnUnsubscribeAnswersTheBlocksTeardownDetailOnlyOnceItProvesEveryResourceAbsent(t *testing.T) {
-	for _, standing := range []bool{false, true} {
-		cloud := standingCloud()
-		cloud.standing["b"] = standing
-		block := &teardownReportingBlock{blockResource: &blockResource{cloud: cloud}}
+func TestBlockLevel_AnUnsubscribeOrValidateAnswersTheBlocksTeardownDetailOnlyOnceItProvesEveryResourceAbsent(t *testing.T) {
+	for _, op := range []string{"unsubscribe", "validate"} {
+		for _, standing := range []bool{false, true} {
+			cloud := standingCloud()
+			cloud.standing["b"] = standing
+			if op == "validate" {
+				cloud.deleteAll()
+			}
+			block := &teardownReportingBlock{blockResource: &blockResource{cloud: cloud}}
 
-		status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: "unsubscribe", fields: recordedAll()})
+			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: op, fields: recordedAll()})
 
-		wantOK(t, status, resp)
-		wantAbsent(t, resp, !standing)
-		asks := 1
-		if standing {
-			asks = 0
-		}
-		if block.asked != asks || strings.Contains(resp.StatusDetail, "parameter/decoy") == standing {
-			t.Errorf("with b standing %t, statusDetail = %q after %d ask(s), want the block's detail, asked once, only when every resource is absent", standing, resp.StatusDetail, block.asked)
+			wantOK(t, status, resp)
+			asks := 1
+			if standing {
+				asks = 0
+			}
+			if absent := resp.Absent != nil && *resp.Absent; absent == standing || block.asked != asks || strings.Contains(resp.StatusDetail, "parameter/decoy") == standing {
+				t.Errorf("%s with b standing %t: absent %v, statusDetail = %q after %d ask(s), want the block's detail, asked once, only when every resource is absent", op, standing, absent, resp.StatusDetail, block.asked)
+			}
 		}
 	}
 }

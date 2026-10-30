@@ -199,8 +199,10 @@ implementing only `Delete` is served as before. The code is `deleteBlock` in
 `handler/block.go`, and `landing.Remove` returns the list in its `Result.Kept`.
 
 A block whose teardown leaves something alone on purpose names it by
-implementing `handler.TeardownReporter`. Once an unsubscribe proves every
-resource absent, the handler calls its `TeardownDetail`. A non-empty detail
+implementing `handler.TeardownReporter`. Once an unsubscribe or a validate
+proves every resource absent, the handler calls its `TeardownDetail`. The
+engine settles a teardown on a validate it sends after the unsubscribe
+answer, so both answers carry the detail. A non-empty detail
 answers as the absent answer's `statusDetail`, such as opentofu-operator's
 list of objects under the app's AppId whose tags name another subscription.
 The handler asks nothing while a resource still stands.
