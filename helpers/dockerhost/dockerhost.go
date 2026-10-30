@@ -16,6 +16,9 @@ const EdgeRunning = `[ "$(docker container inspect -f '{{.State.Running}}' caddy
 
 const (
 	caddyfilePath     = "/opt/app/Caddyfile"
+	caddyfileMount    = "-v " + caddyfilePath + ":/etc/caddy/Caddyfile:ro"
+	edgeRouteDir      = "/etc/caddy/routes"
+	compression       = "encode zstd gzip"
 	setupPath         = "/usr/local/sbin/mitstack-host-setup"
 	sshDropInPath     = "/etc/ssh/sshd_config.d/10-mitstack.conf"
 	readableMode      = "0644"
@@ -61,20 +64,34 @@ type Route struct {
 	Upstream string
 }
 
-// Edge serves each route's hostname on a publicly trusted certificate, and PublicIP on caddy's internal CA to IPUpstream.
+// Edge serves each route's hostname on a publicly trusted certificate, and PublicIP on caddy's internal CA to
+// IPUpstream, or with a 204 when IPUpstream is empty. Compress writes encode in every site, and RouteDir is a host
+// directory of more sites, one .caddy file each, so routes change after boot without a new Caddyfile.
 type Edge struct {
 	PublicIP   string
 	IPUpstream string
 	Routes     []Route
+	Compress   bool
+	RouteDir   string
 }
 
 var (
+	routeDirRe = regexp.MustCompile(`^(/[A-Za-z0-9_][A-Za-z0-9._-]*)+$`)
 	hostnameRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$`)
 	upstreamRe = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?:([0-9]{1,5})$`)
 )
 
 func Setup() File {
-	return File{Path: setupPath, Mode: executableMode, Content: setupScript}
+	return Edge{}.Setup()
+}
+
+// Setup is the package's Setup with the edge's RouteDir mounted read-only where its Caddyfile imports it.
+func (e Edge) Setup() File {
+	script := setupScript
+	if e.RouteDir != "" {
+		script = strings.Replace(script, caddyfileMount, caddyfileMount+" -v "+e.RouteDir+":"+edgeRouteDir+":ro", 1)
+	}
+	return File{Path: setupPath, Mode: executableMode, Content: script}
 }
 
 // SSHLockdown is an sshd drop-in that turns off password, keyboard-interactive and root login. sshd keeps the first
@@ -94,13 +111,41 @@ func (e Edge) Caddyfile() (File, error) {
 	}
 	blocks := []string{block("{", "auto_https disable_redirects", "default_sni "+e.PublicIP)}
 	for _, r := range e.Routes {
-		blocks = append(blocks, block(r.Hostname+" {", "reverse_proxy "+r.Upstream))
+		blocks = append(blocks, e.site(r))
+	}
+	if e.RouteDir != "" {
+		blocks = append(blocks, "import "+edgeRouteDir+"/*.caddy\n")
+	}
+	ipSite := append([]string{"tls internal"}, e.encoding()...)
+	if e.IPUpstream == "" {
+		ipSite = append(ipSite, "respond 204")
+	} else {
+		ipSite = append(ipSite, "reverse_proxy "+e.IPUpstream)
 	}
 	blocks = append(blocks,
-		block("https://"+e.PublicIP+" {", "tls internal", "reverse_proxy "+e.IPUpstream),
+		block("https://"+e.PublicIP+" {", ipSite...),
 		block(":80 {", "redir https://{host}{uri} permanent"),
 	)
 	return File{Path: caddyfilePath, Mode: readableMode, Content: strings.Join(blocks, "\n")}, nil
+}
+
+// Site is one route's site as a file in RouteDir holds it, refusing a route Caddyfile would refuse.
+func (e Edge) Site(r Route) (string, error) {
+	if err := checkRoute(r); err != nil {
+		return "", err
+	}
+	return e.site(r), nil
+}
+
+func (e Edge) site(r Route) string {
+	return block(r.Hostname+" {", append(e.encoding(), "reverse_proxy "+r.Upstream)...)
+}
+
+func (e Edge) encoding() []string {
+	if e.Compress {
+		return []string{compression}
+	}
+	return nil
 }
 
 func block(opening string, directives ...string) string {
@@ -111,8 +156,13 @@ func (e Edge) check() error {
 	if err := checkPublicIP(e.PublicIP); err != nil {
 		return err
 	}
-	if err := checkUpstream(e.IPUpstream); err != nil {
-		return err
+	if e.IPUpstream != "" {
+		if err := checkUpstream(e.IPUpstream); err != nil {
+			return err
+		}
+	}
+	if e.RouteDir != "" && !routeDirRe.MatchString(e.RouteDir) {
+		return fmt.Errorf("edge: route directory %q is not an absolute path of plain names", e.RouteDir)
 	}
 	return checkRoutes(e.Routes)
 }

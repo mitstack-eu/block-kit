@@ -282,7 +282,10 @@ above:
 
 `observe.NodeReportsClient` reads the reports from the platform the request's
 events callback names, with the callback's token, so a block writes no client
-of its own:
+of its own. Each `NodeReport` keeps in `Verdict`, as raw JSON, the verdict the
+platform stored beside it, such as `{"reportSignature":{"status":"signed"}}`.
+A block that trusts only a signed report reads `reportSignature.status` and
+counts any other status as no report:
 
 ```go
 observe.NodeReported{API: observe.NodeReportsClient{}}

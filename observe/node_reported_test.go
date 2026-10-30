@@ -1,6 +1,6 @@
 package observe_test
 
-// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, a cluster that sent none is named enrolled or not as the platform records it, and the client reads the reports with the events callback's token.
+// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, a cluster that sent none is named enrolled or not as the platform records it, and the client reads the reports and their verdicts with the events callback's token.
 
 import (
 	"context"
@@ -216,7 +216,11 @@ func platformServing(t *testing.T, cluster string, reports ...observe.NodeReport
 	t.Helper()
 	listed := make([]map[string]any, 0, len(reports))
 	for _, r := range reports {
-		listed = append(listed, map[string]any{"receivedAt": r.ReceivedAt.Format(time.RFC3339Nano), "body": r.Body})
+		item := map[string]any{"receivedAt": r.ReceivedAt.Format(time.RFC3339Nano), "body": r.Body}
+		if r.Verdict != nil {
+			item["verdict"] = r.Verdict
+		}
+		listed = append(listed, item)
 	}
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -236,8 +240,9 @@ func withCallback(url, token string) context.Context {
 	return events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{URL: url, Token: token}})
 }
 
-func TestNodeReportsClient_ReadsTheReportsWithTheCallbacksToken(t *testing.T) {
+func TestNodeReportsClient_ReadsTheReportsAndTheirVerdictsWithTheCallbacksToken(t *testing.T) {
 	want := nodeReport{received: time.Minute, made: at(30 * time.Second), complete: flag(true), items: list(appNamespace)}.build(t)
+	want.Verdict = json.RawMessage(`{"reportSignature":{"status":"signed"}}`)
 	platform := platformServing(t, "sub-cluster", want)
 	client := observe.NodeReportsClient{HTTPClient: platform.Client()}
 
@@ -246,7 +251,7 @@ func TestNodeReportsClient_ReadsTheReportsWithTheCallbacksToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NodeReports error = %v, want the reports the platform serves", err)
 	}
-	if len(got) != 1 || !got[0].ReceivedAt.Equal(want.ReceivedAt) || string(got[0].Body) != string(want.Body) {
+	if len(got) != 1 || !got[0].ReceivedAt.Equal(want.ReceivedAt) || string(got[0].Body) != string(want.Body) || string(got[0].Verdict) != string(want.Verdict) {
 		t.Errorf("NodeReports = %+v, want [%+v]", got, want)
 	}
 }

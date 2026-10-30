@@ -129,13 +129,16 @@ the Docker network `appnet`, and a `caddy:2` container in front of them
 publishes ports 80 and 443. The package renders text only, and your block
 writes it to the host, through cloud-init or over SSH.
 
-The package gives you three files and two values:
+The package gives you these files and values, where `edge` is your block's
+`dockerhost.Edge`, described below:
 
 | Name | What it is |
 |---|---|
 | `dockerhost.SSHLockdown()` | An sshd drop-in that turns off password, keyboard-interactive and root login, named to sort before cloud-init's own drop-in |
 | `dockerhost.Setup()` | The setup script at `/usr/local/sbin/mitstack-host-setup`, which installs Docker, creates `appnet` and starts the edge |
+| `edge.Setup()` | The same script, which also mounts the edge's `RouteDir` into the edge. Use it in place of `dockerhost.Setup()` whenever the edge sets `RouteDir` |
 | `edge.Caddyfile()` | The edge's config at `/opt/app/Caddyfile`, which the setup script mounts into the edge |
+| `edge.Site(route)` | The text of one route's site, with the edge's compression, to write as a `.caddy` file in `RouteDir` |
 | `dockerhost.Package` | The one Ubuntu package to install, `docker.io` |
 | `dockerhost.EdgeRunning` | A shell test that passes only while the edge container runs, for a readiness check |
 
@@ -148,14 +151,30 @@ A `dockerhost.Edge` names what the edge serves. Each `dockerhost.Route` sends
 one hostname to an upstream, a container on `appnet` written as `name:port`,
 and caddy gets that hostname a publicly trusted certificate. `PublicIP` is
 served too, on caddy's internal certificate authority and proxied to
-`IPUpstream`, and plain HTTP is redirected to HTTPS. `Caddyfile` refuses
-these values, since each could break out of the config:
+`IPUpstream`, and plain HTTP is redirected to HTTPS. With no `IPUpstream`,
+the IP answers 204 with no body.
+
+Two options are off by default, so an edge that sets neither renders what it
+always did:
+
+| Option | What it does |
+|---|---|
+| `Compress` | Writes `encode zstd gzip` in every site, so caddy compresses each response the client accepts compressed |
+| `RouteDir` | A directory on the host, such as `/opt/app/routes`, whose `.caddy` files the Caddyfile imports as more sites. `edge.Setup()` mounts it read-only, so a route added after boot needs a file in it and a caddy reload, not a new Caddyfile |
+
+`edge.Site(route)` returns the text of one site, such as
+`shop.example.com {\n  encode zstd gzip\n  reverse_proxy shop-app:8080\n}\n`
+with compression on. Write it to `RouteDir` as `<app>.caddy`, then run
+`docker exec caddy caddy reload --config /etc/caddy/Caddyfile`. `Site` refuses
+a route that `Caddyfile` would refuse.
+`Caddyfile` refuses these values, since each could break out of the config:
 
 - an address that is not IPv4, an IPv4-mapped IPv6 address included
 - a hostname of one label, a hostname that is an IP address, or one with a
   character other than a lowercase letter, a digit, a dot or a hyphen
 - an upstream with no port, or a port outside 1 to 65535
 - a hostname routed twice
+- a `RouteDir` that is not an absolute path of plain names
 
 ```go
 edge := dockerhost.Edge{
@@ -165,6 +184,8 @@ edge := dockerhost.Edge{
 		{Hostname: "shop.apps.mitstack.dev", Upstream: "shop-app:8080"},
 		{Hostname: "blog.example.org", Upstream: "blog-app:3000"},
 	},
+	Compress: true,
+	RouteDir: "/opt/app/routes",
 }
 caddyfile, err := edge.Caddyfile()
 if err != nil {
@@ -232,7 +253,8 @@ report it posts. A node signs in one of two ways:
 | Node | What your block gives it | What the node does for each report | The `jwks` member it reports |
 |---|---|---|---|
 | A Kubernetes node | `reportproof.TokenRequestScript`, a Go string holding the script `scripts/token-request.sh`, written into the node's job, for example as an environment variable it runs with `bash -c`. Also a Role that grants the report's service account `create` on `serviceaccounts/token` for its own name alone | It runs the script, which asks the Kubernetes API server to mint a token through the TokenRequest API. The API server signs it with its own service-account key, so the node holds no private key | The API server's key set, read from `/openid/v1/jwks` |
-| A server with no Kubernetes, such as a Docker host | An Ed25519 key it generates on the server and keeps there, with a `kid` you choose, such as the server's name | It calls `reportproof.Sign(key, kid, body, "https://api.mitstack.dev", time.Now())`, which returns the proof as a string | `reportproof.KeySet(kid, publicKey)` |
+| A server with no Kubernetes that runs Go, such as an agent your block builds | An Ed25519 key it generates on the server and keeps there, with a `kid` you choose, such as the server's name | It calls `reportproof.Sign(key, kid, body, "https://api.mitstack.dev", time.Now())`, which returns the proof as a string | `reportproof.KeySet(kid, publicKey)` |
+| A server with no Kubernetes and no Go, such as a Docker host built from cloud-init | `reportproof.SignScript`, the script `scripts/sign.sh`, and a key the server generates with `openssl genpkey -algorithm ed25519` | It runs the script's `proof` mode, which prints byte for byte the proof `Sign` makes for that key and time | What the script's `keyset` mode prints, byte for byte what `KeySet` makes |
 
 The script takes the body file, the report URL, the namespace and the
 service account, in that order, and prints the token on its standard output:
@@ -244,6 +266,22 @@ bash token-request.sh /tmp/body.json https://api.mitstack.dev/v1/cluster-reports
 That runs `kubectl create token mitstack-node-report -n mitstack-node
 --audience https://api.mitstack.dev --audience report-sha256:<digest>
 --duration 10m`. The script refuses a report URL that is not https.
+
+The sign script needs only bash and openssl, which Ubuntu's base image holds.
+It takes the key file and the `kid`, and for a proof also the platform's
+origin, the body file and the Unix time to mint the proof at:
+
+```bash
+bash sign.sh keyset /var/lib/mitstack/report.key host-1
+bash sign.sh proof /var/lib/mitstack/report.key host-1 https://api.mitstack.dev /tmp/body.json "$(date +%s)"
+```
+
+`keyset` prints the JSON the report carries as its `jwks` member, and
+`proof` prints the value of the report's `Mitstack-Report-Proof` header. It
+refuses a `kid` of anything but letters, digits, dots, underscores and
+hyphens, an origin that is not https, and a time that is not a whole number
+written without leading zeros, since each is written into the proof's JSON. It
+also refuses a key file that holds no Ed25519 key.
 
 ### How a proof is checked
 
