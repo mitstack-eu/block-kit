@@ -394,6 +394,7 @@ recorded in the workspace note
 
 | Call | What it does |
 |---|---|
+| `Name(subscriptionID)` | Gives the name a block adopts a server under: `robot.NamePrefix` and the whole subscription id, lowered, with any character outside a-z and 0-9 written as a hyphen, such as `mitstack-sub-0123456789ab` |
 | `Adopt(ctx, number, name)` | Names a ready server, whose name begins with `robot.NamePrefix`, and refuses one that is cancelled, absent, without a firewall or named by another subscription, before any write |
 | `Release(ctx, number, name)` | Clears the rescue activation, the keys named after the server and its name, and admits all traffic, but only while the server carries `name` |
 | `Couple(ctx, name, number)` | Finds or creates the vSwitch `name` on the lowest free VLAN and waits until Robot reads the server ready on it, which took under three minutes on the trial |

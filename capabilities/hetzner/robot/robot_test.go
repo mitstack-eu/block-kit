@@ -265,3 +265,15 @@ func TestClient_KeepsTheLoginOutOfEveryError(t *testing.T) {
 		t.Errorf("GetServer with a wrong login = %v, want UNAUTHORIZED without the password", err)
 	}
 }
+
+func TestName_KeepsTheWholeSubscriptionIDSoNoOtherSubscriptionMatchesIt(t *testing.T) {
+	for id, want := range map[string]string{
+		"sub_0123456789ab": "mitstack-sub-0123456789ab",
+		"SUB_0123456789AB": "mitstack-sub-0123456789ab",
+		"sub_01.23 45":     "mitstack-sub-01-23-45",
+	} {
+		if got := robot.Name(id); got != want {
+			t.Errorf("Name(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
