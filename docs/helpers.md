@@ -13,6 +13,7 @@ package has [a page of its own](gitops.md).
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
+| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
@@ -118,6 +119,58 @@ out, err := hostexec.RunOutput(ctx, h, "docker ps --format '{{.Names}}'")
 
 Here `region` is the subscription's AWS region and `creds` the credentials
 `cloudid` resolved, both your block's own.
+
+## Setting up a Docker host
+
+`helpers/dockerhost` holds the setup of a host that runs apps as Docker
+containers, so every block that builds such a host runs the same one. The host
+gets Ubuntu's `docker.io` package and nothing else of Docker's. Its apps join
+the Docker network `appnet`, and a `caddy:2` container in front of them
+publishes ports 80 and 443. The package renders text only, and your block
+writes it to the host, through cloud-init or over SSH.
+
+The package gives you three files and two values:
+
+| Name | What it is |
+|---|---|
+| `dockerhost.SSHLockdown()` | An sshd drop-in that turns off password, keyboard-interactive and root login, named to sort before cloud-init's own drop-in |
+| `dockerhost.Setup()` | The setup script at `/usr/local/sbin/mitstack-host-setup`, which installs Docker, creates `appnet` and starts the edge |
+| `edge.Caddyfile()` | The edge's config at `/opt/app/Caddyfile`, which the setup script mounts into the edge |
+| `dockerhost.Package` | The one Ubuntu package to install, `docker.io` |
+| `dockerhost.EdgeRunning` | A shell test that passes only while the edge container runs, for a readiness check |
+
+Each file is a `dockerhost.File` with a `Path`, an octal `Mode` and the
+`Content`. The setup script tries the Docker install and the edge start up to
+ten times each, ten seconds apart, so one failed package download at boot
+does not leave the host without them. It exits 1 when either never succeeds.
+
+A `dockerhost.Edge` names what the edge serves. Each `dockerhost.Route` sends
+one hostname to an upstream, a container on `appnet` written as `name:port`,
+and caddy gets that hostname a publicly trusted certificate. `PublicIP` is
+served too, on caddy's internal certificate authority and proxied to
+`IPUpstream`, and plain HTTP is redirected to HTTPS. `Caddyfile` refuses
+these values, since each could break out of the config:
+
+- an address that is not IPv4, an IPv4-mapped IPv6 address included
+- a hostname of one label, a hostname that is an IP address, or one with a
+  character other than a lowercase letter, a digit, a dot or a hyphen
+- an upstream with no port, or a port outside 1 to 65535
+- a hostname routed twice
+
+```go
+edge := dockerhost.Edge{
+	PublicIP:   "203.0.113.10",
+	IPUpstream: "shop-app:8080",
+	Routes: []dockerhost.Route{
+		{Hostname: "shop.apps.mitstack.dev", Upstream: "shop-app:8080"},
+		{Hostname: "blog.example.org", Upstream: "blog-app:3000"},
+	},
+}
+caddyfile, err := edge.Caddyfile()
+if err != nil {
+	return err
+}
+```
 
 ## Reporting whether an app answers
 

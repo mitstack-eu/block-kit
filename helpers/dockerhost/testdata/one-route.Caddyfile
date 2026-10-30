@@ -1,0 +1,17 @@
+{
+  auto_https disable_redirects
+  default_sni 203.0.113.10
+}
+
+shop.apps.example.com {
+  reverse_proxy shop-app:8080
+}
+
+https://203.0.113.10 {
+  tls internal
+  reverse_proxy shop-app:8080
+}
+
+:80 {
+  redir https://{host}{uri} permanent
+}
