@@ -1,0 +1,14 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: billing-bucket
+  name: Billing bucket
+  owner: acme
+spec:
+  version: 1.2.0
+  description: Keeps one S3 bucket for the billing exports of each app.
+  resources: [aws.s3-bucket]
+  lifecycle:
+    endpoint: https://billing-bucket.example.com/hook
+    operations: [subscribe, validate]
+    contract: kit/v1

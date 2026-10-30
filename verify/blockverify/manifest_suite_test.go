@@ -61,12 +61,21 @@ func dirBase(t *testing.T) string {
 	return base
 }
 
+// manifestWithSnapshot holds the two files the manifest suite reads, the manifest and the platform's type snapshot.
+func manifestWithSnapshot(content string) dirFunc {
+	return fixture(func(t *testing.T) map[string]string {
+		files := map[string]string{manifestFile: content}
+		withTypeSnapshot(t, files)
+		return files
+	})
+}
+
 func passes(name, content string) suiteCase {
-	return suiteCase{name: name, dir: manifestOnly(content), status: "pass"}
+	return suiteCase{name: name, dir: manifestWithSnapshot(content), status: "pass"}
 }
 
 func fails(name, content string, detail ...string) suiteCase {
-	return suiteCase{name: name, dir: manifestOnly(content), status: "fail", detail: detail}
+	return suiteCase{name: name, dir: manifestWithSnapshot(content), status: "fail", detail: detail}
 }
 
 func TestManifestSuite(t *testing.T) {
@@ -76,49 +85,55 @@ func TestManifestSuite(t *testing.T) {
 		{name: "a directory with no manifest is skipped", dir: emptyDir, status: "skipped"},
 		passes("a manifest that parses passes, naming its version", head),
 		passes("a worked v1beta manifest passes", v1beta),
+		fails("a description longer than the platform allows fails, naming the limit",
+			replaced(t, head, "description: A block for the manifest suite.", "description: "+strings.Repeat("A long description. ", 13)),
+			"manifest.yaml", "spec.description must be 10-240 characters"),
+		fails("a type the block's snapshot lacks fails, naming it", replaced(t, head, "resources: [aws.s3-bucket]", "resources: [example.no-such-type]"),
+			"manifest.yaml", "spec.resources[0]", "example.no-such-type"),
+		{name: "a block with no type snapshot fails, naming the file", dir: manifestOnly(head), status: "fail", detail: []string{"type-snapshot.json"}},
 		fails("a manifest in the old version fails, naming the version the kit knows", oldVersionManifest,
 			"manifest.yaml", `apiVersion "mitstack/v1alpha" is not a manifest version the kit knows; it must be mitstack/v1beta`),
-		{name: "an unchanged version passes without a release class or note", dir: manifestOnly(withVersion(t, "1.0.0")), base: from100, status: "pass"},
+		{name: "an unchanged version passes without a release class or note", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: from100, status: "pass"},
 		{name: "a changed version with a class and a plain note passes", base: from100, status: "pass",
-			dir: manifestOnly(withVersion(t, "1.1.0") + "  releaseClass: feature\n  releaseNote: Adds the bucket.\n")},
+			dir: manifestWithSnapshot(withVersion(t, "1.1.0") + "  releaseClass: feature\n  releaseNote: Adds the bucket.\n")},
 		{name: "a changed version with a class and a folded note passes", base: from100, status: "pass",
-			dir: manifestOnly(withVersion(t, "1.1.0") + "  releaseClass: correctness-fix\n  releaseNote: >\n    Fixes the retry that dropped the second\n    attempt's outputs.\n")},
+			dir: manifestWithSnapshot(withVersion(t, "1.1.0") + "  releaseClass: correctness-fix\n  releaseNote: >\n    Fixes the retry that dropped the second\n    attempt's outputs.\n")},
 		{name: "a changed version with a literal note before its class passes", base: from100, status: "pass",
-			dir: manifestOnly(withVersion(t, "1.1.0") + "  releaseNote: |\n    Renames the output.\n  releaseClass: breaking\n")},
+			dir: manifestWithSnapshot(withVersion(t, "1.1.0") + "  releaseNote: |\n    Renames the output.\n  releaseClass: breaking\n")},
 		{name: "a changed version with no release class fails, naming it", base: from100, status: "fail", detail: []string{"spec.releaseClass"},
-			dir: manifestOnly(withVersion(t, "1.1.0") + "  releaseNote: Adds the bucket.\n")},
+			dir: manifestWithSnapshot(withVersion(t, "1.1.0") + "  releaseNote: Adds the bucket.\n")},
 		{name: "a changed version with no release note fails, naming it", base: from100, status: "fail", detail: []string{"spec.releaseNote"},
-			dir: manifestOnly(withVersion(t, "1.1.0") + "  releaseClass: feature\n")},
+			dir: manifestWithSnapshot(withVersion(t, "1.1.0") + "  releaseClass: feature\n")},
 		{name: "a changed version with a blank release note fails, naming it", base: from100, status: "fail", detail: []string{"spec.releaseNote"},
-			dir: manifestOnly(withVersion(t, "1.1.0") + "  releaseClass: feature\n  releaseNote: \"   \"\n")},
-		{name: "a changed version with neither class nor note names both", dir: manifestOnly(withVersion(t, "2.0.0")), base: from100,
+			dir: manifestWithSnapshot(withVersion(t, "1.1.0") + "  releaseClass: feature\n  releaseNote: \"   \"\n")},
+		{name: "a changed version with neither class nor note names both", dir: manifestWithSnapshot(withVersion(t, "2.0.0")), base: from100,
 			status: "fail", detail: []string{"spec.releaseClass", "spec.releaseNote"}},
-		{name: "a base manifest that does not exist marks the block new and passes", dir: manifestOnly(withVersion(t, "1.1.0")), base: missingBase, status: "pass"},
+		{name: "a base manifest that does not exist marks the block new and passes", dir: manifestWithSnapshot(withVersion(t, "1.1.0")), base: missingBase, status: "pass"},
 		passes("no --base-manifest compares no version", withVersion(t, "1.1.0")),
-		{name: "an unreadable base manifest fails, naming it", dir: manifestOnly(withVersion(t, "1.1.0")), base: dirBase, status: "fail", detail: []string{"$BASE"}},
-		{name: "a worked v1beta manifest passes against an older base", dir: manifestOnly(v1beta), base: baseManifest(replaced(t, v1beta, "version: 3.0.0", "version: 2.4.0")), status: "pass"},
-		{name: "a pull request changing resource.go with the base's version fails, naming the missing bump", dir: manifestOnly(withVersion(t, "1.0.0")), base: from100,
+		{name: "an unreadable base manifest fails, naming it", dir: manifestWithSnapshot(withVersion(t, "1.1.0")), base: dirBase, status: "fail", detail: []string{"$BASE"}},
+		{name: "a worked v1beta manifest passes against an older base", dir: manifestWithSnapshot(v1beta), base: baseManifest(replaced(t, v1beta, "version: 3.0.0", "version: 2.4.0")), status: "pass"},
+		{name: "a pull request changing resource.go with the base's version fails, naming the missing bump", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: from100,
 			changed: changedFiles("resource.go"), status: "fail", detail: []string{"resource.go", "spec.version 1.0.0", "version bump"}},
-		{name: "a dependency update changing go.mod and go.sum with the base's version fails, naming both", dir: manifestOnly(withVersion(t, "1.0.0")), base: from100,
+		{name: "a dependency update changing go.mod and go.sum with the base's version fails, naming both", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: from100,
 			changed: changedFiles("go.mod", "go.sum"), status: "fail", detail: []string{"go.mod", "go.sum", "version bump"}},
-		{name: "a pull request changing only README.md and .github/workflows/ci.yml with the base's version passes", dir: manifestOnly(withVersion(t, "1.0.0")), base: from100,
+		{name: "a pull request changing only README.md and .github/workflows/ci.yml with the base's version passes", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: from100,
 			changed: changedFiles("README.md", ".github/workflows/ci.yml"), status: "pass"},
-		{name: "a pull request changing only nested Markdown and LICENSE with the base's version passes", dir: manifestOnly(withVersion(t, "1.0.0")), base: from100,
+		{name: "a pull request changing only nested Markdown and LICENSE with the base's version passes", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: from100,
 			changed: changedFiles("docs/guide.md", "LICENSE"), status: "pass"},
-		{name: "a pull request changing nothing with the base's version passes", dir: manifestOnly(withVersion(t, "1.0.0")), base: from100,
+		{name: "a pull request changing nothing with the base's version passes", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: from100,
 			changed: changedFiles(), status: "pass"},
 		{name: "a pull request changing resource.go with a raised, released version passes", base: from100, changed: changedFiles("resource.go"), status: "pass",
-			dir: manifestOnly(withVersion(t, "1.1.0") + "  releaseClass: correctness-fix\n  releaseNote: Fixes the retry.\n")},
-		{name: "a pull request changing resource.go on a block new to the branch passes", dir: manifestOnly(withVersion(t, "1.0.0")), base: missingBase,
+			dir: manifestWithSnapshot(withVersion(t, "1.1.0") + "  releaseClass: correctness-fix\n  releaseNote: Fixes the retry.\n")},
+		{name: "a pull request changing resource.go on a block new to the branch passes", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: missingBase,
 			changed: changedFiles("resource.go"), status: "pass"},
-		{name: "a pull request changing five image files names three and counts the rest", dir: manifestOnly(withVersion(t, "1.0.0")), base: from100,
+		{name: "a pull request changing five image files names three and counts the rest", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: from100,
 			changed: changedFiles("a.go", "b.go", "c.go", "d.go", "e.go"), status: "fail", detail: []string{"a.go", "b.go", "c.go", "2 more"}, not: []string{"d.go"}},
-		{name: "a changed-files list that cannot be read fails, naming it", dir: manifestOnly(withVersion(t, "1.0.0")), base: from100,
+		{name: "a changed-files list that cannot be read fails, naming it", dir: manifestWithSnapshot(withVersion(t, "1.0.0")), base: from100,
 			changed: func(t *testing.T) string { return filepath.Join(t.TempDir(), "changed-files") }, status: "fail", detail: []string{"$CHANGED"}},
 		passes("a bare slug metadata.id passes", withID(t, "billing-db")),
-		passes("a double-quoted private metadata.id passes", withID(t, `"@acme/billing-db"`)),
-		passes("a single-quoted private metadata.id passes", withID(t, `'@acme/billing-db'`)),
-		passes("a private metadata.id with a comment passes", withID(t, `"@org-a/api" # the org's own api block`)),
+		passes("a double-quoted private metadata.id passes", withID(t, `"@blockverify-tests/billing-db"`)),
+		passes("a single-quoted private metadata.id passes", withID(t, `'@blockverify-tests/billing-db'`)),
+		passes("a private metadata.id with a comment passes", withID(t, `"@blockverify-tests/api" # the org's own api block`)),
 		passes("a forty-character bare slug passes", withID(t, "a"+strings.Repeat("b", 38)+"c")),
 		fails("metadata as a flow mapping is a failure", replaced(t, head, "metadata:\n  id: manifest-fixture\n  name: Manifest Fixture\n  owner: blockverify-tests\n",
 			"metadata: {id: \"@Acme/x\", name: Manifest Fixture}\n"), "manifest.yaml", "metadata"),
@@ -157,9 +172,9 @@ func TestManifestSuite(t *testing.T) {
 		}
 		cases = append(cases,
 			suiteCase{name: label + " leaves its version unknown, so a released change passes", base: baseManifest(content), status: "pass",
-				dir: manifestOnly(withVersion(t, "1.0.0") + "  releaseClass: feature\n  releaseNote: Fixes the base manifest.\n")},
+				dir: manifestWithSnapshot(withVersion(t, "1.0.0") + "  releaseClass: feature\n  releaseNote: Fixes the base manifest.\n")},
 			suiteCase{name: label + " leaves its version unknown, so an unreleased change names the base, its error and both fields", base: baseManifest(content),
-				dir: manifestOnly(withVersion(t, "1.0.0")), status: "fail", detail: []string{"$BASE", parseErr.Error(), "spec.releaseClass", "spec.releaseNote"}})
+				dir: manifestWithSnapshot(withVersion(t, "1.0.0")), status: "fail", detail: []string{"$BASE", parseErr.Error(), "spec.releaseClass", "spec.releaseNote"}})
 	}
 
 	runSuites(t, []string{"manifest"}, cases)

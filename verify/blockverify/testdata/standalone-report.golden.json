@@ -39,7 +39,7 @@
     {
       "name": "manifest",
       "status": "pass",
-      "detail": "the mitstack/v1beta manifest parses; no --base-manifest given, so spec.version was not compared"
+      "detail": "the mitstack/v1beta manifest parses and passes the platform's checks against type-snapshot.json; no --base-manifest given, so spec.version was not compared"
     }
   ]
 }

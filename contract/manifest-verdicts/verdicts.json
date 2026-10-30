@@ -1,0 +1,22 @@
+[
+  {"manifest": "accepted.yaml", "refusal": ""},
+  {"manifest": "community-id.yaml", "refusal": ""},
+  {"manifest": "id-not-a-block-id.yaml", "refusal": "metadata.id: block id \"Billing-Bucket\" is neither a community id <name> nor a private id @<org>/<name>, where each of org and name is 1 to 40 lowercase letters, digits and dashes that start and end with a letter or digit"},
+  {"manifest": "name-too-short.yaml", "refusal": "metadata.name must be 2-40 characters"},
+  {"manifest": "owner-missing.yaml", "refusal": "metadata.owner must be an org slug"},
+  {"manifest": "id-under-another-owner.yaml", "refusal": "metadata.id \"@globex/billing-bucket\" sits under the namespace \"globex\", but metadata.owner is \"acme\"; a private id must sit under its owner's namespace"},
+  {"manifest": "version-not-strict-semver.yaml", "refusal": "spec.version \"v1.2.0\" is not strict semver (MAJOR.MINOR.PATCH, e.g. 1.2.3)"},
+  {"manifest": "description-too-short.yaml", "refusal": "spec.description must be 10-240 characters"},
+  {"manifest": "description-too-long.yaml", "refusal": "spec.description must be 10-240 characters"},
+  {"manifest": "release-class-unknown.yaml", "refusal": "spec.releaseClass \"hotfix\" is not one of breaking, correctness-fix, feature"},
+  {"manifest": "correctness-fix-without-note.yaml", "refusal": "spec.releaseNote is required when spec.releaseClass is correctness-fix"},
+  {"manifest": "endpoint-not-https.yaml", "refusal": "spec.lifecycle.endpoint must be an https:// URL"},
+  {"manifest": "operation-unknown.yaml", "refusal": "spec.lifecycle.operations: \"deploy\" is not one of subscribe, unsubscribe, upgrade, validate, rotate"},
+  {"manifest": "operation-twice.yaml", "refusal": "spec.lifecycle.operations: \"subscribe\" is listed twice"},
+  {"manifest": "subscribe-without-unsubscribe.yaml", "refusal": "spec.lifecycle.operations: declaring \"subscribe\" requires declaring \"unsubscribe\", so that what the block provisions can be torn down"},
+  {"manifest": "observability-declared.yaml", "refusal": "spec.observability: a mitstack/v1beta manifest declares none, since each resource type declares the metric series of its resources"},
+  {"manifest": "resource-type-not-served.yaml", "refusal": "spec.resources[0]: type example.no-such-type is not in the types the platform serves"},
+  {"manifest": "requirement-type-not-served.yaml", "refusal": "spec.requires[0]: type example.no-such-type is not in the types the platform serves"},
+  {"manifest": "resource-alternative-not-served.yaml", "refusal": "spec.resources[0]: type example.no-such-type is not in the types the platform serves"},
+  {"manifest": "requirement-alternative-not-served.yaml", "refusal": "spec.requires[0]: type example.no-such-type is not in the types the platform serves"}
+]

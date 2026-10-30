@@ -3,6 +3,7 @@ type: block
 metadata:
   id: crossplane-app-infra
   name: Crossplane App Infrastructure
+  owner: blockverify-tests
 spec:
   version: 1.0.0
   description: >
