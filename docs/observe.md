@@ -111,6 +111,11 @@ The answer follows from whether the tag and the recorded identity agree:
 | It does not exist, and nothing else carries the tag | Absent |
 | It does not exist, but an object no recorded identity names carries the tag | Unknown, naming that object as unrecorded. An unsubscribe then cannot finish, and the platform keeps asking until a person removes the object |
 | The block recorded no identity | Unknown, with no provider call |
+| The block recorded no identity, during an unsubscribe | Absent when a recorded identity names every object carrying the tag, and otherwise unknown, naming each object it does not name as unrecorded |
+
+An unsubscribe after a first apply that failed can leave a resource with no
+recorded identity. During an unsubscribe the tag listing decides for such a
+resource, so a subscription whose block made nothing can still end.
 
 To find unrecorded objects, the observer lists what carries the tag, which is
 one more provider call. It lists on every full read, and on any check that

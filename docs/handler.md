@@ -198,6 +198,13 @@ A kept file never carries its content. The handler answers 400 when
 implementing only `Delete` is served as before. The code is `deleteBlock` in
 `handler/block.go`, and `landing.Remove` returns the list in its `Result.Kept`.
 
+A block whose teardown leaves something alone on purpose names it by
+implementing `handler.TeardownReporter`. Once an unsubscribe proves every
+resource absent, the handler calls its `TeardownDetail`. A non-empty detail
+answers as the absent answer's `statusDetail`, such as opentofu-operator's
+list of objects under the app's AppId whose tags name another subscription.
+The handler asks nothing while a resource still stands.
+
 Each observer is handed the identity and type `EnsureResources` reported for
 its resource. When nothing was reported, it gets what the engine recorded,
 and failing that, no identity and the one type its manifest entry lists. A
