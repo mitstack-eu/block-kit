@@ -34,7 +34,9 @@ func (c *fakeCloud) CreateServer(_ context.Context, s robot.ShortLivedServer) (i
 	return int64(len(c.created)), nil
 }
 
-func (c *fakeCloud) ServerAddress(context.Context, int64) (netip.Addr, error) { return shortLivedAddress, nil }
+func (c *fakeCloud) ServerAddress(context.Context, int64) (netip.Addr, error) {
+	return shortLivedAddress, nil
+}
 
 func (c *fakeCloud) DeleteServer(_ context.Context, id int64) error {
 	c.deleted = append(c.deleted, id)
@@ -231,7 +233,9 @@ func TestInstall_DeletesTheShortLivedServerWhenTheHandOffFails(t *testing.T) {
 func TestInstall_StopsBeforeAnyServerWhenTheRescueSessionIsRefused(t *testing.T) {
 	h := newHandOff(t, "HEL1-DC1")
 	refused := errors.New("the rescue system of server 3041839 presented host key SHA256:x, none of the host keys Robot named")
-	h.installer.Dial = func(context.Context, string, robot.RescueKey, robot.RescueSession) (robot.RescueShell, error) { return nil, refused }
+	h.installer.Dial = func(context.Context, string, robot.RescueKey, robot.RescueSession) (robot.RescueShell, error) {
+		return nil, refused
+	}
 
 	err := h.install(t)
 
