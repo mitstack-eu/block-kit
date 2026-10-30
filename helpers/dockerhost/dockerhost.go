@@ -61,7 +61,7 @@ type Route struct {
 	Upstream string
 }
 
-// Edge serves each route's hostname on a publicly trusted certificate and PublicIP on caddy's internal CA.
+// Edge serves each route's hostname on a publicly trusted certificate, and PublicIP on caddy's internal CA to IPUpstream.
 type Edge struct {
 	PublicIP   string
 	IPUpstream string
@@ -70,7 +70,7 @@ type Edge struct {
 
 var (
 	hostnameRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$`)
-	upstreamRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?:([0-9]{1,5})$`)
+	upstreamRe = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?:([0-9]{1,5})$`)
 )
 
 func Setup() File {
@@ -92,14 +92,19 @@ func (e Edge) Caddyfile() (File, error) {
 	if err := e.check(); err != nil {
 		return File{}, err
 	}
-	var b strings.Builder
-	b.WriteString("{\n  auto_https disable_redirects\n  default_sni " + e.PublicIP + "\n}\n")
+	blocks := []string{block("{", "auto_https disable_redirects", "default_sni "+e.PublicIP)}
 	for _, r := range e.Routes {
-		b.WriteString("\n" + r.Hostname + " {\n  reverse_proxy " + r.Upstream + "\n}\n")
+		blocks = append(blocks, block(r.Hostname+" {", "reverse_proxy "+r.Upstream))
 	}
-	b.WriteString("\nhttps://" + e.PublicIP + " {\n  tls internal\n  reverse_proxy " + e.IPUpstream + "\n}\n")
-	b.WriteString("\n:80 {\n  redir https://{host}{uri} permanent\n}\n")
-	return File{Path: caddyfilePath, Mode: readableMode, Content: b.String()}, nil
+	blocks = append(blocks,
+		block("https://"+e.PublicIP+" {", "tls internal", "reverse_proxy "+e.IPUpstream),
+		block(":80 {", "redir https://{host}{uri} permanent"),
+	)
+	return File{Path: caddyfilePath, Mode: readableMode, Content: strings.Join(blocks, "\n")}, nil
+}
+
+func block(opening string, directives ...string) string {
+	return opening + "\n  " + strings.Join(directives, "\n  ") + "\n}\n"
 }
 
 func (e Edge) check() error {
@@ -113,6 +118,7 @@ func (e Edge) check() error {
 }
 
 func checkPublicIP(address string) error {
+	// net.ParseIP reads an IPv4-mapped IPv6 address such as ::ffff:203.0.113.10 as IPv4 too.
 	if ip := net.ParseIP(address); ip == nil || ip.To4() == nil || strings.Contains(address, ":") {
 		return fmt.Errorf("edge: %q is not an IPv4 address", address)
 	}
@@ -122,29 +128,33 @@ func checkPublicIP(address string) error {
 func checkRoutes(routes []Route) error {
 	routed := map[string]bool{}
 	for _, r := range routes {
-		if !hostnameRe.MatchString(r.Hostname) {
-			return fmt.Errorf("edge: %q is not a lowercase hostname of two or more labels", r.Hostname)
-		}
-		if net.ParseIP(r.Hostname) != nil {
-			return fmt.Errorf("edge: route %s is an IP address, which the edge serves on its internal CA already", r.Hostname)
+		if err := checkRoute(r); err != nil {
+			return err
 		}
 		if routed[r.Hostname] {
 			return fmt.Errorf("edge: %s is routed twice, and caddy refuses a config that defines a site twice", r.Hostname)
 		}
 		routed[r.Hostname] = true
-		if err := checkUpstream(r.Upstream); err != nil {
-			return err
-		}
 	}
 	return nil
 }
 
+func checkRoute(r Route) error {
+	if !hostnameRe.MatchString(r.Hostname) {
+		return fmt.Errorf("edge: %q is not a lowercase hostname of two or more labels", r.Hostname)
+	}
+	if net.ParseIP(r.Hostname) != nil {
+		return fmt.Errorf("edge: route %s is an IP address, which the edge serves on its internal CA already", r.Hostname)
+	}
+	return checkUpstream(r.Upstream)
+}
+
 func checkUpstream(upstream string) error {
-	m := upstreamRe.FindStringSubmatch(upstream)
-	if m == nil {
+	match := upstreamRe.FindStringSubmatch(upstream)
+	if match == nil {
 		return fmt.Errorf("edge: upstream %q is not a container name and port, as name:port", upstream)
 	}
-	if port, _ := strconv.Atoi(m[2]); port < 1 || port > highestPortNumber {
+	if port, _ := strconv.Atoi(match[1]); port < 1 || port > highestPortNumber {
 		return fmt.Errorf("edge: upstream %q names port %d, outside 1 to %d", upstream, port, highestPortNumber)
 	}
 	return nil
