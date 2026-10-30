@@ -129,14 +129,16 @@ the Docker network `appnet`, and a `caddy:2` container in front of them
 publishes ports 80 and 443. The package renders text only, and your block
 writes it to the host, through cloud-init or over SSH.
 
-The package gives you three files and two values:
+The package gives you these files and values, where `edge` is your block's
+`dockerhost.Edge`, described below:
 
 | Name | What it is |
 |---|---|
 | `dockerhost.SSHLockdown()` | An sshd drop-in that turns off password, keyboard-interactive and root login, named to sort before cloud-init's own drop-in |
 | `dockerhost.Setup()` | The setup script at `/usr/local/sbin/mitstack-host-setup`, which installs Docker, creates `appnet` and starts the edge |
-| `edge.Setup()` | The same script, which also mounts the edge's `RouteDir` into the edge when it is set |
+| `edge.Setup()` | The same script, which also mounts the edge's `RouteDir` into the edge. Use it in place of `dockerhost.Setup()` whenever the edge sets `RouteDir` |
 | `edge.Caddyfile()` | The edge's config at `/opt/app/Caddyfile`, which the setup script mounts into the edge |
+| `edge.Site(route)` | The text of one route's site, with the edge's compression, to write as a `.caddy` file in `RouteDir` |
 | `dockerhost.Package` | The one Ubuntu package to install, `docker.io` |
 | `dockerhost.EdgeRunning` | A shell test that passes only while the edge container runs, for a readiness check |
 
@@ -160,8 +162,11 @@ always did:
 | `Compress` | Writes `encode zstd gzip` in every site, so caddy compresses each response the client accepts compressed |
 | `RouteDir` | A directory on the host, such as `/opt/app/routes`, whose `.caddy` files the Caddyfile imports as more sites. `edge.Setup()` mounts it read-only, so a route added after boot needs a file in it and a caddy reload, not a new Caddyfile |
 
-`edge.Site(route)` renders one route as a file in `RouteDir` holds it, with
-the edge's compression, and refuses a route `Caddyfile` would refuse.
+`edge.Site(route)` returns the text of one site, such as
+`shop.example.com {\n  encode zstd gzip\n  reverse_proxy shop-app:8080\n}\n`
+with compression on. Write it to `RouteDir` as `<app>.caddy`, then run
+`docker exec caddy caddy reload --config /etc/caddy/Caddyfile`. `Site` refuses
+a route that `Caddyfile` would refuse.
 `Caddyfile` refuses these values, since each could break out of the config:
 
 - an address that is not IPv4, an IPv4-mapped IPv6 address included
@@ -179,6 +184,8 @@ edge := dockerhost.Edge{
 		{Hostname: "shop.apps.mitstack.dev", Upstream: "shop-app:8080"},
 		{Hostname: "blog.example.org", Upstream: "blog-app:3000"},
 	},
+	Compress: true,
+	RouteDir: "/opt/app/routes",
 }
 caddyfile, err := edge.Caddyfile()
 if err != nil {
@@ -269,9 +276,12 @@ bash sign.sh keyset /var/lib/mitstack/report.key host-1
 bash sign.sh proof /var/lib/mitstack/report.key host-1 https://api.mitstack.dev /tmp/body.json "$(date +%s)"
 ```
 
-It refuses a `kid` of anything but letters, digits, dots, underscores and
-hyphens, an origin that is not https, and a time that is not a whole number,
-since each is written into the proof's JSON.
+`keyset` prints the JSON the report carries as its `jwks` member, and
+`proof` prints the value of the report's `Mitstack-Report-Proof` header. It
+refuses a `kid` of anything but letters, digits, dots, underscores and
+hyphens, an origin that is not https, and a time that is not a whole number
+written without leading zeros, since each is written into the proof's JSON. It
+also refuses a key file that holds no Ed25519 key.
 
 ### How a proof is checked
 
