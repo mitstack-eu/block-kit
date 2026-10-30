@@ -86,6 +86,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const releaseDryRun = "bash scripts/release-block-kit.sh --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
 	const rescueSSH = "capabilities/hetzner/robot/rescuessh"
 	const moduleDryRun = "bash scripts/release-block-kit.sh --module " + rescueSSH + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
+	const moduleScan = "go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C " + rescueSSH + " -scan package ./..."
 	raw, err := os.ReadFile("../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatalf("reading ci.yml: %v", err)
@@ -104,7 +105,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the test job runs on vars.CI_RUNS_ON with the ubicloud-standard-2 fallback", field("jobs.test.runs-on"), `${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}`},
 		{"the test job pins checkout to the platform's sha", strconv.FormatBool(stepWith(all, "test", "uses", checkout)), "true"},
 		{"the test job pins setup-go to the platform's sha", strconv.FormatBool(stepWith(all, "test", "uses", setupGo)), "true"},
-		{"the test job pins go-version to 1.26.8", strconv.FormatBool(stepWith(all, "test", "with.go-version", "'1.26.8'")), "true"},
+		{"the test job pins go-version to 1.26.10, whose standard library the rescuessh scan finds clean", strconv.FormatBool(stepWith(all, "test", "with.go-version", "'1.26.10'")), "true"},
 		{"the test job runs go vet ./...", strconv.FormatBool(stepWith(all, "test", "run", "go vet ./...")), "true"},
 		{"the test job runs go test ./...", strconv.FormatBool(stepWith(all, "test", "run", "go test ./...")), "true"},
 		{"the release job needs the test job", field("jobs.release.needs"), "test"},
@@ -119,6 +120,8 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
 		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
 		{"the test job vets and tests the rescuessh module, which ./... leaves out", strconv.FormatBool(stepWith(all, "test", "run", "go -C "+rescueSSH+" vet ./...\ngo -C "+rescueSSH+" test ./...")), "true"},
+		{"the test job scans the packages the rescuessh module imports for known vulnerabilities", strconv.FormatBool(stepWith(all, "test", "run", moduleScan)), "true"},
+		{"the rescuessh scan carries no if, so a push to main runs it too", field(stepOf(all, "test", "run", moduleScan) + "if"), "<absent>"},
 		{"the test job dry-runs the rescuessh release over a pull request's base and head, on a pull request alone",
 			field(stepOf(all, "test", "run", moduleDryRun) + "if"), "github.event_name == 'pull_request'"},
 		{"the release job releases the rescuessh module by its own tags into the job summary", field(stepOf(all, "release", "run", `bash scripts/release-block-kit.sh --module `+rescueSSH+` | tee -a "$GITHUB_STEP_SUMMARY"`) + "shell"), "bash"},
