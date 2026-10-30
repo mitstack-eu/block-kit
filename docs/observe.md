@@ -46,7 +46,6 @@ block's Hetzner client implements in a few lines.
 | `EgressProxy` | `aws.egress-proxy` | `instanceId` | As `EC2Instance`, with no outputs |
 | `S3Bucket`, `VPC`, `SecurityGroup`, `SSMAssociation` | `aws.s3-bucket`, `aws.vpc`, `aws.security-group`, `aws.ssm-association` | `bucket`, `vpcId`, `groupId`, `associationId` | Whether it exists |
 | `EBSVolume` | `aws.ebs-volume` | `volumeId` | Present when available or in use, absent when deleted or missing |
-| `ECRRepository` | `aws.ecr-repository` | `repositoryName` | `registryHost`, the host of the repository's URI |
 | `IAMRole` | `aws.iam-role` | `roleName` | `roleArn`, as a secret output, because the type marks it secret |
 | `Route53Record` | `aws.route53-record` | `hostedZoneId`, `recordName` | `appHostname` and its `https` `appUrl` |
 | `EC2Container` | `aws.ec2-container` | `instanceId`, `container` | The container's state, read from the instance's Docker |
@@ -89,6 +88,18 @@ interface the spec needs, which `handler.New` refuses to go without:
 |---|---|---|
 | `AWS` | `cloudControl`, an AWS Cloud Control type | `Exists` and `Tags` for the probe, `GetResource` for the full read, and `ResourceARNs` to list by tag |
 | `Hetzner` | `collection`, a Hetzner API path such as `/servers/{id}` | `Get` for the path with the identity in place of `{id}`, and `ListByLabel` to list by label |
+
+A spec may also name `outputs`, each a plain output the type declares and the
+property of the provider's document that holds it. The kit observer reports
+them on every present answer, probe and full read alike. `aws.ecr-repository`
+reads `registryHost` from `RepositoryUri` and keeps only its host:
+
+```json
+"outputs": [{"name": "registryHost", "property": "RepositoryUri", "part": "host"}]
+```
+
+An AWS probe of a type whose spec names outputs makes its existence read with
+`GetResource`, whose document holds them, so the outputs cost no extra request.
 
 A health check is a probe, which reads the resource the recorded identity names
 and the tag on it, within the type's `maxReads`. When that resource's last full

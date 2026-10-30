@@ -45,11 +45,21 @@ type SnapshotType struct {
 
 // SnapshotObserve says how the kit observer finds and reads a resource of the type: find, probe and fullRead together, or a named kit check alone.
 type SnapshotObserve struct {
-	Find     *SnapshotFind     `json:"find,omitempty"`
-	Probe    *SnapshotProbe    `json:"probe,omitempty"`
-	FullRead *SnapshotFullRead `json:"fullRead,omitempty"`
-	Named    string            `json:"named,omitempty"`
+	Find     *SnapshotFind           `json:"find,omitempty"`
+	Probe    *SnapshotProbe          `json:"probe,omitempty"`
+	FullRead *SnapshotFullRead       `json:"fullRead,omitempty"`
+	Outputs  []SnapshotObserveOutput `json:"outputs,omitempty"`
+	Named    string                  `json:"named,omitempty"`
 }
+
+// SnapshotObserveOutput names the property of the provider's document of a resource that one plain output is read from, and a Part of ObservePartHost keeps the text before its first slash.
+type SnapshotObserveOutput struct {
+	Name     string `json:"name"`
+	Property string `json:"property"`
+	Part     string `json:"part,omitempty"`
+}
+
+const ObservePartHost = "host"
 
 type SnapshotFind struct {
 	Tag      string `json:"tag"`
@@ -137,6 +147,17 @@ func checkObserveSpec(t SnapshotType) error {
 		return fmt.Errorf("contract: type %q has an observe spec whose probe needs a read and a maxReads of at least one", t.ID)
 	case s.FullRead != nil && (s.FullRead.CloudControl == "") == (s.FullRead.Collection == ""):
 		return fmt.Errorf("contract: type %q has an observe spec whose fullRead names exactly one of cloudControl and collection", t.ID)
+	}
+	for _, o := range s.Outputs {
+		declared, ok := t.Output(o.Name)
+		switch {
+		case !ok || declared.Secret:
+			return fmt.Errorf("contract: type %q has an observe spec reading output %q, which the type does not declare as a plain output", t.ID, o.Name)
+		case o.Property == "":
+			return fmt.Errorf("contract: type %q has an observe spec reading output %q from no property", t.ID, o.Name)
+		case o.Part != "" && o.Part != ObservePartHost:
+			return fmt.Errorf("contract: type %q has an observe spec reading the part %q of output %q, and the only part is %s", t.ID, o.Part, o.Name, ObservePartHost)
+		}
 	}
 	return nil
 }

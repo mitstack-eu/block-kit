@@ -170,34 +170,6 @@ func (o EBSVolume) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 	return unknown("resource %q: volume %s is %s", r.Name, ids[0], desc.State), nil
 }
 
-type ECRRepositoryDescription struct {
-	Name string
-	URI  string
-}
-
-type ECRRepositoryAPI interface {
-	DescribeRepository(ctx context.Context, d contract.Desired, name string) (desc ECRRepositoryDescription, found bool, err error)
-}
-
-// ECRRepository observes an aws.ecr-repository by its repositoryName,
-// reporting its URI's host as registryHost.
-type ECRRepository struct {
-	API ECRRepositoryAPI
-}
-
-func (o ECRRepository) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
-	ids, obs, ok := identityKeys(r, "repositoryName")
-	if !ok {
-		return obs, nil
-	}
-	desc, found, err := o.API.DescribeRepository(ctx, r.Desired, ids[0])
-	if err != nil || !found {
-		return existence(r, found, err, nil)
-	}
-	host, _, _ := strings.Cut(desc.URI, "/")
-	return present(r, map[string]string{"registryHost": host}), nil
-}
-
 type IAMRoleDescription struct {
 	Name string
 	ARN  string
