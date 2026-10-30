@@ -1,11 +1,12 @@
 package observe_test
 
-// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, and the client reads the reports with the events callback's token.
+// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, a cluster that sent none is named enrolled or not as the platform records it, and the client reads the reports with the events callback's token.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -268,6 +269,28 @@ func TestNodeReportsClient_IsAnErrorCarryingNoTokenWhenThePlatformCannotAnswer(t
 
 			if err == nil || strings.Contains(err.Error(), callbackToken) || strings.Contains(err.Error(), "stale-token-0c1d") {
 				t.Errorf("NodeReports = %+v, %v; want an error carrying no token", got, err)
+			}
+		})
+	}
+}
+
+func TestNodeReported_NamesWhetherAClusterThatSentNoReportEnrolledANode(t *testing.T) {
+	silent := `resource "kubernetes.namespace": no node report made since the verb has arrived`
+	cases := []struct{ label, listing, want string }{
+		{"a node enrolled", `{"reports": [], "enrolledAt": "2026-10-07T11:00:00Z"}`, silent + `, though cluster subscription "sub-1" enrolled a node at 2026-10-07T11:00:00Z`},
+		{"no node enrolled", `{"reports": [], "enrolledAt": null}`, silent + `, and cluster subscription "sub-1" has enrolled no node with the platform`},
+		{"a platform that says nothing of enrolment", `{"reports": []}`, silent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			platform := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, tc.listing) }))
+			defer platform.Close()
+			observer := observe.NodeReported{API: observe.NodeReportsClient{HTTPClient: platform.Client()}}
+
+			got, err := observer.ObserveResource(withCallback(platform.URL+"/v1/webhooks/operator-events", callbackToken), namespaceRef())
+
+			if err != nil || got.State != contract.Unknown || got.StatusDetail != tc.want {
+				t.Errorf("ObserveResource = %+v, %v; want unknown, detail %q", got, err, tc.want)
 			}
 		})
 	}
