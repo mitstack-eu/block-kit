@@ -17,7 +17,6 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
-// v1betaManifest builds a block-level manifest declaring resources, each a type id or a { name, type } entry, and providing provides.
 func v1betaManifest(id string, resources []string, provides ...string) string {
 	m := "apiVersion: mitstack/v1beta\ntype: block\nmetadata:\n  id: " + id + "\n  name: " + id + "\nspec:\n  version: 1.0.0\n  resources:\n    - " + strings.Join(resources, "\n    - ") + "\n"
 	if len(provides) > 0 {
@@ -157,7 +156,6 @@ var (
 	_ handler.Observer           = (*observer)(nil)
 )
 
-// observer reports its resource present while the cloud holds it, else its fixed observation or error, and keeps each ref it is handed.
 type observer struct {
 	name  string
 	cloud *fakeCloud
@@ -287,7 +285,6 @@ func wantRefusal(t *testing.T, status int, resp contract.Response, class string,
 	}
 }
 
-// A capability that implements no issue handler is served as a block is.
 func TestBlockLevel_SubscribeAndUpgradeRunOneEnsureThenObserveEachResourceByName(t *testing.T) {
 	for _, tc := range []struct{ name, manifest, op string }{
 		{"block subscribe", blockLevelManifest, "subscribe"}, {"block upgrade", blockLevelManifest, "upgrade"},
@@ -1039,7 +1036,6 @@ func TestBlockLevel_StopsBeforeTheNextResourceOnceTheContextIsDone(t *testing.T)
 
 var issuedExpiry = time.Date(2026, 10, 14, 13, 0, 0, 0, time.UTC)
 
-// issuingBlock issues every named app the credential it holds, and keeps the apps it issued to.
 type issuingBlock struct {
 	*blockResource
 	credential contract.Credential

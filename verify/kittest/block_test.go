@@ -722,7 +722,6 @@ func (l recordingLister) ListTagged(ctx context.Context, d contract.Desired, sub
 	return l.p.ListTagged(ctx, subscriptionID)
 }
 
-// listedHostBlock is the host block bound to an app repository, its provider served through kittest.ListerProvider.
 func listedHostBlock(t *testing.T) (*fakeBlock, kittest.Block, *[]contract.Desired) {
 	t.Helper()
 	b, in := hostBlock(t)

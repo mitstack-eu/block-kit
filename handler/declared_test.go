@@ -73,7 +73,6 @@ func (a *recordingAWS) probed(maxReads int) []string {
 	return reads
 }
 
-// checkingBlock is a block-level Resource whose full-read hook records each read and answers problem.
 type checkingBlock struct {
 	*blockResource
 	problem string

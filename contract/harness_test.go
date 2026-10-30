@@ -167,7 +167,6 @@ func schemaAt(t *testing.T, root map[string]any, node map[string]any, path ...st
 	}
 }
 
-// schemaTypes reads a node's "type" as a sorted list, whether the schema gives one type or several.
 func schemaTypes(node map[string]any) []string {
 	switch v := node["type"].(type) {
 	case string:

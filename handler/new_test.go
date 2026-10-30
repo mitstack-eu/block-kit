@@ -109,7 +109,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-// wantParserRefusal fails unless contract.ParseManifest refuses manifest naming path and err carries the parser's message.
 func wantParserRefusal(t *testing.T, manifest []byte, path string, err error) {
 	t.Helper()
 	_, perr := contract.ParseManifest(manifest)

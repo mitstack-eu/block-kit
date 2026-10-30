@@ -115,7 +115,6 @@ func TestParseTypeSnapshot_ReadsThePlatformsSnapshot(t *testing.T) {
 	}
 }
 
-// iamRoleType is a snapshot type a part may name.
 const iamRoleType = `{"id": "aws.iam-role", "capability": "aws", "kind": "iam-role", "scope": "per-app", "version": 1}`
 
 const instanceHead = `{"id": "aws.ec2-instance", "capability": "aws", "kind": "host", "scope": "per-app", "version": 1,`

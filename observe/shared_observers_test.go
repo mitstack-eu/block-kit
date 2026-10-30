@@ -31,7 +31,6 @@ var (
 	_ handler.Observer = observe.GitHubCommit{}
 )
 
-// existsFake answers every existence question from the keys it holds, and records each key it was asked about.
 type existsFake struct {
 	held  map[string]bool
 	asked []string
