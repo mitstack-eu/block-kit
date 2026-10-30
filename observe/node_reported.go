@@ -15,10 +15,11 @@ import (
 	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
-// NodeReport is one report as GET /v1/subscriptions/{id}/node-reports serves it.
+// NodeReport is one report as GET /v1/subscriptions/{id}/node-reports serves it, with the verdict the platform stored.
 type NodeReport struct {
 	ReceivedAt time.Time       `json:"receivedAt"`
 	Body       json.RawMessage `json:"body"`
+	Verdict    json.RawMessage `json:"verdict,omitempty"`
 }
 
 type NodeReportsAPI interface {
