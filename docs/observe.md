@@ -209,6 +209,26 @@ observe.NodeReported{API: observe.NodeReportsClient{}}
 such a resource reports the type's other required outputs from an observer of
 its own.
 
+### A cluster that has sent no report
+
+A node spends its cluster's single-use enrolment token before it can send any
+report, so the enrolment reaches the platform first. The platform serves when
+that happened as `enrolledAt` beside the reports, or `null` while no node has
+enrolled. When no report counts, `NodeReported` answers unknown and adds what
+the enrolment shows, so the subscription's events say whether to look at the
+node's boot and enrolment or at its reporting:
+
+| `enrolledAt` in the platform's answer | The unknown answer reads |
+|---|---|
+| A time | `resource "kubernetes.namespace": no node report made since the verb has arrived, though cluster subscription "sub-1" enrolled a node at 2026-10-07T11:00:00Z` |
+| `null` | `resource "kubernetes.namespace": no node report made since the verb has arrived, and cluster subscription "sub-1" has enrolled no node with the platform` |
+| Missing, as from a platform that does not serve it | `resource "kubernetes.namespace": no node report made since the verb has arrived` |
+
+`observe.NodeReportsClient` reads the enrolment in the same request as the
+reports. A block that passes an API of its own reads it only when that API
+also implements `observe.ClusterReportsAPI`, and otherwise keeps the last
+row's answer.
+
 ## Listing what a subscription holds
 
 Every object a block creates carries the subscription's id as a tag, or the
