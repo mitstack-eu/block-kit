@@ -339,8 +339,8 @@ made, return `finished`, and the validate answers `redrive` beside `pending`.
 The subscribe that follows reports the identities the work produced, which the
 kit observer needs before it can read a resource. Return an error once the work
 failed, and the validate answers it as the block's error, with no resource
-outcomes. Return none of these while nothing is in flight, and the validate
-observes as usual. An OpenTofu module's apply is
+outcomes. While nothing is in flight, return an empty detail, false and no error,
+and the validate observes as usual. An OpenTofu module's apply is
 such work, since the bucket it makes is named only once the apply has run.
 
 ## What the answer carries
