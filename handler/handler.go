@@ -21,8 +21,7 @@ type Resource interface {
 	// Ensure may be called more than once for the same subscription and must converge rather than duplicate.
 	Ensure(ctx context.Context, d contract.Desired) error
 
-	// Delete must not error when nothing was ever provisioned, and must be idempotent, since a settle timeout's redrive calls it again after it may already have destroyed the resource.
-	// Its outputs are merged into the unsubscribe answer once the block settles absent and reach the wire unscrubbed, so they must never carry secret material.
+	// Delete must not error when nothing was ever provisioned and must be idempotent, since a settle timeout's redrive calls it again, and its outputs reach the unsubscribe answer unscrubbed, so they must never carry secret material.
 	Delete(ctx context.Context, d contract.Desired) (outputs map[string]string, err error)
 }
 
