@@ -19,7 +19,7 @@ const (
 	caddyfileMount    = "-v " + caddyfilePath + ":/etc/caddy/Caddyfile:ro"
 	edgeRouteDir      = "/etc/caddy/routes"
 	compression       = "encode zstd gzip"
-	setupPath        = "/usr/local/sbin/mitstack-host-setup"
+	setupPath         = "/usr/local/sbin/mitstack-host-setup"
 	sshDropInPath     = "/etc/ssh/sshd_config.d/10-mitstack.conf"
 	readableMode      = "0644"
 	executableMode    = "0755"
