@@ -197,6 +197,11 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 		resp.Resources = r.outcomes
 		return status, resp
 	}
+	return r.absentAnswer(ctx, outputs)
+}
+
+// absentAnswer answers absent:true once every resource is proven absent, carrying a TeardownReporter's detail.
+func (r *declaredRun) absentAnswer(ctx context.Context, outputs map[string]string) (int, contract.Response) {
 	var detail string
 	if reporter, ok := r.h.resource.(TeardownReporter); ok {
 		var err error
@@ -272,7 +277,7 @@ func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response)
 	case present:
 		resp = contract.Observation{State: contract.Present, Outputs: outputs, SecretOutputs: secretOutputs}.Response()
 	case absent:
-		resp = contract.Observation{State: contract.Absent}.Response()
+		return r.absentAnswer(ctx, nil)
 	default:
 		resp = contract.Response{
 			Pending:       true,
