@@ -137,6 +137,7 @@ type: block
 metadata:
   id: hetzner-firewall
   name: Hetzner firewall
+  owner: acme
 spec:
   version: 0.1.0
   description: Keeps one empty Hetzner Cloud firewall for each subscription.
@@ -213,7 +214,7 @@ func (b block) Ensure(ctx context.Context, d contract.Desired) error {
 To start your own block, copy the folder into a new repository and delete the
 `replace` line from its `go.mod`, which points the example at the kit beside
 it, so that `go mod tidy` fetches block-kit v0.4.0 instead. Change the module
-path, `metadata.id` and the endpoint, swap the firewall for your resource in
+path, `metadata.id`, `metadata.owner` to your org's slug and the endpoint, swap the firewall for your resource in
 every file, and run your tests and blockverify from the copy:
 
 ```sh

@@ -57,7 +57,7 @@ without it, naming the key's path.
 | `type` | Yes | `block` for a service one app uses, or `capability` for one that serves several apps, such as a shared cluster |
 | `metadata.id` | Yes | The block's id, which the signed token in every call for the block, the OBO token, names, as [Block ids](#block-ids) describes |
 | `metadata.name` | Yes | The name people see |
-| `metadata.owner` | No | Who maintains the block |
+| `metadata.owner` | No | The slug of the org that publishes the block, which the platform requires |
 | `spec.version` | Yes | The block's version, such as `1.2.0` |
 | `spec.releaseClass` | No | What a new version changes, which the platform reads as `correctness-fix`, `feature` or `breaking` |
 | `spec.releaseNote` | No | One paragraph on what the version changes |
@@ -66,13 +66,28 @@ without it, naming the key's path.
 | `spec.resources` | Yes | The resources the block creates, by exact type |
 | `spec.provides` | No | The names of the resources the block offers the rest of the app |
 | `spec.receivesAppSecrets` | No | `true` sends the block every secret the app holds, under `Desired.AppSecrets`, for a block that hands them to the app's own runtime |
-| `spec.observability` | No | Where the block's resources publish metrics and how their cost is grouped, which the platform collects without calling the operator |
+| `spec.observability` | No | Refused by the platform, which takes the metric series of each resource from its type |
 | `spec.lifecycle.endpoint` | Yes | The HTTPS address of the operator's `/hook` route |
 | `spec.lifecycle.operations` | Yes | The lifecycle calls the operator answers, usually all four |
 | `spec.lifecycle.contract` | Yes | `kit/v1`, the lifecycle contract this kit serves and blockverify judges |
 | `spec.lifecycle.needsCredentialRefresh` | No | `true` asks the platform for a periodic `validate`, as [The lifecycle keys](#the-lifecycle-keys) explains |
 | `spec.lifecycle.settleBudget` | No | How long the platform waits for the block's resources to settle (reach the state a call asked for) |
 | `spec.lifecycle.verbConnections` | No | The connections whose secrets a `validate` and an `unsubscribe` need |
+
+The platform refuses more than the parser does when you publish a block, and
+`contract.CheckManifest` holds those rules once, for the platform and for
+blockverify's manifest suite alike. It refuses a `metadata.owner` that is not
+an org slug, and a private id under another org's namespace. It refuses a
+`metadata.name` outside 2 to 40 characters and a `spec.description` outside 10
+to 240. It refuses a `spec.version` that is not strict semver, such as
+`v1.2.0`, a `spec.releaseClass` outside the three above, and a
+`correctness-fix` with no `spec.releaseNote`. It refuses an endpoint that is
+not HTTPS, an operation outside `subscribe`, `unsubscribe`, `upgrade`,
+`validate` and `rotate`, an operation listed twice, `subscribe` without
+`unsubscribe`, any `spec.observability`, and a type the platform does not
+serve. blockverify judges the types against the block's `type-snapshot.json`.
+The platform alone runs the checks that need its records, such as whether the
+version is already published, and the dry-run apply reaches them.
 
 blockverify compares `spec.version` with the base branch's manifest on a pull
 request. A changed version needs both `spec.releaseClass` and
