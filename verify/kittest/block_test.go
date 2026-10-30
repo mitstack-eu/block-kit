@@ -1153,6 +1153,15 @@ func (b *twoRepositoryBlock) fakes() map[string]*landingtest.Fake {
 	return map[string]*landingtest.Fake{b.app.Repo: b.app, b.ci.Repo: b.ci}
 }
 
+// nilEntryProvider also hands a nil fake for a repository the block never lands in.
+type nilEntryProvider struct{ repositoriesProvider }
+
+func (p nilEntryProvider) Repositories() map[string]*landingtest.Fake {
+	fakes := p.b.fakes()
+	fakes["acme/unused"] = nil
+	return fakes
+}
+
 func (b *twoRepositoryBlock) client(repo string) *ghapi.Client {
 	return ghapi.NewClient(b.fakes()[repo].URL, "ghs_kittest", nil)
 }
@@ -1233,14 +1242,24 @@ func (p repositoriesProvider) Lose(ctx context.Context, r contract.CreatedResour
 func TestAssertBlock_ReadsEachLandingRecordAgainstItsOwnRepository(t *testing.T) {
 	for _, tc := range []struct {
 		teardown string
+		nilEntry bool
 		want     []string
 	}{
-		{"", nil},
-		{"removes the CI repository's files", nil},
-		{"leaves the CI repository", []string{"acme/weather-ci", "dispatch.yml", "unchanged"}},
+		{"", false, nil},
+		{"", true, nil},
+		{"removes the CI repository's files", false, nil},
+		{"leaves the CI repository", false, []string{"acme/weather-ci", "dispatch.yml", "unchanged"}},
 	} {
-		t.Run("a block that "+cmp.Or(tc.teardown, "deletes the CI repository whole"), func(t *testing.T) {
+		name := "a block that " + cmp.Or(tc.teardown, "deletes the CI repository whole")
+		if tc.nilEntry {
+			name += ", with a nil fake beside its two"
+		}
+		t.Run(name, func(t *testing.T) {
 			b := &twoRepositoryBlock{app: landingtest.New(t, "acme/weather"), ci: landingtest.New(t, "acme/weather-ci"), teardown: tc.teardown}
+			var provider kittest.Provider = repositoriesProvider{b: b}
+			if tc.nilEntry {
+				provider = nilEntryProvider{repositoriesProvider{b: b}}
+			}
 			in := kittest.Block{
 				Config: handler.Config{
 					Resource:  b,
@@ -1248,7 +1267,7 @@ func TestAssertBlock_ReadsEachLandingRecordAgainstItsOwnRepository(t *testing.T)
 					Types:     typeSnapshot(t),
 					Observers: map[string]handler.Observer{"app-files": b.observer(b.app.Repo), "ci-workflows": b.observer(b.ci.Repo)},
 				},
-				Provider: repositoriesProvider{b: b},
+				Provider: provider,
 				Desired:  blockDesired(""),
 			}
 
