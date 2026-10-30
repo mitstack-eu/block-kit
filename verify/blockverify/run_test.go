@@ -81,7 +81,7 @@ func TestRun(t *testing.T) {
 		{name: "--standalone with no target is a usage error", dir: emptyDir, args: []string{"--json", "--standalone"}, exit: 2},
 		{name: "--base-manifest with no path is a usage error", dir: fullBlock(), args: []string{"--json", "--standalone", "$DIR", "--base-manifest"}, exit: 2},
 		{name: "a capability that implements no issue handler passes", dir: passingBlock(), args: jsonStandalone, exit: 0, verdict: "pass"},
-		{name: "a block the kit observer reads for aws.s3-bucket prints a pass", dir: kitObservedBlock("false"), args: []string{"--standalone", "$DIR"}, exit: 0,
+		{name: "a block the kit observer reads for aws.s3-bucket and aws.ecr-repository prints a pass", dir: kitObservedBlock("false"), args: []string{"--standalone", "$DIR"}, exit: 0,
 			stdout: []string{"VERDICT: PASS"}, human: map[string]suiteWant{"resources": {"pass", []string{"kit-observer", "probe-reads"}}}},
 		{name: "the same block registering its own observer for aws.s3-bucket prints a failing finding naming the type", dir: kitObservedBlock("true"), args: []string{"--standalone", "$DIR"},
 			exit: 1, stdout: []string{"VERDICT: FAIL"}, human: map[string]suiteWant{"resources": {"fail", []string{`resource "aws.s3-bucket"`, "aws.s3-bucket carries an observe spec", "own observer"}}}},

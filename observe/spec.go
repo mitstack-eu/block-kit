@@ -72,6 +72,9 @@ func (k KitObserver) Serves(t contract.SnapshotType) error {
 	if spec.FullRead.Collection != "" {
 		planned = 1
 	}
+	if len(spec.Outputs) > 0 && spec.FullRead.CloudControl != "" && !slices.Contains(spec.Probe.Reads, readExistence) {
+		return fmt.Errorf("observe: type %s's spec reads outputs, which an AWS probe reads with its existence read, but the probe makes no existence read", t.ID)
+	}
 	if planned > spec.Probe.MaxReads {
 		return fmt.Errorf("observe: type %s's probe makes %d reads, above its maxReads of %d", t.ID, planned, spec.Probe.MaxReads)
 	}
@@ -114,7 +117,11 @@ func (k KitObserver) observe(ctx context.Context, t contract.SnapshotType, r con
 	if obs, ok := disagreement(r, t, id, read.Tags); !ok {
 		return obs, nil, nil
 	}
-	obs := present(r, nil)
+	outputs, err := specOutputs(t, read.Properties)
+	if err != nil {
+		return contract.Observation{}, nil, err
+	}
+	obs := present(r, outputs)
 	if !full {
 		return obs, nil, nil
 	}
@@ -184,16 +191,41 @@ func (k KitObserver) read(ctx context.Context, t contract.SnapshotType, d contra
 	for _, name := range spec.Probe.Reads {
 		var found bool
 		var err error
-		if name == readExistence {
-			found, err = k.AWS.Exists(ctx, d, typeName, id)
-		} else {
+		switch {
+		case name == readTags:
 			read.Tags, found, err = k.AWS.Tags(ctx, d, typeName, id)
+		case len(spec.Outputs) > 0:
+			read.Properties, found, err = k.AWS.GetResource(ctx, d, typeName, id)
+		default:
+			found, err = k.AWS.Exists(ctx, d, typeName, id)
 		}
 		if err != nil || !found {
 			return nil, found, err
 		}
 	}
 	return read, true, nil
+}
+
+// specOutputs reads each output the type's spec names from the provider's document of the resource, leaving out one the document does not hold as text.
+func specOutputs(t contract.SnapshotType, doc []byte) (map[string]string, error) {
+	if len(t.ObserveSpec.Outputs) == 0 {
+		return nil, nil
+	}
+	var props map[string]any
+	if err := json.Unmarshal(doc, &props); err != nil {
+		return nil, fmt.Errorf("observe: the provider's document of %s: %w", t.ID, err)
+	}
+	outputs := map[string]string{}
+	for _, o := range t.ObserveSpec.Outputs {
+		value, _ := props[o.Property].(string)
+		if o.Part == contract.ObservePartHost {
+			value, _, _ = strings.Cut(value, "/")
+		}
+		if value != "" {
+			outputs[o.Name] = value
+		}
+	}
+	return outputs, nil
 }
 
 // cloudControlTags reads the Tags property, which Cloud Control serves as a list of Key and Value pairs on most types and as a map on some.

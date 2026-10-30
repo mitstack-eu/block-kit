@@ -468,7 +468,37 @@ func trustedGitHubBase(c githubCreds) (string, error) {
 	}
 	return "https://" + u.Host, nil
 }
--- resources-s3-block_test.go --
+-- resources-kit-observed-manifest.yaml --
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: blockverify-fixture
+  name: blockverify fixture block
+  owner: blockverify-tests
+spec:
+  version: 1.0.0
+  description: >
+    A fixture block whose bucket and image repository the kit observer reads,
+    used only to prove blockverify's own conformance suite.
+  resources: [aws.s3-bucket, aws.ecr-repository]
+  provides: [aws.ecr-repository]
+  lifecycle:
+    endpoint: https://api.mitstack.dev/operators/blockverify-fixture/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+-- resources-kit-observed-type-snapshot.json --
+{"version": 1, "types": [
+  {"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app", "stateful": true, "pricing": {"priced": true, "key": "AmazonS3"},
+   "category": "storage", "outputs": [], "version": 1,
+   "observeSpec": {"find": {"tag": "mitstack:subscription", "identity": "bucket"}, "probe": {"reads": ["tags", "existence"], "maxReads": 4},
+     "fullRead": {"cloudControl": "AWS::S3::Bucket"}}},
+  {"id": "aws.ecr-repository", "capability": "aws", "kind": "container-repository", "scope": "per-app", "stateful": false, "pricing": {"priced": false},
+   "category": "artifact-registry", "outputs": [{"name": "pushRoleArn", "secret": true, "required": false}, {"name": "registryHost", "secret": false, "required": true}],
+   "version": 1,
+   "observeSpec": {"find": {"tag": "mitstack:subscription", "identity": "repositoryName"}, "probe": {"reads": ["existence", "tags"], "maxReads": 2},
+     "fullRead": {"cloudControl": "AWS::ECR::Repository"}, "outputs": [{"name": "registryHost", "property": "RepositoryUri", "part": "host"}]}}
+]}
+-- resources-kit-observed-block_test.go --
 package main
 
 import (
@@ -484,108 +514,127 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
-// s3Provider stands in for AWS, holding each bucket's tags by name and counting every read the block's code makes.
-type s3Provider struct {
+const registryHost = "123456789012.dkr.ecr.eu-central-1.amazonaws.com"
+
+type awsObject struct{ typ, sub string }
+
+// awsProvider stands in for AWS, holding each bucket and repository by name and counting every read the block's code makes.
+type awsProvider struct {
 	mu      sync.Mutex
-	buckets map[string]map[string]string
+	objects map[string]awsObject
 	reads   int
 }
 
-func (p *s3Provider) bucket(name string) (map[string]string, bool) {
+func (p *awsProvider) object(name string) (awsObject, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.reads++
-	tags, ok := p.buckets[name]
-	return tags, ok
+	o, ok := p.objects[name]
+	return o, ok
 }
 
-func (p *s3Provider) Reads() int {
+func (p *awsProvider) Reads() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.reads
 }
 
-func (p *s3Provider) Exists(_ context.Context, _ contract.Desired, _, name string) (bool, error) {
-	_, ok := p.bucket(name)
+func (p *awsProvider) Exists(_ context.Context, _ contract.Desired, _, name string) (bool, error) {
+	_, ok := p.object(name)
 	return ok, nil
 }
 
-func (p *s3Provider) Tags(_ context.Context, _ contract.Desired, _, name string) (map[string]string, bool, error) {
-	tags, ok := p.bucket(name)
-	return tags, ok, nil
+func (p *awsProvider) Tags(_ context.Context, _ contract.Desired, _, name string) (map[string]string, bool, error) {
+	o, ok := p.object(name)
+	return map[string]string{observe.AWSSubscriptionTag: o.sub}, ok, nil
 }
 
-func (p *s3Provider) GetResource(_ context.Context, _ contract.Desired, _, name string) ([]byte, bool, error) {
-	tags, ok := p.bucket(name)
+func (p *awsProvider) GetResource(_ context.Context, _ contract.Desired, _, name string) ([]byte, bool, error) {
+	o, ok := p.object(name)
 	if !ok {
 		return nil, false, nil
 	}
-	raw, err := json.Marshal(map[string]any{"BucketName": name, "Tags": []map[string]string{{"Key": observe.AWSSubscriptionTag, "Value": tags[observe.AWSSubscriptionTag]}}})
+	doc := map[string]any{"Tags": []map[string]string{{"Key": observe.AWSSubscriptionTag, "Value": o.sub}}}
+	if o.typ == "aws.ecr-repository" {
+		doc["RepositoryUri"] = registryHost + "/" + name
+	}
+	raw, err := json.Marshal(doc)
 	return raw, true, err
 }
 
-func (p *s3Provider) BucketExists(ctx context.Context, d contract.Desired, name string) (bool, error) {
+func (p *awsProvider) BucketExists(ctx context.Context, d contract.Desired, name string) (bool, error) {
 	return p.Exists(ctx, d, "AWS::S3::Bucket", name)
 }
 
-func (p *s3Provider) ResourceARNs(_ context.Context, _ contract.Desired, key, value string) ([]string, error) {
+func (p *awsProvider) ResourceARNs(_ context.Context, _ contract.Desired, _, value string) ([]string, error) {
 	tagged, _ := p.ListTagged(context.Background(), value)
 	arns := make([]string, 0, len(tagged))
 	for _, t := range tagged {
-		arns = append(arns, "arn:aws:s3:::"+t.ID)
+		if t.Type == "aws.ecr-repository" {
+			arns = append(arns, "arn:aws:ecr:eu-central-1:123456789012:repository/"+t.ID)
+		} else {
+			arns = append(arns, "arn:aws:s3:::"+t.ID)
+		}
 	}
 	return arns, nil
 }
 
-func (p *s3Provider) ListTagged(_ context.Context, sub string) ([]observe.Tagged, error) {
+func (p *awsProvider) ListTagged(_ context.Context, sub string) ([]observe.Tagged, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.reads++
 	var out []observe.Tagged
-	for name, tags := range p.buckets {
-		if tags[observe.AWSSubscriptionTag] == sub {
-			out = append(out, observe.Tagged{Type: "aws.s3-bucket", ID: name})
+	for name, o := range p.objects {
+		if o.sub == sub {
+			out = append(out, observe.Tagged{Type: o.typ, ID: name})
 		}
 	}
 	return out, nil
 }
 
-func (p *s3Provider) put(name, sub string) {
+func (p *awsProvider) put(name, typ, sub string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.buckets[name] = map[string]string{observe.AWSSubscriptionTag: sub}
+	p.objects[name] = awsObject{typ: typ, sub: sub}
 }
 
-func (p *s3Provider) remove(name string) {
+func (p *awsProvider) remove(name string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.buckets, name)
+	delete(p.objects, name)
 }
 
-func (p *s3Provider) Lose(_ context.Context, r contract.CreatedResource) error {
-	p.remove(r.Identity["bucket"])
+func (p *awsProvider) Lose(_ context.Context, r contract.CreatedResource) error {
+	for _, name := range r.Identity {
+		p.remove(name)
+	}
 	return nil
 }
 
-type s3Block struct{ p *s3Provider }
+type kitObservedBlock struct{ p *awsProvider }
 
-func (b s3Block) EnsureResources(_ context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
-	name := "bucket-" + d.SubscriptionID
-	b.p.put(name, d.SubscriptionID)
-	return []contract.CreatedResource{{Name: "aws.s3-bucket", Type: "aws.s3-bucket", Identity: map[string]string{"bucket": name}}}, nil
+func (b kitObservedBlock) EnsureResources(_ context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	bucket, repository := "bucket-"+d.SubscriptionID, "images-"+d.SubscriptionID
+	b.p.put(bucket, "aws.s3-bucket", d.SubscriptionID)
+	b.p.put(repository, "aws.ecr-repository", d.SubscriptionID)
+	return []contract.CreatedResource{
+		{Name: "aws.s3-bucket", Type: "aws.s3-bucket", Identity: map[string]string{"bucket": bucket}},
+		{Name: "aws.ecr-repository", Type: "aws.ecr-repository", Identity: map[string]string{"repositoryName": repository}},
+	}, nil
 }
 
-func (b s3Block) Ensure(ctx context.Context, d contract.Desired) error {
+func (b kitObservedBlock) Ensure(ctx context.Context, d contract.Desired) error {
 	_, err := b.EnsureResources(ctx, d)
 	return err
 }
 
-func (b s3Block) Delete(_ context.Context, d contract.Desired) (map[string]string, error) {
+func (b kitObservedBlock) Delete(_ context.Context, d contract.Desired) (map[string]string, error) {
 	b.p.remove("bucket-" + d.SubscriptionID)
+	b.p.remove("images-" + d.SubscriptionID)
 	return nil, nil
 }
 
-func assertS3Block(t *testing.T, ownObserver bool) {
+func assertKitObservedBlock(t *testing.T, ownObserver bool) {
 	manifest, err := os.ReadFile("manifest.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -598,9 +647,9 @@ func assertS3Block(t *testing.T, ownObserver bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &s3Provider{buckets: map[string]map[string]string{}}
+	p := &awsProvider{objects: map[string]awsObject{}}
 	in := kittest.Block{
-		Config:   handler.Config{Resource: s3Block{p: p}, Manifest: manifest, Types: snap, KitObserver: observe.KitObserver{AWS: p}},
+		Config:   handler.Config{Resource: kitObservedBlock{p: p}, Manifest: manifest, Types: snap, KitObserver: observe.KitObserver{AWS: p}},
 		Provider: p,
 		Desired:  contract.Desired{Identity: contract.Identity{SubscriptionID: "sub-fixture", BlockID: "blockverify-fixture", OrgID: "org-fixture"}},
 	}

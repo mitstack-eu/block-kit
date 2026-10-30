@@ -46,7 +46,6 @@ block's Hetzner client implements in a few lines.
 | `EgressProxy` | `aws.egress-proxy` | `instanceId` | As `EC2Instance`, with no outputs |
 | `S3Bucket`, `VPC`, `SecurityGroup`, `SSMAssociation` | `aws.s3-bucket`, `aws.vpc`, `aws.security-group`, `aws.ssm-association` | `bucket`, `vpcId`, `groupId`, `associationId` | Whether it exists |
 | `EBSVolume` | `aws.ebs-volume` | `volumeId` | Present when available or in use, absent when deleted or missing |
-| `ECRRepository` | `aws.ecr-repository` | `repositoryName` | `registryHost`, the host of the repository's URI |
 | `IAMRole` | `aws.iam-role` | `roleName` | `roleArn`, as a secret output, because the type marks it secret |
 | `Route53Record` | `aws.route53-record` | `hostedZoneId`, `recordName` | `appHostname` and its `https` `appUrl` |
 | `EC2Container` | `aws.ec2-container` | `instanceId`, `container` | The container's state, read from the instance's Docker |
@@ -87,7 +86,7 @@ interface the spec needs, which `handler.New` refuses to go without:
 
 | Field | Serves a spec whose `fullRead` names | Methods you implement, one provider request each |
 |---|---|---|
-| `AWS` | `cloudControl`, an AWS Cloud Control type | `Exists` and `Tags` for the probe, `GetResource` for the full read, and `ResourceARNs` to list by tag |
+| `AWS` | `cloudControl`, an AWS Cloud Control type | `Exists` and `Tags` for the probe, `GetResource` for the full read and for a probe that reads outputs, and `ResourceARNs` to list by tag |
 | `Hetzner` | `collection`, a Hetzner API path such as `/servers/{id}` | `Get` for the path with the identity in place of `{id}`, and `ListByLabel` to list by label |
 
 A health check is a probe, which reads the resource the recorded identity names
@@ -121,6 +120,35 @@ resource gone mostly during an unsubscribe. ADR 0108 leaves this listing out of
 a probe's reads, so it does not count against `maxReads`. A full read names
 each unrecorded object in the status detail beside a present answer. The kit
 observer only reads, so it never deletes an object it found by tag.
+
+### Reading a type's outputs
+
+A type whose resource reports outputs lists them under `outputs`, in the same
+`observeSpec` as `find`, `probe` and `fullRead`. Each entry names one plain
+output the type declares and the property of the provider's document that
+holds it. The document is what `GetResource` answers for an AWS type and what
+`Get` answers for a Hetzner one. A property is one of its top-level keys,
+holding text. `aws.ecr-repository` reads `registryHost` this way:
+
+```json
+{"find": {"tag": "mitstack:subscription", "identity": "repositoryName"},
+ "probe": {"reads": ["existence", "tags"], "maxReads": 2},
+ "fullRead": {"cloudControl": "AWS::ECR::Repository"},
+ "outputs": [{"name": "registryHost", "property": "RepositoryUri", "part": "host"}]}
+```
+
+`part` takes one value, `host`, which keeps the text before the first slash.
+From `123456789012.dkr.ecr.eu-central-1.amazonaws.com/app` it keeps
+`123456789012.dkr.ecr.eu-central-1.amazonaws.com`. An entry without `part`
+keeps the whole value. `ParseTypeSnapshot` refuses an entry that names a secret
+output or an output the type does not declare.
+
+The kit observer reports these outputs on every present answer, from a probe
+and a full read alike. An AWS probe makes the `existence` entry of its reads
+with `GetResource` in place of `Exists`, since that document holds the outputs,
+so they cost no extra request. `KitObserver.Serves` refuses an AWS spec that
+names outputs but whose probe has no `existence` entry. A Hetzner probe already
+reads the whole object with its one `Get`.
 
 ## Observing a resource the platform cannot reach
 

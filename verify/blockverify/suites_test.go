@@ -230,8 +230,8 @@ func withTypeSnapshot(t *testing.T, files map[string]string) {
 }
 
 func kitObservedBlock(ownObserver string) dirFunc {
-	return fullBlock(withSource("s3_block_test.go", "resources-s3-block_test.go"), withTypeSnapshot,
-		with("resources_test.go", "package main\n\nimport \"testing\"\n\nfunc TestDeclaredResources(t *testing.T) {\n\tassertS3Block(t, "+ownObserver+")\n}\n"))
+	return fullBlock(withSource("kit_observed_block_test.go", "resources-kit-observed-block_test.go"), withSource(manifestFile, "resources-kit-observed-manifest.yaml"),
+		withSource("type-snapshot.json", "resources-kit-observed-type-snapshot.json"), with("resources_test.go", "package main\n\nimport \"testing\"\n\nfunc TestDeclaredResources(t *testing.T) {\n\tassertKitObservedBlock(t, "+ownObserver+")\n}\n"))
 }
 
 func TestResourcesSuite(t *testing.T) {
