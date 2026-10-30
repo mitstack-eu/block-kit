@@ -193,3 +193,45 @@ func TestKitObserver_ADeclaredResourceOfASpeccedTypeNeedsNoObserverButAnAPI(t *t
 		t.Errorf("handler.New with KitObserver.AWS and no Observers = %v, want it served", err)
 	}
 }
+
+type convergingBlock struct {
+	reportingBlock
+	detail   string
+	finished bool
+}
+
+func (c convergingBlock) Converging(context.Context, contract.Desired) (string, bool, error) {
+	return c.detail, c.finished, nil
+}
+
+func TestKitObserver_AValidateReadsNothingWhileTheBlocksWorkRunsAndAsksForTheSubscribeOnceItFinishes(t *testing.T) {
+	snap, err := contract.ParseTypeSnapshot([]byte(s3Snapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		block   convergingBlock
+		state   contract.State
+		redrive bool
+		reads   int
+	}{
+		{"while the work runs", convergingBlock{detail: "converging: the apply runs"}, contract.Unknown, false, 0},
+		{"once the work finished unreported", convergingBlock{finished: true}, contract.Unknown, true, 0},
+		{"with no work in flight", convergingBlock{}, contract.Present, false, 2},
+	} {
+		aws := &recordingAWS{t: t, tags: map[string]string{"mitstack:subscription": "sub-1"}}
+		clock := &tickingClock{now: time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)}
+		tc.block.reportingBlock = reportingBlock{blockResource: &blockResource{}}
+		x := newHarness(t, tc.block, withManifest(s3Manifest), func(c *handler.Config) {
+			c.Observers, c.Types, c.KitObserver, c.Now = nil, snap, observe.KitObserver{AWS: aws}, clock.Now
+		})
+
+		resp := healthCheck(t, x, clock)
+
+		o := resp.Resources["data"].Observe
+		if o == nil || o.State != tc.state || resp.Redrive != tc.redrive || len(aws.reads) != tc.reads || !strings.Contains(o.StatusDetail, tc.block.detail) {
+			t.Errorf("%s: observe %+v, redrive %t after reads %q; want %s, redrive %t after %d reads", tc.name, o, resp.Redrive, aws.reads, tc.state, tc.redrive, tc.reads)
+		}
+	}
+}
