@@ -39,6 +39,7 @@ type recordingAWS struct {
 	t     *testing.T
 	tags  map[string]string
 	reads []string
+	err   error
 }
 
 func (a *recordingAWS) Exists(context.Context, contract.Desired, string, string) (bool, error) {
@@ -53,6 +54,9 @@ func (a *recordingAWS) Tags(context.Context, contract.Desired, string, string) (
 
 func (a *recordingAWS) GetResource(_ context.Context, _ contract.Desired, _, id string) ([]byte, bool, error) {
 	a.reads = append(a.reads, "GetResource")
+	if a.err != nil {
+		return nil, false, a.err
+	}
 	raw, err := json.Marshal(map[string]any{"BucketName": id, "Tags": []map[string]string{{"Key": "mitstack:subscription", "Value": a.tags["mitstack:subscription"]}}})
 	return raw, true, err
 }
@@ -117,20 +121,24 @@ func healthCheck(t *testing.T, x *harness, clock *tickingClock) contract.Respons
 	return resp
 }
 
-func validateAt(t *testing.T, x *harness, clock *tickingClock) (int, contract.Response) {
+func validateAt(t *testing.T, x *harness, clock *tickingClock, extra ...map[string]any) (int, contract.Response) {
 	t.Helper()
 	at := clock.Now()
 	obo, err := webhook.MintOBO(x.s.Private, x.s.Kid, webhook.OBOClaims{Audience: x.audience, OrgID: "org-1", SubscriptionID: "sub-1"}, time.Hour, at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, resp := x.answer(map[string]any{"operation": "validate", "createdAt": at.Format(time.RFC3339Nano), "obo": obo, "recordedResources": map[string]any{
-		"data": map[string]any{"type": "aws.s3-bucket", "identity": map[string]string{"bucket": "acme-data"}}}})
-	return status, resp
+	fields := map[string]any{"operation": "validate", "createdAt": at.Format(time.RFC3339Nano), "obo": obo, "recordedResources": map[string]any{
+		"data": map[string]any{"type": "aws.s3-bucket", "identity": map[string]string{"bucket": "acme-data"}}}}
+	for _, e := range extra {
+		maps.Copy(fields, e)
+	}
+	return x.answer(fields)
 }
 
 func TestKitObserver_AHealthCheckIsAProbeWithinSixHoursOfAFullRead(t *testing.T) {
 	x, aws, block, clock := kitObserved(t, "")
+	logs := captureLog(t)
 	start := clock.Now()
 	cases := []struct {
 		name   string
@@ -150,8 +158,9 @@ func TestKitObserver_AHealthCheckIsAProbeWithinSixHoursOfAFullRead(t *testing.T)
 		resp := healthCheck(t, x, clock)
 
 		var reads []string
+		kind := "full read"
 		if c.probe {
-			reads = aws.probed(4)
+			reads, kind = aws.probed(4), "probe"
 		} else {
 			reads, aws.reads = aws.reads, nil
 		}
@@ -164,6 +173,10 @@ func TestKitObserver_AHealthCheckIsAProbeWithinSixHoursOfAFullRead(t *testing.T)
 		if len(block.checked) != c.hooked {
 			t.Errorf("%s: the full-read hook ran %d times, want %d", c.name, len(block.checked), c.hooked)
 		}
+		if want := `observe: subscription sub-1 resource "data" aws.s3-bucket ` + kind + ": present\n"; strings.Count(logs.String(), "observe: ") != 1 || !strings.HasSuffix(logs.String(), want) {
+			t.Errorf("%s: log = %q, want the one line %q", c.name, logs, want)
+		}
+		logs.Reset()
 	}
 	if len(block.checked) > 0 && (block.checked[0].Identifier != "acme-data" || !strings.Contains(string(block.checked[0].Properties), "acme-data")) {
 		t.Errorf("the hook was handed %+v, want acme-data's Cloud Control document", block.checked[0])
@@ -172,8 +185,13 @@ func TestKitObserver_AHealthCheckIsAProbeWithinSixHoursOfAFullRead(t *testing.T)
 
 func TestKitObserver_AProblemTheFullReadHookFindsAnswersUnhealthy(t *testing.T) {
 	x, _, _, clock := kitObserved(t, "versioning is suspended")
+	logs := captureLog(t)
 
 	resp := healthCheck(t, x, clock)
+
+	if want := `aws.s3-bucket full read: unknown`; !strings.Contains(logs.String(), want) {
+		t.Errorf("log = %q, want a line ending %q", logs, want)
+	}
 
 	o := resp.Resources["data"].Observe
 	if o == nil || o.State != contract.Unknown || !strings.Contains(o.StatusDetail, "versioning is suspended") || !resp.Pending {
@@ -200,6 +218,22 @@ func TestKitObserver_ADeclaredResourceOfASpeccedTypeNeedsNoObserverButAnAPI(t *t
 	cfg.Types, _ = contract.ParseTypeSnapshot([]byte(strings.Replace(s3Snapshot, `"usable": ["existence"], `, "", 1)))
 	if _, err := handler.New(cfg); err == nil || !strings.Contains(err.Error(), "no usable read") {
 		t.Errorf("handler.New over a spec naming no usable read = %v, want a refusal naming it", err)
+	}
+}
+
+func TestKitObserver_AReadLogsFailedWhenItErrorsAndNoRequestSecret(t *testing.T) {
+	x, aws, _, clock := kitObserved(t, "")
+	logs := captureLog(t)
+	aws.err = errors.New("cloud control is down")
+	validateAt(t, x, clock)
+	aws.err = nil
+
+	validateAt(t, x, clock, map[string]any{"secretInputs": map[string]string{"token": "sub-1"}})
+
+	for _, want := range []string{`observe: subscription sub-1 resource "data" aws.s3-bucket full read: failed`, `observe: subscription [REDACTED] resource "data" aws.s3-bucket full read: present`} {
+		if !strings.Contains(logs.String(), want+"\n") {
+			t.Errorf("log = %q, want the line %q", logs, want)
+		}
 	}
 }
 
