@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"fmt"
+	"log"
 	"maps"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
@@ -336,8 +338,26 @@ func (r *declaredRun) observe(ctx context.Context, nr namedResource) (contract.O
 	key := fullReadKey{subscriptionID: r.d.SubscriptionID, resource: nr.name}
 	now := r.h.now()
 	if !r.healthCheck || !r.h.fullReads.due(key, now) {
-		return r.h.kit.Probe(ctx, t, ref)
+		obs, err := r.h.kit.Probe(ctx, t, ref)
+		r.logRead(nr.name, ref.Type, "probe", obs.State, err)
+		return obs, err
 	}
+	obs, err := r.fullRead(ctx, nr.name, t, ref, key, now)
+	r.logRead(nr.name, ref.Type, "full read", obs.State, err)
+	return obs, err
+}
+
+// logRead writes one line per kit observer read, naming no output or identity value.
+func (r *declaredRun) logRead(name, typ, kind string, state contract.State, err error) {
+	read := string(state)
+	if err != nil {
+		read = "failed"
+	}
+	log.Printf("observe: subscription %s resource %q %s %s: %s",
+		safe.LogSafe(r.d.SubscriptionID, r.secrets...), safe.LogSafe(name, r.secrets...), safe.LogSafe(typ, r.secrets...), kind, read)
+}
+
+func (r *declaredRun) fullRead(ctx context.Context, name string, t contract.SnapshotType, ref contract.ResourceRef, key fullReadKey, now time.Time) (contract.Observation, error) {
 	obs, read, err := r.h.kit.FullRead(ctx, t, ref)
 	if err != nil {
 		return obs, err
@@ -352,7 +372,7 @@ func (r *declaredRun) observe(ctx context.Context, nr namedResource) (contract.O
 	}
 	if problem != "" {
 		return contract.Observation{State: contract.Unknown, Identity: ref.Identity,
-			StatusDetail: fmt.Sprintf("resource %q: unhealthy: the full read found %s", nr.name, problem)}, nil
+			StatusDetail: fmt.Sprintf("resource %q: unhealthy: the full read found %s", name, problem)}, nil
 	}
 	return obs, nil
 }
