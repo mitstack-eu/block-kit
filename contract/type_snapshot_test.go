@@ -123,6 +123,12 @@ func bucketSpec(spec string) string {
 	return `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app", "version": 1, "observeSpec": {` + spec + `}}]}`
 }
 
+func repositoryReading(output string) string {
+	return `{"version": 1, "types": [{"id": "aws.ecr-repository", "capability": "aws", "kind": "container-repository", "scope": "per-app", "version": 1,` +
+		` "outputs": [{"name": "registryHost", "required": true}, {"name": "pushRoleArn", "secret": true}], "observeSpec": {"find": {"tag": "t", "identity": "repositoryName"},` +
+		` "probe": {"reads": ["existence", "tags"], "maxReads": 2}, "fullRead": {"cloudControl": "AWS::ECR::Repository"}, "outputs": [` + output + `]}}]}`
+}
+
 func TestParseTypeSnapshot_RefusesASnapshotItCannotUse(t *testing.T) {
 	cases := []struct {
 		label, raw string
@@ -148,6 +154,10 @@ func TestParseTypeSnapshot_RefusesASnapshotItCannotUse(t *testing.T) {
 			` "fullRead": {"cloudControl": "AWS::S3::Bucket", "collection": "/buckets/{id}"}`), []string{"aws.s3-bucket", "exactly one"}},
 		{"an observe spec whose maxReads is below one", bucketSpec(`"find": {"tag": "t", "identity": "bucket"}, "probe": {"reads": ["tags"], "maxReads": 0},` +
 			` "fullRead": {"cloudControl": "AWS::S3::Bucket"}`), []string{"aws.s3-bucket", "maxReads"}},
+		{"an observe spec reading a secret output", repositoryReading(`{"name": "pushRoleArn", "property": "RoleArn"}`), []string{"aws.ecr-repository", "pushRoleArn", "plain"}},
+		{"an observe spec reading an output the type does not declare", repositoryReading(`{"name": "registryUrl", "property": "RepositoryUri"}`), []string{"registryUrl", "plain"}},
+		{"an observe spec reading an output from no property", repositoryReading(`{"name": "registryHost"}`), []string{"registryHost", "property"}},
+		{"an observe spec reading a part the kit does not know", repositoryReading(`{"name": "registryHost", "property": "RepositoryUri", "part": "path"}`), []string{"registryHost", `"path"`}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {

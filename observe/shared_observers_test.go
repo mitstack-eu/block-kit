@@ -18,7 +18,6 @@ var (
 	_ handler.Observer = observe.VPC{}
 	_ handler.Observer = observe.SecurityGroup{}
 	_ handler.Observer = observe.EBSVolume{}
-	_ handler.Observer = observe.ECRRepository{}
 	_ handler.Observer = observe.IAMRole{}
 	_ handler.Observer = observe.Route53Record{}
 	_ handler.Observer = observe.SSMAssociation{}
@@ -162,23 +161,6 @@ func TestEBSVolume_ReadsTheVolumesState(t *testing.T) {
 		})
 	}
 	got, err := observe.EBSVolume{API: fakeVolumes{}}.ObserveResource(context.Background(), ref)
-	wantObservation(t, ref, got, err, contract.Absent, nil, "")
-}
-
-type fakeRepositories map[string]observe.ECRRepositoryDescription
-
-func (f fakeRepositories) DescribeRepository(_ context.Context, _ contract.Desired, name string) (observe.ECRRepositoryDescription, bool, error) {
-	r, ok := f[name]
-	return r, ok, nil
-}
-
-func TestECRRepository_ReportsTheRegistryHost(t *testing.T) {
-	api := fakeRepositories{"app": {Name: "app", URI: "123456789012.dkr.ecr.eu-central-1.amazonaws.com/app"}}
-	ref := refFor("aws.ecr-repository", map[string]string{"repositoryName": "app"})
-	got, err := observe.ECRRepository{API: api}.ObserveResource(context.Background(), ref)
-	wantObservation(t, ref, got, err, contract.Present, map[string]string{"registryHost": "123456789012.dkr.ecr.eu-central-1.amazonaws.com"}, "")
-
-	got, err = observe.ECRRepository{API: fakeRepositories{}}.ObserveResource(context.Background(), ref)
 	wantObservation(t, ref, got, err, contract.Absent, nil, "")
 }
 

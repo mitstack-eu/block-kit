@@ -23,6 +23,13 @@ var s3Bucket = contract.SnapshotType{ID: "aws.s3-bucket", ObserveSpec: &contract
 	FullRead: &contract.SnapshotFullRead{CloudControl: "AWS::S3::Bucket"},
 }}
 
+var ecrRepository = contract.SnapshotType{ID: "aws.ecr-repository", Outputs: []contract.SnapshotOutput{{Name: "registryHost", Required: true}}, ObserveSpec: &contract.SnapshotObserve{
+	Find:     &contract.SnapshotFind{Tag: observe.AWSSubscriptionTag, Identity: "repositoryName"},
+	Probe:    &contract.SnapshotProbe{Reads: []string{"existence", "tags"}, MaxReads: 2},
+	FullRead: &contract.SnapshotFullRead{CloudControl: "AWS::ECR::Repository"},
+	Outputs:  []contract.SnapshotObserveOutput{{Name: "registryHost", Property: "RepositoryUri", Part: contract.ObservePartHost}},
+}}
+
 var hetznerServer = contract.SnapshotType{ID: "hetzner.server", ObserveSpec: &contract.SnapshotObserve{
 	Find:     &contract.SnapshotFind{Tag: observe.HetznerSubscriptionLabel, Identity: "hostId"},
 	Probe:    &contract.SnapshotProbe{Reads: []string{"existence", "tags"}, MaxReads: 1},
@@ -54,9 +61,10 @@ func (f *fakeAWS) GetResource(_ context.Context, _ contract.Desired, typeName, i
 	}
 	type pair struct{ Key, Value string }
 	doc := struct {
-		BucketName string
-		Tags       []pair
-	}{BucketName: id}
+		BucketName    string
+		RepositoryUri string
+		Tags          []pair
+	}{BucketName: id, RepositoryUri: "123456789012.dkr.ecr.eu-central-1.amazonaws.com/" + id}
 	for k, v := range tags {
 		doc.Tags = append(doc.Tags, pair{k, v})
 	}
@@ -210,6 +218,24 @@ func TestKitObserver_FullReadHandsBackTheCloudControlDocument(t *testing.T) {
 	}
 }
 
+func TestKitObserver_ReportsAnECRRepositorysRegistryHostOnAProbeWithinItsMaxReadsAndOnAFullRead(t *testing.T) {
+	api := &fakeAWS{buckets: map[string]map[string]string{"app": {observe.AWSSubscriptionTag: sub}}}
+	ref := contract.ResourceRef{Name: "images", Type: ecrRepository.ID, Identity: map[string]string{"repositoryName": "app"}, Desired: contract.Desired{Identity: contract.Identity{SubscriptionID: sub}}}
+	want := map[string]string{"registryHost": "123456789012.dkr.ecr.eu-central-1.amazonaws.com"}
+
+	probe, err := observe.KitObserver{AWS: api}.Probe(context.Background(), ecrRepository, ref)
+	if err != nil || probe.State != contract.Present || !reflect.DeepEqual(probe.Outputs, want) {
+		t.Errorf("probe = %+v, %v; want present with %v", probe, err, want)
+	}
+	if reads := []string{"GetResource AWS::ECR::Repository app", "Tags AWS::ECR::Repository app"}; !slices.Equal(api.calls, reads) {
+		t.Errorf("probe calls = %q, want %q, within maxReads %d", api.calls, reads, ecrRepository.ObserveSpec.Probe.MaxReads)
+	}
+	full, _, err := observe.KitObserver{AWS: api}.FullRead(context.Background(), ecrRepository, ref)
+	if err != nil || full.State != contract.Present || !reflect.DeepEqual(full.Outputs, want) {
+		t.Errorf("full read = %+v, %v; want present with %v", full, err, want)
+	}
+}
+
 type fakeHetzner struct {
 	servers map[string]map[string]string
 	calls   []string
@@ -247,9 +273,11 @@ func TestKitObserver_ReadsAHetznerCollectionPathInOneRequest(t *testing.T) {
 }
 
 func TestKitObserver_RefusesASpecItCannotServe(t *testing.T) {
-	tooMany := s3Bucket
+	tooMany, outputsUnread := s3Bucket, ecrRepository
 	tooMany.ObserveSpec = &contract.SnapshotObserve{Find: s3Bucket.ObserveSpec.Find, FullRead: s3Bucket.ObserveSpec.FullRead,
 		Probe: &contract.SnapshotProbe{Reads: []string{"tags", "existence"}, MaxReads: 1}}
+	outputsUnread.ObserveSpec = &contract.SnapshotObserve{Find: ecrRepository.ObserveSpec.Find, FullRead: ecrRepository.ObserveSpec.FullRead, Outputs: ecrRepository.ObserveSpec.Outputs,
+		Probe: &contract.SnapshotProbe{Reads: []string{"tags"}, MaxReads: 1}}
 	cases := []struct {
 		name string
 		k    observe.KitObserver
@@ -257,6 +285,7 @@ func TestKitObserver_RefusesASpecItCannotServe(t *testing.T) {
 		want string
 	}{
 		{"a probe planning more reads than maxReads", observe.KitObserver{AWS: &fakeAWS{}}, tooMany, "above its maxReads of 1"},
+		{"a probe with no existence read, which reads the outputs", observe.KitObserver{AWS: &fakeAWS{}}, outputsUnread, "makes no existence read"},
 		{"an AWS type with no AWS API", observe.KitObserver{}, s3Bucket, "no AWS API"},
 		{"a Hetzner type with no Hetzner API", observe.KitObserver{}, hetznerServer, "no Hetzner API"},
 	}
