@@ -32,7 +32,6 @@ spec:
     contract: kit/v1
 `
 
-// hostBlock creates its instance in the fake EC2 API and reports it.
 type hostBlock struct{ api *fakeEC2 }
 
 func (b hostBlock) Ensure(ctx context.Context, d contract.Desired) error {

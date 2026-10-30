@@ -130,13 +130,11 @@ done
 
 func (f fakes) path(name string) string { return filepath.Join(f.dir, name) }
 
-// read returns a file the stubs wrote, empty when they never wrote it.
 func (f fakes) read(name string) string {
 	raw, _ := os.ReadFile(f.path(name))
 	return string(raw)
 }
 
-// calls returns the argv of every call to tool, in order.
 func (f fakes) calls(tool string) [][]string {
 	var out [][]string
 	var cur []string
@@ -163,7 +161,6 @@ func (f fakes) sendArgv(t *testing.T) []string {
 	return nil
 }
 
-// queries returns the --query value of every get-command-invocation call, in order.
 func (f fakes) queries() []string {
 	var out []string
 	for _, c := range f.calls("aws") {
@@ -209,7 +206,6 @@ func runInBackground(t *testing.T, f fakes, call func() error) <-chan error {
 	return done
 }
 
-// waitForPoll returns once the aws stub has answered a get-command-invocation call.
 func waitForPoll(t *testing.T, f fakes, done <-chan error) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

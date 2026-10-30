@@ -148,7 +148,6 @@ func waitForSingleFlightWaiters(t *testing.T, want int, timeout time.Duration) {
 	}
 }
 
-// Every waiter on a panicking call is released, and fails through its own timeout rather than hanging.
 func TestServe_AWaiterOnAPanickingCallIsReleasedWithTheSameAnswer(t *testing.T) {
 	r := &panickingResource{entered: make(chan struct{}, 8), release: make(chan struct{})}
 	x := newHarness(t, r)
