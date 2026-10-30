@@ -117,10 +117,8 @@ func TestPublishBlockWorkflow_AsksThePlatformOnlyWhereAStarterTurnsItOn(t *testi
 	}
 }
 
-// platformCall is one request a workflow script sent the fake platform.
 type platformCall struct{ method, uri, auth, body string }
 
-// fakePlatform answers every request with status and answer, recording each.
 func fakePlatform(t *testing.T, status int, answer string) (string, *[]platformCall) {
 	t.Helper()
 	var calls []platformCall

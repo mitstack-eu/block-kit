@@ -82,9 +82,7 @@ assert_kit_tag_count() { # assert_kit_tag_count <desc> <repo> <want>
   fi
 }
 
-# --- scratch repository construction ------------------------------------------
 
-# setup_repo builds a work repository that is the kit at its root and a bare origin, setting $W, $R and $SEED.
 setup_repo() {
   local t; t="$(mktemp -d)"
   ROOTS+=("$t")
@@ -125,7 +123,6 @@ tag_at() { git -C "$W" tag "$1" "${2:-HEAD}"; }
 
 head_sha() { git -C "$W" rev-parse HEAD; }
 
-# --- running the script -------------------------------------------------------
 
 # A runner sets GITHUB_ACTIONS and GITHUB_OUTPUT, so every run strips them and the cases reading GITHUB_OUTPUT set it.
 run() { # run <args...>
@@ -194,7 +191,7 @@ for row in "commit_change|" "commit_empty|" "commit_change|--dry-run" "commit_em
   assert_kit_tag_count "a refused raise pushes no tag ($row)" "$R" 1
 done
 
-# 6. The base tag is chosen by numeric version order, not lexical order.
+# 6-7. The base tag is chosen by numeric version order, not lexical order, and a tag not shaped vX.Y.Z is ignored.
 setup_repo
 tag_at "v0.9.0"
 tag_at "v0.10.0"
@@ -204,7 +201,6 @@ check "numeric sort exits 0" 0 "$RC"
 assert_tag "v0.10.0 is newer than v0.9.0, so v0.10.1 is cut" "$W" "v0.10.1"
 assert_no_tag "the lexically largest tag is not the base" "$W" "v0.9.1"
 
-# 7. A tag that is not shaped vX.Y.Z is ignored when picking the base.
 setup_repo
 tag_at "v1"
 tag_at "version-9.9.9"
@@ -240,7 +236,7 @@ check "re-run over the same range exits 0" 0 "$RC"
 assert_kit_tag_count "a re-run cuts no second tag" "$W" 2
 assert_no_tag "a re-run does not raise again" "$W" "v0.5.2"
 
-# 10. An empty --base means unknown, so the script resolves the base itself: the newest tag's commit, or <head>^ when there is no tag at all.
+# 10. An empty --base means unknown, so the script resolves the base itself: the newest tag's commit, else <head>^, and with no parent either the repo counts as changed yet cuts nothing before its first release.
 setup_repo
 tag_at "v0.5.0"
 commit_change "fix: fix the health probe"
@@ -256,7 +252,6 @@ check "empty base, repo unchanged, exits 0" 0 "$RC"
 assert_out_contains "empty base still reports unchanged" "unchanged"
 assert_kit_tag_count "empty base cuts nothing when unchanged" "$W" 1
 
-# 10c. No tag and head has no parent either, so the repo counts as changed, and it still cuts nothing before its first release.
 setup_repo
 run --repo "$W" --base "" --head "$SEED"
 check "rootless head exits 0" 0 "$RC"
@@ -290,7 +285,7 @@ run --repo "$W" --base "$ZERO" --head "$(head_sha)"
 check "zero base, repo unchanged, exits 0" 0 "$RC"
 assert_kit_tag_count "zero base cuts nothing when unchanged" "$W" 1
 
-# 12. --verify-only fails loudly when the repo changed and no tag contains head.
+# 12-14. --verify-only fails loudly when the repo changed and no tag contains head, and passes when a tag contains head or nothing changed.
 setup_repo
 tag_at "v0.5.0"
 commit_change "fix: fix the health probe"
@@ -298,7 +293,6 @@ run --repo "$W" --base "$SEED" --head "$(head_sha)" --verify-only
 check "verify-only fails on an untagged change" 1 "$RC"
 assert_kit_tag_count "verify-only cuts nothing even when it fails" "$W" 1
 
-# 13. --verify-only passes when a tag does contain head.
 setup_repo
 tag_at "v0.5.0"
 commit_change "fix: fix the health probe"
@@ -307,7 +301,6 @@ run --repo "$W" --base "$SEED" --head "$(head_sha)" --verify-only
 check "verify-only passes when head is tagged" 0 "$RC"
 assert_kit_tag_count "verify-only cuts nothing when it passes" "$W" 2
 
-# 14. --verify-only passes when nothing changed at all.
 setup_repo
 tag_at "v0.5.0"
 commit_empty "chore: an empty commit"
@@ -430,6 +423,25 @@ assert_tag "the healing tag reaches the remote" "$R" "v0.5.1"
 assert_tag_at "the pushed healing tag points at the current head" "$R" "v0.5.1" "$C"
 OUT="$(git -C "$W" tag --list "v*" --contains "$C")"
 assert_out_contains "head is reachable from a tag afterwards" "v0.5.1"
+
+# 24. --module releases a nested module by its own <path>/vX.Y.Z tags, the first by hand, judging changes under its path alone.
+MOD="capabilities/hetzner/robot/rescuessh"
+commit_module_change() { mkdir -p "$W/$MOD" && printf 'package m // %s\n' "$RANDOM$RANDOM" >"$W/$MOD/m.go" && git -C "$W" add -A && git -C "$W" commit -q -m "$1"; }
+setup_repo
+tag_at "v0.5.0"
+commit_module_change "feat: the module before its first release"
+run --module "$MOD" --repo "$W" --head "$(head_sha)"
+check "a module with no tag exits 0" 0 "$RC"
+assert_out_contains "an untagged module cuts nothing, its first release being by hand" "tagged by hand"
+tag_at "$MOD/v0.1.0"
+commit_change "fix: a change outside the module"
+run --module "$MOD" --repo "$W" --head "$(head_sha)"
+assert_out_contains "a change outside the module leaves it unchanged" "unchanged"
+commit_module_change "fix: a change inside the module"
+run --module "$MOD" --repo "$W" --head "$(head_sha)"
+check "a module change exits 0" 0 "$RC"
+assert_tag_at "a module change cuts the module's patch tag at head on the remote" "$R" "$MOD/v0.1.1" "$(head_sha)"
+assert_kit_tag_count "a module release cuts no root tag" "$W" 1
 
 echo "----"
 echo "release-block-kit: $pass passed, $fail failed"

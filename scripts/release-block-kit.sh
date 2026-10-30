@@ -6,8 +6,12 @@
 #
 # Usage:
 #   scripts/release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>]
-#                                   [--remote <name>] [--dry-run] [--verify-only]
+#                                   [--remote <name>] [--module <path>]
+#                                   [--dry-run] [--verify-only]
 #
+#   --module <path>  release the nested Go module at path by its own
+#                    <path>/vX.Y.Z tags, judging changes under path alone
+#                    (default: the root module, by vX.Y.Z tags).
 #   --base <sha>     the push's "before" commit. An empty value, the all-zero
 #                    sha, and omitting the flag all mean unknown, and the base
 #                    is then resolved from the newest kit tag.
@@ -54,11 +58,12 @@ while [ "$#" -gt 0 ]; do
     --head)   head_ref="${2-}"; shift $(( $# > 1 ? 2 : 1 )) ;;
     --repo)   repo="${2-}";     shift $(( $# > 1 ? 2 : 1 )) ;;
     --remote) remote="${2-}";   shift $(( $# > 1 ? 2 : 1 )) ;;
+    --module) KIT_PATH="${2-}"; TAG_PREFIX="${2-}/v"; shift $(( $# > 1 ? 2 : 1 )) ;;
     --dry-run)     dry_run=1;     shift ;;
     --verify-only) verify_only=1; shift ;;
     *)
       echo "release-block-kit: unknown flag: $1" >&2
-      echo "usage: release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>] [--remote <name>] [--dry-run] [--verify-only]" >&2
+      echo "usage: release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>] [--remote <name>] [--module <path>] [--dry-run] [--verify-only]" >&2
       exit 2
       ;;
   esac
