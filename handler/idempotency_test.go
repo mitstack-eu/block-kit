@@ -162,7 +162,6 @@ type served struct {
 	body   []byte
 }
 
-// startConcurrent delivers fields twice to one handler, the second once the first holds the Resource, and returns the answers and whether the second reached the Resource within wait.
 func startConcurrent(t *testing.T, r *blockingResource, fields map[string]any, wait time.Duration) (first, second served, reached bool) {
 	t.Helper()
 	x := newHarness(t, r)

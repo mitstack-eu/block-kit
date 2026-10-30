@@ -108,6 +108,9 @@ func checkBlock(in Block) ([]string, []string) {
 	if len(problems) > 0 {
 		return problems, nil
 	}
+	if problems := unservedKitTypes(in, spec); len(problems) > 0 {
+		return problems, []string{guardKitObserver}
+	}
 	server, err := newBlockServer(in.Config)
 	if err != nil {
 		return []string{err.Error()}, nil

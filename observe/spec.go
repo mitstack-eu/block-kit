@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	readExistence = "existence"
-	readTags      = "tags"
+	readExistence   = "existence"
+	readTags        = "tags"
+	usableSSMOnline = "ssmOnline"
 )
 
 // AWSSpecAPI answers the kit observer's reads of AWS, and each call is one AWS API request.
@@ -25,6 +26,12 @@ type AWSSpecAPI interface {
 	// GetResource is Cloud Control's GetResource, answering the resource's properties document.
 	GetResource(ctx context.Context, d contract.Desired, typeName, identifier string) (properties []byte, found bool, err error)
 	AWSTaggingAPI
+}
+
+// SSMOnlineAPI is the AWS API a type naming the usable read ssmOnline needs, and each call is one AWS API request.
+type SSMOnlineAPI interface {
+	// SSMOnline answers whether SSM's DescribeInstanceInformation lists the instance with PingStatus Online.
+	SSMOnline(ctx context.Context, d contract.Desired, instanceID string) (bool, error)
 }
 
 // HetznerObjectRead is one object the Hetzner Cloud API answered, its labels apart from the whole body.
@@ -54,7 +61,7 @@ type KitObserver struct {
 	Hetzner HetznerSpecAPI
 }
 
-// Serves refuses a type whose spec names a read the kit cannot make, plans more probe reads than its maxReads, or needs a provider API left unset.
+// Serves refuses a type whose spec names no usable read, names a read the kit cannot make, plans more probe and usable reads than its maxReads, or needs a provider API left unset.
 func (k KitObserver) Serves(t contract.SnapshotType) error {
 	if !t.KitObserved() {
 		return fmt.Errorf("observe: type %s carries no observe spec that finds its resources", t.ID)
@@ -72,6 +79,11 @@ func (k KitObserver) Serves(t contract.SnapshotType) error {
 	if spec.FullRead.Collection != "" {
 		planned = 1
 	}
+	usableReads, err := k.usableReads(t)
+	if err != nil {
+		return err
+	}
+	planned += usableReads
 	if len(spec.Outputs) > 0 && spec.FullRead.CloudControl != "" && !slices.Contains(spec.Probe.Reads, readExistence) {
 		return fmt.Errorf("observe: type %s's spec reads outputs, which an AWS probe reads with its existence read, but the probe makes no existence read", t.ID)
 	}
@@ -85,6 +97,28 @@ func (k KitObserver) Serves(t contract.SnapshotType) error {
 		return fmt.Errorf("observe: type %s is read through the Hetzner API, but the KitObserver has no Hetzner API", t.ID)
 	}
 	return nil
+}
+
+// usableReads refuses a spec naming no usable read or one the kit cannot make, and counts the provider reads its usable reads add to a probe.
+func (k KitObserver) usableReads(t contract.SnapshotType) (int, error) {
+	spec := t.ObserveSpec
+	if len(spec.Usable) == 0 {
+		return 0, fmt.Errorf("observe: type %s's spec finds its resources but names no usable read, so the kit observer cannot tell when a consumer can use one", t.ID)
+	}
+	_, makesSSM := k.AWS.(SSMOnlineAPI)
+	reads := 0
+	for _, read := range spec.Usable {
+		switch {
+		case read == readExistence:
+		case read == usableSSMOnline && spec.FullRead.CloudControl != "" && makesSSM:
+			reads++
+		case read == usableSSMOnline:
+			return 0, fmt.Errorf("observe: type %s names the usable read %s, which the kit observer makes only for an AWS type whose AWS API has an SSMOnline method", t.ID, read)
+		default:
+			return 0, fmt.Errorf("observe: type %s's usable part names the read %q, and the kit observer makes only %s and %s", t.ID, read, readExistence, usableSSMOnline)
+		}
+	}
+	return reads, nil
 }
 
 // Probe reads the resource the recorded identity names and the ownership tag on it, within the spec's maxReads.
@@ -118,6 +152,9 @@ func (k KitObserver) observe(ctx context.Context, t contract.SnapshotType, r con
 		return k.absentUnlessUnrecorded(ctx, t, r, fmt.Sprintf("%s %s does not exist", t.ID, id))
 	}
 	if obs, ok := disagreement(r, t, id, read.Tags); !ok {
+		return obs, nil, nil
+	}
+	if obs, ok := k.usable(ctx, t, r, id); !ok {
 		return obs, nil, nil
 	}
 	outputs, err := specOutputs(t, read.Properties)
@@ -207,6 +244,22 @@ func (k KitObserver) read(ctx context.Context, t contract.SnapshotType, d contra
 		}
 	}
 	return read, true, nil
+}
+
+// usable answers unknown, naming the first usable read that fails or errors, and the existence read passed when the observer found the resource.
+func (k KitObserver) usable(ctx context.Context, t contract.SnapshotType, r contract.ResourceRef, id string) (contract.Observation, bool) {
+	for _, read := range t.ObserveSpec.Usable {
+		if read != usableSSMOnline {
+			continue
+		}
+		switch online, err := k.AWS.(SSMOnlineAPI).SSMOnline(ctx, r.Desired, id); {
+		case err != nil:
+			return unknown("resource %q: %s %s carries the subscription's tag, but its usable read %s failed: %v", r.Name, t.ID, id, read, err), false
+		case !online:
+			return unknown("resource %q: %s %s carries the subscription's tag, but its usable read %s has not passed, so no consumer can use it yet", r.Name, t.ID, id, read), false
+		}
+	}
+	return contract.Observation{}, true
 }
 
 // specOutputs reads each output the type's spec names from the provider's document of the resource, leaving out one the document does not hold as text.

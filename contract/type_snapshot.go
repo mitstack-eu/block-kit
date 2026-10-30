@@ -43,10 +43,11 @@ type SnapshotType struct {
 	ObserveSpec *SnapshotObserve `json:"observeSpec,omitempty"`
 }
 
-// SnapshotObserve says how the kit observer finds and reads a resource of the type: find, probe and fullRead together, or a named kit check alone.
+// SnapshotObserve says how the kit observer finds and reads a resource of the type, and the usable reads proving its consumers can use it: find, probe, usable and fullRead together, or a named kit check alone.
 type SnapshotObserve struct {
 	Find     *SnapshotFind           `json:"find,omitempty"`
 	Probe    *SnapshotProbe          `json:"probe,omitempty"`
+	Usable   []string                `json:"usable,omitempty"`
 	FullRead *SnapshotFullRead       `json:"fullRead,omitempty"`
 	Outputs  []SnapshotObserveOutput `json:"outputs,omitempty"`
 	Named    string                  `json:"named,omitempty"`

@@ -84,7 +84,6 @@ func (c *fakeCloud) stands(name string) bool {
 	return c.present[name]
 }
 
-// blockResource returns deleteOutputs from each Delete, or deleteErr, keeps the request each Delete is handed, and with a clock reads it once each call has run.
 type blockResource struct {
 	cloud                    *fakeCloud
 	ensureCalls, deleteCalls int
@@ -205,7 +204,6 @@ func asObservers(obs map[string]*observer) map[string]handler.Observer {
 	return out
 }
 
-// blockCall serves one verb under blockLevelManifest unless a config replaces it; a nil ctx is context.Background.
 type blockCall struct {
 	ctx    context.Context
 	r      handler.Resource

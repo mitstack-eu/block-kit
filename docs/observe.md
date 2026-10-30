@@ -78,6 +78,7 @@ by Go code, by an OpenTofu module or by hand gets the same answer.
 ```json
 {"find": {"tag": "mitstack:subscription", "identity": "bucket"},
  "probe": {"reads": ["tags", "existence"], "maxReads": 4},
+ "usable": ["existence"],
  "fullRead": {"cloudControl": "AWS::S3::Bucket"}}
 ```
 
@@ -86,7 +87,7 @@ interface the spec needs, which `handler.New` refuses to go without:
 
 | Field | Serves a spec whose `fullRead` names | Methods you implement, one provider request each |
 |---|---|---|
-| `AWS` | `cloudControl`, an AWS Cloud Control type | `Exists` and `Tags` for the probe, `GetResource` for the full read and for a probe that reads outputs, and `ResourceARNs` to list by tag |
+| `AWS` | `cloudControl`, an AWS Cloud Control type | `Exists` and `Tags` for the probe, `GetResource` for the full read and for a probe that reads outputs, and `ResourceARNs` to list by tag, with `SSMOnline` too when a type names the usable read `ssmOnline` |
 | `Hetzner` | `collection`, a Hetzner API path such as `/servers/{id}` | `Get` for the path with the identity in place of `{id}`, and `ListByLabel` to list by label |
 
 A health check is a probe, which reads the resource the recorded identity names
@@ -102,11 +103,13 @@ The handler calls it with each full read that found the resource, holding the
 provider's whole document in `read.Properties`. A non-empty problem it returns
 answers the resource unhealthy.
 
-The answer follows from whether the tag and the recorded identity agree:
+The answer follows from whether the tag and the recorded identity agree, and
+whether the resource is usable:
 
 | What the observer finds | Answer |
 |---|---|
-| The recorded identity exists and carries the subscription's tag | Present |
+| The recorded identity exists, carries the subscription's tag, and every usable read passes | Present |
+| It exists and carries the tag, but a usable read fails or errors | Unknown, with a status detail that names the usable read |
 | It exists but lacks the tag, or carries another subscription's | Unknown, with a status detail that names the tag and says the resource is unhealthy |
 | It does not exist, and nothing else carries the tag | Absent |
 | It does not exist, but an object no recorded identity names carries the tag | Unknown, naming that object as unrecorded. An unsubscribe then cannot finish, and the platform keeps asking until a person removes the object |
@@ -126,6 +129,39 @@ a probe's reads, so it does not count against `maxReads`. A full read names
 each unrecorded object in the status detail beside a present answer. The kit
 observer only reads, so it never deletes an object it found by tag.
 
+### Proving a resource usable
+
+A resource reads present only once the blocks that rely on it can use it, such
+as a database block that runs its commands on another block's host. The
+platform lets those blocks start on the first present answer, so a present
+that means only "exists" lets them start too early. The platform's
+[ADR 0109](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0109-a-resource-reads-present-only-once-its-types-consumers-can-use-it.md)
+records this rule.
+
+Every spec that carries `find` therefore carries `usable`, a list of named
+reads. The kit observer runs them in order once the tag agrees, and it answers
+unknown, naming the read, until every one passes. During a subscribe the
+platform keeps asking while the answer is unknown, until the manifest's
+`spec.lifecycle.settleBudget` runs out, as [the manifest
+guide](manifest.md) explains.
+
+| Name | What the kit observer reads | Extra provider reads |
+|---|---|---|
+| `existence` | Nothing more, since the probe or full read that found the resource proves it exists | None |
+| `ssmOnline` | Whether AWS Systems Manager (SSM), which runs commands on an EC2 instance, lists the instance's agent as `Online`. Your AWS API answers this with a method `SSMOnline(ctx, d, instanceID)` over SSM's `DescribeInstanceInformation` | One, counted within the probe's `maxReads` |
+
+`aws.s3-bucket` and `aws.ecr-repository` name `usable: [existence]`, because a
+block can use either as soon as it exists. `KitObserver.Serves` refuses a
+spec with no `usable` part, a name outside this list, and `ssmOnline` on a type
+not read through AWS or with an AWS API that has no `SSMOnline` method.
+`handler.New` and the `kit-observer` guard of `kittest.AssertBlock` then refuse
+the block.
+
+A block that moves to this kit release replaces its committed
+`type-snapshot.json` entries with the ones the platform serves now, from the
+snapshot request in [the manifest guide](manifest.md), so that its specs carry
+`usable`.
+
 ### Reading a type's outputs
 
 A type whose resource reports outputs lists them under `outputs`, in the same
@@ -138,6 +174,7 @@ holding text. `aws.ecr-repository` reads `registryHost` this way:
 ```json
 {"find": {"tag": "mitstack:subscription", "identity": "repositoryName"},
  "probe": {"reads": ["existence", "tags"], "maxReads": 2},
+ "usable": ["existence"],
  "fullRead": {"cloudControl": "AWS::ECR::Repository"},
  "outputs": [{"name": "registryHost", "property": "RepositoryUri", "part": "host"}]}
 ```
