@@ -300,11 +300,13 @@ type RepositoriesProvider interface {
 	Repositories() map[string]*landingtest.Fake
 }
 
-// repositories is every fake repository the Provider hands the check, keyed by owner/name, and false when it hands none.
+// repositories is every fake repository the Provider hands the check, keyed by owner/name and leaving out a nil fake, and false when it hands none.
 func (c *blockCheck) repositories() (map[string]*landingtest.Fake, bool) {
 	switch p := c.in.Provider.(type) {
 	case RepositoriesProvider:
-		return p.Repositories(), true
+		repos := maps.Clone(p.Repositories())
+		maps.DeleteFunc(repos, func(_ string, f *landingtest.Fake) bool { return f == nil })
+		return repos, true
 	case RepositoryProvider:
 		repo := p.Repository()
 		return map[string]*landingtest.Fake{repo.Repo: repo}, true
