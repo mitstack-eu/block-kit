@@ -54,8 +54,7 @@ func checkAgainstSnapshot(m contract.Manifest, target string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %v", typeSnapshotFile, err)
 	}
-	serves := func(id string) bool { _, ok := snap.Lookup(id); return ok }
-	return contract.CheckManifest(m.Block, serves, contract.CheckOptions{})
+	return contract.CheckManifest(m.Block, snap.Holds, contract.CheckOptions{})
 }
 
 func readManifest(path string) (contract.Manifest, error) {

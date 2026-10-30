@@ -23,10 +23,18 @@ var LifecycleOperations = []string{"subscribe", "unsubscribe", "upgrade", "valid
 // ReleaseClasses are the kinds of change a release may declare.
 var ReleaseClasses = []string{"breaking", "correctness-fix", "feature"}
 
+// The lengths a block's name and description may run to, counted after trimming spaces.
+const (
+	nameMinLength        = 2
+	nameMaxLength        = 40
+	descriptionMinLength = 10
+	descriptionMaxLength = 240
+)
+
 // semverPattern is strict SemVer 2.0.0, so it refuses a leading v and a fourth number.
 var semverPattern = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 
-// CheckManifest refuses what the platform refuses when a block is applied, short of the checks that need its database; serves reports whether the platform serves a type.
+// CheckManifest refuses what the platform refuses at apply short of the checks that need its database, judging each type by serves.
 func CheckManifest(b *BlockManifest, serves func(typeID string) bool, opts CheckOptions) error {
 	if err := checkMetadata(b.Metadata); err != nil {
 		return err
@@ -48,8 +56,8 @@ func checkMetadata(m ManifestMetadata) error {
 	if err != nil {
 		return fmt.Errorf("metadata.id: %w", err)
 	}
-	if n := len(strings.TrimSpace(m.Name)); n < 2 || n > 40 {
-		return errors.New("metadata.name must be 2-40 characters")
+	if n := len(strings.TrimSpace(m.Name)); n < nameMinLength || n > nameMaxLength {
+		return fmt.Errorf("metadata.name must be %d-%d characters", nameMinLength, nameMaxLength)
 	}
 	if !isSlug(m.Owner) {
 		return errors.New("metadata.owner must be an org slug")
@@ -65,8 +73,8 @@ func checkRelease(s ManifestSpec) error {
 	if !semverPattern.MatchString(s.Version) {
 		return fmt.Errorf("spec.version %q is not strict semver (MAJOR.MINOR.PATCH, e.g. 1.2.3)", s.Version)
 	}
-	if n := len(strings.TrimSpace(s.Description)); n < 10 || n > 240 {
-		return errors.New("spec.description must be 10-240 characters")
+	if n := len(strings.TrimSpace(s.Description)); n < descriptionMinLength || n > descriptionMaxLength {
+		return fmt.Errorf("spec.description must be %d-%d characters", descriptionMinLength, descriptionMaxLength)
 	}
 	if s.ReleaseClass != "" && !slices.Contains(ReleaseClasses, s.ReleaseClass) {
 		return fmt.Errorf("spec.releaseClass %q is not one of %s", s.ReleaseClass, strings.Join(ReleaseClasses, ", "))
@@ -132,13 +140,11 @@ const manifestVerdictsDir = "manifest-verdicts"
 //go:embed manifest-verdicts
 var manifestVerdicts embed.FS
 
-// ManifestVerdict is one row of the table the kit's tests and the platform's both run CheckManifest over, so the two give each manifest the same verdict.
+// ManifestVerdict is one row of the table the kit's and the platform's tests both run, with an empty Refusal for a manifest CheckManifest accepts.
 type ManifestVerdict struct {
-	// Name is the manifest's file name in the table.
 	Name     string
 	Manifest []byte
-	// Refusal is the error CheckManifest gives the manifest, empty when it accepts it.
-	Refusal string
+	Refusal  string
 }
 
 // ManifestVerdicts reads the table's rows in the order verdicts.json lists them.

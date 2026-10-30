@@ -7,8 +7,7 @@ import (
 
 // CheckManifestTypes refuses a requirement or resource of spec listing a type snap does not hold.
 func CheckManifestTypes(spec ManifestSpec, snap TypeSnapshot) error {
-	held := func(id string) bool { _, ok := snap.Lookup(id); return ok }
-	return checkTypes(spec, held, fmt.Sprintf("the platform's type snapshot version %d", snap.Version))
+	return checkTypes(spec, snap.Holds, fmt.Sprintf("the platform's type snapshot version %d", snap.Version))
 }
 
 // bindingOutputs splits at the first occurrence because a reference and an output may each hold dots.
