@@ -104,6 +104,9 @@ func (k KitObserver) observe(ctx context.Context, t contract.SnapshotType, r con
 	}
 	find := t.ObserveSpec.Find
 	id := r.Identity[find.Identity]
+	if id == "" && r.Unsubscribing {
+		return k.absentUnlessUnrecorded(ctx, t, r, fmt.Sprintf("the block recorded no %s for it", find.Identity))
+	}
 	if id == "" {
 		return unknown("resource %q: the block recorded no %s for it, and a tag alone proves nothing", r.Name, find.Identity), nil, nil
 	}
@@ -112,7 +115,7 @@ func (k KitObserver) observe(ctx context.Context, t contract.SnapshotType, r con
 		return contract.Observation{}, nil, err
 	}
 	if !found {
-		return k.absentUnlessUnrecorded(ctx, t, r)
+		return k.absentUnlessUnrecorded(ctx, t, r, fmt.Sprintf("%s %s does not exist", t.ID, id))
 	}
 	if obs, ok := disagreement(r, t, id, read.Tags); !ok {
 		return obs, nil, nil
@@ -148,14 +151,14 @@ func disagreement(r contract.ResourceRef, t contract.SnapshotType, id string, ta
 	return contract.Observation{}, true
 }
 
-// absentUnlessUnrecorded keeps a tagged object no recorded identity names from ending the subscription, reporting it by name and deleting nothing.
-func (k KitObserver) absentUnlessUnrecorded(ctx context.Context, t contract.SnapshotType, r contract.ResourceRef) (contract.Observation, *FullRead, error) {
+// absentUnlessUnrecorded keeps a tagged object no recorded identity names from ending the subscription, reporting it by name after why and deleting nothing.
+func (k KitObserver) absentUnlessUnrecorded(ctx context.Context, t contract.SnapshotType, r contract.ResourceRef, why string) (contract.Observation, *FullRead, error) {
 	unrecorded, err := k.unrecorded(ctx, t, r)
 	if err != nil {
 		return contract.Observation{}, nil, err
 	}
 	if len(unrecorded) > 0 {
-		return unknown("resource %q: %s %s does not exist, but %s", r.Name, t.ID, r.Identity[t.ObserveSpec.Find.Identity], unrecordedDetail(t, unrecorded)), nil, nil
+		return unknown("resource %q: %s, but %s", r.Name, why, unrecordedDetail(t, unrecorded)), nil, nil
 	}
 	return absent(), nil, nil
 }

@@ -40,6 +40,11 @@ type KeptReporter interface {
 	DeleteKeeping(ctx context.Context, d contract.Desired) (outputs map[string]string, kept map[string][]contract.Kept, err error)
 }
 
+// TeardownReporter, when a block-level Resource implements it, is asked once an unsubscribe proves every resource absent, and a detail it returns answers as that absent answer's statusDetail, so a block can name what its teardown left alone.
+type TeardownReporter interface {
+	TeardownDetail(ctx context.Context, d contract.Desired) (string, error)
+}
+
 // ReplacementPlanner names, on a validate, the declared resources an upgrade would replace, and a name the manifest does not declare is refused with a 400.
 type ReplacementPlanner interface {
 	PlanReplacements(ctx context.Context, d contract.Desired) ([]string, error)

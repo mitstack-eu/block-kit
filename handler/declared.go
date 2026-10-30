@@ -197,8 +197,17 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 		resp.Resources = r.outcomes
 		return status, resp
 	}
+	var detail string
+	if reporter, ok := r.h.resource.(TeardownReporter); ok {
+		var err error
+		if detail, err = reporter.TeardownDetail(ctx, r.d); err != nil {
+			status, resp := r.h.errorResponse(err, r.secrets)
+			resp.Resources = r.outcomes
+			return status, resp
+		}
+	}
 	absent := true
-	return http.StatusOK, contract.Response{Absent: &absent, Outputs: outputs, Resources: r.outcomes}
+	return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(detail, r.secrets...), Outputs: outputs, Resources: r.outcomes}
 }
 
 // endedWithSubscription records nr absent by its delete, not by an observe, when Config.Types marks its type EndsWithSubscription.
