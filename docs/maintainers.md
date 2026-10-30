@@ -15,12 +15,16 @@ kit's `go.mod` still requires nothing. From the repository's root:
 ```sh
 go vet ./... && go test ./...
 go -C capabilities/hetzner/robot/rescuessh test ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C capabilities/hetzner/robot/rescuessh -scan package ./...
 go -C examples/hetzner-firewall test ./...
 go run ./verify/blockverify --standalone examples/hetzner-firewall
 ```
 
 The rescuessh module and the example block are Go modules of their own, so
-`./...` leaves them out and CI tests each by itself. The example's `go.mod`
+`./...` leaves them out and CI tests each by itself. The rescuessh module is
+the only code here with a third-party dependency, so CI also runs govulncheck
+over every package it imports, and a known vulnerability in any of them fails
+the run. The example's `go.mod`
 builds it against the kit in the same checkout. A test in `examples/` holds
 every README code fence whose lead-in links a file under `examples/` equal to
 that file, so a change to the example's `manifest.yaml` or `block.go` changes
