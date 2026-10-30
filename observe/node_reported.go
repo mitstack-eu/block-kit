@@ -25,6 +25,22 @@ type NodeReportsAPI interface {
 	NodeReports(ctx context.Context, d contract.Desired, subscriptionID string) ([]NodeReport, error)
 }
 
+// Enrolment is when a node spent its cluster's enrolment token, the zero time while none has.
+type Enrolment struct {
+	SpentAt time.Time
+}
+
+// ClusterReports is a cluster's node reports with its enrolment, nil when the platform's answer says nothing of it.
+type ClusterReports struct {
+	Reports   []NodeReport
+	Enrolment *Enrolment
+}
+
+// ClusterReportsAPI is a NodeReportsAPI that also reads a cluster's enrolment, so NodeReported can say whether a cluster that sent no report enrolled a node.
+type ClusterReportsAPI interface {
+	ClusterReports(ctx context.Context, d contract.Desired, subscriptionID string) (ClusterReports, error)
+}
+
 // maxNodeReportsBody fits the platform's answer, which holds up to 50 reports of up to 256 KiB each.
 const maxNodeReportsBody = 32 << 20
 
@@ -35,14 +51,19 @@ type NodeReportsClient struct {
 	HTTPClient *http.Client
 }
 
-func (c NodeReportsClient) NodeReports(ctx context.Context, _ contract.Desired, subscriptionID string) ([]NodeReport, error) {
+func (c NodeReportsClient) NodeReports(ctx context.Context, d contract.Desired, subscriptionID string) ([]NodeReport, error) {
+	listed, err := c.ClusterReports(ctx, d, subscriptionID)
+	return listed.Reports, err
+}
+
+func (c NodeReportsClient) ClusterReports(ctx context.Context, _ contract.Desired, subscriptionID string) (ClusterReports, error) {
 	base, token, err := events.PlatformFrom(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("observe: reading the node reports of %s: %w", subscriptionID, err)
+		return ClusterReports{}, fmt.Errorf("observe: reading the node reports of %s: %w", subscriptionID, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/subscriptions/"+url.PathEscape(subscriptionID)+"/node-reports", nil)
 	if err != nil {
-		return nil, fmt.Errorf("observe: building the node reports request for %s: %w", subscriptionID, err)
+		return ClusterReports{}, fmt.Errorf("observe: building the node reports request for %s: %w", subscriptionID, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	client := c.HTTPClient
@@ -51,19 +72,31 @@ func (c NodeReportsClient) NodeReports(ctx context.Context, _ contract.Desired, 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("observe: reading the node reports of %s: %w", subscriptionID, err)
+		return ClusterReports{}, fmt.Errorf("observe: reading the node reports of %s: %w", subscriptionID, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("observe: the platform answered %d for the node reports of %s", resp.StatusCode, subscriptionID)
+		return ClusterReports{}, fmt.Errorf("observe: the platform answered %d for the node reports of %s", resp.StatusCode, subscriptionID)
 	}
 	var listed struct {
-		Reports []NodeReport `json:"reports"`
+		Reports    []NodeReport    `json:"reports"`
+		EnrolledAt json.RawMessage `json:"enrolledAt"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxNodeReportsBody)).Decode(&listed); err != nil {
-		return nil, fmt.Errorf("observe: decoding the node reports of %s: %w", subscriptionID, err)
+		return ClusterReports{}, fmt.Errorf("observe: decoding the node reports of %s: %w", subscriptionID, err)
 	}
-	return listed.Reports, nil
+	out := ClusterReports{Reports: listed.Reports}
+	if listed.EnrolledAt != nil {
+		var at *time.Time
+		if err := json.Unmarshal(listed.EnrolledAt, &at); err != nil {
+			return ClusterReports{}, fmt.Errorf("observe: decoding the enrolment of %s: %w", subscriptionID, err)
+		}
+		out.Enrolment = &Enrolment{}
+		if at != nil {
+			out.Enrolment.SpentAt = *at
+		}
+	}
+	return out, nil
 }
 
 // NodeReported matches an object labelled with the observing subscription's id in the reports of the identity's clusterSubscription, else its own.
@@ -118,13 +151,13 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 	if cluster == "" {
 		cluster = r.Desired.SubscriptionID
 	}
-	reports, err := o.API.NodeReports(ctx, r.Desired, cluster)
+	got, err := o.reports(ctx, r.Desired, cluster)
 	if err != nil {
 		return contract.Observation{}, err
 	}
 	var newest *reportBody
 	var newestAt time.Time
-	for _, report := range reports {
+	for _, report := range got.Reports {
 		var body reportBody
 		if err := json.Unmarshal(report.Body, &body); err != nil {
 			return contract.Observation{}, fmt.Errorf("observe: reading the node report received at %s: %w", report.ReceivedAt.Format(time.RFC3339), err)
@@ -138,7 +171,7 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 		}
 	}
 	if newest == nil {
-		return unknown("resource %q: no node report made since the verb has arrived", r.Name), nil
+		return unknown("resource %q: no node report made since the verb has arrived%s", r.Name, enrolled(cluster, got.Enrolment)), nil
 	}
 	if app := r.Identity["argocdApplication"]; app != "" {
 		return appliedBy(r, *newest, app, ids[0], ids[1]), nil
@@ -160,6 +193,24 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 		return unknown("resource %q: the newest node report does not list it, but proves no absence: it neither marks its list complete nor read kind %q whole", r.Name, want.Kind), nil
 	}
 	return absent(), nil
+}
+
+func (o NodeReported) reports(ctx context.Context, d contract.Desired, cluster string) (ClusterReports, error) {
+	if api, ok := o.API.(ClusterReportsAPI); ok {
+		return api.ClusterReports(ctx, d, cluster)
+	}
+	reports, err := o.API.NodeReports(ctx, d, cluster)
+	return ClusterReports{Reports: reports}, err
+}
+
+func enrolled(cluster string, e *Enrolment) string {
+	switch {
+	case e == nil:
+		return ""
+	case e.SpentAt.IsZero():
+		return fmt.Sprintf(", and cluster subscription %q has enrolled no node with the platform", cluster)
+	}
+	return fmt.Sprintf(", though cluster subscription %q enrolled a node at %s", cluster, e.SpentAt.UTC().Format(time.RFC3339))
 }
 
 // appliedBy reads the object of kind and name from the list of the Application app in the newest counting report.
