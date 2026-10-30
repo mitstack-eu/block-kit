@@ -35,7 +35,6 @@ const s3Snapshot = `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability
 
 var s3Manifest = v1betaManifest("s3-block", []string{"{ name: data, type: aws.s3-bucket }"})
 
-// recordingAWS stands in for AWS, holding one bucket and recording every read; a probe check fails the test when it reads more than the type's maxReads.
 type recordingAWS struct {
 	t     *testing.T
 	tags  map[string]string
