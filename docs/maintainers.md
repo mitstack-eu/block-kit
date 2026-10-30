@@ -8,16 +8,19 @@ which a block's own CI runs too.
 ## Testing the kit
 
 The kit's module is stdlib-only, and no third-party dependency is ever added.
-From the repository's root:
+The Robot rescue system's SSH session needs `golang.org/x/crypto/ssh`, so it
+sits in a Go module of its own, `capabilities/hetzner/robot/rescuessh`, and the
+kit's `go.mod` still requires nothing. From the repository's root:
 
 ```sh
 go vet ./... && go test ./...
+go -C capabilities/hetzner/robot/rescuessh test ./...
 go -C examples/hetzner-firewall test ./...
 go run ./verify/blockverify --standalone examples/hetzner-firewall
 ```
 
-The example block is a Go module of its own, so `./...` leaves it out and CI
-tests it by itself. The example's `go.mod`
+The rescuessh module and the example block are Go modules of their own, so
+`./...` leaves them out and CI tests each by itself. The example's `go.mod`
 builds it against the kit in the same checkout. A test in `examples/` holds
 every README code fence whose lead-in links a file under `examples/` equal to
 that file, so a change to the example's `manifest.yaml` or `block.go` changes
@@ -47,6 +50,14 @@ at the commercial launch. So while the newest tag is a v0 version, the script
 refuses that line, cuts no tag and fails. Go never reuses a published version,
 so a v1.0.0 cut by mistake would stay on the Go module proxy as the kit's
 newest release.
+
+The rescuessh module is released by its own tags, such as
+`capabilities/hetzner/robot/rescuessh/v0.1.0`, the form Go resolves for a
+module inside a repository. Its first tag is cut by hand, as the kit's was.
+After it, the
+release job runs `scripts/release-block-kit.sh --module
+capabilities/hetzner/robot/rescuessh`, which judges changes under that path
+alone and follows the same rules as the kit's tags.
 
 The release job runs only after a merge, so a pull request carrying the line
 has to fail before it merges. The required `test` job in

@@ -408,9 +408,29 @@ A rescue boot answers the host keys Robot names in `RescueSession.HostKeys`.
 On the trial Robot named none, so a client cannot tell the rescue system from
 an impersonator on the path to it. A block therefore sends that session no
 secret, and its secrets reach the disk by a channel an on-path attacker cannot
-impersonate. The package holds no SSH client, since the kit takes no
-dependency beyond the standard library: `RescueKey.PrivateKey()` hands the
-block the key for its own SSH client.
+impersonate.
+
+`Installer.Install(ctx, target, handOff)` runs that whole install once, from
+adoption to the reset that boots the written disk. It refuses a server outside
+`robot.Locations`, fsn1, nbg1 and hel1, where a vSwitch reaches a Cloud
+network. It then adopts the server, couples its vSwitch, writes the target's
+firewall and boots the rescue system. Over the rescue session it runs the
+block's own rescue script with `read`, which reports the hardware. `handOff`
+then renders the short-lived Cloud server for that hardware, and the block's
+`Cloud` creates it on the vSwitch. The script's `write` receives only the
+VLAN, the addresses, the port, the pin of the server's TLS key and the disk's
+serial, each matched against a pattern, then fetches the secret over the
+vSwitch and checks the pin. Whether the hand-off succeeds or fails, the
+install deletes the short-lived server and the rescue key, restores the
+firewall and resets the server into its disk.
+
+The kit's module holds no SSH client, since it takes no dependency beyond the
+standard library. `Installer.Dial` opens the session, and the module
+`github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/rescuessh`
+provides one: `rescuessh.Config{Script: script}.Dial` accepts only a host key
+Robot named, and any key when Robot named none, and it runs nothing but the
+script. `rescuesshtest.New(t, admit)` is a fake rescue system for a block's
+tests, which runs each command with bash.
 
 Robot's documentation at
 [robot.hetzner.com/doc/webservice](https://robot.hetzner.com/doc/webservice/en.html)

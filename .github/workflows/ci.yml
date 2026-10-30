@@ -29,6 +29,12 @@ jobs:
           go -C examples/hetzner-firewall vet ./...
           go -C examples/hetzner-firewall test ./...
           go run ./verify/blockverify --standalone examples/hetzner-firewall
+      # The rescue SSH session is a module of its own, so that the kit's
+      # module stays stdlib-only, and ./... leaves it out as well.
+      - name: Test the rescuessh module
+        run: |
+          go -C capabilities/hetzner/robot/rescuessh vet ./...
+          go -C capabilities/hetzner/robot/rescuessh test ./...
       - run: bash scripts/release-block-kit_test.sh
       # The release job runs only after a merge, so a line it would refuse has
       # to fail here, in a check main requires, before it reaches main.
@@ -36,6 +42,12 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           bash scripts/release-block-kit.sh --dry-run \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+      - name: Dry-run the rescuessh release over the pull request's commits
+        if: github.event_name == 'pull_request'
+        run: |
+          bash scripts/release-block-kit.sh --module capabilities/hetzner/robot/rescuessh --dry-run \
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}"
 
@@ -116,6 +128,9 @@ jobs:
         # a run that was skipped or red does not lose its release. The next
         # push or a dispatch on main picks it up, with no change of its own.
         run: bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Cut the rescuessh tag when the module changed
+        shell: bash
+        run: bash scripts/release-block-kit.sh --module capabilities/hetzner/robot/rescuessh | tee -a "$GITHUB_STEP_SUMMARY"
 
   # This repository has no other mechanism that reaches the board, so a
   # ticket delivered here never reached Done. needs: [test, release] only

@@ -115,7 +115,7 @@ provider and in `capabilities` per provider:
 | `capabilities/github/ghapi` | A block that calls the GitHub API | A GitHub REST client whose host the operator decides |
 | `capabilities/github/gitops` | A block that deploys to Kubernetes through Argo CD | Commits the block's files to a GitOps repository and judges the deploy, with test fakes in `capabilities/github/gitops/gitopstest` |
 | `capabilities/github/landing` | A block that lands files in an app's repository | Records each file it lands, and at unsubscribe removes every one main still carries unchanged through one pull request per repository, with a fake of GitHub in `capabilities/github/landing/landingtest` |
-| `capabilities/hetzner/robot` | A block that adopts a Hetzner dedicated server | Hetzner's Robot webservice: adopt, name and release a server, boot it into the rescue system and back, couple a vSwitch and write the Robot firewall, with a fake of the webservice in `capabilities/hetzner/robot/robottest` |
+| `capabilities/hetzner/robot` | A block that adopts a Hetzner dedicated server | Hetzner's Robot webservice: adopt, name and release a server, boot it into the rescue system and back, couple a vSwitch and write the Robot firewall, and hand a secret to the server from a short-lived Cloud server behind a pinned TLS key, with a fake of the webservice in `capabilities/hetzner/robot/robottest`. The rescue SSH session is the module `capabilities/hetzner/robot/rescuessh`, with a fake rescue system in `rescuessh/rescuesshtest` |
 
 ## A minimal block to copy
 
