@@ -196,25 +196,68 @@ if err != nil {
 ### Sizing an app against what the host holds
 
 Every app on a Docker host reserves CPU and memory, so a host takes no more
-apps than it can run. A per-app block records each reservation as a file in
-the host repository, the Git repository the host's pull agent applies, at
-`<app>/reservations/<block>.json`:
+apps than it can run. A per-app block is one an app subscribes to on its own,
+such as docker-app-slice, the block that lands an app's container on the
+host. The host repository is the private Git repository the host's own block,
+such as hcloud-docker-host, creates for the host. The host's pull agent, a
+container on the host, starts each of its top-level directories as one app.
+
+Each per-app block records its app's reservation in that repository at
+`<app>/reservations/<block>.json`, where `<app>` is the app's directory and
+`<block>` the block's id. `cpuMillis` counts thousandths of a CPU core and
+`memoryBytes` counts bytes, so this record reserves half a core and 512 MiB:
 
 ```json
 {"cpuMillis": 500, "memoryBytes": 536870912}
 ```
 
-`dockerhost.SumReservations(files, except)` takes the repository's files,
-each path and its content, and adds up every such record, whichever block
-wrote it. It leaves out the path `except`, so a block sizing its own app
+`dockerhost.SumReservations(files, except)` takes the repository's files as a
+`map[string][]byte` of each path, relative to the repository's root, to its
+content. Your block reads them through its GitHub client, for example by
+listing the tree at the head of `main` and reading each path that ends in
+`.json` under a `reservations` directory. The function adds up every record,
+whichever block wrote it, into one `dockerhost.Reservation`, whose fields are
+`CPUMillis` and `MemoryBytes`. It leaves out the path `except`, so a block
 counts only what the other blocks hold. A top-level directory whose name
-starts with a dot holds no app, so its files never count. A record that does
-not parse, holds a field a `dockerhost.Reservation` lacks or reserves a
-negative amount returns an error naming its path.
+starts with a dot holds no app, so its files never count.
 
-Your block compares the sum with the host's allocatable capacity, which the
-host's node report gives, and refuses an app whose own reservation does not fit
-in what is left.
+The function returns an error naming the record's path when a record does not
+parse, holds more than one JSON value, lacks either amount, holds a field a
+`dockerhost.Reservation` lacks, reserves a negative amount or takes the sum
+past what an `int64` holds.
+
+The host's allocatable capacity is what the host can give its apps once it
+has kept back what its system needs. The host sends it in its node report, the
+signed status a host posts to mitstack every few minutes, which [Signing a node
+report](#signing-a-node-report) describes. It sits in the report's body under
+`host.capacity.allocatable`, in the same two keys:
+
+```json
+{"host": {"capacity": {"allocatable": {"cpuMillis": 3500, "memoryBytes": 7516192768}}}}
+```
+
+`observe.NodeReportsClient{}.NodeReports(ctx, d, hostSubscription)` returns
+the host subscription's reports, each with its JSON `Body`, as [Observing a
+resource the platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
+explains. Your block reads the newest report's allocatable capacity into a
+`dockerhost.Reservation`, sums the other blocks' records, and checks that its
+own reservation fits in what is left before it writes anything. When it does
+not fit, the block's subscribe returns a `handler.Refuse` error naming the
+free and the requested amounts, so the platform shows the refusal and nothing
+lands on the host:
+
+```go
+others, err := dockerhost.SumReservations(files, app+"/reservations/docker-app-slice.json")
+if err != nil {
+	return nil, err
+}
+freeCPU := allocatable.CPUMillis - others.CPUMillis
+freeMemory := allocatable.MemoryBytes - others.MemoryBytes
+if want.CPUMillis > freeCPU || want.MemoryBytes > freeMemory {
+	return nil, handler.Refuse("host-full", "the host has %d CPU millis and %d memory bytes free; the app asks for %d and %d",
+		freeCPU, freeMemory, want.CPUMillis, want.MemoryBytes)
+}
+```
 
 ## Reporting whether an app answers
 
