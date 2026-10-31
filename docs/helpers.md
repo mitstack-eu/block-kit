@@ -193,6 +193,72 @@ if err != nil {
 }
 ```
 
+### Sizing an app against what the host holds
+
+Every app on a Docker host reserves CPU and memory, so a host takes no more
+apps than it can run. A per-app block is one an app subscribes to on its own,
+such as docker-app-slice, the block that lands an app's container on the
+host. The host repository is the private Git repository the host's own block,
+such as hcloud-docker-host, creates for the host. The host's pull agent, a
+container on the host, starts each of its top-level directories as one app.
+
+Each per-app block records its app's reservation in that repository at
+`<app>/reservations/<block>.json`, where `<app>` is the app's directory and
+`<block>` the block's id. `cpuMillis` counts thousandths of a CPU core and
+`memoryBytes` counts bytes, so this record reserves half a core and 512 MiB:
+
+```json
+{"cpuMillis": 500, "memoryBytes": 536870912}
+```
+
+`dockerhost.SumReservations(files, except)` takes the repository's files as a
+`map[string][]byte` of each path, relative to the repository's root, to its
+content. Your block reads them through its GitHub client, for example by
+listing the tree at the head of `main` and reading each path that ends in
+`.json` under a `reservations` directory. The function adds up every record,
+whichever block wrote it, into one `dockerhost.Reservation`, whose fields are
+`CPUMillis` and `MemoryBytes`. It leaves out the path `except`, so a block
+counts only what the other blocks hold. A top-level directory whose name
+starts with a dot holds no app, so its files never count.
+
+The function returns an error naming the record's path when a record does not
+parse, holds more than one JSON value, lacks either amount, holds a field a
+`dockerhost.Reservation` lacks, reserves a negative amount or takes the sum
+past what an `int64` holds.
+
+The host's allocatable capacity is what the host can give its apps once it
+has kept back what its system needs. The host sends it in its node report, the
+signed status a host posts to mitstack every few minutes, which [Signing a node
+report](#signing-a-node-report) describes. It sits in the report's body under
+`host.capacity.allocatable`, in the same two keys:
+
+```json
+{"host": {"capacity": {"allocatable": {"cpuMillis": 3500, "memoryBytes": 7516192768}}}}
+```
+
+`observe.NodeReportsClient{}.NodeReports(ctx, d, hostSubscription)` returns
+the host subscription's reports, each with its JSON `Body`, as [Observing a
+resource the platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
+explains. Your block reads the newest report's allocatable capacity into a
+`dockerhost.Reservation`, sums the other blocks' records, and checks that its
+own reservation fits in what is left before it writes anything. When it does
+not fit, the block's subscribe returns a `handler.Refuse` error naming the
+free and the requested amounts, so the platform shows the refusal and nothing
+lands on the host:
+
+```go
+others, err := dockerhost.SumReservations(files, app+"/reservations/docker-app-slice.json")
+if err != nil {
+	return nil, err
+}
+freeCPU := allocatable.CPUMillis - others.CPUMillis
+freeMemory := allocatable.MemoryBytes - others.MemoryBytes
+if want.CPUMillis > freeCPU || want.MemoryBytes > freeMemory {
+	return nil, handler.Refuse("host-full", "the host has %d CPU millis and %d memory bytes free; the app asks for %d and %d",
+		freeCPU, freeMemory, want.CPUMillis, want.MemoryBytes)
+}
+```
+
 ## Reporting whether an app answers
 
 `helpers/reach` judges whether an app is serving at its URL and records the
@@ -323,6 +389,13 @@ refuses a private, loopback, bare-IP or metadata host even when you listed it.
 `ghapi.NewClient(base.String(), token, httpClient)` then creates repositories,
 commits files and sets Actions variables, each idempotently.
 
+A block that reads a repository at one commit takes main's head with
+`HeadCommit`, the commit's tree with `CommitTree`, and the path of every file
+in that tree with `TreePaths`, which refuses a listing GitHub truncated past
+100,000 entries. `ReadFileAt` then reads one file at that commit, and
+`CommitChanges` commits onto it, wrapping `ghapi.ErrNotFastForward` when main
+has moved on since.
+
 blockverify holds a block that calls the GitHub API to this rule: it must
 resolve the host through `ghapi.Base`, `ghapi.BaseFromEnv` or an allowlist of
 its own, as [Running the block checks](block-checks.md) describes.
@@ -416,7 +489,13 @@ unknown.
 
 `capabilities/github/landing/landingtest` is a fake of the GitHub routes the
 package calls, holding one repository's main, branches, pull requests and
-checks.
+checks. A block's own tests use it too: `Seed` and `Remove` change main as
+another writer would, `Head` names its commit, and `BeforeWrite` runs a hook
+ahead of each write. A hook that returns an error refuses that write, and one
+that seeds main moves it under the block's commit, so the block's retry can be
+tested. A refused write is not listed by `Writes`. The hook runs once per
+request, in parallel when the client sends requests in parallel, so a hook
+that keeps state guards it.
 
 
 ## Adopting a Hetzner dedicated server

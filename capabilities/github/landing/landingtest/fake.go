@@ -52,6 +52,7 @@ type Fake struct {
 	deleted   bool
 	answers   map[string]int
 	requests  []Request
+	before    func(method, path string) error
 }
 
 func New(t testing.TB, repo string) *Fake {
@@ -79,6 +80,32 @@ func (f *Fake) Seed(files map[string]string) {
 	}
 	maps.Copy(tree, files)
 	f.refs["heads/main"] = f.commit(f.storeTree(tree), f.refs["heads/main"])
+}
+
+// Remove commits main without paths, as another writer deleting them does.
+func (f *Fake) Remove(paths ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	tree := maps.Clone(f.commits[f.refs["heads/main"]].tree)
+	for _, p := range paths {
+		delete(tree, p)
+	}
+	f.refs["heads/main"] = f.commit(f.storeTree(tree), f.refs["heads/main"])
+}
+
+// Head returns the commit main points at, "" before the first Seed.
+func (f *Fake) Head() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.refs["heads/main"]
+}
+
+// BeforeWrite runs hook ahead of each request but a GET, outside the fake's lock so it may change main, and answers 422
+// to a request it returns an error for.
+func (f *Fake) BeforeWrite(hook func(method, path string) error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.before = hook
 }
 
 // Edit changes one file on main, as the app does after a landing.
@@ -197,6 +224,15 @@ func (f *Fake) Writes() []Request {
 
 func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
+	before := f.before
+	f.mu.Unlock()
+	if before != nil && r.Method != http.MethodGet {
+		if err := before(r.Method, r.URL.Path); err != nil {
+			reply(w, http.StatusUnprocessableEntity, map[string]any{"message": err.Error()})
+			return
+		}
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, Request{Method: r.Method, Path: r.URL.RequestURI(), Authorization: r.Header.Get("Authorization")})
 	if status, ok := f.answers[r.Method+" "+r.URL.Path]; ok {
@@ -229,6 +265,8 @@ func (f *Fake) route(method, rest string, r *http.Request, body map[string]any) 
 		return f.matchingRefs(strings.TrimPrefix(rest, "/git/matching-refs/"))
 	case method == http.MethodGet && strings.HasPrefix(rest, "/git/commits/"):
 		return f.readCommit(strings.TrimPrefix(rest, "/git/commits/"))
+	case method == http.MethodGet && strings.HasPrefix(rest, "/git/trees/"):
+		return f.listTree(strings.TrimPrefix(rest, "/git/trees/"))
 	case method == http.MethodGet && strings.HasPrefix(rest, "/contents/"):
 		return f.readContents(strings.TrimPrefix(rest, "/contents/"), r.URL.Query().Get("ref"))
 	case method == http.MethodPost && rest == "/git/trees":
@@ -287,6 +325,19 @@ func (f *Fake) readCommit(sha string) (int, any) {
 		parents = append(parents, map[string]any{"sha": c.parent})
 	}
 	return http.StatusOK, map[string]any{"sha": sha, "tree": map[string]any{"sha": f.treeID(c.tree)}, "parents": parents}
+}
+
+// listTree lists a tree's every file, as GitHub's recursive listing does, holding no directory entry.
+func (f *Fake) listTree(id string) (int, any) {
+	tree, ok := f.trees[id]
+	if !ok {
+		return http.StatusNotFound, map[string]any{"message": "Not Found"}
+	}
+	entries := []any{}
+	for _, path := range slices.Sorted(maps.Keys(tree)) {
+		entries = append(entries, map[string]any{"path": path, "type": "blob", "sha": blob(tree[path])})
+	}
+	return http.StatusOK, map[string]any{"sha": id, "truncated": false, "tree": entries}
 }
 
 func (f *Fake) readContents(path, ref string) (int, any) {

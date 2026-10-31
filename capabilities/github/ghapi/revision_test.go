@@ -151,6 +151,22 @@ func TestCommitParentAndPaths(t *testing.T) {
 	})
 }
 
+func TestTreePaths(t *testing.T) {
+	treeOf := get(gitops + "/git/trees/" + shaRev1 + "?recursive=1")
+	of := func(c *ghapi.Client) (any, error) { return c.TreePaths(context.Background(), revRepo, shaRev1) }
+	runAPICases(t, []apiCase{
+		{name: "it returns every file's path sorted, and no directory or submodule", routes: map[string][]reply{treeOf: {{body: `{"truncated":false,"tree":[` +
+			`{"path":"shop/compose.yaml","type":"blob"},{"path":"shop","type":"tree"},{"path":"README.md","type":"blob"},{"path":"vendor/lib","type":"commit"}]}`}}},
+			call: of, want: []string{"README.md", "shop/compose.yaml"}, requests: []string{treeOf}},
+		{name: "a listing GitHub truncated is an error", routes: map[string][]reply{treeOf: {{body: `{"truncated":true,"tree":[{"path":"a.yaml","type":"blob"}]}`}}},
+			call: of, want: []string(nil), err: errAny, errHas: "truncated", requests: []string{treeOf}},
+		{name: "a tree the repository never held is an error", routes: map[string][]reply{treeOf: {notFound}},
+			call: of, want: []string(nil), err: errAny, errHas: "returned 404", requests: []string{treeOf}},
+		{name: "a server error echoing the token never carries it", routes: map[string][]reply{treeOf: {{http.StatusInternalServerError, `{"message":"failure for {auth}"}`}}},
+			call: of, want: []string(nil), err: errAny, errHas: "returned 500", requests: []string{treeOf}},
+	})
+}
+
 // revisionCalls are the calls taking a repository and a revision, each called with them.
 var revisionCalls = map[string]func(c *ghapi.Client, repo, rev string) error{
 	"ReadFileAt": func(c *ghapi.Client, repo, rev string) error {
@@ -167,6 +183,10 @@ var revisionCalls = map[string]func(c *ghapi.Client, repo, rev string) error{
 	},
 	"CommitChanges": func(c *ghapi.Client, repo, rev string) error {
 		_, err := c.CommitChanges(context.Background(), repo, rev, "m", map[string]*string{"a.yaml": strp("a\n")})
+		return err
+	},
+	"TreePaths": func(c *ghapi.Client, repo, rev string) error {
+		_, err := c.TreePaths(context.Background(), repo, rev)
 		return err
 	},
 	"HeadCommit": func(c *ghapi.Client, repo, _ string) error {
