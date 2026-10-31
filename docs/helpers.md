@@ -493,7 +493,9 @@ checks. A block's own tests use it too: `Seed` and `Remove` change main as
 another writer would, `Head` names its commit, and `BeforeWrite` runs a hook
 ahead of each write. A hook that returns an error refuses that write, and one
 that seeds main moves it under the block's commit, so the block's retry can be
-tested.
+tested. A refused write is not listed by `Writes`. The hook runs once per
+request, in parallel when the client sends requests in parallel, so a hook
+that keeps state guards it.
 
 
 ## Adopting a Hetzner dedicated server
