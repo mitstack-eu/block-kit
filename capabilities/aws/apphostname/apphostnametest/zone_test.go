@@ -83,3 +83,14 @@ func TestZone_HeldByNamesEachHostnameWhoseTXTNamesTheSubscription(t *testing.T) 
 		t.Errorf("HeldBy(sub_shop) = %q, want only %s", got, host)
 	}
 }
+
+func TestZone_DeletesARecordWhoseValuesTheBatchNamesInAnotherOrder(t *testing.T) {
+	zone := apphostnametest.New()
+	zone.Set(host, []string{"198.51.100.1", "198.51.100.9"}, "")
+
+	err := zone.ChangeRecords(context.Background(), "Z0APPS", []apphostname.Change{change("DELETE", "A", "198.51.100.9", "198.51.100.1")})
+
+	if err != nil || zone.Addresses(host) != nil {
+		t.Errorf("ChangeRecords = %v leaving A %q; want the record deleted, as Route 53 compares values as a set", err, zone.Addresses(host))
+	}
+}

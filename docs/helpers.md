@@ -400,7 +400,8 @@ for the same name is refused rather than moving the first app's visitors.
 3. `apphostname.ReadClaim(ctx, w, rec, subscriptionID)` reads the hostname
    before your block writes anything else. It refuses with `hostname-taken`
    when another subscription holds the name, or when an A record that names
-   no subscription points somewhere else.
+   no subscription points somewhere else, and with `no-address` when the
+   record has no address.
 4. `claim.Apply(ctx)` writes the changes in one batch once your block's own
    writes have landed. A batch Route 53 rejects because a racing call changed
    the records is read again, and passes when the records are now this

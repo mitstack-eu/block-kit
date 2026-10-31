@@ -106,6 +106,9 @@ type Claim struct {
 }
 
 func ReadClaim(ctx context.Context, w Writer, rec Record, subscription string) (Claim, error) {
+	if len(rec.Values) == 0 {
+		return Claim{}, handler.Refuse("no-address", "the hostname %s has no address to point at", rec.Name)
+	}
 	held, err := w.LookupHost(ctx, rec.ZoneID, rec.Name)
 	if err != nil {
 		return Claim{}, fmt.Errorf("reading the records of %s: %w", rec.Name, err)
@@ -172,7 +175,7 @@ func Observe(ctx context.Context, w Writer, rec Record, subscription string) (co
 	if err != nil {
 		return contract.Observation{}, fmt.Errorf("reading the records of %s: %w", rec.Name, err)
 	}
-	if !sameAddresses(held.Addresses, rec.Values) || !holds(held, subscription) {
+	if len(rec.Values) == 0 || !sameAddresses(held.Addresses, rec.Values) || !holds(held, subscription) {
 		return contract.Observation{State: contract.Absent}, nil
 	}
 	// The type's address output is one IPv4 address, so it carries the first of the sorted set.

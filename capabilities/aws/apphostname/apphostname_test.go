@@ -347,3 +347,16 @@ func TestIdentity_ReadsBackAsTheRecordItWasMadeFrom(t *testing.T) {
 		t.Error("FromIdentity read a record from an identity naming no addresses")
 	}
 }
+
+func TestClaimAndObserve_ARecordWithNoAddressIsRefusedAndReadAbsent(t *testing.T) {
+	zone := apphostnametest.New()
+	rec := apphostname.NewRecord(zoneID, host)
+
+	_, err := apphostname.ReadClaim(context.Background(), zone, rec, sub)
+	obs, obsErr := apphostname.Observe(context.Background(), zone, rec, sub)
+
+	wantRefused(t, err, "no-address")
+	if obsErr != nil || obs.State != contract.Absent {
+		t.Errorf("Observe of a record with no address = %+v, %v; want absent", obs, obsErr)
+	}
+}

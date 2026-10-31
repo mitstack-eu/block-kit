@@ -89,7 +89,7 @@ func (z *Zone) LookupHost(_ context.Context, _, name string) (apphostname.Held, 
 	return apphostname.Held{Addresses: slices.Clone(z.addresses[name]), Owner: z.owners[name]}, nil
 }
 
-// ChangeRecords rejects the whole batch when a CREATE names a record that exists, or a DELETE's values are not the record's.
+// ChangeRecords rejects the whole batch when a CREATE names a record that exists, or a DELETE's values, in any order, are not the record's.
 func (z *Zone) ChangeRecords(_ context.Context, zoneID string, changes []apphostname.Change) error {
 	z.mu.Lock()
 	before := z.beforeChange
@@ -111,7 +111,7 @@ func (z *Zone) ChangeRecords(_ context.Context, zoneID string, changes []apphost
 		switch {
 		case c.Action == apphostname.Create && exists:
 			return fmt.Errorf("creating %s %s, which exists: %w", c.Type, c.Name, apphostname.ErrConflict)
-		case c.Action == apphostname.Delete && (!exists || !slices.Equal(current, c.Values)):
+		case c.Action == apphostname.Delete && (!exists || !slices.Equal(slices.Sorted(slices.Values(current)), slices.Sorted(slices.Values(c.Values)))):
 			return fmt.Errorf("deleting %s %s at %q, which holds %q: %w", c.Type, c.Name, c.Values, current, apphostname.ErrConflict)
 		case c.Action == apphostname.Create:
 			records[c.Name] = slices.Clone(c.Values)
