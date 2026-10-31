@@ -35,6 +35,10 @@ func TestSumReservations_RefusesARecordItCannotTrustNamingItsPath(t *testing.T) 
 		{"a record with a field no reservation holds", `{"cpuMillis":500,"memoryBytes":1,"disk":1}`},
 		{"a negative CPU reservation", `{"cpuMillis":-500,"memoryBytes":1}`},
 		{"a negative memory reservation", `{"cpuMillis":500,"memoryBytes":-1}`},
+		{"a record followed by more text", `{"cpuMillis":500,"memoryBytes":1} {"cpuMillis":1}`},
+		{"a record missing its memory", `{"cpuMillis":500}`},
+		{"an empty record", `{}`},
+		{"a null record", `null`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			files := map[string][]byte{"shop/reservations/docker-app-slice.json": []byte(tc.record)}
@@ -45,5 +49,18 @@ func TestSumReservations_RefusesARecordItCannotTrustNamingItsPath(t *testing.T) 
 				t.Errorf("SumReservations(%s) = %+v, %v; want an error naming the record's path", tc.record, got, err)
 			}
 		})
+	}
+}
+
+func TestSumReservations_RefusesASumPastWhatAnInt64Holds(t *testing.T) {
+	files := map[string][]byte{
+		"shop/reservations/docker-app-slice.json": []byte(`{"cpuMillis":9223372036854775807,"memoryBytes":1}`),
+		"blog/reservations/docker-app-slice.json": []byte(`{"cpuMillis":1,"memoryBytes":1}`),
+	}
+
+	got, err := dockerhost.SumReservations(files, "")
+
+	if err == nil {
+		t.Errorf("SumReservations(two records summing past the int64 maximum) = %+v, nil; want an error", got)
 	}
 }
