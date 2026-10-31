@@ -61,12 +61,14 @@ newest release.
 The rescuessh module is released by its own tags, such as
 `capabilities/hetzner/robot/rescuessh/v0.1.0`, the form Go resolves for a
 module inside a repository. Its first tag is cut by hand, as the kit's was.
-The healthz module follows the same rules under its own tags, such as
-`helpers/healthz/v0.1.0`.
 After it, the
 release job runs `scripts/release-block-kit.sh --module
 capabilities/hetzner/robot/rescuessh`, which judges changes under that path
 alone and follows the same rules as the kit's tags.
+
+The healthz module is released the same way, by tags such as
+`helpers/healthz/v0.1.0`. Its first tag is cut by hand too. After it, the
+release job runs `scripts/release-block-kit.sh --module helpers/healthz`.
 
 The release job runs only after a merge, so a pull request carrying the line
 has to fail before it merges. The required `test` job in
