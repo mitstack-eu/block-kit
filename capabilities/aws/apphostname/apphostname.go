@@ -24,15 +24,13 @@ const (
 	TypeA   = "A"
 	TypeTXT = "TXT"
 
-	ownerPrefix = "mitstack-subscription="
-	// addressSeparator joins a record's addresses in its identity, whose values are strings.
+	ownerPrefix      = "mitstack-subscription="
 	addressSeparator = ","
 )
 
 // ErrConflict marks a change batch Route 53 rejected because a record it creates exists, or one it deletes is gone or holds other values.
 var ErrConflict = errors.New("the hostname's records changed since they were read")
 
-// Record is one hostname and the addresses it points at, sorted.
 type Record struct {
 	ZoneID string
 	Name   string
@@ -54,14 +52,13 @@ type Change struct {
 	TTL    int
 }
 
-// Writer reads a hostname's records and changes them in batches that apply whole or not at all.
+// Writer changes records in batches that apply whole or not at all.
 type Writer interface {
 	LookupHost(ctx context.Context, zoneID, name string) (Held, error)
 	// ChangeRecords wraps ErrConflict when the zone no longer holds what the batch was planned against.
 	ChangeRecords(ctx context.Context, zoneID string, changes []Change) error
 }
 
-// OwnerText is the TXT value that marks a hostname as subscription's.
 func OwnerText(subscription string) string { return ownerPrefix + subscription }
 
 // ZoneID returns the apps zone's Route 53 id, refusing when the operator is not set up for domain, the zone the block's hostnames live in.
