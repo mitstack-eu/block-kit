@@ -193,6 +193,29 @@ if err != nil {
 }
 ```
 
+### Sizing an app against what the host holds
+
+Every app on a Docker host reserves CPU and memory, so a host takes no more
+apps than it can run. A per-app block records each reservation as a file in
+the host repository, the Git repository the host's pull agent applies, at
+`<app>/reservations/<block>.json`:
+
+```json
+{"cpuMillis": 500, "memoryBytes": 536870912}
+```
+
+`dockerhost.SumReservations(files, except)` takes the repository's files,
+each path and its content, and adds up every such record, whichever block
+wrote it. It leaves out the path `except`, so a block sizing its own app
+counts only what the other blocks hold. A top-level directory whose name
+starts with a dot holds no app, so its files never count. A record that does
+not parse, holds a field a `dockerhost.Reservation` lacks or reserves a
+negative amount returns an error naming its path.
+
+Your block compares the sum with the host's allocatable capacity, which the
+host's node report gives, and refuses an app whose own reservation does not fit
+in what is left.
+
 ## Reporting whether an app answers
 
 `helpers/reach` judges whether an app is serving at its URL and records the
