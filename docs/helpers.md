@@ -17,6 +17,7 @@ package has [a page of its own](gitops.md).
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
+| `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
@@ -378,6 +379,44 @@ never reaches a command line. `cloudid.Env(creds)` returns an environment for
 a subprocess, and a `cloudid.Refresher` holds the credentials across calls,
 failing closed as `credrefresh` does. `Identity.Region` is required, because a
 default region that shifts would strand what already runs in the real one.
+
+## Pointing an app's hostname at its host
+
+An app's hostname, such as `shop.apps.mitstack.dev`, lives in mitstack's own
+apps zone in Route 53, in the platform's AWS account rather than the org's.
+`capabilities/aws/apphostname` writes it with the operator's own credentials
+through the `aws` CLI, so the operator's image needs the CLI and the operator
+runs where the platform's instance role may change records in that zone.
+
+Beside the A record it writes a TXT record, `mitstack-subscription=<id>`,
+naming the one subscription that holds the hostname, so a second subscription
+for the same name is refused rather than moving the first app's visitors.
+
+1. `apphostname.ZoneID(domain)` reads `MITSTACK_APPS_ZONE` and
+   `MITSTACK_APPS_ZONE_ID`. It refuses with `apps-zone-unset` when either is
+   empty, and with `apps-zone-mismatch` when the zone is not `domain`, the zone
+   your block's hostnames live in.
+2. `apphostname.NewRecord(zoneID, name, addresses...)` is the record you want.
+3. `apphostname.ReadClaim(ctx, w, rec, subscriptionID)` reads the hostname
+   before your block writes anything else. It refuses with `hostname-taken`
+   when another subscription holds the name, or when an A record that names
+   no subscription points somewhere else, and with `no-address` when the
+   record has no address.
+4. `claim.Apply(ctx)` writes the changes in one batch once your block's own
+   writes have landed. A batch Route 53 rejects because a racing call changed
+   the records is read again, and passes when the records are now this
+   subscription's.
+5. `apphostname.Release(ctx, w, rec, subscriptionID)` deletes only what the
+   subscription holds, and counts records already gone as deleted.
+6. `apphostname.Observe(ctx, w, rec, subscriptionID)` reads the hostname present,
+   with the `appHostname`, `address` and `appUrl` outputs of
+   `mitstack.app-hostname`, while it points at the record's addresses.
+
+`w` is `apphostname.Route53{}` in the operator. Record the resource's identity
+with `apphostname.Identity(rec)`, and read it back on a later call with
+`apphostname.FromIdentity`. Your tests pass an `apphostnametest.Zone` instead
+of Route 53, which applies a batch whole or not at all, as Route 53 does, and
+whose `HeldBy(subscriptionID)` names what a subscription left in the zone.
 
 ## Calling the GitHub API
 
