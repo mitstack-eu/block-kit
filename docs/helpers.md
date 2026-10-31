@@ -389,6 +389,13 @@ refuses a private, loopback, bare-IP or metadata host even when you listed it.
 `ghapi.NewClient(base.String(), token, httpClient)` then creates repositories,
 commits files and sets Actions variables, each idempotently.
 
+A block that reads a repository at one commit takes main's head with
+`HeadCommit`, the commit's tree with `CommitTree`, and the path of every file
+in that tree with `TreePaths`, which refuses a listing GitHub truncated past
+100,000 entries. `ReadFileAt` then reads one file at that commit, and
+`CommitChanges` commits onto it, wrapping `ghapi.ErrNotFastForward` when main
+has moved on since.
+
 blockverify holds a block that calls the GitHub API to this rule: it must
 resolve the host through `ghapi.Base`, `ghapi.BaseFromEnv` or an allowlist of
 its own, as [Running the block checks](block-checks.md) describes.
@@ -482,7 +489,11 @@ unknown.
 
 `capabilities/github/landing/landingtest` is a fake of the GitHub routes the
 package calls, holding one repository's main, branches, pull requests and
-checks.
+checks. A block's own tests use it too: `Seed` and `Remove` change main as
+another writer would, `Head` names its commit, and `BeforeWrite` runs a hook
+ahead of each write. A hook that returns an error refuses that write, and one
+that seeds main moves it under the block's commit, so the block's retry can be
+tested.
 
 
 ## Adopting a Hetzner dedicated server

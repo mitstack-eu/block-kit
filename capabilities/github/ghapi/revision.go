@@ -30,10 +30,12 @@ func checkRevision(revision string) error {
 	return nil
 }
 
-// A contents read carries a file of up to 1 MB base64-encoded, and a commits read carries each file's patch.
+// A contents read carries a file of up to 1 MB base64-encoded, a commits read carries each file's patch, and a
+// recursive tree read lists up to 100,000 entries before GitHub truncates it.
 const (
 	maxContentsBody = 4 << 20
 	maxCommitBody   = 32 << 20
+	maxTreeBody     = 32 << 20
 )
 
 // GitHub lists at most 3000 files of a commit, 300 per page.
@@ -202,6 +204,45 @@ func (c *Client) CommitParentAndPaths(ctx context.Context, repoFullName, revisio
 	}
 	sort.Strings(paths)
 	return parent, paths, nil
+}
+
+// TreePaths returns the sorted path of every file in tree and its subtrees, refusing a listing GitHub truncated.
+func (c *Client) TreePaths(ctx context.Context, repoFullName, tree string) ([]string, error) {
+	repo, err := SafeRepo(repoFullName)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRevision(tree); err != nil {
+		return nil, err
+	}
+	status, raw, _, err := c.get(ctx, "/repos/"+repo+"/git/trees/"+url.PathEscape(tree)+"?recursive=1", maxTreeBody)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("ghapi: github GET tree %s of %s returned %d: %s", tree, repo, status, safe.LogSafe(string(raw), c.Token))
+	}
+	var listed struct {
+		Truncated bool `json:"truncated"`
+		Tree      []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"tree"`
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		return nil, fmt.Errorf("ghapi: decode tree %s: %w", tree, err)
+	}
+	if listed.Truncated {
+		return nil, fmt.Errorf("ghapi: github truncated the listing of tree %s of %s, so its files cannot all be named", tree, repo)
+	}
+	var paths []string
+	for _, e := range listed.Tree {
+		if e.Type == "blob" {
+			paths = append(paths, e.Path)
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 func changeEntries(changes map[string]*string) []map[string]any {
