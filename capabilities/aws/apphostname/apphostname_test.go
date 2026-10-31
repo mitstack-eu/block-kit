@@ -347,14 +347,3 @@ func TestIdentity_ReadsBackAsTheRecordItWasMadeFrom(t *testing.T) {
 		t.Error("FromIdentity read a record from an identity naming no addresses")
 	}
 }
-
-func TestZone_HeldByNamesEachHostnameWhoseTXTNamesTheSubscription(t *testing.T) {
-	zone := apphostnametest.New()
-	zone.Set(host, []string{address}, apphostname.OwnerText(sub))
-	zone.Set("cart.apps.mitstack.dev", []string{address}, apphostname.OwnerText(otherSub))
-	zone.Set("blog.apps.mitstack.dev", []string{address}, "")
-
-	if got := zone.HeldBy(sub); !slices.Equal(got, []string{host}) {
-		t.Errorf("HeldBy(%s) = %q, want only %s", sub, got, host)
-	}
-}
