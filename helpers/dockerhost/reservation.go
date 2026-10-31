@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// ReservationDir is the directory of an app's directory in the host repository where each per-app block records its
-// reservation, as <block>.json.
+// ReservationDir holds, inside an app's directory of the host repository, each per-app block's <block>.json record.
 const ReservationDir = "reservations"
 
 // Reservation is the CPU and memory one per-app block holds back on a Docker host for its app.
@@ -17,8 +16,7 @@ type Reservation struct {
 	MemoryBytes int64 `json:"memoryBytes"`
 }
 
-// SumReservations adds every reservation the host repository's files record at <app>/reservations/<block>.json,
-// leaving out the path except, so a block sizing its own app counts only what the others hold.
+// SumReservations adds every <app>/reservations/<block>.json record but except, so a block counts what the others hold.
 func SumReservations(files map[string][]byte, except string) (Reservation, error) {
 	var sum Reservation
 	for path, content := range files {
@@ -35,7 +33,6 @@ func SumReservations(files map[string][]byte, except string) (Reservation, error
 	return sum, nil
 }
 
-// isReservationPath leaves out a top-level directory whose name starts with a dot, since the host runs no app from it.
 func isReservationPath(path string) bool {
 	parts := strings.Split(path, "/")
 	return len(parts) == 3 && parts[0] != "" && !strings.HasPrefix(parts[0], ".") &&
