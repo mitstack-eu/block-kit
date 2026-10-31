@@ -112,6 +112,7 @@ provider and in `capabilities` per provider:
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
 | `helpers/reportproof` | A cluster or server block whose nodes report to mitstack | The proof that signs each report, and the check that verifies it |
 | `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials for the AWS account a call names |
+| `capabilities/aws/apphostname` | A block that gives an app its hostname | The app's A record in mitstack's apps zone, held by one subscription, with an in-memory zone for tests in `capabilities/aws/apphostname/apphostnametest` |
 | `capabilities/github/ghapi` | A block that calls the GitHub API | A GitHub REST client whose host the operator decides |
 | `capabilities/github/gitops` | A block that deploys to Kubernetes through Argo CD | Commits the block's files to a GitOps repository and judges the deploy, with test fakes in `capabilities/github/gitops/gitopstest` |
 | `capabilities/github/landing` | A block that lands files in an app's repository | Records each file it lands, and at unsubscribe removes every one main still carries unchanged through one pull request per repository, with a fake of GitHub in `capabilities/github/landing/landingtest` that any block's tests can hold a repository in |
