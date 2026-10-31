@@ -110,6 +110,7 @@ provider and in `capabilities` per provider:
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
 | `helpers/dockerhost` | A block that builds a host running apps as Docker containers | The host's setup: Docker alone, the `appnet` network, a caddy edge routing each hostname to its app, and sshd locked to key login |
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
+| `helpers/healthz` | Every block, since the platform's edge asks each operator for `/healthz` | The health handler, a module of its own that an operator on any kit release mounts |
 | `helpers/reportproof` | A cluster or server block whose nodes report to mitstack | The proof that signs each report, and the check that verifies it |
 | `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials for the AWS account a call names |
 | `capabilities/aws/apphostname` | A block that gives an app its hostname | The app's A record in mitstack's apps zone, held by one subscription, with an in-memory zone for tests in `capabilities/aws/apphostname/apphostnametest` |

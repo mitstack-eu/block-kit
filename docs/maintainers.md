@@ -15,13 +15,16 @@ kit's `go.mod` still requires nothing. From the repository's root:
 ```sh
 go vet ./... && go test ./...
 go -C capabilities/hetzner/robot/rescuessh test ./...
+go -C helpers/healthz test ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C capabilities/hetzner/robot/rescuessh -scan package ./...
 go -C examples/hetzner-firewall test ./...
 go run ./verify/blockverify --standalone examples/hetzner-firewall
 ```
 
-The rescuessh module and the example block are Go modules of their own, so
-`./...` leaves them out and CI tests each by itself. The rescuessh module is
+The rescuessh module, the healthz module and the example block are Go modules
+of their own, so `./...` leaves them out and CI tests each by itself. The
+healthz module is one so that an operator on any kit release can mount the
+health handler without moving its kit pin. The rescuessh module is
 the only code here with a third-party dependency, so CI also runs govulncheck
 over every package it imports, and a known vulnerability in any of them fails
 the run. The example's `go.mod`
@@ -62,6 +65,10 @@ After it, the
 release job runs `scripts/release-block-kit.sh --module
 capabilities/hetzner/robot/rescuessh`, which judges changes under that path
 alone and follows the same rules as the kit's tags.
+
+The healthz module is released the same way, by tags such as
+`helpers/healthz/v0.1.0`. Its first tag is cut by hand too. After it, the
+release job runs `scripts/release-block-kit.sh --module helpers/healthz`.
 
 The release job runs only after a merge, so a pull request carrying the line
 has to fail before it merges. The required `test` job in

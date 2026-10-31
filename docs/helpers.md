@@ -15,6 +15,7 @@ package has [a page of its own](gitops.md).
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
 | `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
+| `helpers/healthz` | Serves its health check, which every block does |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
@@ -276,6 +277,21 @@ The probe dials only a host under `apps.mitstack.dev`, a custom domain
 cannot point it at a private address or the cloud's metadata endpoint. A
 status below 500 counts as serving, and so does a TLS failure on certificate
 trust alone, since it proves the app's edge is up.
+
+## Answering the health check
+
+The platform's edge and a cluster's pod probe ask each operator for `/healthz`,
+and an operator that answers at all is up. `helpers/healthz` holds the one
+handler every operator mounts, so no operator writes its own:
+
+```go
+mux.Handle(healthz.Path, healthz.Handler())
+```
+
+The handler answers 200 with the body `ok`. It is the Go module
+`github.com/mitstack-eu/block-kit/helpers/healthz`, released by its own tags
+such as `helpers/healthz/v0.1.0`. A block requires it beside whatever kit
+release it builds on, so taking it moves no other pin.
 
 ## Signing a node report
 

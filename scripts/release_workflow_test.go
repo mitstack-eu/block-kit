@@ -87,6 +87,8 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const rescueSSH = "capabilities/hetzner/robot/rescuessh"
 	const moduleDryRun = "bash scripts/release-block-kit.sh --module " + rescueSSH + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
 	const moduleScan = "go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C " + rescueSSH + " -scan package ./..."
+	const healthz = "helpers/healthz"
+	const healthzDryRun = "bash scripts/release-block-kit.sh --module " + healthz + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
 	raw, err := os.ReadFile("../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatalf("reading ci.yml: %v", err)
@@ -125,6 +127,10 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the test job dry-runs the rescuessh release over a pull request's base and head, on a pull request alone",
 			field(stepOf(all, "test", "run", moduleDryRun) + "if"), "github.event_name == 'pull_request'"},
 		{"the release job releases the rescuessh module by its own tags into the job summary", field(stepOf(all, "release", "run", `bash scripts/release-block-kit.sh --module `+rescueSSH+` | tee -a "$GITHUB_STEP_SUMMARY"`) + "shell"), "bash"},
+		{"the test job vets and tests the healthz module, which ./... leaves out", strconv.FormatBool(stepWith(all, "test", "run", "go -C "+healthz+" vet ./...\ngo -C "+healthz+" test ./...")), "true"},
+		{"the test job dry-runs the healthz release over a pull request's base and head, on a pull request alone",
+			field(stepOf(all, "test", "run", healthzDryRun) + "if"), "github.event_name == 'pull_request'"},
+		{"the release job releases the healthz module by its own tags into the job summary", field(stepOf(all, "release", "run", `bash scripts/release-block-kit.sh --module `+healthz+` | tee -a "$GITHUB_STEP_SUMMARY"`) + "shell"), "bash"},
 		{"the test job reports as test, the context branch protection requires", field("jobs.test.name"), "test"},
 		{"the test job carries no if, so every event runs the check main requires", field("jobs.test.if"), "<absent>"},
 		{"the release tests carry no if, so every event runs them", field(stepOf(all, "test", "run", "bash scripts/release-block-kit_test.sh") + "if"), "<absent>"},
