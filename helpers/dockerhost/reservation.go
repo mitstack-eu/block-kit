@@ -13,10 +13,11 @@ import (
 // ReservationDir holds, inside an app's directory of the host repository, each per-app block's <block>.json record.
 const ReservationDir = "reservations"
 
-// Reservation is the CPU and memory one per-app block holds back on a Docker host for its app.
+// Reservation is what one per-app block holds back on a Docker host for its app, no disk when the app keeps no data.
 type Reservation struct {
 	CPUMillis   int64 `json:"cpuMillis"`
 	MemoryBytes int64 `json:"memoryBytes"`
+	DiskBytes   int64 `json:"diskBytes,omitempty"`
 }
 
 // SumReservations adds every <app>/reservations/<block>.json record but except, so a block counts what the others hold.
@@ -30,14 +31,18 @@ func SumReservations(files map[string][]byte, except string) (Reservation, error
 		if err != nil {
 			return Reservation{}, fmt.Errorf("dockerhost: the reservation %s: %w", path, err)
 		}
-		if sum.CPUMillis > math.MaxInt64-r.CPUMillis || sum.MemoryBytes > math.MaxInt64-r.MemoryBytes {
+		if overflows(sum.CPUMillis, r.CPUMillis) || overflows(sum.MemoryBytes, r.MemoryBytes) || overflows(sum.DiskBytes, r.DiskBytes) {
 			return Reservation{}, fmt.Errorf("dockerhost: the reservation %s takes the host's sum past what an int64 holds", path)
 		}
 		sum.CPUMillis += r.CPUMillis
 		sum.MemoryBytes += r.MemoryBytes
+		sum.DiskBytes += r.DiskBytes
 	}
 	return sum, nil
 }
+
+// overflows is right only for a non-negative add, which parseReservation guarantees.
+func overflows(sum, add int64) bool { return sum > math.MaxInt64-add }
 
 func isReservationPath(path string) bool {
 	parts := strings.Split(path, "/")
@@ -45,10 +50,11 @@ func isReservationPath(path string) bool {
 		parts[1] == ReservationDir && strings.HasSuffix(parts[2], ".json")
 }
 
-// recordedReservation holds pointers, so a record missing an amount is refused rather than counted as zero.
+// recordedReservation holds pointers, so a record missing CPU or memory is refused rather than counted as zero.
 type recordedReservation struct {
 	CPUMillis   *int64 `json:"cpuMillis"`
 	MemoryBytes *int64 `json:"memoryBytes"`
+	DiskBytes   int64  `json:"diskBytes"`
 }
 
 func parseReservation(content []byte) (Reservation, error) {
@@ -64,9 +70,9 @@ func parseReservation(content []byte) (Reservation, error) {
 	if rec.CPUMillis == nil || rec.MemoryBytes == nil {
 		return Reservation{}, errors.New("lacks cpuMillis or memoryBytes")
 	}
-	r := Reservation{CPUMillis: *rec.CPUMillis, MemoryBytes: *rec.MemoryBytes}
-	if r.CPUMillis < 0 || r.MemoryBytes < 0 {
-		return Reservation{}, fmt.Errorf("reserves a negative amount, %d CPU millis and %d memory bytes", r.CPUMillis, r.MemoryBytes)
+	r := Reservation{CPUMillis: *rec.CPUMillis, MemoryBytes: *rec.MemoryBytes, DiskBytes: rec.DiskBytes}
+	if r.CPUMillis < 0 || r.MemoryBytes < 0 || r.DiskBytes < 0 {
+		return Reservation{}, fmt.Errorf("reserves a negative amount, %d CPU millis, %d memory bytes and %d disk bytes", r.CPUMillis, r.MemoryBytes, r.DiskBytes)
 	}
 	return r, nil
 }
