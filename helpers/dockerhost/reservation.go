@@ -32,7 +32,7 @@ func SumReservations(files map[string][]byte, except string) (Reservation, error
 		if err != nil {
 			return Reservation{}, fmt.Errorf("dockerhost: the reservation %s: %w", path, err)
 		}
-		if sum.CPUMillis > math.MaxInt64-r.CPUMillis || sum.MemoryBytes > math.MaxInt64-r.MemoryBytes || sum.DiskBytes > math.MaxInt64-r.DiskBytes {
+		if overflows(sum.CPUMillis, r.CPUMillis) || overflows(sum.MemoryBytes, r.MemoryBytes) || overflows(sum.DiskBytes, r.DiskBytes) {
 			return Reservation{}, fmt.Errorf("dockerhost: the reservation %s takes the host's sum past what an int64 holds", path)
 		}
 		sum.CPUMillis += r.CPUMillis
@@ -41,6 +41,9 @@ func SumReservations(files map[string][]byte, except string) (Reservation, error
 	}
 	return sum, nil
 }
+
+// overflows is right only for a non-negative add, which parseReservation guarantees.
+func overflows(sum, add int64) bool { return sum > math.MaxInt64-add }
 
 func isReservationPath(path string) bool {
 	parts := strings.Split(path, "/")
