@@ -13,12 +13,11 @@ import (
 // ReservationDir holds, inside an app's directory of the host repository, each per-app block's <block>.json record.
 const ReservationDir = "reservations"
 
-// Reservation is the CPU, memory and disk one per-app block holds back on a Docker host for its app.
+// Reservation is what one per-app block holds back on a Docker host for its app, no disk when the app keeps no data.
 type Reservation struct {
 	CPUMillis   int64 `json:"cpuMillis"`
 	MemoryBytes int64 `json:"memoryBytes"`
-	// DiskBytes is zero for a block whose app keeps no data of its own, so its record may leave it out.
-	DiskBytes int64 `json:"diskBytes,omitempty"`
+	DiskBytes   int64 `json:"diskBytes,omitempty"`
 }
 
 // SumReservations adds every <app>/reservations/<block>.json record but except, so a block counts what the others hold.
