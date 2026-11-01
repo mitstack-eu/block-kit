@@ -64,3 +64,47 @@ func TestSumReservations_RefusesASumPastWhatAnInt64Holds(t *testing.T) {
 		t.Errorf("SumReservations(two records summing past the int64 maximum) = %+v, nil; want an error", got)
 	}
 }
+
+func TestSumReservations_AddsTheDiskOfEveryRecordThatCarriesOneAndNoneForARecordWithout(t *testing.T) {
+	files := map[string][]byte{
+		"shop/reservations/docker-app-slice.json": []byte(`{"cpuMillis":500,"memoryBytes":536870912}`),
+		"shop/reservations/docker-mariadb.json":   []byte(`{"cpuMillis":250,"memoryBytes":268435456,"diskBytes":10737418240}`),
+		"blog/reservations/docker-mariadb.json":   []byte(`{"cpuMillis":250,"memoryBytes":268435456,"diskBytes":5368709120}`),
+	}
+
+	got, err := dockerhost.SumReservations(files, "")
+
+	want := dockerhost.Reservation{CPUMillis: 1000, MemoryBytes: 1073741824, DiskBytes: 16106127360}
+	if err != nil || got != want {
+		t.Errorf("SumReservations(two records with disk and one without) = %+v, %v; want %+v, nil", got, err, want)
+	}
+}
+
+func TestSumReservations_RefusesADiskAmountItCannotCountNamingTheRecordsPath(t *testing.T) {
+	const shop, blog = "shop/reservations/docker-mariadb.json", "blog/reservations/docker-mariadb.json"
+	for _, tc := range []struct {
+		name   string
+		files  map[string]string
+		reason string
+	}{
+		{"a negative disk reservation", map[string]string{shop: `{"cpuMillis":250,"memoryBytes":1,"diskBytes":-1}`}, "negative"},
+		{"a disk amount past what an int64 holds", map[string]string{shop: `{"cpuMillis":250,"memoryBytes":1,"diskBytes":9223372036854775808}`}, "int64"},
+		{"disk amounts summing past what an int64 holds", map[string]string{
+			shop: `{"cpuMillis":250,"memoryBytes":1,"diskBytes":9223372036854775807}`,
+			blog: `{"cpuMillis":250,"memoryBytes":1,"diskBytes":1}`,
+		}, "int64"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string][]byte{}
+			for p, record := range tc.files {
+				files[p] = []byte(record)
+			}
+
+			got, err := dockerhost.SumReservations(files, "")
+
+			if err == nil || !strings.Contains(err.Error(), "reservations/docker-mariadb.json") || !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("SumReservations(%v) = %+v, %v; want an error naming the record's path and %q", tc.files, got, err, tc.reason)
+			}
+		})
+	}
+}
