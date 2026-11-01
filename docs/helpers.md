@@ -198,9 +198,9 @@ if err != nil {
 ### Sizing an app against what the host holds
 
 Every app on a Docker host reserves CPU and memory, and an app that keeps data
-of its own also reserves disk, so a host takes no more apps than it can run. A per-app block is one an app subscribes to on its own,
-such as docker-app-slice, the block that lands an app's container on the
-host. The host repository is the private Git repository the host's own block,
+of its own also reserves disk, so a host takes no more apps than it can run. A
+per-app block is one an app subscribes to on its own, such as
+docker-app-slice, the block that lands an app's container on the host. The host repository is the private Git repository the host's own block,
 such as hcloud-docker-host, creates for the host. The host's pull agent, a
 container on the host, starts each of its top-level directories as one app.
 
@@ -227,9 +227,9 @@ content. Your block reads them through its GitHub client, for example by
 listing the tree at the head of `main` and reading each path that ends in
 `.json` under a `reservations` directory. The function adds up every record,
 whichever block wrote it, into one `dockerhost.Reservation`, whose fields are
-`CPUMillis`, `MemoryBytes` and `DiskBytes`. It leaves out the path `except`, so a block
-counts only what the other blocks hold. A top-level directory whose name
-starts with a dot holds no app, so its files never count.
+`CPUMillis`, `MemoryBytes` and `DiskBytes`. It leaves out the path `except`, so
+a block counts only what the other blocks hold. A top-level directory whose
+name starts with a dot holds no app, so its files never count.
 
 The function returns an error naming the record's path when a record does not
 parse, holds more than one JSON value, lacks its CPU or memory amount, holds a
@@ -240,10 +240,12 @@ The host's allocatable capacity is what the host can give its apps once it
 has kept back what its system needs. The host sends it in its node report, the
 signed status a host posts to mitstack every few minutes, which [Signing a node
 report](#signing-a-node-report) describes. It sits in the report's body under
-`host.capacity.allocatable`, in the same three keys:
+`host.capacity.allocatable`, in the same three keys, as hcloud-docker-host's
+host sends them:
 
 ```json
-{"host": {"capacity": {"allocatable": {"cpuMillis": 3500, "memoryBytes": 7516192768, "diskBytes": 150323855360}}}}
+{"host": {"capacity": {"allocatable": {
+  "cpuMillis": 3500, "memoryBytes": 7516192768, "diskBytes": 150323855360}}}}
 ```
 
 `observe.NodeReportsClient{}.NodeReports(ctx, d, hostSubscription)` returns
@@ -268,6 +270,10 @@ if want.CPUMillis > freeCPU || want.MemoryBytes > freeMemory {
 		freeCPU, freeMemory, want.CPUMillis, want.MemoryBytes)
 }
 ```
+
+The snippet sizes an app container, which reserves no disk. A block whose
+record carries `diskBytes` compares `allocatable.DiskBytes - others.DiskBytes`
+with its own disk amount in the same way, and names both in its refusal.
 
 ## Reporting whether an app answers
 
