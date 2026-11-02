@@ -13,7 +13,7 @@ package has [a page of its own](gitops.md).
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
-| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge |
+| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, or sizes and observes an app on one |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `helpers/healthz` | Serves its health check, which every block does |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
@@ -264,12 +264,12 @@ host sends them:
   "cpuMillis": 3500, "memoryBytes": 7516192768, "diskBytes": 150323855360}}}}
 ```
 
-`observe.NodeReportsClient{}.NodeReports(ctx, d, hostSubscription)` returns
-the host subscription's reports, each with its JSON `Body`, as [Observing a
-resource the platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
-explains. Your block reads the newest report's allocatable capacity into a
-`dockerhost.Reservation`, sums the other blocks' records, and checks that its
-own reservation fits in what is left before it writes anything. When it does
+`dockerhost.NewestReport` reads the host's newest report and returns it as a
+`dockerhost.Report`, whose `Allocatable` field holds the report's allocatable
+capacity as a `dockerhost.Reservation`, or `nil` when the report gives none.
+[Reading what the host last synced](#reading-what-the-host-last-synced) covers
+its arguments and the rest of what it returns. Your block sums the other blocks' records and checks that its own
+reservation fits in what is left before it writes anything. When it does
 not fit, the block's subscribe returns a `handler.Refuse` error naming the
 free and the requested amounts, so the platform shows the refusal and nothing
 lands on the host.
@@ -297,6 +297,60 @@ free := dockerhost.Free(allocatable, others)
 if !want.Fits(free) {
 	return nil, handler.Refuse("host-full", "the host has %s free, and the app asks for %s",
 		dockerhost.Describe(free), dockerhost.Describe(want))
+}
+```
+
+### Reading what the host last synced
+
+The host's pull agent fetches the host's repository each minute and starts the
+apps it holds, which this page calls a sync. A per-app block's observe answers
+`contract.Present`, the app in place, only once the agent has synced a commit
+that holds the block's files, and `contract.Unknown` while it cannot tell.
+Every block on the host reads that commit the same way, through
+`dockerhost.NewestReport`, so a deploy never reads differently from one block
+to the next.
+
+`dockerhost.NewestReport(ctx, api, d, hostSubscription)` takes the
+`contract.Desired` your observe received as `d`, and as `hostSubscription` the
+`subscriptionId` that `d.Bindings` gives under your block's host requirement.
+`api` is `observe.NodeReportsClient{}`, which [Observing a resource the
+platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
+describes, or a fake of `observe.NodeReportsAPI` in your tests. It returns
+three values: the `dockerhost.Report`, a `found` flag that is `false` while
+the host has sent no report, and an error. An empty `hostSubscription` is
+refused through `handler.Refuse` with the class `host-binding`, so the
+platform shows the subscriber why. A platform that does not answer or a
+report that is not JSON returns a plain error. The report gives you three
+things:
+
+| Field or method | What it gives |
+|---|---|
+| `report.Allocatable` | The host's allocatable capacity, or `nil` when the report gives none |
+| `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
+| `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as each app's containers |
+
+`SyncedCommit` never reads the agent's log. The report carries only the log's
+last 20 lines, and a deploy's image pulls can fill them all. When the report
+cannot name a commit, `SyncedCommit` returns an error, and your block answers
+`contract.Unknown` with that error as its status detail.
+
+The field is absent when the host runs a version of the hcloud-docker-host
+block older than `dockerhost.SyncedCommitSince`, 0.8.0. The error then says
+to upgrade the host's subscription to 0.8.0 or later. The field is `null`
+from the moment the agent restarts on a new version until its first sync,
+and the error says the next sync names the commit.
+
+```go
+report, found, err := dockerhost.NewestReport(ctx, observe.NodeReportsClient{}, d, hostSubscription)
+if err != nil {
+	return contract.Observation{}, err
+}
+if !found {
+	return contract.Observation{State: contract.Unknown, StatusDetail: "the host has sent no node report yet"}, nil
+}
+commit, err := report.SyncedCommit()
+if err != nil {
+	return contract.Observation{State: contract.Unknown, StatusDetail: err.Error()}, nil
 }
 ```
 
