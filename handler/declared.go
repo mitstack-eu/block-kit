@@ -15,6 +15,9 @@ import (
 
 const classUndeclaredResource = "undeclared-resource"
 
+// ClassBlocker refuses a validate whose observations carry a blocker finding.
+const ClassBlocker = "blocker"
+
 // dispatchDeclared refuses a name the manifest does not declare with a 400 before any resource is reached, unless a validate names a type Config.TypeObservers holds.
 //
 // A resource still converging, left standing or failing stops the verb there, and the request context is checked before each resource's first call. Every answer, an error included, carries the resources map of the resources reached.

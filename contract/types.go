@@ -140,16 +140,14 @@ type CallOutcome struct {
 	Findings     []Finding         `json:"findings,omitempty"`
 }
 
-// FindingKind says whether a finding is what a block will do for an app or what stops it.
 type FindingKind string
 
-// A validate answering a FindingBlocker answers as a refusal.
 const (
 	FindingPlan    FindingKind = "plan"
 	FindingBlocker FindingKind = "blocker"
 )
 
-// Finding is one thing a validate tells a builder before the block writes anything: Text says it in plain words, and Fix, for a blocker, what to change.
+// Finding is one thing a validate alone answers before the block writes anything, a plan it will carry out or a blocker that refuses the validate, with Text in plain words and, for a blocker, the Fix to make.
 type Finding struct {
 	Kind FindingKind `json:"kind"`
 	Text string      `json:"text"`
@@ -205,8 +203,7 @@ type Observation struct {
 	// Redrive, read beside State Unknown alone, reports from what the provider holds, never a clock, that the work the last Ensure left in flight has finished, so a validate asks the engine to re-drive subscribe.
 	Redrive   bool
 	Unhealthy *Unhealthy
-	// Findings are read on a validate alone.
-	Findings []Finding
+	Findings  []Finding
 }
 
 // Unhealthy, read beside State Present alone, names one failure a resource meets while the engine still reads it present: Cause is a cause its catalogue type lists under failures, word for word, and Detail says what was seen.

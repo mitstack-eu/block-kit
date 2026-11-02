@@ -136,7 +136,8 @@ names no port. The answer, from
 }
 ```
 
-`handler/findings_test.go` serves that validate through the handler and fails
+`TestDeclared_AValidateWithFindingsAnswersTheBytesTheReadmeShows` in
+`handler/declared_test.go` serves that validate through the handler and fails
 when the answer differs from the file. `kittest.CheckResponse` fails an answer
 that carries a blocker finding but is no refusal, since the engine would read
 it as a pass.
