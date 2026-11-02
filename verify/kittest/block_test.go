@@ -326,15 +326,16 @@ func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.Resource
 	return contract.Observation{State: contract.Absent}, nil
 }
 
-// unhealthyObserver answers each resource its inner observer finds present unhealthy, naming cause.
+// unhealthyObserver answers each resource its inner observer finds present unhealthy, naming cause, and with anyState set one it finds in any state.
 type unhealthyObserver struct {
-	inner handler.Observer
-	cause string
+	inner    handler.Observer
+	cause    string
+	anyState bool
 }
 
 func (o unhealthyObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	obs, err := o.inner.ObserveResource(ctx, r)
-	if err == nil && obs.State == contract.Present {
+	if err == nil && (o.anyState || obs.State == contract.Present) {
 		obs.Unhealthy = &contract.Unhealthy{Cause: o.cause, Detail: "the volume has been attaching for two hours"}
 	}
 	return obs, err
@@ -890,9 +891,9 @@ func TestCheckBlock(t *testing.T) {
 			}
 		}
 	}
-	unhealthy := func(cause string) mutation {
+	unhealthy := func(cause string, anyState bool) mutation {
 		return func(b *fakeBlock, in *kittest.Block) {
-			in.Config.Observers["aws.ebs-volume"] = unhealthyObserver{inner: providerObserver{p: b.p}, cause: cause}
+			in.Config.Observers["aws.ebs-volume"] = unhealthyObserver{inner: providerObserver{p: b.p}, cause: cause, anyState: anyState}
 		}
 	}
 	withParts := func(parts ...observe.Tagged) mutation {
@@ -954,9 +955,11 @@ func TestCheckBlock(t *testing.T) {
 		{"a github block that tags each repository it creates passes", github(""), nil, true},
 		{"a github block whose Ensure never tags its app repository fails, naming it untagged", github("github.repository"), [][]string{{`resource "github.repository"`, "untagged"}}, true},
 		{"a docs repository left untagged beside a tagged app repository fails, naming docs", github("docs"), [][]string{{`resource "docs"`, "untagged"}}, true},
-		{"a present resource answered unhealthy with a cause its type lists passes", host(unhealthy("the volume is still creating, attaching or detaching")), nil, true},
-		{"a present resource answered unhealthy with a cause its type does not list fails, naming the cause and the type", host(unhealthy("the resource stopped answering")),
+		{"a present resource answered unhealthy with a cause its type lists passes", host(unhealthy("the volume is still creating, attaching or detaching", false)), nil, true},
+		{"a present resource answered unhealthy with a cause its type does not list fails, naming the cause and the type", host(unhealthy("the resource stopped answering", false)),
 			[][]string{{`resource "aws.ebs-volume"`, `"the resource stopped answering"`, "aws.ebs-volume"}}, true},
+		{"a resource answered unhealthy while absent fails, since only a present resource is unhealthy", host(unhealthy("the volume is still creating, attaching or detaching", true)),
+			[][]string{{`resource "aws.ebs-volume"`, "observed absent", "only a present resource"}}, true},
 		{"tagged resources the provider lists by no value of their identity pass, each matched by its type", host(func(b *fakeBlock, _ *kittest.Block) { b.p.listPrefix = "arn:" }), nil, true},
 	}
 	for _, tc := range cases {
