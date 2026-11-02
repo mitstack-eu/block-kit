@@ -248,13 +248,11 @@ host sends them:
   "cpuMillis": 3500, "memoryBytes": 7516192768, "diskBytes": 150323855360}}}}
 ```
 
-`dockerhost.NewestReport(ctx, api, d, hostSubscription)` reads the host's
-newest report through `observe.NodeReportsClient{}`, which [Observing a
-resource the platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
-describes, and [Reading what the host last synced](#reading-what-the-host-last-synced)
-covers the rest of what it returns. Its `Allocatable` field holds the report's
-allocatable capacity as a `dockerhost.Reservation`, or `nil` when the report
-gives none. Your block sums the other blocks' records and checks that its own
+`dockerhost.NewestReport` reads the host's newest report and returns it as a
+`dockerhost.Report`, whose `Allocatable` field holds the report's allocatable
+capacity as a `dockerhost.Reservation`, or `nil` when the report gives none.
+[Reading what the host last synced](#reading-what-the-host-last-synced) covers
+its arguments and the rest of what it returns. Your block sums the other blocks' records and checks that its own
 reservation fits in what is left before it writes anything. When it does
 not fit, the block's subscribe returns a `handler.Refuse` error naming the
 free and the requested amounts, so the platform shows the refusal and nothing
@@ -288,15 +286,26 @@ if !want.Fits(free) {
 
 ### Reading what the host last synced
 
-A per-app block reads its app present only once the host's pull agent has
-applied a commit that holds the block's files. Every block on the host reads
-that commit the same way, through `dockerhost.NewestReport`, so a deploy never
-reads differently from one block to the next.
+The host's pull agent fetches the host's repository each minute and starts the
+apps it holds, which this page calls a sync. A per-app block's observe answers
+`contract.Present`, the app in place, only once the agent has synced a commit
+that holds the block's files, and `contract.Unknown` while it cannot tell.
+Every block on the host reads that commit the same way, through
+`dockerhost.NewestReport`, so a deploy never reads differently from one block
+to the next.
 
-`NewestReport` returns found `false` while the host has sent no report. It
-refuses a host binding with no `subscriptionId` with the class `host-binding`,
-and returns an error when the platform does not answer or the report is not
-JSON. The `dockerhost.Report` it returns gives you three things:
+`dockerhost.NewestReport(ctx, api, d, hostSubscription)` takes the
+`contract.Desired` your observe received as `d`, and as `hostSubscription` the
+`subscriptionId` that `d.Bindings` gives under your block's host requirement.
+`api` is `observe.NodeReportsClient{}`, which [Observing a resource the
+platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
+describes, or a fake of `observe.NodeReportsAPI` in your tests. It returns
+three values: the `dockerhost.Report`, a `found` flag that is `false` while
+the host has sent no report, and an error. An empty `hostSubscription` is
+refused through `handler.Refuse` with the class `host-binding`, so the
+platform shows the subscriber why. A platform that does not answer or a
+report that is not JSON returns a plain error. The report gives you three
+things:
 
 | Field or method | What it gives |
 |---|---|
@@ -304,13 +313,16 @@ JSON. The `dockerhost.Report` it returns gives you three things:
 | `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
 | `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as each app's containers |
 
-`SyncedCommit` never reads the agent's log, since a deploy's image pulls fill
-the log's last lines. When the report cannot name a commit, it returns an
-error your block reads the resource unknown with. A report without the field
-comes from a host on a hcloud-docker-host release before
-`dockerhost.SyncedCommitSince`, 0.8.0, and the error says that upgrading the
-host fixes it. A field that is `null` means the agent has not synced since it
-took its current release, and the error says the next sync names the commit.
+`SyncedCommit` never reads the agent's log. The report carries only the log's
+last 20 lines, and a deploy's image pulls can fill them all. When the report
+cannot name a commit, `SyncedCommit` returns an error, and your block answers
+`contract.Unknown` with that error as its status detail.
+
+The field is absent when the host runs a version of the hcloud-docker-host
+block older than `dockerhost.SyncedCommitSince`, 0.8.0. The error then says
+to upgrade the host's subscription to 0.8.0 or later. The field is `null`
+from the moment the agent restarts on a new version until its first sync,
+and the error says the next sync names the commit.
 
 ```go
 report, found, err := dockerhost.NewestReport(ctx, observe.NodeReportsClient{}, d, hostSubscription)
