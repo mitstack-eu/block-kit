@@ -27,7 +27,8 @@
 #           plan was reported
 #   exit 1  head is unreachable from any kit tag after the cut, a --verify-only
 #           assertion did not hold, the computed tag is already published
-#           elsewhere, or the range asks for a major raise from a v0 tag
+#           elsewhere, the range asks for a major raise from a v0 tag, or git
+#           could not read the range's changed files or commit messages
 #   exit 2  an unknown flag
 #
 # Why this exists. This repository IS the kit: github.com/mitstack-eu/block-kit
@@ -80,6 +81,15 @@ emit_output() {
   printf '%s\n' "$@" >> "$GITHUB_OUTPUT"
 }
 
+# fail_unread <what> ends a run whose git read of <what> over $range failed,
+# since a guessed answer would skip a release or cut the wrong one. git's own
+# error is already on stderr above this line.
+fail_unread() {
+  echo "::error::git could not read $1 in $range, so the release of '$KIT_PATH' cuts no tag rather than guess." >&2
+  emit_output "released=false"
+  exit 1
+}
+
 # Kit tags, local only: the version scan must not fetch. A fetch would pull in a
 # tag somebody else published, compute the version after it, and quietly cut a
 # release on top of a tree this run has never seen. Anything not shaped
@@ -97,10 +107,11 @@ newest_kit_version() {
 }
 
 # raise_level <range> prints the level a whole kit-release line in the range's
-# commit messages asks for, major winning over minor, or patch when none does.
+# commit messages asks for, major winning over minor, or patch when none does,
+# and fails when git cannot read those messages.
 raise_level() {
   local messages
-  messages="$(in_repo log --format=%B "$1" 2> /dev/null)"
+  messages="$(in_repo log --format=%B "$1")" || return 1
   if grep -qiE '^[[:space:]]*kit-release:[[:space:]]*major[[:space:]]*$' <<< "$messages"; then
     echo "major"
   elif grep -qiE '^[[:space:]]*kit-release:[[:space:]]*minor[[:space:]]*$' <<< "$messages"; then
@@ -137,8 +148,8 @@ fi
 # With no base at all — no kit tag and a head with no parent — the whole tree is
 # new, so the kit counts as changed and no diff is computed.
 if [ -n "$resolved_base" ]; then
-  touched="$(in_repo diff --name-only "$resolved_base" "$head_sha" -- "$KIT_PATH" 2> /dev/null)"
   range="$resolved_base..$head_sha"
+  touched="$(in_repo diff --name-only "$resolved_base" "$head_sha" -- "$KIT_PATH")" || fail_unread "the changed files"
 else
   touched="$KIT_PATH"
   range="$head_sha"
@@ -146,7 +157,7 @@ fi
 
 echo "release-block-kit: range $range (base ${resolved_base:-<none>}, head $head_sha)"
 
-level="$(raise_level "$range")"
+level="$(raise_level "$range")" || fail_unread "the commit messages"
 
 # Refused before the unchanged check, so a range carrying the line fails
 # whatever it touches.
