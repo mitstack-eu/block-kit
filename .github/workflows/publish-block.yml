@@ -24,6 +24,11 @@
 # calling job is named `block` reports them as `block / conformance`,
 # `block / secrets` and `block / scripts`, the contexts its main requires.
 #
+# `publish` also runs only for a caller that names its image registry in
+# `ecr-repository`. A caller naming none still gets every check and its
+# attestation, and the `no-registry` job runs in place of `publish` to say in
+# the run's summary that nothing was published.
+#
 # The scan jobs run the kit's own scripts at kit-ref, so a scanner pin
 # changes in one place for every block.
 #
@@ -53,7 +58,7 @@ on:
         required: true
         type: string
       ecr-repository:
-        required: true
+        required: false
         type: string
       aws-region:
         required: false
@@ -419,7 +424,7 @@ jobs:
   # asks that no need failed or was cancelled.
   publish:
     needs: [conformance, opentofu-conformance, secrets, scripts]
-    if: ${{ !cancelled() && !failure() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    if: ${{ !cancelled() && !failure() && inputs.ecr-repository != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:
       contents: read
@@ -666,3 +671,14 @@ jobs:
             --image-digest "$IMAGE_DIGEST" \
             --username AWS \
             --password-env ECR_PASSWORD
+
+  # Runs where publish would, for a caller naming no registry, so a push that
+  # publishes nothing says so in the run's summary.
+  no-registry:
+    needs: [conformance, opentofu-conformance, secrets, scripts]
+    if: ${{ !cancelled() && !failure() && inputs.ecr-repository == '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions: {}
+    steps:
+      - name: Say that no registry was named and nothing was published
+        run: echo "No image registry was named in the ecr-repository input, so nothing was published." >> "$GITHUB_STEP_SUMMARY"

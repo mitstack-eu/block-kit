@@ -175,13 +175,23 @@ jobs:
 (ECR), AWS's image registry, that receives the image, and `kit-ref` the
 block-kit tag the workflow builds blockverify and `blockprov` from.
 
+`ecr-repository` is optional. Leave it out when your block has no registry
+to publish to. The workflow then runs every check below, and your attestation
+when you turn it on, and publishes nothing. On a push to your default branch
+its `no-registry` job runs in place of `publish` and writes this line to the
+run's summary:
+
+```text
+No image registry was named in the ecr-repository input, so nothing was published.
+```
+
 Its `conformance` job runs on every event your CI calls it for. It runs your
 tests and `blockverify --standalone`, and on a pull request it also runs
 `commentcheck`, which judges the comments the change adds, as [Maintaining
 the kit](maintainers.md#judging-the-comments-in-a-pull-request) explains. A
 red verdict stops the `publish` job, which on a push to your default branch
 builds the image, scans it and pushes it to the ECR repository you name, so
-no image ships without a pass. The job then runs `blockprov`, which builds a
+no image ships without a pass. The job runs only when you name one. The job then runs `blockprov`, which builds a
 provenance record naming your repository, commit and CI run, signs it with
 the run's GitHub Actions identity token and pushes it beside the image.
 
