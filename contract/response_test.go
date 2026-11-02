@@ -183,6 +183,10 @@ func TestDecodeResponse_ReadsEachResourceOutcomeByName(t *testing.T) {
 				"data": {Observe: &contract.CallOutcome{State: contract.Present, Unhealthy: &contract.Unhealthy{
 					Cause: "the volume is still creating, attaching or detaching", Detail: "attaching for two hours"}}},
 			}}},
+		{"the wait of a removal an observe found under way", `{"resources":{"app":{"observe":{"state":"present","removing":{"waitsOn":"pull request 4 to pass its managed-ci check"}}}}}`,
+			contract.Response{Resources: map[string]contract.ResourceOutcome{
+				"app": {Observe: &contract.CallOutcome{State: contract.Present, Removing: &contract.Removing{WaitsOn: "pull request 4 to pass its managed-ci check"}}},
+			}}},
 		{"the files a delete kept", `{"resources":{"starter":{"delete":{"kept":[{"repository":"acme/weather","path":"CLAUDE.md","reason":"changed"}]}}}}`,
 			contract.Response{Resources: map[string]contract.ResourceOutcome{
 				"starter": {Delete: &contract.CallOutcome{Kept: []contract.Kept{{Repository: "acme/weather", Path: "CLAUDE.md", Reason: "changed"}}}},
@@ -239,6 +243,9 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 		{"an observe naming no failure encodes byte for byte as the release before", contract.Response{Resources: map[string]contract.ResourceOutcome{
 			"data": {Observe: &contract.CallOutcome{State: contract.Present, StatusDetail: "in-use", Type: "aws.ebs-volume"}}}},
 			`{"outputs":null,"resources":{"data":{"observe":{"state":"present","statusDetail":"in-use","type":"aws.ebs-volume"}}}}`, true},
+		{"an observe of a removal under way encodes what it waits on beside present", contract.Response{Resources: map[string]contract.ResourceOutcome{
+			"app": {Observe: &contract.CallOutcome{State: contract.Present, Removing: &contract.Removing{WaitsOn: "pull request 4 to pass its managed-ci check"}}}}},
+			`{"outputs":null,"resources":{"app":{"observe":{"state":"present","removing":{"waitsOn":"pull request 4 to pass its managed-ci check"}}}}}`, true},
 		{"an observe carrying a plan and a blocker encodes each with its kind, text and fix", contract.CallOutcome{State: contract.Absent, Findings: []contract.Finding{
 			{Kind: contract.FindingPlan, Text: "adds the build workflow"}, {Kind: contract.FindingBlocker, Text: "the Dockerfile names no port", Fix: "add an EXPOSE line"}}},
 			`{"state":"absent","findings":[{"kind":"plan","text":"adds the build workflow"},{"kind":"blocker","text":"the Dockerfile names no port","fix":"add an EXPOSE line"}]}`, false},
@@ -361,6 +368,14 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 		}},
 		{"an ensure's identity is an object of strings", func(t *testing.T) {
 			objectOfStrings(t, doc, schemaAt(t, doc, calls, "ensure", "properties", "identity"), "ensure identity")
+		}},
+		{"removing is an object requiring waitsOn under each call", func(t *testing.T) {
+			for _, verb := range []string{"ensure", "observe", "delete"} {
+				removing := schemaAt(t, doc, calls, verb, "properties", "removing")
+				if !hasType(removing, "object") || !slices.Contains(sortedStrings(removing["required"]), "waitsOn") || !hasType(schemaAt(t, doc, removing, "properties", "waitsOn"), "string") {
+					t.Errorf("resource outcome %q removing = %v, want an object requiring the string waitsOn", verb, removing)
+				}
+			}
 		}},
 		{"every field the types encode is declared", func(t *testing.T) {
 			for _, name := range jsonNames(reflect.TypeOf(contract.Response{})) {

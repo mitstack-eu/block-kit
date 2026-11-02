@@ -542,19 +542,24 @@ func TestBlockLevel_UnsubscribeLeavesAResourceRecordedAbsentUnobservedAndHandsTh
 	}
 }
 
-func TestBlockLevel_AnUnsubscribeLeavingAResourceStandingAnswersAbsentFalseNamingItWithNoneOfTheDeletesOutputs(t *testing.T) {
+func TestBlockLevel_AnUnsubscribeLeavingAResourceStandingAnswersAbsentFalseNamingItAndWhatItsRemovalWaitsOnScrubbed(t *testing.T) {
+	const token = "ghp_removing-leak-7a2f3c91"
 	cloud := standingCloud()
-	cloud.standing["b"] = true
 	block := &blockResource{cloud: cloud, deleteOutputs: map[string]string{"dataSnapshotId": "snap-0abc"}}
-
 	obs := blockObservers(cloud)
+	obs["b"] = fixed(contract.Observation{State: contract.Present, Removing: &contract.Removing{WaitsOn: "pull request " + token + " to pass its check"}})
+	fields := recordedAll()
+	fields["secrets"] = githubToken(token)["secrets"]
 
-	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: "unsubscribe", fields: recordedAll()})
+	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: "unsubscribe", fields: fields})
 
 	wantOK(t, status, resp)
 	wantAbsent(t, resp, false)
 	if want := `resource "b" observed present, not yet absent`; resp.StatusDetail != want || len(resp.Outputs) != 0 || len(obs["b"].calls()) != 1 {
 		t.Errorf("statusDetail = %q with outputs %v after %d observes of b, want %q after one observe and no output until the block settles absent", resp.StatusDetail, resp.Outputs, len(obs["b"].calls()), want)
+	}
+	if o := resp.Resources["b"].Observe; o == nil || o.Removing == nil || o.Removing.WaitsOn != "pull request [REDACTED] to pass its check" {
+		t.Errorf("b observe = %+v, want what its removal waits on with the request secret scrubbed", o)
 	}
 }
 

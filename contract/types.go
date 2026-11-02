@@ -64,9 +64,8 @@ type Request struct {
 	ResourceType      string                      `json:"resourceType,omitempty"`
 	RecordedResources map[string]RecordedResource `json:"recordedResources,omitempty"`
 	RequirementTypes  map[string]string           `json:"requirementTypes,omitempty"`
-	// SettlesAt is the time of the state-changing verb a validate settles.
-	SettlesAt   *time.Time `json:"settlesAt,omitempty"`
-	NeverActive bool       `json:"neverActive,omitempty"`
+	SettlesAt         *time.Time                  `json:"settlesAt,omitempty"`
+	NeverActive       bool                        `json:"neverActive,omitempty"`
 
 	IssueAppID string `json:"issueAppId,omitempty"`
 }
@@ -137,6 +136,7 @@ type CallOutcome struct {
 	Type         string            `json:"type,omitempty"`
 	Kept         []Kept            `json:"kept,omitempty"`
 	Unhealthy    *Unhealthy        `json:"unhealthy,omitempty"`
+	Removing     *Removing         `json:"removing,omitempty"`
 	Findings     []Finding         `json:"findings,omitempty"`
 }
 
@@ -203,6 +203,7 @@ type Observation struct {
 	// Redrive, read beside State Unknown alone, reports from what the provider holds, never a clock, that the work the last Ensure left in flight has finished, so a validate asks the engine to re-drive subscribe.
 	Redrive   bool
 	Unhealthy *Unhealthy
+	Removing  *Removing
 	Findings  []Finding
 }
 
@@ -210,6 +211,11 @@ type Observation struct {
 type Unhealthy struct {
 	Cause  string `json:"cause"`
 	Detail string `json:"detail"`
+}
+
+// Removing, read beside State Present alone, says the resource's removal is under way and moving: WaitsOn says in plain words what it waits on, and is never blank.
+type Removing struct {
+	WaitsOn string `json:"waitsOn"`
 }
 
 type requiredField struct {
