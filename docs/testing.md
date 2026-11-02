@@ -78,8 +78,10 @@ On every answer, the check also reads each observe that names a resource
 unhealthy. Its cause must be one the resource's type lists under `failures`
 in `Config.Types`, and a problem names the resource, the cause and the type.
 A cause beside a state other than present fails too, because the engine
-reads one only beside present. The check holds a removal under way to the
-same rule, and fails one whose `waitsOn` is empty.
+reads one only beside present. In the same way, the check fails an observe
+that sends `Removing` beside any state but present, or with a blank
+`WaitsOn`, and names the resource, as
+[A resource being removed](observe.md#a-resource-being-removed) explains.
 
 The tagging guard checks both directions. Everything the provider lists must
 match, by type and count, a recorded resource or one of its parts, the objects

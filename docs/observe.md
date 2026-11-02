@@ -59,10 +59,12 @@ The handler scrubs request secrets from both fields, and
 
 ## A resource being removed
 
-A removal can outlast one call, such as an app's teardown that waits for a
-pull request's check to pass. While the resource still stands, its observer
-answers `Present` and sets `Removing` to a `contract.Removing`, whose
-`WaitsOn` says in plain words what the removal waits on:
+A removal can outlast one call. A block that removes its files from an app's
+repository, for example, opens a pull request that deletes them, and the files
+are gone only once that pull request's checks pass and it merges. While the
+resource still stands, its observer answers `Present` and sets `Removing` to a
+`contract.Removing`, whose `WaitsOn` says in plain words what the removal
+waits on:
 
 ```go
 return contract.Observation{State: contract.Present,
@@ -71,11 +73,14 @@ return contract.Observation{State: contract.Present,
 	}}, nil
 ```
 
-The platform then reads the removal as moving, not stuck. A resource that
-answers `Absent` is gone and carries no `Removing`, and an answer without it
-reads as before. The handler scrubs request secrets from `WaitsOn`, and
-`kittest.AssertBlock` fails a `Removing` beside any state but `Present`, or
-one with an empty `WaitsOn`.
+Without `Removing`, a resource that still stands after an unsubscribe looks
+the same whether its removal is moving or stuck. With it, the answer says the
+removal is moving and names what it waits on, so the platform can keep
+waiting rather than give up on the removal. A resource that answers `Absent`
+is gone and carries no `Removing`, and an answer without it reads as before.
+The handler scrubs request secrets from `WaitsOn`, and `kittest.AssertBlock`
+fails a `Removing` beside any state but `Present`, or one whose `WaitsOn` is
+blank.
 
 ## The observers the kit ships
 

@@ -64,9 +64,8 @@ type Request struct {
 	ResourceType      string                      `json:"resourceType,omitempty"`
 	RecordedResources map[string]RecordedResource `json:"recordedResources,omitempty"`
 	RequirementTypes  map[string]string           `json:"requirementTypes,omitempty"`
-	// SettlesAt is the time of the state-changing verb a validate settles.
-	SettlesAt   *time.Time `json:"settlesAt,omitempty"`
-	NeverActive bool       `json:"neverActive,omitempty"`
+	SettlesAt         *time.Time                  `json:"settlesAt,omitempty"`
+	NeverActive       bool                        `json:"neverActive,omitempty"`
 
 	IssueAppID string `json:"issueAppId,omitempty"`
 }
@@ -214,6 +213,7 @@ type Unhealthy struct {
 	Detail string `json:"detail"`
 }
 
+// Removing, read beside State Present alone, says the resource's removal is under way and moving: WaitsOn says in plain words what it waits on, and is never blank.
 type Removing struct {
 	WaitsOn string `json:"waitsOn"`
 }

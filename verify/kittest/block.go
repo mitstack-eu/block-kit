@@ -589,7 +589,7 @@ func (c *blockCheck) removingWaits(resp contract.Response) {
 		case o.State != contract.Present:
 			c.resourceProblem(name, "observed %s with removing, but only a present resource is being removed", o.State)
 		case strings.TrimSpace(o.Removing.WaitsOn) == "":
-			c.resourceProblem(name, "observed removing with an empty waitsOn, which must say what the removal waits on")
+			c.resourceProblem(name, "observed removing with a blank waitsOn, which must say what the removal waits on")
 		default:
 			continue
 		}
