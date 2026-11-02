@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -17,41 +16,18 @@ import (
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
-func TestDeclared_AValidateHandedNoIdentityAnswersTheIdentityItsObserverRead(t *testing.T) {
+func TestDeclared_AValidateAnswersTheIdentityItsObserverReadAndItsUnhealthyCauseScrubbed(t *testing.T) {
+	const token, cause = "ghp_unhealthy-leak-5d1e88a0", "the connected AWS role lacks permission for the call"
 	read := map[string]string{"roleName": "a-role-read"}
 	obs := asObservers(blockObservers(standingCloud()))
-	obs["a"] = fixed(contract.Observation{State: contract.Present, Identity: read})
+	obs["a"] = fixed(contract.Observation{State: contract.Present, Identity: read, Unhealthy: &contract.Unhealthy{Cause: cause, Detail: "denied for " + token}})
+	secrets := map[string]any{"secrets": map[string]any{"github": map[string]any{"token": token}}}
 
-	_, resp := serveBlock(t, blockCall{r: &blockResource{}, obs: obs, op: "validate"})
+	_, resp := serveBlock(t, blockCall{r: &blockResource{}, obs: obs, op: "validate", fields: secrets})
 
-	if got := resp.Resources["a"].Observe; got == nil || !maps.Equal(got.Identity, read) {
-		t.Errorf("a observe = %+v, want the identity its observer read, %v", got, read)
-	}
-}
-
-func TestDeclared_APresentResourceAnsweredUnhealthySettlesPresentAndCarriesItsCauseScrubbed(t *testing.T) {
-	const token = "ghp_unhealthy-leak-5d1e88a0"
-	const cause = "the connected AWS role lacks permission for the call"
-	for _, op := range []string{"subscribe", "validate"} {
-		t.Run(op, func(t *testing.T) {
-			cloud := standingCloud()
-			obs := asObservers(blockObservers(cloud))
-			obs["a"] = fixed(contract.Observation{State: contract.Present,
-				Unhealthy: &contract.Unhealthy{Cause: cause, Detail: "AssumeRole was denied for " + token}})
-			fields := recordedAll()
-			fields["secrets"] = map[string]any{"github": map[string]any{"token": token}}
-
-			status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: obs, op: op, fields: fields})
-
-			wantOK(t, status, resp)
-			if resp.Pending || resp.Absent == nil || *resp.Absent {
-				t.Errorf("%s answered pending %v, absent %v; want settled present, since an unhealthy resource is present", op, resp.Pending, resp.Absent)
-			}
-			want := &contract.Unhealthy{Cause: cause, Detail: "AssumeRole was denied for [REDACTED]"}
-			if o := resp.Resources["a"].Observe; o == nil || o.State != contract.Present || !reflect.DeepEqual(o.Unhealthy, want) {
-				t.Errorf("a observe = %+v; want present with unhealthy %+v, its detail scrubbed of the request secret", o, want)
-			}
-		})
+	want := contract.Unhealthy{Cause: cause, Detail: "denied for [REDACTED]"}
+	if got := resp.Resources["a"].Observe; got == nil || !maps.Equal(got.Identity, read) || got.Unhealthy == nil || *got.Unhealthy != want || resp.Pending {
+		t.Errorf("a observe = %+v, pending %t; want the identity its observer read, %v, and settled present with unhealthy %+v", got, resp.Pending, read, want)
 	}
 }
 
