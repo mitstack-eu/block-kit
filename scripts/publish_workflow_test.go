@@ -69,13 +69,15 @@ func TestPublishBlockWorkflow_PublishesOnlyForACallerNamingARegistry(t *testing.
 		return "<absent>"
 	}
 	credentials := stepOf(all, "publish", "with.role-to-assume", "${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}")
+	if credentials == "" {
+		t.Fatal("publish has no step assuming the role vars.AWS_BLOCK_PUBLISH_ROLE_ARN names")
+	}
 	cases := []struct{ name, got, want string }{
 		{"ecr-repository is optional, so a block repository's ci.yml may name no registry", field("on.workflow_call.inputs.ecr-repository.required"), "false"},
 		{"a caller naming no registry gets no publish on a push to main, and a caller naming one and holding its publish role publishes there as it does today",
 			field("jobs.publish.if"), "${{ !cancelled() && !failure() && inputs.ecr-repository != '' && " + onAPushToMain + " }}"},
 		{"a caller naming a registry still publishes only once every check passed", field("jobs.publish.needs"), everyCheck},
-		{"a caller naming a registry with no publish role fails at the credentials step, which carries no if",
-			strconv.FormatBool(credentials != "") + " " + field(credentials+"if"), "true <absent>"},
+		{"a caller naming a registry with no publish role fails at the credentials step, which carries no if", field(credentials + "if"), "<absent>"},
 		{"a caller naming no registry gets the no-registry summary on a push to main where publish would have run",
 			field("jobs.no-registry.if"), "${{ !cancelled() && !failure() && inputs.ecr-repository == '' && " + onAPushToMain + " }}"},
 		{"the no-registry summary waits for every check, as publish does", field("jobs.no-registry.needs"), everyCheck},
