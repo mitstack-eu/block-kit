@@ -549,7 +549,7 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 	return status, resp, false
 }
 
-// unlistedCauses fails an observe answering a resource unhealthy with a cause its type does not list under failures, since the platform shows a failure by its type's entry.
+// unlistedCauses fails an observe answering a resource unhealthy beside a state other than present, which the engine never reads, or with a cause its type does not list under failures, since the platform shows a failure by its type's entry.
 func (c *blockCheck) unlistedCauses(resp contract.Response) {
 	for _, name := range sortedKeys(resp.Resources) {
 		o := resp.Resources[name].Observe
@@ -558,15 +558,20 @@ func (c *blockCheck) unlistedCauses(resp contract.Response) {
 		}
 		t, _ := c.in.Config.Types.Lookup(o.Type)
 		cause := o.Unhealthy.Cause
+		listed := slices.ContainsFunc(t.Failures, func(f contract.SnapshotFailure) bool { return f.Cause == cause })
 		key := [2]string{name, cause}
-		if c.unlisted[key] || slices.ContainsFunc(t.Failures, func(f contract.SnapshotFailure) bool { return f.Cause == cause }) {
+		if c.unlisted[key] || (listed && o.State == contract.Present) {
 			continue
 		}
 		if c.unlisted == nil {
 			c.unlisted = map[[2]string]bool{}
 		}
 		c.unlisted[key] = true
-		c.resourceProblem(name, "observed unhealthy with the cause %q, which its type %s does not list under failures", cause, o.Type)
+		if o.State != contract.Present {
+			c.resourceProblem(name, "observed %s with the unhealthy cause %q, but only a present resource is unhealthy", o.State, cause)
+		} else {
+			c.resourceProblem(name, "observed unhealthy with the cause %q, which its type %s does not list under failures", cause, o.Type)
+		}
 	}
 }
 
