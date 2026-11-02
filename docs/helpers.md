@@ -13,7 +13,7 @@ package has [a page of its own](gitops.md).
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
-| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge |
+| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, or sizes and observes an app on one |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `helpers/healthz` | Serves its health check, which every block does |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
@@ -248,12 +248,14 @@ host sends them:
   "cpuMillis": 3500, "memoryBytes": 7516192768, "diskBytes": 150323855360}}}}
 ```
 
-`observe.NodeReportsClient{}.NodeReports(ctx, d, hostSubscription)` returns
-the host subscription's reports, each with its JSON `Body`, as [Observing a
+`dockerhost.NewestReport(ctx, api, d, hostSubscription)` reads the host's
+newest report through `observe.NodeReportsClient{}`, which [Observing a
 resource the platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
-explains. Your block reads the newest report's allocatable capacity into a
-`dockerhost.Reservation`, sums the other blocks' records, and checks that its
-own reservation fits in what is left before it writes anything. When it does
+describes, and [Reading what the host last synced](#reading-what-the-host-last-synced)
+covers the rest of what it returns. Its `Allocatable` field holds the report's
+allocatable capacity as a `dockerhost.Reservation`, or `nil` when the report
+gives none. Your block sums the other blocks' records and checks that its own
+reservation fits in what is left before it writes anything. When it does
 not fit, the block's subscribe returns a `handler.Refuse` error naming the
 free and the requested amounts, so the platform shows the refusal and nothing
 lands on the host.
@@ -281,6 +283,46 @@ free := dockerhost.Free(allocatable, others)
 if !want.Fits(free) {
 	return nil, handler.Refuse("host-full", "the host has %s free, and the app asks for %s",
 		dockerhost.Describe(free), dockerhost.Describe(want))
+}
+```
+
+### Reading what the host last synced
+
+A per-app block reads its app present only once the host's pull agent has
+applied a commit that holds the block's files. Every block on the host reads
+that commit the same way, through `dockerhost.NewestReport`, so a deploy never
+reads differently from one block to the next.
+
+`NewestReport` returns found `false` while the host has sent no report. It
+refuses a host binding with no `subscriptionId` with the class `host-binding`,
+and returns an error when the platform does not answer or the report is not
+JSON. The `dockerhost.Report` it returns gives you three things:
+
+| Field or method | What it gives |
+|---|---|
+| `report.Allocatable` | The host's allocatable capacity, or `nil` when the report gives none |
+| `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
+| `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as each app's containers |
+
+`SyncedCommit` never reads the agent's log, since a deploy's image pulls fill
+the log's last lines. When the report cannot name a commit, it returns an
+error your block reads the resource unknown with. A report without the field
+comes from a host on a hcloud-docker-host release before
+`dockerhost.SyncedCommitSince`, 0.8.0, and the error says that upgrading the
+host fixes it. A field that is `null` means the agent has not synced since it
+took its current release, and the error says the next sync names the commit.
+
+```go
+report, found, err := dockerhost.NewestReport(ctx, observe.NodeReportsClient{}, d, hostSubscription)
+if err != nil {
+	return contract.Observation{}, err
+}
+if !found {
+	return contract.Observation{State: contract.Unknown, StatusDetail: "the host has sent no node report yet"}, nil
+}
+commit, err := report.SyncedCommit()
+if err != nil {
+	return contract.Observation{State: contract.Unknown, StatusDetail: err.Error()}, nil
 }
 ```
 

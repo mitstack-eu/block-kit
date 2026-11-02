@@ -1,5 +1,6 @@
 // Package dockerhost renders the setup of a host that runs apps as containers: Ubuntu's Docker alone, the appnet
-// network, a caddy edge container routing each hostname to an app, and sshd locked to key login.
+// network, a caddy edge container routing each hostname to an app, and sshd locked to key login. It also sizes an app
+// against the host and reads the host's newest node report for every block whose app runs there.
 package dockerhost
 
 import (
