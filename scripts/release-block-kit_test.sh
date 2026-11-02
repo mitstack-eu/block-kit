@@ -443,6 +443,29 @@ check "a module change exits 0" 0 "$RC"
 assert_tag_at "a module change cuts the module's patch tag at head on the remote" "$R" "$MOD/v0.1.1" "$(head_sha)"
 assert_kit_tag_count "a module release cuts no root tag" "$W" 1
 
+# 25. A diff or a commit log git cannot read fails the root and module releases alike and cuts no tag, rather than reading as an unchanged range or a patch raise, and names the range and the module path beside git's own error. Losing head's tree breaks the diff alone, and losing head's parent, which asks for a minor raise, breaks the log alone.
+for row in "diff|^{tree}" "log|^"; do
+  IFS='|' read -r failing lost <<<"$row"
+  setup_repo
+  tag_at "v0.5.0"
+  tag_at "$MOD/v0.1.0"
+  commit_change "feat: a capability" -m "kit-release: minor"
+  commit_module_change "fix: a change inside the module"
+  H="$(head_sha)"
+  # Pushed before the loss, so a run that ignored the failed read would cut its tag rather than fail at the push.
+  git -C "$W" push -q origin main
+  LOST="$(git -C "$W" rev-parse "$H$lost")"
+  rm -f "$W/.git/objects/${LOST:0:2}/${LOST:2}"
+  for module in "" "$MOD"; do
+    run ${module:+--module "$module"} --repo "$W" --head "$H"
+    check "an unreadable $failing fails the ${module:-root} release" 1 "$RC"
+    assert_out_contains "the ${module:-root} $failing error names the range and the module path" "$SEED..$H, so the release of '${module:-.}' cuts no tag"
+    assert_out_contains "the ${module:-root} run shows git's $failing error naming the lost object" "$LOST"
+  done
+  assert_kit_tag_count "an unreadable $failing cuts no root tag" "$W" 1
+  assert_no_tag "an unreadable $failing cuts no module tag" "$W" "$MOD/v0.1.1"
+done
+
 echo "----"
 echo "release-block-kit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
