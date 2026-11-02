@@ -59,6 +59,20 @@ platform puts in every request. They do nothing when the request carries no
 callback, and `events.ScrubDetail` removes secret-shaped `key=value` pairs from
 a detail before it leaves the process.
 
+Each event carries a `sequence`, a whole number that tells two events under one
+idempotency key apart. The platform keeps one event per sequence, so it keeps
+both of two identical progress events. The helper reads the number from the
+clock in microseconds and keeps it rising within the process. When the platform
+sends a call again, it repeats the call's idempotency key, often to a fresh
+process, and the clock still gives that process numbers the first one never
+sent. A progress event's body looks like this:
+
+```json
+{"subscriptionId": "sub_3f9c2b1e8d7a6c5b", "token": "<eventsCallback.token>", "operation": "subscribe",
+ "status": "progress", "detail": "creating instance", "idempotencyKey": "sub_3f9c2b1e8d7a6c5b:subscribe:deadbeef",
+ "sequence": 1793650412345678}
+```
+
 `events.PlatformFrom(ctx)` returns the platform's base URL, the callback URL
 without its `/v1/webhooks/operator-events` path, and the callback's token. A
 block calls another platform route with that base URL and token, acting for

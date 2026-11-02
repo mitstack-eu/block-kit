@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -68,6 +69,20 @@ type operatorEvent struct {
 	Status         string `json:"status"`
 	Detail         string `json:"detail"`
 	IdempotencyKey string `json:"idempotencyKey"`
+	Sequence       int64  `json:"sequence"`
+}
+
+var lastSequence atomic.Int64
+
+// nextSequence reads the microsecond clock, kept rising in this process, so a redrive from a fresh process repeats no number under its key, and every JSON reader reads a value below 2^53 exactly.
+func nextSequence() int64 {
+	for {
+		last := lastSequence.Load()
+		next := max(time.Now().UnixMicro(), last+1)
+		if lastSequence.CompareAndSwap(last, next) {
+			return next
+		}
+	}
 }
 
 func EmitProgress(ctx context.Context, detail string) error { return emit(ctx, "progress", detail) }
@@ -89,6 +104,7 @@ func emit(ctx context.Context, status, detail string) error {
 		Status:         status,
 		Detail:         ScrubDetail(detail),
 		IdempotencyKey: env.IdempotencyKey,
+		Sequence:       nextSequence(),
 	}
 
 	body, err := json.Marshal(ev)
