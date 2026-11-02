@@ -259,6 +259,8 @@ type blockCheck struct {
 	ran      map[string]bool
 	problems []string
 	kept     map[string][]contract.Kept
+	// failedCauses holds each resource and unhealthy cause already failed, so a cause every answer repeats fails once.
+	failedCauses map[[2]string]bool
 }
 
 func (c *blockCheck) problem(format string, args ...any) {
@@ -529,6 +531,7 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 		return status, resp, false
 	}
 	if status == http.StatusOK {
+		c.unhealthyCauses(resp)
 		return status, resp, true
 	}
 	named := false
@@ -544,6 +547,32 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 		c.problem("%s answered %d: %s", operation, status, resp.Error)
 	}
 	return status, resp, false
+}
+
+// unhealthyCauses fails an observe answering a resource unhealthy beside a state other than present, which the engine never reads, or with a cause its type does not list under failures, since the platform shows a failure by its type's entry.
+func (c *blockCheck) unhealthyCauses(resp contract.Response) {
+	for _, name := range sortedKeys(resp.Resources) {
+		o := resp.Resources[name].Observe
+		if o == nil || o.Unhealthy == nil {
+			continue
+		}
+		t, _ := c.in.Config.Types.Lookup(o.Type)
+		cause := o.Unhealthy.Cause
+		listed := slices.ContainsFunc(t.Failures, func(f contract.SnapshotFailure) bool { return f.Cause == cause })
+		key := [2]string{name, cause}
+		if c.failedCauses[key] || (listed && o.State == contract.Present) {
+			continue
+		}
+		if c.failedCauses == nil {
+			c.failedCauses = map[[2]string]bool{}
+		}
+		c.failedCauses[key] = true
+		if o.State != contract.Present {
+			c.resourceProblem(name, "observed %s with the unhealthy cause %q, but only a present resource is unhealthy", o.State, cause)
+		} else {
+			c.resourceProblem(name, "observed unhealthy with the cause %q, which its type %s does not list under failures", cause, o.Type)
+		}
+	}
 }
 
 // requiredOutputs reads a secret output from the answer's secretOutputs, which carry no resource's name.

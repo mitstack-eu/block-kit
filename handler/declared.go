@@ -390,12 +390,17 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 	if len(obs.Identity) > 0 {
 		identity = obs.Identity
 	}
+	var unhealthy *contract.Unhealthy
+	if u := obs.Unhealthy; u != nil {
+		unhealthy = &contract.Unhealthy{Cause: safe.Scrub(u.Cause, r.secrets...), Detail: safe.Scrub(u.Detail, r.secrets...)}
+	}
 	return &contract.CallOutcome{
 		State:        obs.State,
 		Outputs:      obs.Outputs,
 		StatusDetail: safe.Scrub(obs.StatusDetail, r.secrets...),
 		Identity:     identity,
 		Type:         ref.Type,
+		Unhealthy:    unhealthy,
 	}, nil
 }
 

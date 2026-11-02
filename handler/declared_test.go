@@ -16,15 +16,18 @@ import (
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
-func TestDeclared_AValidateHandedNoIdentityAnswersTheIdentityItsObserverRead(t *testing.T) {
+func TestDeclared_AValidateAnswersTheIdentityItsObserverReadAndItsUnhealthyCauseScrubbed(t *testing.T) {
+	const token, cause = "ghp_unhealthy-leak-5d1e88a0", "the connected AWS role lacks permission for the call"
 	read := map[string]string{"roleName": "a-role-read"}
 	obs := asObservers(blockObservers(standingCloud()))
-	obs["a"] = fixed(contract.Observation{State: contract.Present, Identity: read})
+	obs["a"] = fixed(contract.Observation{State: contract.Present, Identity: read, Unhealthy: &contract.Unhealthy{Cause: cause + token, Detail: "denied for " + token}})
+	secrets := map[string]any{"secrets": map[string]any{"github": map[string]any{"token": token}}}
 
-	_, resp := serveBlock(t, blockCall{r: &blockResource{}, obs: obs, op: "validate"})
+	_, resp := serveBlock(t, blockCall{r: &blockResource{}, obs: obs, op: "validate", fields: secrets})
 
-	if got := resp.Resources["a"].Observe; got == nil || !maps.Equal(got.Identity, read) {
-		t.Errorf("a observe = %+v, want the identity its observer read, %v", got, read)
+	want := contract.Unhealthy{Cause: cause + "[REDACTED]", Detail: "denied for [REDACTED]"}
+	if got := resp.Resources["a"].Observe; got == nil || !maps.Equal(got.Identity, read) || got.Unhealthy == nil || *got.Unhealthy != want || resp.Pending {
+		t.Errorf("a observe = %+v, pending %t; want the identity its observer read, %v, and settled present with unhealthy %+v", got, resp.Pending, read, want)
 	}
 }
 

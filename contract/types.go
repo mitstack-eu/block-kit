@@ -136,6 +136,7 @@ type CallOutcome struct {
 	Identity     map[string]string `json:"identity,omitempty"`
 	Type         string            `json:"type,omitempty"`
 	Kept         []Kept            `json:"kept,omitempty"`
+	Unhealthy    *Unhealthy        `json:"unhealthy,omitempty"`
 }
 
 // Kept is a file an unsubscribe left in an app's repository, naming no content, and Reason is "changed" when the app changed it after the landing.
@@ -185,7 +186,14 @@ type Observation struct {
 	StatusDetail  string
 	Identity      map[string]string
 	// Redrive, read beside State Unknown alone, reports from what the provider holds, never a clock, that the work the last Ensure left in flight has finished, so a validate asks the engine to re-drive subscribe.
-	Redrive bool
+	Redrive   bool
+	Unhealthy *Unhealthy
+}
+
+// Unhealthy, read beside State Present alone, names one failure a resource meets while the engine still reads it present: Cause is a cause its catalogue type lists under failures, word for word, and Detail says what was seen.
+type Unhealthy struct {
+	Cause  string `json:"cause"`
+	Detail string `json:"detail"`
 }
 
 type requiredField struct {
