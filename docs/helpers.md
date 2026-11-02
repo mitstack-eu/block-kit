@@ -256,24 +256,33 @@ explains. Your block reads the newest report's allocatable capacity into a
 own reservation fits in what is left before it writes anything. When it does
 not fit, the block's subscribe returns a `handler.Refuse` error naming the
 free and the requested amounts, so the platform shows the refusal and nothing
-lands on the host:
+lands on the host.
+
+Four functions keep every block's sizes the same as the console's, which
+reads the same inputs on its subscribe page:
+
+| Function | What it does |
+|---|---|
+| `dockerhost.ParseCPU(v)` | Reads vCPUs to three decimals, such as `0.5`, or millicores, such as `500m`, into millicores |
+| `dockerhost.ParseSize(v)` | Reads a whole number of `Mi` or `Gi`, such as `512Mi` or `10Gi`, into bytes, for memory and disk alike |
+| `dockerhost.Free(allocatable, others)` | Takes what the others hold from what the host can give, an amount below zero when they overfill it |
+| `want.Fits(free)` | Holds each amount of `want` within `free`. A reservation of no disk fits whatever disk is free |
+| `dockerhost.Describe(r)` | Writes the amounts as the console does, such as `0.5 vCPU, 512 MiB and 10 GiB of disk`, rounded down, with the disk only when `r` holds some |
+
+Each parse function returns an error saying what to give, which your block
+puts in its refusal of the input:
 
 ```go
 others, err := dockerhost.SumReservations(files, app+"/reservations/docker-app-slice.json")
 if err != nil {
 	return nil, err
 }
-freeCPU := allocatable.CPUMillis - others.CPUMillis
-freeMemory := allocatable.MemoryBytes - others.MemoryBytes
-if want.CPUMillis > freeCPU || want.MemoryBytes > freeMemory {
-	return nil, handler.Refuse("host-full", "the host has %d CPU millis and %d memory bytes free; the app asks for %d and %d",
-		freeCPU, freeMemory, want.CPUMillis, want.MemoryBytes)
+free := dockerhost.Free(allocatable, others)
+if !want.Fits(free) {
+	return nil, handler.Refuse("host-full", "the host has %s free, and the app asks for %s",
+		dockerhost.Describe(free), dockerhost.Describe(want))
 }
 ```
-
-The snippet sizes an app container, which reserves no disk. A block whose
-record carries `diskBytes` compares `allocatable.DiskBytes - others.DiskBytes`
-with its own disk amount in the same way, and names both in its refusal.
 
 ## Reporting whether an app answers
 
