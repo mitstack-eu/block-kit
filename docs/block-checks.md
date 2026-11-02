@@ -173,7 +173,25 @@ jobs:
 
 `ecr-repository` names the repository in Amazon Elastic Container Registry
 (ECR), AWS's image registry, that receives the image, and `kit-ref` the
-block-kit tag the workflow builds blockverify and `blockprov` from.
+block-kit tag the workflow builds blockverify and `blockprov` from. A mitstack
+maintainer creates that ECR repository and a publish role in the platform
+repository, mitstack-eu/mitstack, in `deploy/tofu/operators.tf` and
+`deploy/tofu/block_publish.tf`. The maintainer then sets the
+`AWS_BLOCK_PUBLISH_ROLE_ARN` variable on your repository to the role's ARN,
+Amazon's identifier for it.
+
+`ecr-repository` is optional, and the `publish` job runs only when you name
+one. Leave it out when mitstack holds no ECR repository for your block, as for
+a block repository the mitstack console or MCP server created in your own
+GitHub organisation. The workflow then runs every check below, and the
+attestation [`post-attestation`](#asking-the-platform-from-the-shared-workflow)
+turns on, and publishes nothing. On a push to your default branch its
+`no-registry` job runs in place of `publish` and writes this line to the run's
+summary:
+
+```text
+No image registry was named in the ecr-repository input, so nothing was published.
+```
 
 Its `conformance` job runs on every event your CI calls it for. It runs your
 tests and `blockverify --standalone`, and on a pull request it also runs
