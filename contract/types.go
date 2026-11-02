@@ -137,6 +137,21 @@ type CallOutcome struct {
 	Type         string            `json:"type,omitempty"`
 	Kept         []Kept            `json:"kept,omitempty"`
 	Unhealthy    *Unhealthy        `json:"unhealthy,omitempty"`
+	Findings     []Finding         `json:"findings,omitempty"`
+}
+
+type FindingKind string
+
+const (
+	FindingPlan    FindingKind = "plan"
+	FindingBlocker FindingKind = "blocker"
+)
+
+// Finding is one thing a validate alone answers before the block writes anything, a plan it will carry out or a blocker that refuses the validate, with Text in plain words and, for a blocker, the Fix to make.
+type Finding struct {
+	Kind FindingKind `json:"kind"`
+	Text string      `json:"text"`
+	Fix  string      `json:"fix,omitempty"`
 }
 
 // Kept is a file an unsubscribe left in an app's repository, naming no content, and Reason is "changed" when the app changed it after the landing.
@@ -188,6 +203,7 @@ type Observation struct {
 	// Redrive, read beside State Unknown alone, reports from what the provider holds, never a clock, that the work the last Ensure left in flight has finished, so a validate asks the engine to re-drive subscribe.
 	Redrive   bool
 	Unhealthy *Unhealthy
+	Findings  []Finding
 }
 
 // Unhealthy, read beside State Present alone, names one failure a resource meets while the engine still reads it present: Cause is a cause its catalogue type lists under failures, word for word, and Detail says what was seen.

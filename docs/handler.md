@@ -161,7 +161,7 @@ whose answer depends on the verb can tell that pass apart.
 |---|---|
 | `subscribe`, `upgrade` | Runs one `EnsureResources`, then observes each declared resource once, in manifest order, and stops at the first not yet `present` |
 | `unsubscribe` | Runs one `Delete`, or `DeleteKeeping` for a block that implements `handler.KeptReporter`, then observes each declared resource once, in reverse order, stops at the first not yet `absent`, and adds the outputs `Delete` returned to the answer once all are absent |
-| `validate` | Asks a block that implements `handler.Converger` whether its work still runs, and while it does or until a subscribe reports it, answers without observing; otherwise observes each declared resource once. For a block that implements `handler.ReplacementPlanner` it names the resources an upgrade would replace |
+| `validate` | Asks a block that implements `handler.Converger` whether its work still runs, and while it does or until a subscribe reports it, answers without observing; otherwise observes each declared resource once. For a block that implements `handler.ReplacementPlanner` it names the resources an upgrade would replace. An observation carrying a blocker finding answers a refusal of class `handler.ClassBlocker` |
 
 The handler never waits inside a call. A resource short of the state the call
 asked for answers `pending:true` on a subscribe or upgrade and `absent:false`

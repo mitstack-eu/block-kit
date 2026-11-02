@@ -92,6 +92,56 @@ sequenceDiagram
    it again later or asks with `validate`, so `Ensure` and `Delete` must be
    safe to repeat.
 
+## What a validate tells a builder
+
+A block that reads an app's repository can say on a `validate` what it will
+do for the app and what stops it, before it writes anything. Its observer
+returns these in `Observation.Findings`, each a `contract.Finding`. A
+finding's `Kind` field sorts it: `contract.FindingPlan` says what the block
+will do, and `contract.FindingBlocker` says what stops it. `Text` says either in plain
+words, and a blocker's `Fix` says what the builder changes. The handler reads
+findings on a `validate` alone and scrubs the request's secrets from them.
+
+A validate that finds a blocker answers 400, a refusal of class `blocker`
+that names each blocker and its fix, and the answer still carries every
+finding. An answer with no findings carries no `findings` key. Here a block's
+`ci-workflows` resource is not yet landed, and the Dockerfile it would build
+names no port. The answer, from
+[`examples/validate-answer.json`](examples/validate-answer.json):
+
+```json
+{
+  "outputs": null,
+  "error": "refused:blocker: resource \"ci-workflows\": the Dockerfile names no port, so the host cannot route requests to the app (fix: add an EXPOSE line naming the port the app listens on)",
+  "statusDetail": "refused:blocker: resource \"ci-workflows\": the Dockerfile names no port, so the host cannot route requests to the app (fix: add an EXPOSE line naming the port the app listens on)",
+  "resources": {
+    "ci-workflows": {
+      "observe": {
+        "state": "absent",
+        "type": "github.workflow-file",
+        "findings": [
+          {
+            "kind": "plan",
+            "text": "adds .github/workflows/build.yml, which builds the image from the Dockerfile at the repository root"
+          },
+          {
+            "kind": "blocker",
+            "text": "the Dockerfile names no port, so the host cannot route requests to the app",
+            "fix": "add an EXPOSE line naming the port the app listens on"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+`TestDeclared_AValidateWithFindingsAnswersTheBytesTheReadmeShows` in
+`handler/declared_test.go` serves that validate through the handler and fails
+when the answer differs from the file. `kittest.CheckResponse` fails an answer
+that carries a blocker finding but is no refusal, since the engine would read
+it as a pass.
+
 ## What a block imports
 
 A block must import the four packages at the root of this repository,

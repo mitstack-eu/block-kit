@@ -23,6 +23,7 @@ behind the block's back. It returns a `contract.Observation`:
 | `Identity` | The values the observer read the resource by. Nil keeps the identity it was handed, and one holding a request secret is refused |
 | `Redrive` | Read only beside `Unknown`, as [Serving lifecycle calls](handler.md#work-that-outlasts-one-call) explains |
 | `Unhealthy` | Read only beside `Present`: the failure a resource that stands still meets, as [the next section](#a-resource-that-stands-but-fails) explains |
+| `Findings` | Read only on a `validate`: what the block will do for the app and what stops it, as [the README](../README.md#what-a-validate-tells-a-builder) explains |
 
 The `contract.ResourceRef` an observer receives carries the resource's name,
 its type, its identity and the call's `contract.Desired`. Its `Unsubscribing`

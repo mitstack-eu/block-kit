@@ -1,0 +1,24 @@
+{
+  "outputs": null,
+  "error": "refused:blocker: resource \"ci-workflows\": the Dockerfile names no port, so the host cannot route requests to the app (fix: add an EXPOSE line naming the port the app listens on)",
+  "statusDetail": "refused:blocker: resource \"ci-workflows\": the Dockerfile names no port, so the host cannot route requests to the app (fix: add an EXPOSE line naming the port the app listens on)",
+  "resources": {
+    "ci-workflows": {
+      "observe": {
+        "state": "absent",
+        "type": "github.workflow-file",
+        "findings": [
+          {
+            "kind": "plan",
+            "text": "adds .github/workflows/build.yml, which builds the image from the Dockerfile at the repository root"
+          },
+          {
+            "kind": "blocker",
+            "text": "the Dockerfile names no port, so the host cannot route requests to the app",
+            "fix": "add an EXPOSE line naming the port the app listens on"
+          }
+        ]
+      }
+    }
+  }
+}
