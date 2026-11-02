@@ -1,6 +1,6 @@
 package scripts_test
 
-// publish-block.yml runs the kit's scan scripts on every event before publish, hands blockverify what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
+// publish-block.yml runs the kit's scan scripts on every event before publish, publishes only for a caller naming its image registry, hands blockverify what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
 
 import (
 	"io"
@@ -52,6 +52,73 @@ func TestPublishBlockWorkflow_ScansEveryEventBeforePublish(t *testing.T) {
 				t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
 			}
 		})
+	}
+}
+
+const (
+	onAPushToMain = "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+	everyCheck    = "[conformance, opentofu-conformance, secrets, scripts]"
+)
+
+func TestPublishBlockWorkflow_PublishesOnlyForACallerNamingARegistry(t *testing.T) {
+	all := publishWorkflow(t)
+	field := func(path string) string {
+		if v, ok := all[path]; ok {
+			return v
+		}
+		return "<absent>"
+	}
+	credentials := stepOf(all, "publish", "with.role-to-assume", "${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}")
+	cases := []struct{ name, got, want string }{
+		{"ecr-repository is optional, so a block repository's ci.yml may name no registry", field("on.workflow_call.inputs.ecr-repository.required"), "false"},
+		{"a caller naming no registry gets no publish on a push to main, and a caller naming one and holding its publish role publishes there as it does today",
+			field("jobs.publish.if"), "${{ !cancelled() && !failure() && inputs.ecr-repository != '' && " + onAPushToMain + " }}"},
+		{"a caller naming a registry still publishes only once every check passed", field("jobs.publish.needs"), everyCheck},
+		{"a caller naming a registry with no publish role fails at the credentials step, which carries no if",
+			strconv.FormatBool(credentials != "") + " " + field(credentials+"if"), "true <absent>"},
+		{"a caller naming no registry gets the no-registry summary on a push to main where publish would have run",
+			field("jobs.no-registry.if"), "${{ !cancelled() && !failure() && inputs.ecr-repository == '' && " + onAPushToMain + " }}"},
+		{"the no-registry summary waits for every check, as publish does", field("jobs.no-registry.needs"), everyCheck},
+		{"the no-registry summary job is granted nothing, since it only writes the summary", field("jobs.no-registry.permissions"), "{}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+// A block repository naming no registry still gets its checks, its platform verdict and its attestation, since none of those jobs reads the registry.
+func TestPublishBlockWorkflow_ACallerNamingNoRegistryGetsItsChecksAndAttestation(t *testing.T) {
+	all := publishWorkflow(t)
+	for _, job := range []string{"conformance", "opentofu-conformance", "secrets", "scripts", "platform-verdict", "attest"} {
+		t.Run(job, func(t *testing.T) {
+			if _, ok := all["jobs."+job]; !ok {
+				t.Fatalf("publish-block.yml has no job %s", job)
+			}
+
+			for path, v := range all {
+				if strings.HasPrefix(path, "jobs."+job+".") && strings.Contains(v, "inputs.ecr-repository") {
+					t.Errorf("%s = %q reads the registry, want %s to run whether or not a caller names one", path, v, job)
+				}
+			}
+		})
+	}
+}
+
+func TestPublishBlockWorkflow_ACallerNamingNoRegistryReadsInTheSummaryThatNothingWasPublished(t *testing.T) {
+	summary := filepath.Join(t.TempDir(), "summary.md")
+
+	out, exit := runNamed(t, "no-registry", "Say that no registry was named and nothing was published", t.TempDir(), "", "GITHUB_STEP_SUMMARY="+summary)
+
+	if exit != 0 {
+		t.Fatalf("the no-registry step exit %d:\n%s", exit, out)
+	}
+	got, err := os.ReadFile(summary)
+	if want := "No image registry was named in the ecr-repository input, so nothing was published.\n"; err != nil || string(got) != want {
+		t.Errorf("the run's summary = %q (err %v), want %q", got, err, want)
 	}
 }
 
