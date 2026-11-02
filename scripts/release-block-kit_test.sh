@@ -34,15 +34,6 @@ assert_out_contains() { # assert_out_contains <desc> <needle>
   fi
 }
 
-assert_a_line_carries() { # assert_a_line_carries <desc> <needle>... passes when one output line carries every needle
-  local desc="$1" lines="${OUT:-}" needle; shift
-  for needle in "$@"; do lines="$(grep -F -- "$needle" <<<"$lines")"; done
-  if [ -n "$lines" ]; then ok; else
-    bad "$desc — no line carries all of: $*"
-    sed 's/^/    /' <<<"${OUT:-}"
-  fi
-}
-
 assert_file_contains() { # assert_file_contains <desc> <file> <needle>
   if grep -qF -- "$3" "$2" 2>/dev/null; then ok; else
     bad "$1 — '$3' not in $2"
@@ -129,8 +120,6 @@ commit_empty() { # commit_empty <subject> [extra -m args...] commits no change, 
 }
 
 tag_at() { git -C "$W" tag "$1" "${2:-HEAD}"; }
-
-drop_object() { rm -f "$W/.git/objects/${1:0:2}/${1:2}"; } # drop_object <sha> deletes a loose object, so every git read needing it fails as on a corrupt store
 
 head_sha() { git -C "$W" rev-parse HEAD; }
 
@@ -454,42 +443,28 @@ check "a module change exits 0" 0 "$RC"
 assert_tag_at "a module change cuts the module's patch tag at head on the remote" "$R" "$MOD/v0.1.1" "$(head_sha)"
 assert_kit_tag_count "a module release cuts no root tag" "$W" 1
 
-# 25. A diff git cannot read fails the root and module releases alike and cuts no tag, rather than reading as an unchanged range: an error line names the module path and the range, beside git's own error.
-setup_repo
-tag_at "v0.5.0"
-tag_at "$MOD/v0.1.0"
-commit_module_change "fix: a change inside the module"
-H="$(head_sha)"
-TREE="$(git -C "$W" rev-parse "$H^{tree}")"
-drop_object "$TREE"
-for module in "" "$MOD"; do
-  run ${module:+--module "$module"} --repo "$W" --head "$H"
-  check "an unreadable diff fails the ${module:-root} release" 1 "$RC"
-  assert_a_line_carries "the ${module:-root} error names its module path and the range" "::error::" "${module:-.}" "$SEED..$H"
-  assert_out_contains "the ${module:-root} run shows git's error naming the tree it could not read" "$TREE"
+# 25. A diff or a commit log git cannot read fails the root and module releases alike and cuts no tag, rather than reading as an unchanged range or a patch raise, and names the range and the module path beside git's own error. Losing head's tree breaks the diff alone, and losing head's parent, which asks for a minor raise, breaks the log alone.
+for row in "diff|^{tree}" "log|^"; do
+  IFS='|' read -r failing lost <<<"$row"
+  setup_repo
+  tag_at "v0.5.0"
+  tag_at "$MOD/v0.1.0"
+  commit_change "feat: a capability" -m "kit-release: minor"
+  commit_module_change "fix: a change inside the module"
+  H="$(head_sha)"
+  # Pushed before the loss, so a run that ignored the failed read would cut its tag rather than fail at the push.
+  git -C "$W" push -q origin main
+  LOST="$(git -C "$W" rev-parse "$H$lost")"
+  rm -f "$W/.git/objects/${LOST:0:2}/${LOST:2}"
+  for module in "" "$MOD"; do
+    run ${module:+--module "$module"} --repo "$W" --head "$H"
+    check "an unreadable $failing fails the ${module:-root} release" 1 "$RC"
+    assert_out_contains "the ${module:-root} $failing error names the range and the module path" "$SEED..$H, so the release of '${module:-.}' cuts no tag"
+    assert_out_contains "the ${module:-root} run shows git's $failing error naming the lost object" "$LOST"
+  done
+  assert_kit_tag_count "an unreadable $failing cuts no root tag" "$W" 1
+  assert_no_tag "an unreadable $failing cuts no module tag" "$W" "$MOD/v0.1.1"
 done
-assert_kit_tag_count "an unreadable diff cuts no root tag" "$W" 1
-assert_no_tag "an unreadable diff cuts no module tag" "$W" "$MOD/v0.1.1"
-
-# 26. A commit log git cannot read fails the root and module releases alike and cuts no tag, rather than reading as a patch raise: an error line names the module path and the range, beside git's own error.
-setup_repo
-tag_at "v0.5.0"
-tag_at "$MOD/v0.1.0"
-commit_change "feat: a capability" -m "kit-release: minor"
-UNREAD="$(head_sha)"
-commit_module_change "fix: a change inside the module"
-H="$(head_sha)"
-# The remote holds every commit before the drop, so the lost object stops the log alone and never a tag's push.
-git -C "$W" push -q origin main
-drop_object "$UNREAD"
-for module in "" "$MOD"; do
-  run ${module:+--module "$module"} --repo "$W" --head "$H"
-  check "an unreadable log fails the ${module:-root} release" 1 "$RC"
-  assert_a_line_carries "the ${module:-root} error names its module path and the range" "::error::" "${module:-.}" "$SEED..$H"
-  assert_out_contains "the ${module:-root} run shows git's error naming the commit it could not read" "$UNREAD"
-done
-assert_kit_tag_count "an unreadable log cuts no root tag" "$W" 1
-assert_no_tag "an unreadable log cuts no module tag" "$W" "$MOD/v0.1.1"
 
 echo "----"
 echo "release-block-kit: $pass passed, $fail failed"
