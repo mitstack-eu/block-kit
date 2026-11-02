@@ -30,12 +30,13 @@ func checkRevision(revision string) error {
 	return nil
 }
 
-// A contents read carries a file of up to 1 MB base64-encoded, a commits read carries each file's patch, and a
-// recursive tree read lists up to 100,000 entries before GitHub truncates it.
+// A contents read carries a file of up to 1 MB base64-encoded, a commits read carries each file's patch, a
+// recursive tree read or a create-tree answer lists up to 100,000 entries, and a repository answer is about 7 KB.
 const (
 	maxContentsBody = 4 << 20
 	maxCommitBody   = 32 << 20
 	maxTreeBody     = 32 << 20
+	maxRepoBody     = 1 << 20
 )
 
 // GitHub lists at most 3000 files of a commit, 300 per page.
@@ -182,10 +183,12 @@ func (c *Client) CommitParentAndPaths(ctx context.Context, repoFullName, revisio
 			} `json:"files"`
 		}
 		if err := json.Unmarshal(raw, &commit); err != nil {
-			return "", nil, fmt.Errorf("ghapi: decode commit %s: %w", revision, err)
+			return "", nil, fmt.Errorf("ghapi: decode commit from GET %s: %w", path, err)
 		}
 		if page == 1 && len(commit.Parents) > 0 {
-			parent = commit.Parents[0].SHA
+			if parent, err = c.answeredSHA("GET "+path, commit.Parents[0].SHA); err != nil {
+				return "", nil, err
+			}
 		}
 		for _, f := range commit.Files {
 			for _, p := range []string{f.Filename, f.PreviousFilename} {
@@ -297,7 +300,8 @@ func (c *Client) createMainRef(ctx context.Context, repo, commitSHA string) erro
 }
 
 func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain bool, err error) {
-	status, raw, _, err := c.get(ctx, "/repos/"+repo+"/git/ref/heads/main", 8<<10)
+	path := "/repos/" + repo + "/git/ref/heads/main"
+	status, raw, _, err := c.get(ctx, path, 8<<10)
 	if err != nil {
 		return "", false, err
 	}
@@ -313,13 +317,18 @@ func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain
 		} `json:"object"`
 	}
 	if err := json.Unmarshal(raw, &ref); err != nil {
-		return "", false, fmt.Errorf("ghapi: decode ref: %w", err)
+		return "", false, fmt.Errorf("ghapi: decode ref from GET %s: %w", path, err)
 	}
-	return ref.Object.SHA, true, nil
+	sha, err = c.answeredSHA("GET "+path, ref.Object.SHA)
+	if err != nil {
+		return "", false, err
+	}
+	return sha, true, nil
 }
 
 func (c *Client) commitTree(ctx context.Context, repo, sha string) (string, error) {
-	status, raw, _, err := c.get(ctx, "/repos/"+repo+"/git/commits/"+url.PathEscape(sha), 8<<10)
+	path := "/repos/" + repo + "/git/commits/" + url.PathEscape(sha)
+	status, raw, _, err := c.get(ctx, path, 8<<10)
 	if err != nil {
 		return "", err
 	}
@@ -332,9 +341,9 @@ func (c *Client) commitTree(ctx context.Context, repo, sha string) (string, erro
 		} `json:"tree"`
 	}
 	if err := json.Unmarshal(raw, &commit); err != nil {
-		return "", fmt.Errorf("ghapi: decode commit: %w", err)
+		return "", fmt.Errorf("ghapi: decode commit from GET %s: %w", path, err)
 	}
-	return commit.Tree.SHA, nil
+	return c.answeredSHA("GET "+path, commit.Tree.SHA)
 }
 
 // get returns the body unscrubbed, so a caller must pass it through safe.LogSafe.

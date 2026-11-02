@@ -74,18 +74,21 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name string) (string, erro
 		return "", err
 	}
 	defer cresp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(cresp.Body, 8<<10))
+	route := "POST /orgs/" + org + "/repos"
 	if cresp.StatusCode >= 300 {
-		return "", fmt.Errorf("ghapi: github POST /orgs/%s/repos returned %d: %s", org, cresp.StatusCode, safe.LogSafe(string(raw), c.Token))
+		raw, _ := io.ReadAll(io.LimitReader(cresp.Body, 4<<10))
+		return "", fmt.Errorf("ghapi: github %s returned %d: %s", route, cresp.StatusCode, safe.LogSafe(string(raw), c.Token))
 	}
 	var out struct {
 		FullName string `json:"full_name"`
 	}
-	_ = json.Unmarshal(raw, &out)
-	if out.FullName != "" {
-		return out.FullName, nil
+	if err := decodeAnswer(cresp.Body, maxRepoBody, &out); err != nil {
+		return "", fmt.Errorf("ghapi: decode the answer to %s: %w", route, err)
 	}
-	return fullName, nil
+	if out.FullName == "" {
+		return "", fmt.Errorf("ghapi: github %s answered no full_name", route)
+	}
+	return out.FullName, nil
 }
 
 // DeleteRepo treats a 404 as success so a teardown can repeat safely.
@@ -165,8 +168,7 @@ func (c *Client) createMain(ctx context.Context, repo, message string, entries [
 	if err != nil {
 		return err
 	}
-	_, err = c.postForSHA(ctx, "/repos/"+repo+"/git/refs", map[string]any{"ref": "refs/heads/main", "sha": commitSHA})
-	return err
+	return c.createMainRef(ctx, repo, commitSHA)
 }
 
 // commitOnto wraps errStaleBase only when GitHub refuses the PATCH as not a fast forward.
@@ -209,21 +211,52 @@ func (c *Client) baseCommit(ctx context.Context, repo string) (commitSHA, treeSH
 	return commitSHA, treeSHA, true, nil
 }
 
+// postForSHA reads the whole answer, since a create-tree answer lists every root entry of the new tree.
 func (c *Client) postForSHA(ctx context.Context, path string, payload any) (string, error) {
+	route := "POST " + path
 	resp, err := c.doJSON(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("ghapi: github POST %s returned %d: %s", path, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return "", fmt.Errorf("ghapi: github %s returned %d: %s", route, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
 	}
 	var out struct {
 		SHA string `json:"sha"`
 	}
-	_ = json.Unmarshal(raw, &out)
-	return out.SHA, nil
+	if err := decodeAnswer(resp.Body, maxTreeBody, &out); err != nil {
+		return "", fmt.Errorf("ghapi: decode the answer to %s: %w", route, err)
+	}
+	return c.answeredSHA(route, out.SHA)
+}
+
+// answeredSHA refuses a SHA from GitHub's answer to route that is not a full lowercase hex SHA, so an empty or cut-off one never reaches the next call.
+func (c *Client) answeredSHA(route, sha string) (string, error) {
+	if !fullSHA.MatchString(sha) {
+		quoted := safe.LogSafe(sha, c.Token)
+		if len(quoted) > maxQuotedSHA {
+			quoted = quoted[:maxQuotedSHA] + "..."
+		}
+		return "", fmt.Errorf("ghapi: github %s answered SHA %q, want a full lowercase hex SHA", route, quoted)
+	}
+	return sha, nil
+}
+
+// maxQuotedSHA keeps an error short when an answer's sha field holds far more than a SHA.
+const maxQuotedSHA = 80
+
+// decodeAnswer decodes a whole answer into v and refuses one longer than limit rather than decode a cut-off copy.
+func decodeAnswer(body io.Reader, limit int64, v any) error {
+	raw, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return fmt.Errorf("read answer: %w", err)
+	}
+	if int64(len(raw)) > limit {
+		return fmt.Errorf("the answer is longer than %d bytes", limit)
+	}
+	return json.Unmarshal(raw, v)
 }
 
 func (c *Client) patch(ctx context.Context, path string, payload any) error {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
@@ -19,6 +20,13 @@ func TestEnsureRepo_AndDeleteRepo(t *testing.T) {
 			call: ensure, want: "acme/widget", requests: []string{get(widget)}},
 		{name: "a missing repo is created once", routes: map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusCreated, `{"full_name":"acme/widget"}`}}},
 			call: ensure, want: "acme/widget", requests: []string{get(widget), post("/orgs/acme/repos")}},
+		{name: "a create answer as large as GitHub's whole repository object yields its full name", routes: map[string][]reply{get(widget): {notFound},
+			post("/orgs/acme/repos"): {{http.StatusCreated, `{"description":"` + strings.Repeat("a", 16<<10) + `","full_name":"acme/Widget"}`}}},
+			call: ensure, want: "acme/Widget", requests: []string{get(widget), post("/orgs/acme/repos")}},
+		{name: "a create answer that does not decode fails naming its route", routes: map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusCreated, `{"full_name":`}}},
+			call: ensure, want: "", err: errAny, errHas: "POST /orgs/acme/repos", requests: []string{get(widget), post("/orgs/acme/repos")}},
+		{name: "a create answer with no full name fails naming its route", routes: map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusCreated, `{"name":"widget"}`}}},
+			call: ensure, want: "", err: errAny, errHas: "POST /orgs/acme/repos", requests: []string{get(widget), post("/orgs/acme/repos")}},
 		{name: "a create refused with a body echoing the token fails without carrying it",
 			routes: map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusUnprocessableEntity, `{"message":"bad credentials","auth":"{auth}"}`}}},
 			call:   ensure, want: "", err: errAny, errHas: "returned 422", requests: []string{get(widget), post("/orgs/acme/repos")}},
@@ -73,17 +81,17 @@ const fastForwardRefusal = `{"message":"Update is not a fast forward"}`
 
 // attempt is the requests of one CommitFiles try onto main at generation gen, up to its ref update.
 func attempt(gen int) []string {
-	return []string{get(widget + "/git/ref/heads/main"), get(fmt.Sprintf(widget+"/git/commits/main-sha-gen-%d", gen)),
+	return []string{get(widget + "/git/ref/heads/main"), get(widget + "/git/commits/" + mainSHA(gen)),
 		post(widget + "/git/trees"), post(widget + "/git/commits"), patch(widget + "/git/refs/heads/main")}
 }
 
 // movingMain scripts a main that moves to the next generation each time a ref update is refused with refusal, for gens generations.
 func movingMain(gens int, refusals []reply) map[string][]reply {
-	routes := map[string][]reply{post(widget + "/git/commits"): {{http.StatusCreated, `{"sha":"new-commit-sha"}`}}}
+	routes := map[string][]reply{post(widget + "/git/commits"): {{http.StatusCreated, `{"sha":"` + shaNewCommit + `"}`}}}
 	for gen := 0; gen < gens; gen++ {
-		routes[get(widget+"/git/ref/heads/main")] = append(routes[get(widget+"/git/ref/heads/main")], reply{body: fmt.Sprintf(`{"object":{"sha":"main-sha-gen-%d"}}`, gen)})
-		routes[get(fmt.Sprintf(widget+"/git/commits/main-sha-gen-%d", gen))] = []reply{{body: fmt.Sprintf(`{"tree":{"sha":"main-tree-gen-%d"}}`, gen)}}
-		routes[post(widget+"/git/trees")] = append(routes[post(widget+"/git/trees")], reply{http.StatusCreated, fmt.Sprintf(`{"sha":"tree-over-main-tree-gen-%d"}`, gen)})
+		routes[get(widget+"/git/ref/heads/main")] = append(routes[get(widget+"/git/ref/heads/main")], reply{body: `{"object":{"sha":"` + mainSHA(gen) + `"}}`})
+		routes[get(widget+"/git/commits/"+mainSHA(gen))] = []reply{{body: `{"tree":{"sha":"` + mainTree(gen) + `"}}`}}
+		routes[post(widget+"/git/trees")] = append(routes[post(widget+"/git/trees")], reply{http.StatusCreated, `{"sha":"` + rebuiltTree(gen) + `"}`})
 	}
 	routes[patch(widget+"/git/refs/heads/main")] = append(refusals, reply{body: `{"ref":"refs/heads/main"}`})
 	return routes
@@ -103,8 +111,8 @@ func TestCommitFiles(t *testing.T) {
 		return nil, c.CommitFiles(context.Background(), "acme/widget", "seed", files)
 	}
 	race := reply{http.StatusUnprocessableEntity, fastForwardRefusal}
-	ref, base, trees := get(widget+"/git/ref/heads/main"), get(widget+"/git/commits/base-sha"), post(widget+"/git/trees")
-	onBase := map[string][]reply{ref: {{body: `{"object":{"sha":"base-sha"}}`}}, base: {{body: `{"tree":{"sha":"tree-sha"}}`}}}
+	ref, base, trees, commits := get(widget+"/git/ref/heads/main"), get(widget+"/git/commits/"+shaBase), post(widget+"/git/trees"), post(widget+"/git/commits")
+	onBase := map[string][]reply{ref: {{body: `{"object":{"sha":"` + shaBase + `"}}`}}, base: {{body: `{"tree":{"sha":"` + shaBaseTree + `"}}`}}}
 	with := func(extra map[string][]reply) map[string][]reply {
 		out := map[string][]reply{}
 		for k, v := range onBase {
@@ -117,32 +125,35 @@ func TestCommitFiles(t *testing.T) {
 	}
 	twoAttempts := slices.Concat(attempt(0), attempt(1))
 	cases := []apiCase{
-		{name: "an unchanged tree makes no commit and moves no ref", routes: with(map[string][]reply{trees: {{body: `{"sha":"tree-sha"}`}}}),
+		{name: "an unchanged tree makes no commit and moves no ref", routes: with(map[string][]reply{trees: {{body: `{"sha":"` + shaBaseTree + `"}`}}}),
 			call: commit, requests: []string{ref, base, trees}},
-		{name: "a changed tree commits and moves the ref once", routes: with(map[string][]reply{trees: {{body: `{"sha":"new-tree-sha"}`}},
-			post(widget + "/git/commits"): {{body: `{"sha":"new-commit-sha"}`}}, patch(widget + "/git/refs/heads/main"): {{}}}),
-			call: commit, requests: []string{ref, base, trees, post(widget + "/git/commits"), patch(widget + "/git/refs/heads/main")}},
+		{name: "a changed tree commits and moves the ref once", routes: with(map[string][]reply{trees: {{body: `{"sha":"` + shaNewTree + `"}`}},
+			commits: {{body: `{"sha":"` + shaNewCommit + `"}`}}, patch(widget + "/git/refs/heads/main"): {{}}}),
+			call: commit, requests: []string{ref, base, trees, commits, patch(widget + "/git/refs/heads/main")}},
+		{name: "a create-tree answer over 8 KiB still sends the tree's SHA to the commit", routes: with(map[string][]reply{trees: {{http.StatusCreated, treeAnswer(shaNewTree, 48)}},
+			commits: {{http.StatusCreated, `{"sha":"` + shaNewCommit + `"}`}}, patch(widget + "/git/refs/heads/main"): {{}}}),
+			call: commit, requests: []string{ref, base, trees, commits, patch(widget + "/git/refs/heads/main")}, check: sentTree(commits, shaNewTree)},
 		{name: "a refused tree on an empty repo echoing the token fails without carrying it",
 			routes: map[string][]reply{ref: {notFound}, trees: {{http.StatusUnprocessableEntity, `{"message":"rejected for token {auth}"}`}}},
 			call:   commit, err: errAny, errHas: "returned 422", requests: []string{ref, trees}},
 		{name: "an oversized ref lookup is refused by a bounded decode before the commit lookup",
-			routes: with(map[string][]reply{ref: {{body: huge(`"object":{"sha":"base-sha"}`)}}}), call: commit, err: errAny, errHas: "decode ref", requests: []string{ref}},
+			routes: with(map[string][]reply{ref: {{body: huge(`"object":{"sha":"` + shaBase + `"}`)}}}), call: commit, err: errAny, errHas: "decode ref", requests: []string{ref}},
 		{name: "an oversized ref lookup echoing the token fails without carrying it",
-			routes: with(map[string][]reply{ref: {{body: huge(`"object":{"sha":"base-sha"},"auth":"{auth}"`)}}}), call: commit, err: errAny, errHas: "decode ref", requests: []string{ref}},
+			routes: with(map[string][]reply{ref: {{body: huge(`"object":{"sha":"` + shaBase + `"},"auth":"{auth}"`)}}}), call: commit, err: errAny, errHas: "decode ref", requests: []string{ref}},
 		{name: "an oversized commit lookup is refused by a bounded decode before any tree is built",
-			routes: with(map[string][]reply{base: {{body: huge(`"tree":{"sha":"tree-sha"}`)}}}), call: commit, err: errAny, errHas: "decode commit", requests: []string{ref, base}},
+			routes: with(map[string][]reply{base: {{body: huge(`"tree":{"sha":"` + shaBaseTree + `"}`)}}}), call: commit, err: errAny, errHas: "decode commit", requests: []string{ref, base}},
 		{name: "one lost fast forward race replays the same entries onto the new head", routes: movingMain(2, []reply{race}), call: commit, requests: twoAttempts,
 			check: func(t *testing.T, f *fakeGitHub) {
-				tb, cb := f.bodies(trees), f.bodies(post(widget+"/git/commits"))
-				if tb[0]["base_tree"] != "main-tree-gen-0" || tb[1]["base_tree"] != "main-tree-gen-1" || !reflect.DeepEqual(tb[0]["tree"], tb[1]["tree"]) {
-					t.Errorf("tree POSTs = %v, want the same entries over main-tree-gen-0 then main-tree-gen-1", tb)
+				tb, cb := f.bodies(trees), f.bodies(commits)
+				if tb[0]["base_tree"] != mainTree(0) || tb[1]["base_tree"] != mainTree(1) || !reflect.DeepEqual(tb[0]["tree"], tb[1]["tree"]) {
+					t.Errorf("tree POSTs = %v, want the same entries over main's tree at generation 0 then 1", tb)
 				}
-				if !reflect.DeepEqual(cb[0]["parents"], []any{"main-sha-gen-0"}) || !reflect.DeepEqual(cb[1]["parents"], []any{"main-sha-gen-1"}) || cb[1]["tree"] != "tree-over-main-tree-gen-1" {
+				if !reflect.DeepEqual(cb[0]["parents"], []any{mainSHA(0)}) || !reflect.DeepEqual(cb[1]["parents"], []any{mainSHA(1)}) || cb[1]["tree"] != rebuiltTree(1) {
 					t.Errorf("commit POSTs = %v, want parents gen-0 then exactly the new head gen-1 over the rebuilt tree", cb)
 				}
 				for i, p := range f.bodies(patch(widget + "/git/refs/heads/main")) {
-					if p["sha"] != "new-commit-sha" {
-						t.Errorf("PATCH #%d = %v, want sha new-commit-sha", i+1, p)
+					if p["sha"] != shaNewCommit {
+						t.Errorf("PATCH #%d = %v, want sha %s", i+1, p, shaNewCommit)
 					}
 				}
 			}},
@@ -158,16 +169,19 @@ func TestCommitFiles(t *testing.T) {
 			call: commit, err: errAny, errHas: "returned 422", requests: attempt(0)},
 		{name: "a 500 fails at once", routes: movingMain(1, []reply{{http.StatusInternalServerError, `{"message":"Server Error","auth":"{auth}"}`}}),
 			call: commit, err: errAny, errHas: "returned 500", requests: attempt(0)},
-		{name: "an empty repo creates the ref once and never updates it", routes: map[string][]reply{ref: {notFound}, trees: {{http.StatusCreated, `{"sha":"t"}`}},
-			post(widget + "/git/commits"): {{http.StatusCreated, `{"sha":"new-commit-sha"}`}}, post(widget + "/git/refs"): {{status: http.StatusCreated}}},
-			call: commit, requests: []string{ref, trees, post(widget + "/git/commits"), post(widget + "/git/refs")},
+		{name: "an empty repo creates the ref once and never updates it", routes: map[string][]reply{ref: {notFound}, trees: {{http.StatusCreated, `{"sha":"` + shaNewTree + `"}`}},
+			commits: {{http.StatusCreated, `{"sha":"` + shaNewCommit + `"}`}}, post(widget + "/git/refs"): {{status: http.StatusCreated}}},
+			call: commit, requests: []string{ref, trees, commits, post(widget + "/git/refs")},
 			check: func(t *testing.T, f *fakeGitHub) {
 				_, hasBase := f.bodies(trees)[0]["base_tree"]
-				_, hasParents := f.bodies(post(widget + "/git/commits"))[0]["parents"]
-				if refs := f.bodies(post(widget + "/git/refs")); hasBase || hasParents || !reflect.DeepEqual(refs[0], jsonBody(t, `{"ref":"refs/heads/main","sha":"new-commit-sha"}`)) {
-					t.Errorf("base_tree %v, parents %v, ref POST %v; want neither and refs/heads/main at new-commit-sha", hasBase, hasParents, refs)
+				_, hasParents := f.bodies(commits)[0]["parents"]
+				if refs := f.bodies(post(widget + "/git/refs")); hasBase || hasParents || !reflect.DeepEqual(refs[0], jsonBody(t, `{"ref":"refs/heads/main","sha":"`+shaNewCommit+`"}`)) {
+					t.Errorf("base_tree %v, parents %v, ref POST %v; want neither and refs/heads/main at %s", hasBase, hasParents, refs, shaNewCommit)
 				}
 			}},
+		{name: "an empty repo sends the tree's SHA from a create-tree answer over 8 KiB to its first commit", routes: map[string][]reply{ref: {notFound},
+			trees: {{http.StatusCreated, treeAnswer(shaNewTree, 48)}}, commits: {{http.StatusCreated, `{"sha":"` + shaNewCommit + `"}`}}, post(widget + "/git/refs"): {{status: http.StatusCreated}}},
+			call: commit, requests: []string{ref, trees, commits, post(widget + "/git/refs")}, check: sentTree(commits, shaNewTree)},
 		{name: "main vanishing mid-replay errors without creating a ref", routes: func() map[string][]reply {
 			r := movingMain(1, []reply{race})
 			r[ref] = append(r[ref], notFound)
@@ -175,19 +189,29 @@ func TestCommitFiles(t *testing.T) {
 		}(), call: commit, err: errAny, errHas: "disappeared", requests: slices.Concat(attempt(0), []string{ref})},
 		{name: "a replay whose rebuilt tree equals the new head's tree is a no-op", routes: func() map[string][]reply {
 			r := movingMain(2, []reply{race})
-			r[trees] = []reply{{http.StatusCreated, `{"sha":"tree-over-main-tree-gen-0"}`}, {http.StatusCreated, `{"sha":"main-tree-gen-1"}`}}
+			r[trees] = []reply{{http.StatusCreated, `{"sha":"` + rebuiltTree(0) + `"}`}, {http.StatusCreated, `{"sha":"` + mainTree(1) + `"}`}}
 			return r
 		}(), call: commit, requests: slices.Concat(attempt(0), attempt(1)[:3]),
 			check: func(t *testing.T, f *fakeGitHub) {
-				if got := f.bodies(trees)[1]["base_tree"]; got != "main-tree-gen-1" {
-					t.Errorf("replayed tree base_tree = %v, want main-tree-gen-1: the replay rebuilds before deciding it is a no-op", got)
+				if got := f.bodies(trees)[1]["base_tree"]; got != mainTree(1) {
+					t.Errorf("replayed tree base_tree = %v, want %s: the replay rebuilds before deciding it is a no-op", got, mainTree(1))
 				}
 			}},
 		{name: "a replay never touches another repository", routes: func() map[string][]reply {
 			r := movingMain(2, []reply{race})
-			r[get("/repos/acme/other/git/ref/heads/main")] = []reply{{body: `{"object":{"sha":"main-sha-gen-7"}}`}}
+			r[get("/repos/acme/other/git/ref/heads/main")] = []reply{{body: `{"object":{"sha":"` + mainSHA(7) + `"}}`}}
 			return r
 		}(), call: commit, requests: twoAttempts},
 	}
 	runAPICases(t, cases)
+}
+
+// sentTree checks that the one request to commits carried tree as its tree.
+func sentTree(commits, tree string) func(t *testing.T, f *fakeGitHub) {
+	return func(t *testing.T, f *fakeGitHub) {
+		t.Helper()
+		if got := f.bodies(commits); len(got) != 1 || got[0]["tree"] != tree {
+			t.Errorf("%s bodies = %v, want one carrying tree %s", commits, got, tree)
+		}
+	}
 }

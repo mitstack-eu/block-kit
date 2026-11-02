@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -20,6 +22,19 @@ const (
 	widget = "/repos/acme/widget"
 	gitops = "/repos/acme/gitops"
 )
+
+const (
+	shaBase       = "0b95b71f5e6d0a8c4ad1e7f3c2b9a6d5e4f3a2b1"
+	shaBaseTree   = "044b28c11d42ac5f2be6151bfdb013f46694c297"
+	shaParentTree = "2ecf75eabe776947a73f03bf5fa7cc3574f6b69b"
+	shaNewTree    = "5d890c4e1b2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e"
+	shaNewCommit  = "423bd6305a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d"
+)
+
+// mainSHA, mainTree and rebuiltTree are the commit main points at, its tree, and the tree rebuilt over it, at generation gen.
+func mainSHA(gen int) string     { return fmt.Sprintf("a%039d", gen) }
+func mainTree(gen int) string    { return fmt.Sprintf("b%039d", gen) }
+func rebuiltTree(gen int) string { return fmt.Sprintf("c%039d", gen) }
 
 // reply is one scripted answer: status 0 means 200, and {auth} in body echoes the request's Authorization header, as a proxy or a misconfigured host might.
 type reply struct {
@@ -48,8 +63,12 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	key := r.Method + " " + r.URL.RequestURI()
 	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	decodeErr := json.NewDecoder(r.Body).Decode(&body)
 	f.calls = append(f.calls, call{key: key, body: body, auth: r.Header.Get("Authorization")})
+	if decodeErr != nil && !errors.Is(decodeErr, io.EOF) {
+		http.Error(w, "the fake GitHub could not decode the request body: "+decodeErr.Error(), http.StatusBadRequest)
+		return
+	}
 	rep := notFound
 	if replies, ok := f.routes[key]; ok {
 		rep = replies[0]
@@ -182,4 +201,14 @@ func wrappedBase64(content string) string {
 // huge is valid JSON past any sane single-object bound, which an unbounded decoder reads fine.
 func huge(fields string) string {
 	return `{` + fields + `,"padding":"` + strings.Repeat("a", 2<<20) + `"}`
+}
+
+// treeAnswer is GitHub's create-tree answer for a root of n files, led by the tree's SHA as GitHub sends it, at about 231 bytes an entry.
+func treeAnswer(sha string, n int) string {
+	entries := make([]string, n)
+	for i := range entries {
+		entries[i] = fmt.Sprintf(`{"path":"process-%02d-deployment.json","mode":"100644","type":"blob","sha":"%040d","size":1024,`+
+			`"url":"https://api.github.com/repos/acme/gitops/git/blobs/%040d"}`, i, i, i)
+	}
+	return `{"sha":"` + sha + `","url":"https://api.github.com/repos/acme/gitops/git/trees/` + sha + `","tree":[` + strings.Join(entries, ",") + `],"truncated":false}`
 }

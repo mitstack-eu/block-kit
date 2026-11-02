@@ -123,10 +123,12 @@ it commits to the repository's `main`. It takes the API host from the request's
 `github` instance, resolved through `ghapi.BaseFromEnv`, and the token from the
 request's `github` secret. Apart from the empty revision `""`, every revision
 it reads at or commits on must be a full lowercase hex SHA of 40 or 64 digits,
-and anything else is refused before a request goes out. File content must be
-UTF-8, because the Git Data API carries it as a JSON string. A commit whose
-parent is no longer the tip lands nothing, so `CommitManifests` and `Revert`
-retry it on a fresh head a bounded number of times.
+and anything else is refused before a request goes out. A SHA read from
+GitHub's answer must have the same form, so a call whose answer does not
+decode or carries any other SHA fails and names the request it sent. File
+content must be UTF-8, because the Git Data API carries it as a JSON string. A
+commit whose parent is no longer the tip lands nothing, so `CommitManifests`
+and `Revert` retry it on a fresh head a bounded number of times.
 
 In tests, `gitopstest.NewRepository` and `gitopstest.NewNotifications` give
 in-memory fakes of the repository and the notification source.
