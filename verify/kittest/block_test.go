@@ -326,17 +326,17 @@ func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.Resource
 	return contract.Observation{State: contract.Absent}, nil
 }
 
-// unhealthyObserver answers each resource its inner observer finds present unhealthy, naming cause, and with anyState set one it finds in any state.
-type unhealthyObserver struct {
+// amendedObserver amends each answer in which its inner observer finds a resource present, and with anyState set every answer.
+type amendedObserver struct {
 	inner    handler.Observer
-	cause    string
+	amend    func(*contract.Observation)
 	anyState bool
 }
 
-func (o unhealthyObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+func (o amendedObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	obs, err := o.inner.ObserveResource(ctx, r)
 	if err == nil && (o.anyState || obs.State == contract.Present) {
-		obs.Unhealthy = &contract.Unhealthy{Cause: o.cause, Detail: "the volume has been attaching for two hours"}
+		o.amend(&obs)
 	}
 	return obs, err
 }
@@ -891,10 +891,18 @@ func TestCheckBlock(t *testing.T) {
 			}
 		}
 	}
-	unhealthy := func(cause string, anyState bool) mutation {
+	amended := func(amend func(*contract.Observation), anyState bool) mutation {
 		return func(b *fakeBlock, in *kittest.Block) {
-			in.Config.Observers["aws.ebs-volume"] = unhealthyObserver{inner: providerObserver{p: b.p}, cause: cause, anyState: anyState}
+			in.Config.Observers["aws.ebs-volume"] = amendedObserver{inner: providerObserver{p: b.p}, amend: amend, anyState: anyState}
 		}
+	}
+	unhealthy := func(cause string, anyState bool) mutation {
+		return amended(func(o *contract.Observation) {
+			o.Unhealthy = &contract.Unhealthy{Cause: cause, Detail: "the volume has been attaching for two hours"}
+		}, anyState)
+	}
+	removing := func(waitsOn string, anyState bool) mutation {
+		return amended(func(o *contract.Observation) { o.Removing = &contract.Removing{WaitsOn: waitsOn} }, anyState)
 	}
 	withParts := func(parts ...observe.Tagged) mutation {
 		return func(b *fakeBlock, _ *kittest.Block) { b.parts = parts }
@@ -960,6 +968,11 @@ func TestCheckBlock(t *testing.T) {
 			[][]string{{`resource "aws.ebs-volume"`, `"the resource stopped answering"`, "aws.ebs-volume"}}, true},
 		{"a resource answered unhealthy while absent fails, since only a present resource is unhealthy", host(unhealthy("the volume is still creating, attaching or detaching", true)),
 			[][]string{{`resource "aws.ebs-volume"`, "observed absent", "only a present resource"}}, true},
+		{"a present resource answered removing, naming what the removal waits on, passes", host(removing("the volume to detach from its instance", false)), nil, true},
+		{"a resource answered removing while absent fails, since only a present resource is being removed", host(removing("the volume to detach from its instance", true)),
+			[][]string{{`resource "aws.ebs-volume"`, "observed absent", "only a present resource"}}, true},
+		{"a present resource answered removing with no waitsOn fails, naming the resource", host(removing("", false)),
+			[][]string{{`resource "aws.ebs-volume"`, "waitsOn"}}, true},
 		{"tagged resources the provider lists by no value of their identity pass, each matched by its type", host(func(b *fakeBlock, _ *kittest.Block) { b.p.listPrefix = "arn:" }), nil, true},
 	}
 	for _, tc := range cases {

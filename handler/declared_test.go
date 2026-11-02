@@ -34,6 +34,35 @@ func TestDeclared_AValidateAnswersTheIdentityItsObserverReadAndItsUnhealthyCause
 	}
 }
 
+func TestDeclared_AnUnsubscribeAnswersWhatARemovalUnderWayWaitsOnScrubbed(t *testing.T) {
+	const token = "ghp_removing-leak-7a2f3c91"
+	cases := []struct {
+		label          string
+		removing, want *contract.Removing
+	}{
+		{"a removal under way names what it waits on", &contract.Removing{WaitsOn: "pull request " + token + " to pass its managed-ci check"},
+			&contract.Removing{WaitsOn: "pull request [REDACTED] to pass its managed-ci check"}},
+		{"an observer naming no removal answers none", nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			cloud := standingCloud()
+			obs := asObservers(blockObservers(cloud))
+			obs["b"] = fixed(contract.Observation{State: contract.Present, Removing: tc.removing})
+			fields := recordedAll()
+			fields["secrets"] = githubToken(token)["secrets"]
+
+			status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: obs, op: "unsubscribe", fields: fields})
+
+			wantOK(t, status, resp)
+			wantAbsent(t, resp, false)
+			if got := resp.Resources["b"].Observe; got == nil || got.State != contract.Present || !reflect.DeepEqual(got.Removing, tc.want) {
+				t.Errorf("b observe = %+v, want present with removing %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func githubToken(token string) map[string]any {
 	return map[string]any{"secrets": map[string]any{"github": map[string]any{"token": token}}}
 }
