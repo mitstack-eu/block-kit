@@ -178,6 +178,11 @@ func TestDecodeResponse_ReadsEachResourceOutcomeByName(t *testing.T) {
 			contract.Response{Resources: map[string]contract.ResourceOutcome{
 				"firewall": {Ensure: &contract.CallOutcome{Identity: map[string]string{"groupId": "sg-0abc"}, Outputs: map[string]string{"groupArn": "arn:sg"}}},
 			}}},
+		{"the failure an observe found a present resource meets", `{"resources":{"data":{"observe":{"state":"present","unhealthy":{"cause":"the volume is still creating, attaching or detaching","detail":"attaching for two hours"}}}}}`,
+			contract.Response{Resources: map[string]contract.ResourceOutcome{
+				"data": {Observe: &contract.CallOutcome{State: contract.Present, Unhealthy: &contract.Unhealthy{
+					Cause: "the volume is still creating, attaching or detaching", Detail: "attaching for two hours"}}},
+			}}},
 		{"the files a delete kept", `{"resources":{"starter":{"delete":{"kept":[{"repository":"acme/weather","path":"CLAUDE.md","reason":"changed"}]}}}}`,
 			contract.Response{Resources: map[string]contract.ResourceOutcome{
 				"starter": {Delete: &contract.CallOutcome{Kept: []contract.Kept{{Repository: "acme/weather", Path: "CLAUDE.md", Reason: "changed"}}}},
@@ -227,6 +232,13 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 		{"a response reporting no resources encodes as before", contract.Response{Pending: true}, `{"outputs":null,"pending":true}`, false},
 		{"an ensure reporting an identity", contract.CallOutcome{Identity: map[string]string{"groupId": "sg-0abc"}}, `{"identity":{"groupId":"sg-0abc"}}`, false},
 		{"an ensure reporting no identity encodes as before", contract.CallOutcome{}, `{}`, false},
+		{"an observe naming the failure its type lists encodes it beside present", contract.Response{Resources: map[string]contract.ResourceOutcome{
+			"data": {Observe: &contract.CallOutcome{State: contract.Present, Unhealthy: &contract.Unhealthy{
+				Cause: "the volume is still creating, attaching or detaching", Detail: "the volume has been attaching for two hours"}}}}},
+			`{"outputs":null,"resources":{"data":{"observe":{"state":"present","unhealthy":{"cause":"the volume is still creating, attaching or detaching","detail":"the volume has been attaching for two hours"}}}}}`, true},
+		{"an observe naming no failure encodes byte for byte as the release before", contract.Response{Resources: map[string]contract.ResourceOutcome{
+			"data": {Observe: &contract.CallOutcome{State: contract.Present, StatusDetail: "in-use", Type: "aws.ebs-volume"}}}},
+			`{"outputs":null,"resources":{"data":{"observe":{"state":"present","statusDetail":"in-use","type":"aws.ebs-volume"}}}}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {

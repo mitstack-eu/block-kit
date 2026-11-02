@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -25,6 +26,32 @@ func TestDeclared_AValidateHandedNoIdentityAnswersTheIdentityItsObserverRead(t *
 
 	if got := resp.Resources["a"].Observe; got == nil || !maps.Equal(got.Identity, read) {
 		t.Errorf("a observe = %+v, want the identity its observer read, %v", got, read)
+	}
+}
+
+func TestDeclared_APresentResourceAnsweredUnhealthySettlesPresentAndCarriesItsCauseScrubbed(t *testing.T) {
+	const token = "ghp_unhealthy-leak-5d1e88a0"
+	const cause = "the connected AWS role lacks permission for the call"
+	for _, op := range []string{"subscribe", "validate"} {
+		t.Run(op, func(t *testing.T) {
+			cloud := standingCloud()
+			obs := asObservers(blockObservers(cloud))
+			obs["a"] = fixed(contract.Observation{State: contract.Present,
+				Unhealthy: &contract.Unhealthy{Cause: cause, Detail: "AssumeRole was denied for " + token}})
+			fields := recordedAll()
+			fields["secrets"] = map[string]any{"github": map[string]any{"token": token}}
+
+			status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: obs, op: op, fields: fields})
+
+			wantOK(t, status, resp)
+			if resp.Pending || resp.Absent == nil || *resp.Absent {
+				t.Errorf("%s answered pending %v, absent %v; want settled present, since an unhealthy resource is present", op, resp.Pending, resp.Absent)
+			}
+			want := &contract.Unhealthy{Cause: cause, Detail: "AssumeRole was denied for [REDACTED]"}
+			if o := resp.Resources["a"].Observe; o == nil || o.State != contract.Present || !reflect.DeepEqual(o.Unhealthy, want) {
+				t.Errorf("a observe = %+v; want present with unhealthy %+v, its detail scrubbed of the request secret", o, want)
+			}
+		})
 	}
 }
 
