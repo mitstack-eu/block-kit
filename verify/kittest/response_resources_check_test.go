@@ -33,6 +33,17 @@ func TestCheckResponse_AcceptsAWellFormedResourcesReport(t *testing.T) {
 	}
 }
 
+func TestCheckResponse_AcceptsAPlanAnsweredAsAPassAndABlockerAnsweredAsARefusal(t *testing.T) {
+	for _, body := range []string{
+		`{"resources": {"ci": {"observe": {"state": "absent", "findings": [{"kind": "plan", "text": "adds the build workflow"}]}}}}`,
+		`{"error": "refused:blocker: no port", "statusDetail": "refused:blocker: no port", "resources": {"ci": {"observe": {"findings": [{"kind": "blocker", "text": "no port", "fix": "add EXPOSE"}]}}}}`,
+	} {
+		if problems := kittest.CheckResponse([]byte(body)); len(problems) != 0 {
+			t.Errorf("CheckResponse(%s) = %q, want no problems", body, problems)
+		}
+	}
+}
+
 func TestCheckResponse_RejectsMalformedResourcesNamingThePath(t *testing.T) {
 	cases := []struct {
 		name string
@@ -53,6 +64,10 @@ func TestCheckResponse_RejectsMalformedResourcesNamingThePath(t *testing.T) {
 		{"delete error a number", `{"resources": {"network": {"delete": {"error": 7}}}}`, `"resources"."network"."delete"."error"`},
 		{"observe state a boolean", `{"resources": {"network": {"observe": {"state": true}}}}`, `"resources"."network"."observe"."state"`},
 		{"observe statusDetail an array", `{"resources": {"network": {"observe": {"statusDetail": ["waiting"]}}}}`, `"resources"."network"."observe"."statusDetail"`},
+		{"findings an object", `{"resources": {"ci": {"observe": {"findings": {"kind": "plan"}}}}}`, `"resources"."ci"."observe"."findings"`},
+		{"a finding's text a number", `{"resources": {"ci": {"observe": {"findings": [{"kind": "plan", "text": 7}]}}}}`, `"resources"."ci"."observe"."findings"`},
+		{"a blocker finding answered as a pass", `{"resources": {"ci": {"observe": {"state": "absent", "findings": [{"kind": "blocker", "text": "no port", "fix": "add EXPOSE"}]}}}}`, `"resources"."ci"."observe"."findings"`},
+		{"a blocker finding answered as an error the engine retries", `{"error": "boom", "resources": {"ci": {"observe": {"findings": [{"kind": "blocker", "text": "no port", "fix": "add EXPOSE"}]}}}}`, `"resources"."ci"."observe"."findings"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

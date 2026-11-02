@@ -239,6 +239,9 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 		{"an observe naming no failure encodes byte for byte as the release before", contract.Response{Resources: map[string]contract.ResourceOutcome{
 			"data": {Observe: &contract.CallOutcome{State: contract.Present, StatusDetail: "in-use", Type: "aws.ebs-volume"}}}},
 			`{"outputs":null,"resources":{"data":{"observe":{"state":"present","statusDetail":"in-use","type":"aws.ebs-volume"}}}}`, true},
+		{"an observe carrying a plan and a blocker encodes each with its kind, text and fix", contract.CallOutcome{State: contract.Absent, Findings: []contract.Finding{
+			{Kind: contract.FindingPlan, Text: "adds the build workflow"}, {Kind: contract.FindingBlocker, Text: "the Dockerfile names no port", Fix: "add an EXPOSE line"}}},
+			`{"state":"absent","findings":[{"kind":"plan","text":"adds the build workflow"},{"kind":"blocker","text":"the Dockerfile names no port","fix":"add an EXPOSE line"}]}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
