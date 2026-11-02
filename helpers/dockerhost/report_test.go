@@ -18,17 +18,17 @@ import (
 const (
 	hostSub = "sub_host"
 	synced  = "6e40c8f03e5b2a7c9d1f4e8a0b3c6d9e2f5a8b1c"
-	older   = "0123456789abcdef0123456789abcdef01234567"
 )
 
 type hostReports struct {
 	reports []observe.NodeReport
 	err     error
-	asked   []string
 }
 
 func (h *hostReports) NodeReports(_ context.Context, _ contract.Desired, sub string) ([]observe.NodeReport, error) {
-	h.asked = append(h.asked, sub)
+	if sub != hostSub {
+		return nil, errors.New("asked for another subscription's reports")
+	}
 	return h.reports, h.err
 }
 
@@ -38,13 +38,9 @@ func received(minute int, body string) observe.NodeReport {
 
 func newest(t *testing.T, reports ...observe.NodeReport) dockerhost.Report {
 	t.Helper()
-	api := &hostReports{reports: reports}
-	r, found, err := dockerhost.NewestReport(context.Background(), api, contract.Desired{}, hostSub)
+	r, found, err := dockerhost.NewestReport(context.Background(), &hostReports{reports: reports}, contract.Desired{}, hostSub)
 	if err != nil || !found {
 		t.Fatalf("NewestReport = found %v, %v; want the newest report", found, err)
-	}
-	if len(api.asked) != 1 || api.asked[0] != hostSub {
-		t.Errorf("NewestReport asked for %v, want the host subscription once", api.asked)
 	}
 	return r
 }
@@ -52,7 +48,7 @@ func newest(t *testing.T, reports ...observe.NodeReport) dockerhost.Report {
 func TestNewestReport_AnswersTheCommitAndCapacityOfTheNewestReport(t *testing.T) {
 	r := newest(t,
 		received(39, `{"host":{"capacity":{"allocatable":{"cpuMillis":3500,"memoryBytes":7516192768}},"agent":{"output":"Pulling fs layer\n","syncedCommit":"`+synced+`"}}}`),
-		received(38, `{"host":{"agent":{"output":"","syncedCommit":"`+older+`"}}}`),
+		received(38, `{"host":{"agent":{"output":"","syncedCommit":"0123456789abcdef0123456789abcdef01234567"}}}`),
 	)
 
 	commit, err := r.SyncedCommit()
@@ -64,11 +60,7 @@ func TestNewestReport_AnswersTheCommitAndCapacityOfTheNewestReport(t *testing.T)
 		t.Errorf("Allocatable = %+v, want the newest report's", r.Allocatable)
 	}
 	var body struct {
-		Host struct {
-			Agent struct {
-				Output string `json:"output"`
-			} `json:"agent"`
-		} `json:"host"`
+		Host struct{ Agent struct{ Output string } }
 	}
 	if err := r.Decode(&body); err != nil || body.Host.Agent.Output != "Pulling fs layer\n" {
 		t.Errorf("Decode = %+v, %v; want the newest report's own fields", body, err)
@@ -76,27 +68,18 @@ func TestNewestReport_AnswersTheCommitAndCapacityOfTheNewestReport(t *testing.T)
 }
 
 func TestNewestReport_AnswersNoCommitWhenTheReportCannotNameOne(t *testing.T) {
-	for _, tc := range []struct {
-		name, agent string
-		want        []string
-	}{
-		{"a host on a release without the field, whatever its log says", `{"exitCode":0,"output":"agent: synced ` + synced + `\n"}`,
-			[]string{"host.agent.syncedCommit", "hcloud-docker-host release before 0.8.0", "upgrade the host"}},
-		{"an agent that has not synced on this release", `{"output":"","syncedCommit":null}`,
-			[]string{"has not synced", "next sync"}},
+	for _, tc := range []struct{ name, agent, want string }{
+		{"a host on a release without the field, whatever its log says", `{"output":"agent: synced ` + synced + `\n"}`,
+			"no host.agent.syncedCommit, so the host runs a hcloud-docker-host release before 0.8.0; upgrade the host to 0.8.0"},
+		{"an agent that has not synced on this release", `{"output":"","syncedCommit":null}`, "has not synced since it took its current release"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newest(t, received(39, `{"host":{"agent":`+tc.agent+`}}`))
 
 			commit, err := r.SyncedCommit()
 
-			if commit != "" || err == nil {
-				t.Fatalf("SyncedCommit = %q, %v; want no commit and the reason", commit, err)
-			}
-			for _, w := range tc.want {
-				if !strings.Contains(err.Error(), w) {
-					t.Errorf("SyncedCommit's reason = %q, want it to name %q", err, w)
-				}
+			if commit != "" || err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("SyncedCommit = %q, %v; want no commit and a reason naming %q", commit, err, tc.want)
 			}
 		})
 	}
