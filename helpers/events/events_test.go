@@ -3,8 +3,11 @@ package events_test
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,43 +15,64 @@ import (
 	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
+var redriveCallback = flag.String("redrive-callback", "", "the callback URL a redrive's fresh process posts one heartbeat to")
+
 func TestEmit(t *testing.T) {
 	progress := func(ctx context.Context) error { return events.EmitProgress(ctx, "creating instance") }
 	completed := events.EmitCompleted
 	failed := func(ctx context.Context) error { return events.EmitFailed(ctx, "it broke") }
+	if *redriveCallback != "" {
+		if err := progress(events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1", IdempotencyKey: "idem-1", Callback: &events.Callback{URL: *redriveCallback}})); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	redriveFromAFreshProcess := func(ctx context.Context) error {
+		env, _ := events.EnvelopeFrom(ctx)
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=^TestEmit$", "-redrive-callback="+env.Callback.URL).Run()
+	}
+	posted := func(status, detail, key string) map[string]any {
+		return map[string]any{"subscriptionId": "sub-1", "operation": "", "status": status, "detail": detail, "idempotencyKey": key, "token": ""}
+	}
+	heartbeat := posted("progress", "creating instance", "idem-1")
 	cases := []struct {
 		name  string
 		env   *events.Envelope
 		emits []func(context.Context) error
-		want  []map[string]string
+		want  []map[string]any
 	}{
 		{"every emit is silent rather than an error when an older engine sends no callback", &events.Envelope{SubscriptionID: "sub-1"},
 			[]func(context.Context) error{progress, completed, failed}, nil},
 		{"an emit on a context with no envelope is silent", nil, []func(context.Context) error{progress}, nil},
 		{"a progress event posts the whole envelope with its detail", &events.Envelope{SubscriptionID: "sub-1", Operation: "subscribe", IdempotencyKey: "idem-1", Callback: &events.Callback{Token: "tok-abc"}},
 			[]func(context.Context) error{progress},
-			[]map[string]string{{"subscriptionId": "sub-1", "operation": "subscribe", "status": "progress", "detail": "creating instance", "idempotencyKey": "idem-1", "token": "tok-abc"}}},
+			[]map[string]any{{"subscriptionId": "sub-1", "operation": "subscribe", "status": "progress", "detail": "creating instance", "idempotencyKey": "idem-1", "token": "tok-abc"}}},
 		{"completed and failed carry their status", &events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{}},
-			[]func(context.Context) error{completed, failed},
-			[]map[string]string{
-				{"subscriptionId": "sub-1", "operation": "", "status": "completed", "detail": "", "idempotencyKey": "", "token": ""},
-				{"subscriptionId": "sub-1", "operation": "", "status": "failed", "detail": "it broke", "idempotencyKey": "", "token": ""},
-			}},
+			[]func(context.Context) error{completed, failed}, []map[string]any{posted("completed", "", ""), posted("failed", "it broke", "")}},
 		{"a secret in the detail is scrubbed before it leaves the process", &events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{}},
 			[]func(context.Context) error{func(ctx context.Context) error {
 				return events.EmitFailed(ctx, "auth failed: token=ghp_supersecretvalue while calling API")
-			}},
-			[]map[string]string{{"subscriptionId": "sub-1", "operation": "", "status": "failed", "detail": "auth failed: token= [REDACTED] while calling API", "idempotencyKey": "", "token": ""}}},
+			}}, []map[string]any{posted("failed", "auth failed: token= [REDACTED] while calling API", "")}},
+		{"two identical heartbeats under one envelope post two events, the second numbered above the first", &events.Envelope{SubscriptionID: "sub-1", IdempotencyKey: "idem-1", Callback: &events.Callback{}},
+			[]func(context.Context) error{progress, progress}, []map[string]any{heartbeat, heartbeat}},
+		{"a redrive from a fresh process under the same key numbers its heartbeat above the first drive's", &events.Envelope{SubscriptionID: "sub-1", IdempotencyKey: "idem-1", Callback: &events.Callback{}},
+			[]func(context.Context) error{progress, redriveFromAFreshProcess}, []map[string]any{heartbeat, heartbeat}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var got []map[string]string
+			var got []map[string]any
+			var last float64
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var ev map[string]string
+				var ev map[string]any
 				_ = json.NewDecoder(r.Body).Decode(&ev)
+				seq, _ := ev["sequence"].(float64)
+				if seq <= last {
+					t.Errorf("a %v event carries sequence %v after %.0f; want a number above it, the first at least 1", ev["status"], ev["sequence"], last)
+				}
+				last = seq
+				delete(ev, "sequence")
 				got = append(got, ev)
 			}))
-			defer srv.Close()
 			ctx := context.Background()
 			if tc.env != nil {
 				env := *tc.env
@@ -63,6 +87,7 @@ func TestEmit(t *testing.T) {
 					t.Errorf("emit #%d returned %v, want nil", i+1, err)
 				}
 			}
+			srv.Close()
 
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("posted events = %v, want %v", got, tc.want)
@@ -87,12 +112,7 @@ func TestScrubDetail(t *testing.T) {
 }
 
 func TestEnvelopeFrom(t *testing.T) {
-	full := events.Envelope{
-		SubscriptionID: "sub-1",
-		Operation:      "subscribe",
-		IdempotencyKey: "key-1",
-		Callback:       &events.Callback{URL: "https://api.mitstack.dev/v1/webhooks/operator-events", Token: "evt-token"},
-	}
+	full := events.Envelope{SubscriptionID: "sub-1", Operation: "subscribe", IdempotencyKey: "key-1", Callback: &events.Callback{URL: "https://api.mitstack.dev/v1/webhooks/operator-events", Token: "evt-token"}}
 	cases := []struct {
 		name   string
 		ctx    context.Context
@@ -100,8 +120,7 @@ func TestEnvelopeFrom(t *testing.T) {
 		wantOK bool
 	}{
 		{"it returns the envelope WithEnvelope stashed", events.WithEnvelope(context.Background(), full), full, true},
-		{"an envelope with no callback is found, with a nil callback", events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1"}),
-			events.Envelope{SubscriptionID: "sub-1"}, true},
+		{"an envelope with no callback is found, with a nil callback", events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1"}), events.Envelope{SubscriptionID: "sub-1"}, true},
 		{"a context with no envelope reports not found", context.Background(), events.Envelope{}, false},
 	}
 	for _, tc := range cases {
