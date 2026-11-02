@@ -249,11 +249,15 @@ func checkFindings(path string, v any) []string {
 			problems = append(problems, fmt.Sprintf("%s[%d] must be an object, got %s", path, i, jsonKind(f)))
 			continue
 		}
-		for _, field := range []string{"kind", "text", "fix"} {
-			if fv, present := finding[field]; present {
-				if _, ok := fv.(string); !ok {
-					problems = append(problems, fmt.Sprintf("%s[%d].%q must be a string, got %s", path, i, field, jsonKind(fv)))
-				}
+		if kind := finding["kind"]; kind != string(contract.FindingPlan) && kind != string(contract.FindingBlocker) {
+			problems = append(problems, fmt.Sprintf("%s[%d].%q must be %q or %q, got %v", path, i, "kind", contract.FindingPlan, contract.FindingBlocker, kind))
+		}
+		if _, ok := finding["text"].(string); !ok {
+			problems = append(problems, fmt.Sprintf("%s[%d].%q must be a string, got %s", path, i, "text", jsonKind(finding["text"])))
+		}
+		if fix, present := finding["fix"]; present {
+			if _, ok := fix.(string); !ok {
+				problems = append(problems, fmt.Sprintf("%s[%d].%q must be a string, got %s", path, i, "fix", jsonKind(fix)))
 			}
 		}
 	}

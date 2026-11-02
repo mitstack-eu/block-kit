@@ -430,6 +430,9 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 	var findings []contract.Finding
 	if r.healthCheck {
 		for _, f := range obs.Findings {
+			if f.Kind != contract.FindingPlan && f.Kind != contract.FindingBlocker {
+				return nil, fmt.Errorf("resource %q answered a finding of kind %q, which is neither %q nor %q", nr.name, f.Kind, contract.FindingPlan, contract.FindingBlocker)
+			}
 			findings = append(findings, contract.Finding{Kind: f.Kind, Text: safe.Scrub(f.Text, r.secrets...), Fix: safe.Scrub(f.Fix, r.secrets...)})
 		}
 	}
