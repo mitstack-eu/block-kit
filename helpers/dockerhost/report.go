@@ -16,7 +16,6 @@ const SyncedCommitSince = "0.8.0"
 
 // Report is a Docker host's newest node report, read the same way by every block whose app runs on the host.
 type Report struct {
-	// Allocatable is what the host can give its apps, nil when the report gives none.
 	Allocatable *Reservation
 	body        json.RawMessage
 	agent       map[string]json.RawMessage
@@ -61,8 +60,7 @@ func (r Report) Decode(v any) error {
 	return json.Unmarshal(r.body, v)
 }
 
-// SyncedCommit is the commit the host's agent last synced, from host.agent.syncedCommit and never from the agent's
-// log. Its error says why the report names none, for the block to read the resource unknown with.
+// SyncedCommit reads host.agent.syncedCommit, never the agent's log, and its error says why the report names none.
 func (r Report) SyncedCommit() (string, error) {
 	raw, ok := r.agent["syncedCommit"]
 	if !ok {
