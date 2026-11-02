@@ -258,7 +258,7 @@ not fit, the block's subscribe returns a `handler.Refuse` error naming the
 free and the requested amounts, so the platform shows the refusal and nothing
 lands on the host.
 
-Four functions keep every block's sizes the same as the console's, which
+Five functions keep every block's sizes the same as the console's, which
 reads the same inputs on its subscribe page:
 
 | Function | What it does |
