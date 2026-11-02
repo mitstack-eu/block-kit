@@ -2,8 +2,10 @@ package ghapi_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -41,8 +43,8 @@ func TestHeadCommit_AndReadFileAt(t *testing.T) {
 	mainRef := get(gitops + "/git/ref/heads/main")
 	contents := func(escaped string) string { return get(gitops + "/contents/" + escaped + "?ref=" + shaRev1) }
 	runAPICases(t, []apiCase{
-		{name: "HeadCommit returns the commit main points at", routes: map[string][]reply{mainRef: {{body: `{"ref":"refs/heads/main","object":{"sha":"tip-sha","type":"commit"}}`}}},
-			call: head, want: "tip-sha", requests: []string{mainRef}},
+		{name: "HeadCommit returns the commit main points at", routes: map[string][]reply{mainRef: {{body: `{"ref":"refs/heads/main","object":{"sha":"` + shaRev2 + `","type":"commit"}}`}}},
+			call: head, want: shaRev2, requests: []string{mainRef}},
 		{name: "HeadCommit is empty when the repository has no main yet", routes: map[string][]reply{mainRef: {notFound}},
 			call: head, want: "", requests: []string{mainRef}},
 		{name: "HeadCommit fails on any other status", routes: map[string][]reply{mainRef: {{http.StatusInternalServerError, `{"message":"failure for {auth}"}`}}},
@@ -66,7 +68,8 @@ func TestCommitChanges(t *testing.T) {
 	parentCommit, trees, commits := get(gitops+"/git/commits/"+shaParent), post(gitops+"/git/trees"), post(gitops+"/git/commits")
 	update, create := patch(gitops+"/git/refs/heads/main"), post(gitops+"/git/refs")
 	onParent := func(extra map[string][]reply) map[string][]reply {
-		routes := map[string][]reply{parentCommit: {{body: `{"tree":{"sha":"parent-tree"}}`}}, trees: {{http.StatusCreated, `{"sha":"new-tree-sha"}`}}, commits: {{http.StatusCreated, `{"sha":"new-commit-sha"}`}}}
+		routes := map[string][]reply{parentCommit: {{body: `{"tree":{"sha":"` + shaParentTree + `"}}`}}, trees: {{http.StatusCreated, `{"sha":"` + shaNewTree + `"}`}},
+			commits: {{http.StatusCreated, `{"sha":"` + shaNewCommit + `"}`}}}
 		for k, v := range extra {
 			routes[k] = v
 		}
@@ -91,35 +94,42 @@ func TestCommitChanges(t *testing.T) {
 	runAPICases(t, []apiCase{
 		{name: "it lands one fast-forward commit on the parent, writing and deleting paths", routes: onParent(map[string][]reply{update: {{}}}),
 			call: onto(shaParent, map[string]*string{"apps/app-alpha/deploy.yaml": strp("image: v2\n"), "apps/app-alpha/old.yaml": nil}),
-			want: "new-commit-sha", requests: []string{parentCommit, trees, commits, update},
+			want: shaNewCommit, requests: []string{parentCommit, trees, commits, update},
 			check: wantBodies(map[string]string{
-				trees: `{"base_tree":"parent-tree","tree":[{"path":"apps/app-alpha/deploy.yaml","mode":"100644","type":"blob","content":"image: v2\n"},` +
+				trees: `{"base_tree":"` + shaParentTree + `","tree":[{"path":"apps/app-alpha/deploy.yaml","mode":"100644","type":"blob","content":"image: v2\n"},` +
 					`{"path":"apps/app-alpha/old.yaml","mode":"100644","type":"blob","sha":null}]}`,
-				commits: `{"message":"app-alpha: update","tree":"new-tree-sha","parents":["` + shaParent + `"]}`,
-				update:  `{"sha":"new-commit-sha"}`,
+				commits: `{"message":"app-alpha: update","tree":"` + shaNewTree + `","parents":["` + shaParent + `"]}`,
+				update:  `{"sha":"` + shaNewCommit + `"}`,
 			})},
 		{name: "an empty parent creates main", routes: onParent(map[string][]reply{create: {{status: http.StatusCreated}}}),
-			call: onto("", one), want: "new-commit-sha", requests: []string{trees, commits, create},
+			call: onto("", one), want: shaNewCommit, requests: []string{trees, commits, create},
 			check: wantBodies(map[string]string{
 				trees:   `{"tree":[{"path":"a.yaml","mode":"100644","type":"blob","content":"a\n"}]}`,
-				commits: `{"message":"app-alpha: update","tree":"new-tree-sha","parents":[]}`,
-				create:  `{"ref":"refs/heads/main","sha":"new-commit-sha"}`,
+				commits: `{"message":"app-alpha: update","tree":"` + shaNewTree + `","parents":[]}`,
+				create:  `{"ref":"refs/heads/main","sha":"` + shaNewCommit + `"}`,
 			})},
-		{name: "an unchanged tree makes no commit and returns the parent", routes: onParent(map[string][]reply{trees: {{http.StatusCreated, `{"sha":"parent-tree"}`}}}),
+		{name: "a create-tree answer over 8 KiB still sends the tree's SHA to the commit", routes: onParent(map[string][]reply{trees: {{http.StatusCreated, treeAnswer(shaNewTree, 48)}}, update: {{}}}),
+			call: onto(shaParent, one), want: shaNewCommit, requests: []string{parentCommit, trees, commits, update}, check: sentTree(commits, shaNewTree)},
+		{name: "a first commit sends the tree's SHA from a create-tree answer over 8 KiB", routes: onParent(map[string][]reply{trees: {{http.StatusCreated, treeAnswer(shaNewTree, 48)}},
+			create: {{status: http.StatusCreated}}}), call: onto("", one), want: shaNewCommit, requests: []string{trees, commits, create}, check: sentTree(commits, shaNewTree)},
+		{name: "a create-tree answer past the bound is an error that names its route, and nothing is committed",
+			routes: onParent(map[string][]reply{trees: {{http.StatusCreated, `{"sha":"` + shaNewTree + `","padding":"` + strings.Repeat("a", 32<<20) + `"}`}}}),
+			call:   onto(shaParent, one), want: "", err: errAny, errHas: "POST " + gitops + "/git/trees", requests: []string{parentCommit, trees}},
+		{name: "an unchanged tree makes no commit and returns the parent", routes: onParent(map[string][]reply{trees: {{http.StatusCreated, `{"sha":"` + shaParentTree + `"}`}}}),
 			call: onto(shaParent, one), want: shaParent, requests: []string{parentCommit, trees}},
 		{name: "a parent that is no longer the tip wraps ErrNotFastForward and does not replay", routes: onParent(map[string][]reply{update: {notFastForward}}),
-			call: onto(shaParent, one), want: "new-commit-sha", err: ghapi.ErrNotFastForward, requests: []string{parentCommit, trees, commits, update}},
+			call: onto(shaParent, one), want: shaNewCommit, err: ghapi.ErrNotFastForward, requests: []string{parentCommit, trees, commits, update}},
 		{name: "an empty parent when main exists wraps ErrNotFastForward and never moves main",
 			routes: onParent(map[string][]reply{create: {{http.StatusUnprocessableEntity, `{"message":"Reference already exists"}`}}}),
-			call:   onto("", one), want: "new-commit-sha", err: ghapi.ErrNotFastForward, requests: []string{trees, commits, create}},
+			call:   onto("", one), want: shaNewCommit, err: ghapi.ErrNotFastForward, requests: []string{trees, commits, create}},
 		{name: "another refusal is an error but not ErrNotFastForward", routes: onParent(map[string][]reply{update: {{http.StatusUnprocessableEntity, `{"message":"Object does not exist"}`}}}),
-			call: onto(shaParent, one), want: "new-commit-sha", err: errAny, notErr: ghapi.ErrNotFastForward, requests: []string{parentCommit, trees, commits, update}},
+			call: onto(shaParent, one), want: shaNewCommit, err: errAny, notErr: ghapi.ErrNotFastForward, requests: []string{parentCommit, trees, commits, update}},
 		{name: "an unknown parent is an error and moves no ref", routes: onParent(nil),
 			call: onto(shaUnknown, one), want: "", err: errAny, errHas: "returned 404", requests: []string{get(gitops + "/git/commits/" + shaUnknown)}},
 		{name: "a fast forward refusal echoing the token never carries it", routes: onParent(map[string][]reply{update: {{http.StatusUnprocessableEntity, `{"message":"Update is not a fast forward for {auth}"}`}}}),
-			call: onto(shaParent, one), want: "new-commit-sha", err: ghapi.ErrNotFastForward, requests: []string{parentCommit, trees, commits, update}},
+			call: onto(shaParent, one), want: shaNewCommit, err: ghapi.ErrNotFastForward, requests: []string{parentCommit, trees, commits, update}},
 		{name: "a server error echoing the token never carries it", routes: onParent(map[string][]reply{update: {{http.StatusInternalServerError, `{"message":"boom {auth}"}`}}}),
-			call: onto(shaParent, one), want: "new-commit-sha", err: errAny, errHas: "returned 500", requests: []string{parentCommit, trees, commits, update}},
+			call: onto(shaParent, one), want: shaNewCommit, err: errAny, errHas: "returned 500", requests: []string{parentCommit, trees, commits, update}},
 		{name: "a tree refusal echoing the token never carries it", routes: onParent(map[string][]reply{trees: {{http.StatusUnprocessableEntity, `{"message":"failure for {auth}"}`}}}),
 			call: onto(shaParent, one), want: "", err: errAny, errHas: "returned 422", requests: []string{parentCommit, trees}},
 	})
@@ -134,14 +144,14 @@ func TestCommitParentAndPaths(t *testing.T) {
 		}
 	}
 	runAPICases(t, []apiCase{
-		{name: "it returns the first parent and the sorted paths", routes: map[string][]reply{commitOf(shaRev2): {{body: `{"parents":[{"sha":"rev-1"},{"sha":"merged-sha"}],` +
+		{name: "it returns the first parent and the sorted paths", routes: map[string][]reply{commitOf(shaRev2): {{body: `{"parents":[{"sha":"` + shaRev1 + `"},{"sha":"` + shaParent + `"}],` +
 			`"files":[{"filename":"b.yaml","status":"modified"},{"filename":"apps/app-alpha/z.yaml","status":"added"},{"filename":"a.yaml","status":"removed"}]}`}}},
-			call: of(shaRev2), want: commitInfo{"rev-1", []string{"a.yaml", "apps/app-alpha/z.yaml", "b.yaml"}}, requests: []string{commitOf(shaRev2)}},
+			call: of(shaRev2), want: commitInfo{shaRev1, []string{"a.yaml", "apps/app-alpha/z.yaml", "b.yaml"}}, requests: []string{commitOf(shaRev2)}},
 		{name: "the parent of a root commit is empty", routes: map[string][]reply{commitOf(shaRev1): {{body: `{"parents":[],"files":[{"filename":"a.yaml","status":"added"}]}`}}},
 			call: of(shaRev1), want: commitInfo{"", []string{"a.yaml"}}, requests: []string{commitOf(shaRev1)}},
-		{name: "a rename lists both its paths", routes: map[string][]reply{commitOf(shaRev2): {{body: `{"parents":[{"sha":"rev-1"}],` +
+		{name: "a rename lists both its paths", routes: map[string][]reply{commitOf(shaRev2): {{body: `{"parents":[{"sha":"` + shaRev1 + `"}],` +
 			`"files":[{"filename":"apps/app-alpha/new.yaml","status":"renamed","previous_filename":"apps/app-alpha/old.yaml"}]}`}}},
-			call: of(shaRev2), want: commitInfo{"rev-1", []string{"apps/app-alpha/new.yaml", "apps/app-alpha/old.yaml"}}, requests: []string{commitOf(shaRev2)}},
+			call: of(shaRev2), want: commitInfo{shaRev1, []string{"apps/app-alpha/new.yaml", "apps/app-alpha/old.yaml"}}, requests: []string{commitOf(shaRev2)}},
 		{name: "a revision the repository never held is an error on a 422", routes: map[string][]reply{commitOf(shaUnknown): {{http.StatusUnprocessableEntity, `{"message":"No commit found for SHA: no-such-sha"}`}}},
 			call: of(shaUnknown), want: commitInfo{}, err: errAny, errHas: "returned 422", requests: []string{commitOf(shaUnknown)}},
 		{name: "a revision the repository never held is an error on a 404", routes: map[string][]reply{commitOf(shaUnknown): {notFound}},
@@ -165,6 +175,66 @@ func TestTreePaths(t *testing.T) {
 		{name: "a server error echoing the token never carries it", routes: map[string][]reply{treeOf: {{http.StatusInternalServerError, `{"message":"failure for {auth}"}`}}},
 			call: of, want: []string(nil), err: errAny, errHas: "returned 500", requests: []string{treeOf}},
 	})
+}
+
+func TestSHAReadingCalls_FailNamingTheRouteOnAnAnswerThatIsNotAFullSHA(t *testing.T) {
+	ref, parentCommit, trees, commits := get(gitops+"/git/ref/heads/main"), get(gitops+"/git/commits/"+shaParent), post(gitops+"/git/trees"), post(gitops+"/git/commits")
+	commitOf := get(gitops + "/commits/" + shaRev2)
+	goodTree := reply{http.StatusCreated, `{"sha":"` + shaNewTree + `"}`}
+	commitChanges := func(parent string) func(c *ghapi.Client) (any, error) {
+		return func(c *ghapi.Client) (any, error) {
+			return c.CommitChanges(context.Background(), revRepo, parent, "m", map[string]*string{"a.yaml": strp("a\n")})
+		}
+	}
+	commitFiles := func(c *ghapi.Client) (any, error) {
+		return nil, c.CommitFiles(context.Background(), revRepo, "m", map[string]string{"a.yaml": "a\n"})
+	}
+	stages := []struct {
+		name   string
+		call   func(c *ghapi.Client) (any, error)
+		want   any
+		before map[string][]reply
+		prior  []string
+		route  string
+		shape  string
+	}{
+		{name: "HeadCommit reading main's ref", call: func(c *ghapi.Client) (any, error) { return c.HeadCommit(context.Background(), revRepo) },
+			want: "", route: ref, shape: `{"object":{"sha":%s}}`},
+		{name: "CommitTree reading a commit's tree", call: func(c *ghapi.Client) (any, error) { return c.CommitTree(context.Background(), revRepo, shaParent) },
+			want: "", route: parentCommit, shape: `{"tree":{"sha":%s}}`},
+		{name: "CommitParentAndPaths reading the first parent", call: func(c *ghapi.Client) (any, error) {
+			parent, paths, err := c.CommitParentAndPaths(context.Background(), revRepo, shaRev2)
+			return commitInfo{parent, paths}, err
+		}, want: commitInfo{}, route: commitOf, shape: `{"parents":[{"sha":%s}],"files":[]}`},
+		{name: "CommitChanges reading its parent's tree", call: commitChanges(shaParent), want: "", route: parentCommit, shape: `{"tree":{"sha":%s}}`},
+		{name: "CommitChanges reading the new tree", call: commitChanges(shaParent), want: "",
+			before: map[string][]reply{parentCommit: {{body: `{"tree":{"sha":"` + shaParentTree + `"}}`}}}, prior: []string{parentCommit}, route: trees, shape: `{"sha":%s}`},
+		{name: "CommitChanges reading the new commit", call: commitChanges(shaParent), want: "",
+			before: map[string][]reply{parentCommit: {{body: `{"tree":{"sha":"` + shaParentTree + `"}}`}}, trees: {goodTree}}, prior: []string{parentCommit, trees}, route: commits, shape: `{"sha":%s}`},
+		{name: "CommitChanges reading a first commit", call: commitChanges(""), want: "",
+			before: map[string][]reply{trees: {goodTree}}, prior: []string{trees}, route: commits, shape: `{"sha":%s}`},
+		{name: "CommitFiles reading main's ref", call: commitFiles, route: ref, shape: `{"object":{"sha":%s}}`},
+		{name: "CommitFiles reading an empty repository's first tree", call: commitFiles,
+			before: map[string][]reply{ref: {notFound}}, prior: []string{ref}, route: trees, shape: `{"sha":%s}`},
+		{name: "CommitFiles reading an empty repository's first commit", call: commitFiles,
+			before: map[string][]reply{ref: {notFound}, trees: {goodTree}}, prior: []string{ref, trees}, route: commits, shape: `{"sha":%s}`},
+	}
+	answers := map[string]string{
+		"an empty SHA": `""`, "a short SHA": `"abc"`, "a SHA with a non-hex letter": `"g` + shaRev1[1:] + `"`,
+		"an uppercase SHA": `"` + strings.ToUpper(shaRev1) + `"`, "an answer that does not decode": `"` + shaRev1[:20],
+	}
+	var cases []apiCase
+	for _, s := range stages {
+		for label, value := range answers {
+			routes := map[string][]reply{s.route: {{http.StatusOK, fmt.Sprintf(s.shape, value)}}}
+			for k, v := range s.before {
+				routes[k] = v
+			}
+			cases = append(cases, apiCase{name: s.name + " fails on " + label, routes: routes, call: s.call, want: s.want,
+				err: errAny, errHas: s.route, requests: append(slices.Clone(s.prior), s.route)})
+		}
+	}
+	runAPICases(t, cases)
 }
 
 // revisionCalls are the calls taking a repository and a revision, each called with them.
