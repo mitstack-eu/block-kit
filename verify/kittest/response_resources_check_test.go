@@ -66,6 +66,8 @@ func TestCheckResponse_RejectsMalformedResourcesNamingThePath(t *testing.T) {
 		{"observe statusDetail an array", `{"resources": {"network": {"observe": {"statusDetail": ["waiting"]}}}}`, `"resources"."network"."observe"."statusDetail"`},
 		{"findings an object", `{"resources": {"ci": {"observe": {"findings": {"kind": "plan"}}}}}`, `"resources"."ci"."observe"."findings"`},
 		{"a finding's text a number", `{"resources": {"ci": {"observe": {"findings": [{"kind": "plan", "text": 7}]}}}}`, `"resources"."ci"."observe"."findings"`},
+		{"a finding of neither kind", `{"resources": {"ci": {"observe": {"findings": [{"kind": "Blocker", "text": "no port"}]}}}}`, `"resources"."ci"."observe"."findings"[0]."kind"`},
+		{"a finding with no text", `{"resources": {"ci": {"observe": {"findings": [{"kind": "plan"}]}}}}`, `"resources"."ci"."observe"."findings"[0]."text"`},
 		{"a blocker finding answered as a pass", `{"resources": {"ci": {"observe": {"state": "absent", "findings": [{"kind": "blocker", "text": "no port", "fix": "add EXPOSE"}]}}}}`, `"resources"."ci"."observe"."findings"`},
 		{"a blocker finding answered as an error the engine retries", `{"error": "boom", "resources": {"ci": {"observe": {"findings": [{"kind": "blocker", "text": "no port", "fix": "add EXPOSE"}]}}}}`, `"resources"."ci"."observe"."findings"`},
 	}
