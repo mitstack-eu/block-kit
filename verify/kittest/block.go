@@ -261,6 +261,8 @@ type blockCheck struct {
 	kept     map[string][]contract.Kept
 	// failedCauses holds each resource and unhealthy cause already failed, so a cause every answer repeats fails once.
 	failedCauses map[[2]string]bool
+	// failedRemovals holds each resource whose removing answer already failed, so an answer every observe repeats fails once.
+	failedRemovals map[string]bool
 }
 
 func (c *blockCheck) problem(format string, args ...any) {
@@ -532,6 +534,7 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 	}
 	if status == http.StatusOK {
 		c.unhealthyCauses(resp)
+		c.removingWaits(resp)
 		return status, resp, true
 	}
 	named := false
@@ -572,6 +575,28 @@ func (c *blockCheck) unhealthyCauses(resp contract.Response) {
 		} else {
 			c.resourceProblem(name, "observed unhealthy with the cause %q, which its type %s does not list under failures", cause, o.Type)
 		}
+	}
+}
+
+// removingWaits fails an observe answering a removal under way beside a state other than present, which the engine never reads, or naming nothing it waits on, since the platform shows what the removal waits on.
+func (c *blockCheck) removingWaits(resp contract.Response) {
+	for _, name := range sortedKeys(resp.Resources) {
+		o := resp.Resources[name].Observe
+		if o == nil || o.Removing == nil || c.failedRemovals[name] {
+			continue
+		}
+		switch {
+		case o.State != contract.Present:
+			c.resourceProblem(name, "observed %s with removing, but only a present resource is being removed", o.State)
+		case strings.TrimSpace(o.Removing.WaitsOn) == "":
+			c.resourceProblem(name, "observed removing with an empty waitsOn, which must say what the removal waits on")
+		default:
+			continue
+		}
+		if c.failedRemovals == nil {
+			c.failedRemovals = map[string]bool{}
+		}
+		c.failedRemovals[name] = true
 	}
 }
 

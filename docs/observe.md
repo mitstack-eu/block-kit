@@ -23,6 +23,7 @@ behind the block's back. It returns a `contract.Observation`:
 | `Identity` | The values the observer read the resource by. Nil keeps the identity it was handed, and one holding a request secret is refused |
 | `Redrive` | Read only beside `Unknown`, as [Serving lifecycle calls](handler.md#work-that-outlasts-one-call) explains |
 | `Unhealthy` | Read only beside `Present`: the failure a resource that stands still meets, as [the next section](#a-resource-that-stands-but-fails) explains |
+| `Removing` | Read only beside `Present`: what a removal under way waits on, as [A resource being removed](#a-resource-being-removed) explains |
 | `Findings` | Read only on a `validate`: what the block will do for the app and what stops it, as [the README](../README.md#what-a-validate-tells-a-builder) explains |
 
 The `contract.ResourceRef` an observer receives carries the resource's name,
@@ -55,6 +56,26 @@ The engine still reads the resource present, so an unhealthy answer drives
 no lifecycle step, and the platform shows the failure by the type's entry.
 The handler scrubs request secrets from both fields, and
 `kittest.AssertBlock` fails a cause the type does not list.
+
+## A resource being removed
+
+A removal can outlast one call, such as an app's teardown that waits for a
+pull request's check to pass. While the resource still stands, its observer
+answers `Present` and sets `Removing` to a `contract.Removing`, whose
+`WaitsOn` says in plain words what the removal waits on:
+
+```go
+return contract.Observation{State: contract.Present,
+	Removing: &contract.Removing{
+		WaitsOn: "pull request https://github.com/acme/weather/pull/4 to pass its managed-ci check",
+	}}, nil
+```
+
+The platform then reads the removal as moving, not stuck. A resource that
+answers `Absent` is gone and carries no `Removing`, and an answer without it
+reads as before. The handler scrubs request secrets from `WaitsOn`, and
+`kittest.AssertBlock` fails a `Removing` beside any state but `Present`, or
+one with an empty `WaitsOn`.
 
 ## The observers the kit ships
 

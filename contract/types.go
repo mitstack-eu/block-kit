@@ -137,6 +137,7 @@ type CallOutcome struct {
 	Type         string            `json:"type,omitempty"`
 	Kept         []Kept            `json:"kept,omitempty"`
 	Unhealthy    *Unhealthy        `json:"unhealthy,omitempty"`
+	Removing     *Removing         `json:"removing,omitempty"`
 	Findings     []Finding         `json:"findings,omitempty"`
 }
 
@@ -203,6 +204,7 @@ type Observation struct {
 	// Redrive, read beside State Unknown alone, reports from what the provider holds, never a clock, that the work the last Ensure left in flight has finished, so a validate asks the engine to re-drive subscribe.
 	Redrive   bool
 	Unhealthy *Unhealthy
+	Removing  *Removing
 	Findings  []Finding
 }
 
@@ -210,6 +212,10 @@ type Observation struct {
 type Unhealthy struct {
 	Cause  string `json:"cause"`
 	Detail string `json:"detail"`
+}
+
+type Removing struct {
+	WaitsOn string `json:"waitsOn"`
 }
 
 type requiredField struct {
