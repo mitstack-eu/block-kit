@@ -10,6 +10,9 @@ const refusedPrefix = "refused:"
 // ClassHostCannotRun refuses a resource whose host cannot run its workload, which a fresh subscribe on the same host cannot repair.
 const ClassHostCannotRun = "host-cannot-run"
 
+// ClassBlocker refuses a validate whose observations carry a blocker finding, naming each blocker and its fix.
+const ClassBlocker = "blocker"
+
 // unclassifiedRefusal keeps a wire-level statusDetail from carrying an empty class segment.
 const unclassifiedRefusal = "unclassified"
 

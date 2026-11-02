@@ -91,7 +91,7 @@ type declaredRun struct {
 	provided      map[string]bool
 	deleteOutputs map[string]string
 	deleteKept    map[string][]contract.Kept
-	// healthCheck is set on a validate, the only verb whose kit observation may be a full read.
+	// healthCheck is set on a validate, the only verb whose kit observation may be a full read and whose observations answer findings.
 	healthCheck bool
 
 	resourceSecretOutputs map[string]map[string]string
@@ -232,8 +232,41 @@ func (r *declaredRun) endedWithSubscription(nr namedResource) (*contract.CallOut
 	}, true
 }
 
-// validateEach never polls, answers redrive when any resource observed Unknown reports its work finished, and an Observe error is classified, never folded into pending, and stops the probe there.
+// validateEach answers a validate whose observations carry a blocker finding as a refusal carrying every finding.
 func (r *declaredRun) validateEach(ctx context.Context) (int, contract.Response) {
+	status, resp := r.validateObserved(ctx)
+	blockers := r.blockers()
+	if status != http.StatusOK || len(blockers) == 0 {
+		return status, resp
+	}
+	status, resp = r.h.errorResponse(Refuse(ClassBlocker, "%s", strings.Join(blockers, "; ")), r.secrets)
+	resp.Resources = r.outcomes
+	return status, resp
+}
+
+func (r *declaredRun) blockers() []string {
+	var out []string
+	for _, nr := range r.resources {
+		call := r.outcomes[nr.name].Observe
+		if call == nil {
+			continue
+		}
+		for _, f := range call.Findings {
+			if f.Kind != contract.FindingBlocker {
+				continue
+			}
+			blocker := fmt.Sprintf("resource %q: %s", nr.name, f.Text)
+			if f.Fix != "" {
+				blocker += " (fix: " + f.Fix + ")"
+			}
+			out = append(out, blocker)
+		}
+	}
+	return out
+}
+
+// validateObserved never polls, answers redrive when any resource observed Unknown reports its work finished, and an Observe error is classified, never folded into pending, and stops the probe there.
+func (r *declaredRun) validateObserved(ctx context.Context) (int, contract.Response) {
 	if c, ok := r.h.resource.(Converger); ok {
 		detail, done, err := c.Converging(ctx, r.d)
 		if err != nil {
@@ -394,6 +427,12 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 	if u := obs.Unhealthy; u != nil {
 		unhealthy = &contract.Unhealthy{Cause: safe.Scrub(u.Cause, r.secrets...), Detail: safe.Scrub(u.Detail, r.secrets...)}
 	}
+	var findings []contract.Finding
+	if r.healthCheck {
+		for _, f := range obs.Findings {
+			findings = append(findings, contract.Finding{Kind: f.Kind, Text: safe.Scrub(f.Text, r.secrets...), Fix: safe.Scrub(f.Fix, r.secrets...)})
+		}
+	}
 	return &contract.CallOutcome{
 		State:        obs.State,
 		Outputs:      obs.Outputs,
@@ -401,6 +440,7 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 		Identity:     identity,
 		Type:         ref.Type,
 		Unhealthy:    unhealthy,
+		Findings:     findings,
 	}, nil
 }
 

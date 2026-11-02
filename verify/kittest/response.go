@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/handler"
 )
 
 // respGoldenEntries fails the test rather than skipping, and reads the goldens embedded in the contract package so an external operator needs no working-directory path.
@@ -130,6 +132,7 @@ func CheckResponse(raw []byte) []string {
 	checkString("statusDetail")
 	checkString("lastError")
 	problems = append(problems, checkResources(doc)...)
+	problems = append(problems, blockersAnsweredAsPass(doc)...)
 	problems = append(problems, checkResourceSecretOutputs(doc)...)
 
 	return problems
@@ -211,6 +214,9 @@ func checkCallOutcome(path string, fields map[string]any) []string {
 			problems = append(problems, fmt.Sprintf("%s.%q must be a string, got %s", path, field, jsonKind(v)))
 		}
 	}
+	if v, present := fields["findings"]; present {
+		problems = append(problems, checkFindings(fmt.Sprintf("%s.%q", path, "findings"), v)...)
+	}
 	for _, field := range []string{"outputs", "identity"} {
 		v, present := fields[field]
 		if !present {
@@ -225,6 +231,53 @@ func checkCallOutcome(path string, fields map[string]any) []string {
 		for _, k := range sortedKeys(obj) {
 			if _, ok := obj[k].(string); !ok {
 				problems = append(problems, fmt.Sprintf("%s.%q must be a string value, got %s", fieldPath, k, jsonKind(obj[k])))
+			}
+		}
+	}
+	return problems
+}
+
+func checkFindings(path string, v any) []string {
+	findings, ok := v.([]any)
+	if !ok {
+		return []string{fmt.Sprintf("%s must be an array of findings, got %s", path, jsonKind(v))}
+	}
+	var problems []string
+	for i, f := range findings {
+		finding, ok := f.(map[string]any)
+		if !ok {
+			problems = append(problems, fmt.Sprintf("%s[%d] must be an object, got %s", path, i, jsonKind(f)))
+			continue
+		}
+		for _, field := range []string{"kind", "text", "fix"} {
+			if fv, present := finding[field]; present {
+				if _, ok := fv.(string); !ok {
+					problems = append(problems, fmt.Sprintf("%s[%d].%q must be a string, got %s", path, i, field, jsonKind(fv)))
+				}
+			}
+		}
+	}
+	return problems
+}
+
+// blockersAnsweredAsPass fails a blocker finding in an answer whose statusDetail is no refusal, since the engine reads any other answer as a pass or a retry.
+func blockersAnsweredAsPass(doc map[string]any) []string {
+	if detail, _ := doc["statusDetail"].(string); handler.RefusedClass(detail) != "" {
+		return nil
+	}
+	entries, _ := doc["resources"].(map[string]any)
+	var problems []string
+	for _, name := range sortedKeys(entries) {
+		entry, _ := entries[name].(map[string]any)
+		for _, call := range resourceCalls {
+			fields, _ := entry[call].(map[string]any)
+			findings, _ := fields["findings"].([]any)
+			if slices.ContainsFunc(findings, func(f any) bool {
+				finding, _ := f.(map[string]any)
+				return finding["kind"] == string(contract.FindingBlocker)
+			}) {
+				problems = append(problems, fmt.Sprintf("%q.%q.%q.%q names a blocker, but the answer is no refusal, so the engine reads it as a pass or a retry",
+					"resources", name, call, "findings"))
 			}
 		}
 	}

@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/response.schema.json",
   "title": "mitstack lifecycle webhook response",
   "description": "Versioned wire-shape contract for the JSON body a block owner's registered webhook endpoint returns to mitstack's lifecycle engine for a subscribe/unsubscribe/upgrade/validate call (MIT-1136, the response half of the bidirectional contract envelope.schema.json pins on the request side). Mirrors api/internal/lifecycle.webhookResponse byte-for-byte for every property but resources, which reports the outcome of each declared resource's ensure, observe and delete calls by name. Additive-friendly: additionalProperties is true at every level so a new optional response field never breaks an existing operator or this contract test. Nothing is required: a verb with nothing to report legitimately answers {}.",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "type": "object",
   "additionalProperties": true,
   "properties": {
@@ -82,6 +82,7 @@
               "identity": { "description": "The identity the ensure stored for its resource, the values that address the resource where it lives.", "type": "object", "additionalProperties": { "type": "string" } },
               "type": { "description": "A type the call reported. Only an observe reports one.", "type": "string" },
               "unhealthy": { "description": "Beside state present on an observe alone, the failure the resource meets: cause is a cause its catalogue type lists under failures, word for word, and detail says what was seen. The engine still reads the resource present.", "type": "object", "additionalProperties": true, "required": ["cause", "detail"], "properties": { "cause": { "type": "string" }, "detail": { "type": "string" } } },
+              "findings": { "description": "On a validate's observe alone, what the block will do for the app and what stops it. Each finding's kind is plan or blocker, its text says it in plain words, and a blocker's fix says what to change. An answer carrying a blocker is a refusal.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["kind", "text"], "properties": { "kind": { "enum": ["plan", "blocker"] }, "text": { "type": "string" }, "fix": { "type": "string" } } } },
               "kept": { "description": "The files an unsubscribe left in an app's repository, each naming its repository, its path and why it stayed. Only a delete reports them.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["repository", "path", "reason"], "properties": { "repository": { "type": "string" }, "path": { "type": "string" }, "reason": { "description": "changed, when the app changed the file after it was landed.", "type": "string" } } } }
             }
           },
@@ -97,6 +98,7 @@
               "identity": { "description": "The identity the observe addressed the resource by, when it was known.", "type": "object", "additionalProperties": { "type": "string" } },
               "type": { "description": "The exact type the observe observed the resource as.", "type": "string" },
               "unhealthy": { "description": "Beside state present on an observe alone, the failure the resource meets: cause is a cause its catalogue type lists under failures, word for word, and detail says what was seen. The engine still reads the resource present.", "type": "object", "additionalProperties": true, "required": ["cause", "detail"], "properties": { "cause": { "type": "string" }, "detail": { "type": "string" } } },
+              "findings": { "description": "On a validate's observe alone, what the block will do for the app and what stops it. Each finding's kind is plan or blocker, its text says it in plain words, and a blocker's fix says what to change. An answer carrying a blocker is a refusal.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["kind", "text"], "properties": { "kind": { "enum": ["plan", "blocker"] }, "text": { "type": "string" }, "fix": { "type": "string" } } } },
               "kept": { "description": "The files an unsubscribe left in an app's repository, each naming its repository, its path and why it stayed. Only a delete reports them.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["repository", "path", "reason"], "properties": { "repository": { "type": "string" }, "path": { "type": "string" }, "reason": { "description": "changed, when the app changed the file after it was landed.", "type": "string" } } } }
             }
           },
@@ -112,6 +114,7 @@
               "identity": { "description": "An identity the call reported. Only an ensure or an observe reports one.", "type": "object", "additionalProperties": { "type": "string" } },
               "type": { "description": "A type the call reported. Only an observe reports one.", "type": "string" },
               "unhealthy": { "description": "Beside state present on an observe alone, the failure the resource meets: cause is a cause its catalogue type lists under failures, word for word, and detail says what was seen. The engine still reads the resource present.", "type": "object", "additionalProperties": true, "required": ["cause", "detail"], "properties": { "cause": { "type": "string" }, "detail": { "type": "string" } } },
+              "findings": { "description": "On a validate's observe alone, what the block will do for the app and what stops it. Each finding's kind is plan or blocker, its text says it in plain words, and a blocker's fix says what to change. An answer carrying a blocker is a refusal.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["kind", "text"], "properties": { "kind": { "enum": ["plan", "blocker"] }, "text": { "type": "string" }, "fix": { "type": "string" } } } },
               "kept": { "description": "The files an unsubscribe left in an app's repository, each naming its repository, its path and why it stayed. Only a delete reports them.", "type": "array", "items": { "type": "object", "additionalProperties": true, "required": ["repository", "path", "reason"], "properties": { "repository": { "type": "string" }, "path": { "type": "string" }, "reason": { "description": "changed, when the app changed the file after it was landed.", "type": "string" } } } }
             }
           }
