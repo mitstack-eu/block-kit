@@ -82,8 +82,8 @@ emit_output() {
 }
 
 # fail_unread <what> ends a run whose git read of <what> over $range failed,
-# since a guessed answer would skip a release or cut the wrong one. git's own
-# error is already on stderr above this line.
+# since a guessed answer would skip a release or cut the wrong one. git has
+# already written its own error to stderr, so this adds the range and the path.
 fail_unread() {
   echo "::error::git could not read $1 in $range, so the release of '$KIT_PATH' cuts no tag rather than guess." >&2
   emit_output "released=false"
