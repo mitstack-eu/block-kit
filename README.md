@@ -108,7 +108,7 @@ provider and in `capabilities` per provider:
 | `helpers/events` | A block that reports its own progress during long work | Progress reports to mitstack while a long call runs |
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
-| `helpers/dockerhost` | A block that builds a host running apps as Docker containers | The host's setup: Docker alone, the `appnet` network, a caddy edge routing each hostname to its app, and sshd locked to key login |
+| `helpers/dockerhost` | A block that builds a host running apps as Docker containers | The host's setup: Docker alone, the `appnet` network, a caddy edge routing each hostname to its app, sshd locked to key login, and the sizes each app reserves on it |
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
 | `helpers/healthz` | Every block, since the platform's edge asks each operator for `/healthz` | The health handler, a module of its own that an operator on any kit release mounts |
 | `helpers/reportproof` | A cluster or server block whose nodes report to mitstack | The proof that signs each report, and the check that verifies it |
