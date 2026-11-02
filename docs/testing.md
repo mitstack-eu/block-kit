@@ -74,6 +74,10 @@ holds the block to the guards below and logs the name of every guard that ran:
 | `kit-observer` | A resource whose type carries an observe spec has no observer of the block's own in `Config.Observers` or `Config.TypeObservers`, since `Config.KitObserver` reads it. The kit observer must also be able to run that spec, which needs at least one usable read, the read that proves the resource ready for use. A failure here names the resource and type, and [Observing resources](observe.md#proving-a-resource-usable) shows how to fix it |
 | `probe-reads` | A probe of such a resource makes no more provider reads than its type's `maxReads`, counted by a `Provider` that implements `kittest.ReadCounter` |
 
+On every answer, the check also reads each observe that names a resource
+unhealthy. Its cause must be one the resource's type lists under `failures`
+in `Config.Types`, and a problem names the resource, the cause and the type.
+
 The tagging guard checks both directions. Everything the provider lists must
 match, by type and count, a recorded resource or one of its parts, the objects
 the snapshot says exist only to serve one resource of a type. The guard adds

@@ -37,7 +37,11 @@ resource has an observer, whose one method,
 `ObserveResource(ctx, ref)`, gets the resource's name, type and identity and
 the call's `contract.Desired` in a `contract.ResourceRef`, and asks the
 provider about it. It returns a `contract.Observation`: `contract.Present`,
-`contract.Absent` or `contract.Unknown`, and the resource's outputs. The kit's
+`contract.Absent` or `contract.Unknown`, and the resource's outputs. A
+resource that stands but fails answers present and names the failure its type
+lists, as
+[Observing resources](docs/observe.md#a-resource-that-stands-but-fails)
+explains. The kit's
 `observe` package has observers for common resource types, and you write one
 for any other type. A type whose snapshot entry carries an observe spec needs
 no observer, because `observe.KitObserver` runs the spec, as

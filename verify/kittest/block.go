@@ -259,6 +259,8 @@ type blockCheck struct {
 	ran      map[string]bool
 	problems []string
 	kept     map[string][]contract.Kept
+	// unlisted holds each resource and cause already failed as unlisted, so a cause every answer repeats fails once.
+	unlisted map[[2]string]bool
 }
 
 func (c *blockCheck) problem(format string, args ...any) {
@@ -529,6 +531,7 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 		return status, resp, false
 	}
 	if status == http.StatusOK {
+		c.unlistedCauses(resp)
 		return status, resp, true
 	}
 	named := false
@@ -544,6 +547,27 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 		c.problem("%s answered %d: %s", operation, status, resp.Error)
 	}
 	return status, resp, false
+}
+
+// unlistedCauses fails an observe answering a resource unhealthy with a cause its type does not list under failures, since the platform shows a failure by its type's entry.
+func (c *blockCheck) unlistedCauses(resp contract.Response) {
+	for _, name := range sortedKeys(resp.Resources) {
+		o := resp.Resources[name].Observe
+		if o == nil || o.Unhealthy == nil {
+			continue
+		}
+		t, _ := c.in.Config.Types.Lookup(o.Type)
+		cause := o.Unhealthy.Cause
+		key := [2]string{name, cause}
+		if c.unlisted[key] || slices.ContainsFunc(t.Failures, func(f contract.SnapshotFailure) bool { return f.Cause == cause }) {
+			continue
+		}
+		if c.unlisted == nil {
+			c.unlisted = map[[2]string]bool{}
+		}
+		c.unlisted[key] = true
+		c.resourceProblem(name, "observed unhealthy with the cause %q, which its type %s does not list under failures", cause, o.Type)
+	}
 }
 
 // requiredOutputs reads a secret output from the answer's secretOutputs, which carry no resource's name.

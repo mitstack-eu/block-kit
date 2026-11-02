@@ -22,6 +22,7 @@ behind the block's back. It returns a `contract.Observation`:
 | `StatusDetail` | A short reason, shown to people, for a state other than present |
 | `Identity` | The values the observer read the resource by. Nil keeps the identity it was handed, and one holding a request secret is refused |
 | `Redrive` | Read only beside `Unknown`, as [Serving lifecycle calls](handler.md#work-that-outlasts-one-call) explains |
+| `Unhealthy` | Read only beside `Present`: the failure a resource that stands still meets, as [the next section](#a-resource-that-stands-but-fails) explains |
 
 The `contract.ResourceRef` an observer receives carries the resource's name,
 its type, its identity and the call's `contract.Desired`. Its `Unsubscribing`
@@ -32,6 +33,27 @@ is the set of values that address it at the provider, such as
 the resource. Every shared observer answers `Unknown` without calling the
 provider when the identity lacks the key it needs, and reports that identity
 on a present answer.
+
+## A resource that stands but fails
+
+A resource can stand and still fail, such as a volume stuck attaching. Its
+observer answers `Present` and sets `Unhealthy` to a `contract.Unhealthy`.
+Its `Cause` is one of the causes the resource's catalogue type lists under
+`failures`, copied word for word, and its `Detail` is one sentence on what
+the observer saw:
+
+```go
+return contract.Observation{State: contract.Present, Outputs: outputs,
+	Unhealthy: &contract.Unhealthy{
+		Cause:  "the volume is still creating, attaching or detaching",
+		Detail: "the volume has been attaching for two hours",
+	}}, nil
+```
+
+The engine still reads the resource present, so an unhealthy answer drives
+no lifecycle step, and the platform shows the failure by the type's entry.
+The handler scrubs request secrets from both fields, and
+`kittest.AssertBlock` fails a cause the type does not list.
 
 ## The observers the kit ships
 
