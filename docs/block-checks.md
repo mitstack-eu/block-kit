@@ -260,7 +260,7 @@ it otherwise:
 | Condition | How the script proves it |
 |---|---|
 | The binary is an OpenTofu provider the image installs | Its path in the image is `/var/cache/tofu-plugins/<host>/<namespace>/<type>/<version>/<platform>/terraform-provider-<type>`, with an optional `_` suffix. That directory is the plugin cache the opentofu-operator image names in `/etc/tofu.tfrc` |
-| No openpgp code is compiled into it | `cmd/gofuncnames` prints the function names in the binary's `.gopclntab`, inlined ones included. The Go runtime keeps that table for stack traces, so stripping a binary leaves it. It must name at least one `golang.org/x/crypto` function and none under `golang.org/x/crypto/openpgp` |
+| No openpgp code is compiled into it | `cmd/gofuncnames` prints the function names in the binary's `.gopclntab`, inlined ones included. The Go runtime keeps that table for stack traces, so stripping a binary leaves it. It must name at least one `golang.org/x/crypto` function and none under `golang.org/x/crypto/openpgp`. A refusal for openpgp code lists every openpgp name the table holds |
 | The provider has shipped no release on a fixed x/crypto | The script reads the provider's newest release from `https://<host>/v1/providers/<namespace>/<type>/versions`. It then reads that release's `go.mod` from `https://raw.githubusercontent.com/<owner>/<repo>/v<release>/go.mod`, the repository named by the binary's main module. Its `golang.org/x/crypto` requirement must sit below the fix |
 
 The script also runs govulncheck v1.9.0, checked by its module sum, on each
