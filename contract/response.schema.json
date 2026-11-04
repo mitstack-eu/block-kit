@@ -32,8 +32,8 @@
       "additionalProperties": { "type": "string" }
     },
     "ownSecrets": {
-      "description": "Secrets the block keeps for its own later calls, keyed by names it chooses. The platform lays them over the subscription's stored set on a subscribe, an upgrade or a settle validate that succeeds, pending or not, hands that set back on every later request of this subscription alone, and deletes it at unsubscribe. A name the answer leaves out keeps its value. The whole set, encoded as JSON, is at most 8 KiB (8192 bytes). They are never outputs, so no other block or listing receives them.",
-      "type": "object",
+      "description": "Secrets the block keeps for its own later calls, keyed by names it chooses. The platform lays them over the subscription's stored set on a subscribe, an upgrade or a settle validate that succeeds, pending or not, hands that set back on every later request of this subscription alone, and deletes it at unsubscribe. A name the answer leaves out keeps its value. The whole set, encoded as JSON, is at most 8 KiB (8192 bytes), which the platform checks, failing the call that would pass it. They are never outputs, so no other block or listing receives them. Same null tolerance as outputs.",
+      "type": ["object", "null"],
       "additionalProperties": { "type": "string" }
     },
     "error": {
