@@ -18,17 +18,7 @@ import (
 // A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue skips it because a replayed credential may have expired.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := h.secretsFor(req)
-
-	var callback *events.Callback
-	if req.EventsCallback != nil {
-		callback = &events.Callback{URL: req.EventsCallback.URL, Token: req.EventsCallback.Token}
-	}
-	ctx := events.WithEnvelope(r.Context(), events.Envelope{
-		SubscriptionID: req.SubscriptionID,
-		Operation:      req.Operation,
-		IdempotencyKey: req.IdempotencyKey,
-		Callback:       callback,
-	})
+	ctx := requestContext(r.Context(), req)
 
 	run := func() (int, []byte, bool) {
 		status, resp := h.dispatchVerbRecovering(ctx, req, secrets)
@@ -55,6 +45,20 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(raw)
+}
+
+// requestContext carries req's events envelope, through which the block emits events and reads platform routes as the request it serves.
+func requestContext(ctx context.Context, req contract.Request) context.Context {
+	var callback *events.Callback
+	if req.EventsCallback != nil {
+		callback = &events.Callback{URL: req.EventsCallback.URL, Token: req.EventsCallback.Token}
+	}
+	return events.WithEnvelope(ctx, events.Envelope{
+		SubscriptionID: req.SubscriptionID,
+		Operation:      req.Operation,
+		IdempotencyKey: req.IdempotencyKey,
+		Callback:       callback,
+	})
 }
 
 // answerSettled is the one verdict the idempotency cache and the verb's event both read: an answer is settled unless it is pending or an unsubscribe still observed present.

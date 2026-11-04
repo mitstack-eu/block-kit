@@ -75,6 +75,9 @@ type Request struct {
 // OperationIssue asks a capability for one app's credential, beside the four lifecycle verbs.
 const OperationIssue = "issue"
 
+// OperationLogs asks a block for one subscription's recent lines, sent to /logs and never to /hook.
+const OperationLogs = "logs"
+
 // Credential is what a capability issues one app: values that are secret, and when they stop working.
 type Credential struct {
 	Values    map[string]string `json:"values"`
@@ -268,6 +271,7 @@ var validOperations = map[string]bool{
 	"upgrade":      true,
 	"validate":     true,
 	OperationIssue: true,
+	OperationLogs:  true,
 }
 
 // DecodeRequest decodes raw into a Request validated against envelope.schema.json, naming the JSON field in every error.
@@ -299,7 +303,7 @@ func DecodeRequest(raw []byte) (Request, error) {
 
 	if !validOperations[req.Operation] {
 		return Request{}, fmt.Errorf(
-			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, got %q",
+			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, got %q",
 			"operation", req.Operation)
 	}
 

@@ -10,8 +10,9 @@ path in brief, and this page fills in each part.
 
 `handler.New` takes a `handler.Config` and returns a `*handler.Handler`. That
 is an `http.Handler` serving `POST /hook`, where the engine sends lifecycle
-calls, and `GET /logs`, where the platform reads the operator's recent log
-lines. The example block builds its config in `newConfig` and serves it from
+calls, and `/logs`, where the platform reads recent log lines, as
+[Serving a subscription's logs](#serving-a-subscriptions-logs) describes. The
+example block builds its config in `newConfig` and serves it from
 `main`:
 
 ```go
@@ -36,6 +37,7 @@ server := &http.Server{Addr: listenAddr, Handler: h, ReadHeaderTimeout: readHead
 | `Types` | Yes, for the checks | The type snapshot your manifest names its types from, which `kittest.AssertBlock` and the unsubscribe of an `endsWithSubscription` type read |
 | `TypeObservers` | No | Observers keyed by type id, for a resource an earlier version of the block declared |
 | `Logs` | No | The `*webhook.LogBuffer` that `GET /logs` serves, which answers 404 without one |
+| `SubscriptionLogs` | When the manifest lists `logs` | The function that answers `POST /logs` with one subscription's lines |
 | `PublicKey`, `Replay`, `Now` | No | Replacements a test supplies for the key lookup, the nonce store and the clock |
 
 `handler.New` returns an error for a configuration it cannot serve safely: no
@@ -93,7 +95,7 @@ refusal. The class follows the status, as this table shows.
 | 400 | `malformed-request` | The body cannot be read, is too large, or fails `contract.DecodeRequest` |
 | 401 | `untrusted-request` | A signature, replay or OBO token check fails |
 | 404 | `unknown-path` | The path is neither `/hook` nor `/logs`, or `/logs` on a handler with no `Config.Logs` |
-| 405 | `method-not-allowed` | `/hook` is called with anything but POST, or `/logs` with anything but GET |
+| 405 | `method-not-allowed` | `/hook` is called with anything but POST, or `/logs` with anything but GET or, on a handler with a `Config.SubscriptionLogs`, POST |
 
 ## The request your code receives
 
@@ -495,3 +497,60 @@ The last row compares the credential with every secret the request carried:
 each connection secret, each secret input, each app secret, each own secret
 and the call's tokens. It compares whole values only, so a value derived from a secret
 passes, and the capability's own code keeps such a credential from an app.
+
+## Serving a subscription's logs
+
+The console's Troubleshoot panel and MCP's `get_app_logs` show a part's recent
+lines. The platform reads them from the block in one of two ways, and the
+block's manifest decides which.
+
+A block that keeps one operator-wide buffer sets `Config.Logs`. The platform
+reads it with a bodyless signed `GET /logs`, which names no subscription, so
+every subscription sees the same lines.
+
+A block that serves each subscription's own lines lists `logs` under
+`spec.lifecycle.operations` and names a function in `Config.SubscriptionLogs`:
+
+```yaml
+lifecycle:
+  endpoint: https://app-slice.example.com/hook
+  operations: [subscribe, unsubscribe, upgrade, validate, logs]
+  contract: kit/v1
+```
+
+```go
+cfg.SubscriptionLogs = func(ctx context.Context, d contract.Desired) ([]string, error) {
+	host := d.Bindings["docker-host"]
+	report, found, err := dockerhost.NewestReport(ctx, observe.NodeReportsClient{}, d, host["subscriptionId"])
+	if err != nil || !found {
+		return nil, err
+	}
+	return appLines(report, d.AppID)
+}
+```
+
+Here `appLines` stands for your block's own code that picks the app's lines
+out of the host's report.
+
+The platform then sends a signed `POST /logs` whose body is a request with the
+operation `logs`. It carries what a hook carries for that subscription: its
+params, connections, secrets and bindings, and the events callback through
+which `ctx` reaches the platform's routes, such as the host's node reports.
+The handler trusts it as it trusts a hook, checking the signature, the replay
+window and the OBO token. It then calls your function with the request's
+`contract.Desired` and answers `{"lines": [...]}`, with each secret the
+request carried scrubbed from every line.
+
+| Case | Answer |
+|---|---|
+| A signature, replay or OBO token check fails | 401, before your function runs |
+| The request's operation is not `logs` | 400 |
+| A `logs` request sent to `/hook` | 400 |
+| Your function returns a `handler.Refuse` error | 400, carrying its class |
+| Your function returns any other error, or panics | 500 |
+| A `POST /logs` to a handler with no `Config.SubscriptionLogs` | 405 |
+
+`handler.New` refuses a manifest that lists `logs` without a
+`Config.SubscriptionLogs`, and a `Config.SubscriptionLogs` on a manifest that
+does not list `logs`, since the platform would then never call it. A handler
+may set both fields, and the `GET /logs` keeps answering from the buffer.
