@@ -3,6 +3,6 @@ module github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/rescuessh
 
 go 1.26.0
 
-require golang.org/x/crypto v0.58.0
+require golang.org/x/crypto v0.58.1-0.20261009181718-2f1f834330b2
 
 require golang.org/x/sys v0.49.0 // indirect
