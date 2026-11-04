@@ -1,8 +1,8 @@
 package ghapi
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -145,17 +145,17 @@ func (c *Client) sendRuleset(ctx context.Context, method, path string, r ruleset
 	return nil
 }
 
-// getJSON decodes a whole 200 answer into v through get, refusing any other status and an answer longer than limit.
+// getJSON decodes a 200 answer into v, refusing any other status, and get refuses one longer than limit.
 func (c *Client) getJSON(ctx context.Context, path string, limit int64, v any) error {
 	route := "GET " + path
-	status, raw, _, err := c.get(ctx, path, limit+1)
+	status, raw, _, err := c.get(ctx, path, limit)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("ghapi: github %s returned %d: %s", route, status, safe.LogSafe(string(raw[:min(len(raw), 4<<10)]), c.Token))
 	}
-	if err := decodeAnswer(bytes.NewReader(raw), limit, v); err != nil {
+	if err := json.Unmarshal(raw, v); err != nil {
 		return fmt.Errorf("ghapi: decode the answer to %s: %w", route, err)
 	}
 	return nil
