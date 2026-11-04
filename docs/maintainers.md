@@ -58,10 +58,14 @@ A pull request that changes the scan also runs
 `.github/workflows/scan-image-proof.yml`. It builds one image holding the AWS
 provider 6.71.0 and one holding the Scaleway provider 2.89.0, each fetched by
 the checksum the registry publishes, and runs `scripts/scan-image.sh` on both.
-It expects GO-2026-5932 accepted in each, with the AWS scan passing and the
-Scaleway scan failing on its x/net and standard-library findings alone. A run
-of that workflow on `main` by `workflow_dispatch` repeats the proof with no
-change.
+It expects GO-2026-5932 accepted in each and refused nowhere.
+
+The AWS scan is expected to pass. The Scaleway release also carries x/net and
+standard-library findings that have fixes, which the scan refuses as it should,
+so its scan is expected to exit 1. Once a Scaleway release clears them, that
+job fails until its matrix row moves to the new release. To repeat the proof
+on `main` with no change, start the workflow by hand from the repository's
+Actions tab, which its `workflow_dispatch` trigger allows.
 
 ## Release
 

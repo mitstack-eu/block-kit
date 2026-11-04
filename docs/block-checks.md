@@ -255,13 +255,15 @@ The exception covers [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932), an
 advisory in the Go vulnerability database that marks the whole
 `golang.org/x/crypto/openpgp` package unsafe. Its fix is a commit of
 golang.org/x/crypto that no release names yet. Go knows that commit only by
-the pseudo-version `v0.58.1-0.20261009181718-2f1f834330b2`, and every
-released x/crypto, v0.58.0 included, orders below it. Trivy therefore reports
-the advisory in every OpenTofu provider built on a released x/crypto, whether
-or not the provider uses openpgp.
+the pseudo-version `v0.58.1-0.20261009181718-2f1f834330b2`, which Go's
+version order puts above v0.58.0 and below v0.58.1. Every x/crypto release up
+to v0.58.0 therefore counts as affected. Trivy reports the advisory in every
+OpenTofu provider built on such a release, whether or not the provider uses
+openpgp.
 
-The exception covers a provider binary in the image's plugin cache and no
-other binary. Your block's own binary, such as its operator, keeps the full
+An OpenTofu provider is the plugin OpenTofu downloads to call a cloud's API,
+and `tofu init` keeps it in the image's plugin cache. The exception covers a
+provider binary in that cache and no other binary. Your block's own binary, such as its operator, keeps the full
 refusal for GO-2026-5932, as for every other finding.
 `scripts/go-2026-5932-exception.sh` accepts the finding only when each
 condition in this table holds, and refuses it otherwise:
@@ -273,7 +275,8 @@ condition in this table holds, and refuses it otherwise:
 | The provider has shipped no release on a fixed x/crypto | The script reads the provider's newest release from `https://<host>/v1/providers/<namespace>/<type>/versions`. It then reads that release's `go.mod` from `https://raw.githubusercontent.com/<owner>/<repo>/v<release>/go.mod`. `<owner>/<repo>` comes from the binary's main module, the path `go version -m <binary>` prints on its `mod` line. The release's `golang.org/x/crypto` requirement must order below the fixed version above |
 
 The script also runs govulncheck v1.9.0, the Go team's vulnerability scanner,
-checked by its module sum, on each provider binary that holds the finding. It
+on each provider binary that holds the finding. Its install is checked against
+its module sum, the hash the Go checksum database records for that release. It
 prints govulncheck's result, which does not decide. A provider release is
 stripped, which means it is built without the symbol table govulncheck reads
 to see which packages a binary holds. govulncheck then judges by module
@@ -281,7 +284,8 @@ versions alone, which its output calls go.mod-level precision, and lists every
 openpgp package as present. If govulncheck cannot run, the script prints why
 and the function table alone decides.
 
-For the AWS provider 6.71.0, one accepted finding reads like this:
+The script names each binary by its path inside the image, with no leading
+slash. For the AWS provider 6.71.0, one accepted finding reads like this:
 
 ```text
   govulncheck v1.9.0 against https://vuln.go.dev, modified 2026-11-02T22:01:43Z, ran at go.mod-level precision because the binary is stripped, so it cannot show which packages are present, and it does not decide:
