@@ -26,7 +26,7 @@ func NeedsApp(format string, args ...any) error {
 	return Refuse(ClassNeedsApp, format, args...)
 }
 
-// ParamAppName is the param the platform fills with the app's name for every block, left out only by a dry run naming no app.
+// ParamAppName is the param the platform fills with the app's name for every block, left out only by a dry run naming neither an app nor its name.
 const ParamAppName = "appName"
 
 // NeedsAppName answers NeedsApp for a request naming neither an app nor its name, and nil otherwise.
