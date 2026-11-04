@@ -64,8 +64,8 @@ func ownObservers(in Block, spec contract.ManifestSpec, ran map[string]bool) []s
 
 // probeReads validates each kit-observed resource twice, since the first may be a full read, and counts the provider reads of the second, a probe, against its type's maxReads.
 func (c *blockCheck) probeReads() {
-	for _, entry := range c.spec.Resources {
-		rec := c.desired.RecordedResources[entry.Name]
+	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+		rec := c.desired.RecordedResources[name]
 		t, ok := c.in.Config.Types.Lookup(rec.Type)
 		if !ok || !t.KitObserved() {
 			continue
@@ -73,12 +73,12 @@ func (c *blockCheck) probeReads() {
 		maxReads := t.ObserveSpec.Probe.MaxReads
 		counter, ok := c.in.Provider.(ReadCounter)
 		if !ok {
-			c.resourceProblem(entry.Name, "its type %s carries an observe spec, but Provider is no kittest.ReadCounter, so whether its probe stays within maxReads %d is unproven", rec.Type, maxReads)
+			c.resourceProblem(name, "its type %s carries an observe spec, but Provider is no kittest.ReadCounter, so whether its probe stays within maxReads %d is unproven", rec.Type, maxReads)
 			continue
 		}
 		c.ran[guardProbeReads] = true
 		d := c.desired
-		d.Resource, d.ResourceType, d.ResourceIdentity = entry.Name, rec.Type, rec.Identity
+		d.Resource, d.ResourceType, d.ResourceIdentity = name, rec.Type, rec.Identity
 		if _, _, ok := c.sendOK("validate", d); !ok {
 			continue
 		}
@@ -87,7 +87,7 @@ func (c *blockCheck) probeReads() {
 			continue
 		}
 		if reads := counter.Reads() - before; reads > maxReads {
-			c.resourceProblem(entry.Name, "a probe of its type %s made %d provider reads, above the type's maxReads of %d", rec.Type, reads, maxReads)
+			c.resourceProblem(name, "a probe of its type %s made %d provider reads, above the type's maxReads of %d", rec.Type, reads, maxReads)
 		}
 	}
 }

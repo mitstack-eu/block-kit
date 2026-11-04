@@ -212,9 +212,18 @@ Each observer is handed the identity and type `EnsureResources` reported for
 its resource. When nothing was reported, it gets what the engine recorded,
 and failing that, no identity and the one type its manifest entry lists. A
 reported resource the manifest does not declare, or of a type its entry does
-not list, answers 400. The answer carries each reported type and identity as
-that resource's `ensure` outcome, so the engine records them even when the
-call stops pending before it observes that resource.
+not list, answers 400, and so does a name reported twice. The answer carries
+each reported type and identity as that resource's `ensure` outcome, so the
+engine records them even when the call stops pending before it observes that
+resource.
+
+A member of an entry marked many, named `<entry>/<key>` as
+[Writing a block's manifest](manifest.md#requirements-resources-and-what-a-block-provides)
+describes, is observed as a resource of its own through its entry's observer.
+The members take their entry's place in manifest order, in name order among
+themselves. A subscribe or upgrade observes each member `EnsureResources`
+reported, and an unsubscribe or validate each member the engine recorded. A
+validate naming one member asks the entry's observer about that member alone.
 
 An observer that reads the identity at the provider returns it in
 `Observation.Identity`, and the `observe` outcome carries that identity. This

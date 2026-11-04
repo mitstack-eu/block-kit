@@ -93,10 +93,11 @@ func kitObservedDeclaration(cfg Config, decl contract.ManifestResource) (bool, e
 	return all, nil
 }
 
+// declaredResource matches an entry by its own name, or an entry marked many by the name of one of its members.
 func (h *Handler) declaredResource(name string) (namedResource, bool) {
 	for _, nr := range h.declared {
-		if nr.name == name {
-			return nr, true
+		if nr.name == name || nr.declaration.IsMember(name) {
+			return nr.member(name), true
 		}
 	}
 	return namedResource{}, false

@@ -265,6 +265,23 @@ type blockCheck struct {
 	failedRemovals map[string]bool
 }
 
+// unitNames lists each entry not marked many and, in name order, each member of an entry marked many that held names.
+func unitNames[V any](spec contract.ManifestSpec, held map[string]V) []string {
+	var names []string
+	for _, entry := range spec.Resources {
+		if !entry.Many {
+			names = append(names, entry.Name)
+			continue
+		}
+		for _, name := range sortedKeys(held) {
+			if entry.IsMember(name) {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
 func (c *blockCheck) problem(format string, args ...any) {
 	c.problems = append(c.problems, fmt.Sprintf(format, args...)+c.label)
 }
@@ -278,9 +295,9 @@ func (c *blockCheck) run() {
 	if !ok {
 		return
 	}
-	for _, entry := range c.spec.Resources {
-		if len(c.desired.RecordedResources[entry.Name].Identity) == 0 {
-			c.resourceProblem(entry.Name, "observed present after subscribe with no identity, so the check cannot lose it from the provider; report each resource's identity through handler.ResourceReporter or the Observation its observer returns")
+	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+		if len(c.desired.RecordedResources[name].Identity) == 0 {
+			c.resourceProblem(name, "observed present after subscribe with no identity, so the check cannot lose it from the provider; report each resource's identity through handler.ResourceReporter or the Observation its observer returns")
 		}
 	}
 	c.requiredOutputs(resp, "subscribe")
@@ -327,8 +344,8 @@ func (c *blockCheck) commitContributions(resp contract.Response) {
 	if !ok {
 		return
 	}
-	for _, entry := range c.spec.Resources {
-		o := resp.Resources[entry.Name].Observe
+	for _, name := range unitNames(c.spec, resp.Resources) {
+		o := resp.Resources[name].Observe
 		if o == nil || o.Type != "github.scaffold-contribution" {
 			continue
 		}
@@ -338,7 +355,7 @@ func (c *blockCheck) commitContributions(resp contract.Response) {
 		if err := json.Unmarshal([]byte(o.Outputs["scaffoldContribution"]), &offer); err != nil || len(offer.Files) == 0 {
 			continue
 		}
-		rec, err := landing.RecordFromIdentity(c.desired.RecordedResources[entry.Name].Identity)
+		rec, err := landing.RecordFromIdentity(c.desired.RecordedResources[name].Identity)
 		if err != nil || repos[rec.Repository] == nil {
 			continue
 		}
@@ -350,7 +367,7 @@ func (c *blockCheck) commitContributions(resp contract.Response) {
 		main, commit := repo.Main(), map[string]string{}
 		for _, path := range sortedKeys(offer.Files) {
 			if blob := landing.BlobHash([]byte(offer.Files[path])); blobs[path] != blob {
-				c.resourceProblem(entry.Name, "it offers %s with blob %s, but its landing record does not name it at that blob, so unsubscribe cannot remove it", path, blob)
+				c.resourceProblem(name, "it offers %s with blob %s, but its landing record does not name it at that blob, so unsubscribe cannot remove it", path, blob)
 			}
 			if _, held := main[path]; !held {
 				commit[path] = offer.Files[path]
@@ -376,9 +393,9 @@ type changedFile struct {
 // changeALandedFile reads each file-landing resource's record and, in each repository, changes the first file a record created there, as an app edits a landed file; it returns nil for a block that lands no files.
 func (c *blockCheck) changeALandedFile() *landedFiles {
 	var names []string
-	for _, entry := range c.spec.Resources {
-		if landing.LandsFiles(c.desired.RecordedResources[entry.Name].Type) {
-			names = append(names, entry.Name)
+	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+		if landing.LandsFiles(c.desired.RecordedResources[name].Type) {
+			names = append(names, name)
 		}
 	}
 	if len(names) == 0 {
@@ -455,9 +472,10 @@ var settleBudget = 10 * time.Second
 
 const settlePause = 20 * time.Millisecond
 
-// converge settles operation as the engine does: while the answer leaves a declared resource not present, it validates with what every answer so far reported of each resource, and sends operation again when a validate asks for a re-drive.
+// converge settles operation as the engine does: while the answer leaves a declared resource not present, it validates with what every answer so far reported of each resource, and sends operation again when a validate asks for a re-drive. A member the operation stops reporting leaves the record, and is proven absent once the rest settles.
 func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 	recorded := maps.Clone(c.desired.RecordedResources)
+	dropped := map[string]contract.RecordedResource{}
 	call, deadline := operation, time.Now().Add(settleBudget)
 	for {
 		d := c.desired
@@ -467,8 +485,12 @@ func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 			return resp, false
 		}
 		recorded = c.recordReported(recorded, resp)
+		if call == operation {
+			c.dropUnreported(recorded, resp, dropped)
+		}
 		if c.settled(resp) {
 			c.desired.RecordedResources = recorded
+			c.proveDroppedAbsent(operation, dropped)
 			return resp, true
 		}
 		if time.Now().After(deadline) {
@@ -488,25 +510,61 @@ func (c *blockCheck) recordReported(recorded map[string]contract.RecordedResourc
 	if recorded == nil {
 		recorded = make(map[string]contract.RecordedResource, len(c.spec.Resources))
 	}
-	for _, entry := range c.spec.Resources {
-		for _, call := range []*contract.CallOutcome{resp.Resources[entry.Name].Ensure, resp.Resources[entry.Name].Observe} {
+	for _, name := range unitNames(c.spec, resp.Resources) {
+		for _, call := range []*contract.CallOutcome{resp.Resources[name].Ensure, resp.Resources[name].Observe} {
 			if call == nil {
 				continue
 			}
-			rec := recorded[entry.Name]
+			rec := recorded[name]
 			rec.Type = cmp.Or(call.Type, rec.Type)
 			if len(call.Identity) > 0 {
 				rec.Identity = call.Identity
 			}
-			recorded[entry.Name] = rec
+			recorded[name] = rec
 		}
 	}
 	return recorded
 }
 
+// dropUnreported moves into dropped each recorded member the answer carries no ensure outcome for, unless the answer is pending with no ensure outcome at all, as a block waiting before its ensure answers.
+func (c *blockCheck) dropUnreported(recorded map[string]contract.RecordedResource, resp contract.Response, dropped map[string]contract.RecordedResource) {
+	ensured := false
+	for _, o := range resp.Resources {
+		ensured = ensured || o.Ensure != nil
+	}
+	if resp.Pending && !ensured {
+		return
+	}
+	for _, name := range sortedKeys(recorded) {
+		if resp.Resources[name].Ensure == nil && slices.ContainsFunc(c.spec.Resources, func(e contract.ManifestResource) bool { return e.IsMember(name) }) {
+			dropped[name] = recorded[name]
+			delete(recorded, name)
+		}
+	}
+}
+
+// proveDroppedAbsent validates each dropped member by name, as the engine proves a member absent before the operation that dropped it settles, then checks the provider again for a stray object.
+func (c *blockCheck) proveDroppedAbsent(operation string, dropped map[string]contract.RecordedResource) {
+	if len(dropped) == 0 {
+		return
+	}
+	for _, name := range sortedKeys(dropped) {
+		d := c.desired
+		d.Resource, d.ResourceType, d.ResourceIdentity = name, dropped[name].Type, dropped[name].Identity
+		_, resp, ok := c.sendOK("validate", d)
+		if !ok {
+			continue
+		}
+		if o := resp.Resources[name].Observe; o == nil || o.State != contract.Absent {
+			c.resourceProblem(name, "the %s stopped reporting it, but a validate naming it does not observe it absent; Ensure removes a member it stops reporting", operation)
+		}
+	}
+	c.taggedMatchDeclared()
+}
+
 func (c *blockCheck) settled(resp contract.Response) bool {
-	for _, entry := range c.spec.Resources {
-		if o := resp.Resources[entry.Name].Observe; o == nil || o.State != contract.Present {
+	for _, name := range unitNames(c.spec, resp.Resources) {
+		if o := resp.Resources[name].Observe; o == nil || o.State != contract.Present {
 			return false
 		}
 	}
@@ -515,9 +573,9 @@ func (c *blockCheck) settled(resp contract.Response) bool {
 
 func (c *blockCheck) unsettled(operation string, resp contract.Response) {
 	named := false
-	for _, entry := range c.spec.Resources {
-		if o := resp.Resources[entry.Name].Observe; o != nil && o.State != contract.Present {
-			c.resourceProblem(entry.Name, "observed %s after %s and validates for %s, want present", o.State, operation, settleBudget)
+	for _, name := range unitNames(c.spec, resp.Resources) {
+		if o := resp.Resources[name].Observe; o != nil && o.State != contract.Present {
+			c.resourceProblem(name, "observed %s after %s and validates for %s, want present", o.State, operation, settleBudget)
 			named = true
 		}
 	}
@@ -701,10 +759,10 @@ func (c *blockCheck) taggedRoom() map[string]int {
 // upgrade flags a stateful declared type when Upgrade is nil, since its replacement cannot be proved.
 func (c *blockCheck) upgrade() bool {
 	if c.in.Upgrade == nil {
-		for _, entry := range c.spec.Resources {
-			typ := c.desired.RecordedResources[entry.Name].Type
+		for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+			typ := c.desired.RecordedResources[name].Type
 			if t, ok := c.in.Config.Types.Lookup(typ); ok && t.Stateful {
-				c.resourceProblem(entry.Name, "its type %s is stateful, but Upgrade is nil, so the check cannot prove an upgrade names its replacement", typ)
+				c.resourceProblem(name, "its type %s is stateful, but Upgrade is nil, so the check cannot prove an upgrade names its replacement", typ)
 			}
 		}
 		return true
@@ -722,15 +780,15 @@ func (c *blockCheck) upgrade() bool {
 		return false
 	}
 	c.ran[guardReplacement] = true
-	for _, entry := range c.spec.Resources {
-		was, is := before[entry.Name], c.desired.RecordedResources[entry.Name]
-		if len(was.Identity) == 0 || maps.Equal(was.Identity, is.Identity) || slices.Contains(validated.Replaces, entry.Name) {
+	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+		was, is := before[name], c.desired.RecordedResources[name]
+		if len(was.Identity) == 0 || maps.Equal(was.Identity, is.Identity) || slices.Contains(validated.Replaces, name) {
 			continue
 		}
 		if t, ok := c.in.Config.Types.Lookup(is.Type); ok && t.Stateful {
-			c.resourceProblem(entry.Name, "the upgrade replaced it, but the validate before it did not name it in replaces; its type %s is stateful, so the replacement loses its data unannounced", is.Type)
+			c.resourceProblem(name, "the upgrade replaced it, but the validate before it did not name it in replaces; its type %s is stateful, so the replacement loses its data unannounced", is.Type)
 		} else {
-			c.resourceProblem(entry.Name, "the upgrade replaced it, but the validate before it did not name it in replaces")
+			c.resourceProblem(name, "the upgrade replaced it, but the validate before it did not name it in replaces")
 		}
 	}
 	c.requiredOutputs(resp, "upgrade")
@@ -740,16 +798,16 @@ func (c *blockCheck) upgrade() bool {
 // observesTheProvider upgrades again afterwards so the teardown has the block whole.
 func (c *blockCheck) observesTheProvider() bool {
 	var lost []string
-	for _, entry := range c.spec.Resources {
-		r := c.desired.RecordedResources[entry.Name]
+	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+		r := c.desired.RecordedResources[name]
 		if len(r.Identity) == 0 {
 			continue
 		}
-		if err := c.in.Provider.Lose(context.Background(), contract.CreatedResource{Name: entry.Name, Type: r.Type, Identity: r.Identity}); err != nil {
-			c.resourceProblem(entry.Name, "the provider could not lose it: %v", err)
+		if err := c.in.Provider.Lose(context.Background(), contract.CreatedResource{Name: name, Type: r.Type, Identity: r.Identity}); err != nil {
+			c.resourceProblem(name, "the provider could not lose it: %v", err)
 			return false
 		}
-		lost = append(lost, entry.Name)
+		lost = append(lost, name)
 	}
 	if len(lost) == 0 {
 		return true
@@ -788,11 +846,11 @@ func (c *blockCheck) unsubscribe() {
 			c.notAbsent(resp)
 			return
 		}
-		for _, entry := range c.spec.Resources {
-			if o := resp.Resources[entry.Name].Observe; o != nil && o.State == contract.Absent {
-				rec := d.RecordedResources[entry.Name]
+		for _, name := range unitNames(c.spec, resp.Resources) {
+			if o := resp.Resources[name].Observe; o != nil && o.State == contract.Absent {
+				rec := d.RecordedResources[name]
 				rec.State = contract.Absent
-				d.RecordedResources[entry.Name] = rec
+				d.RecordedResources[name] = rec
 			}
 		}
 		time.Sleep(settlePause)
@@ -812,9 +870,9 @@ func (c *blockCheck) keepKept(resp contract.Response) {
 
 func (c *blockCheck) notAbsent(resp contract.Response) {
 	named := false
-	for _, entry := range c.spec.Resources {
-		if o := resp.Resources[entry.Name].Observe; o != nil && o.State != contract.Absent {
-			c.resourceProblem(entry.Name, "observed %s after unsubscribe re-sent for %s, want absent", o.State, settleBudget)
+	for _, name := range unitNames(c.spec, resp.Resources) {
+		if o := resp.Resources[name].Observe; o != nil && o.State != contract.Absent {
+			c.resourceProblem(name, "observed %s after unsubscribe re-sent for %s, want absent", o.State, settleBudget)
 			named = true
 		}
 	}

@@ -93,6 +93,12 @@ tag fails, named as `untagged`. A resource claims first the listed object
 whose id equals one of its identity values, and only then any other object of
 its type, so the guard names exactly the resource left untagged.
 
+Each member of an entry marked many is a recorded resource of its own, so two
+members of one entry account for two listed objects. When an upgrade stops
+reporting a member, the check drops it from the record, as the engine does. It
+then sends a validate naming that member, which must read absent, and runs the
+tagging guard again, so a server the block left behind fails by its id.
+
 A requirement listing more than one type runs the check once per listed type,
 with `Requirements` giving each type's outputs, and each problem names the
 type. `kittest.CheckBlock` does the same work and returns the problems as

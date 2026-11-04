@@ -98,14 +98,14 @@ request. A changed version needs both `spec.releaseClass` and
 A block names what it needs and what it creates by exact resource type (a
 type id from mitstack's type catalogue, such as `hetzner.firewall`). Each
 entry under `requires` or `resources` is a type id on its own, as in
-`github.repository`, or a mapping of `type` and `name`. A requirement's
-mapping may also set `many`. The `type` is one id or a list of ids, and an
-entry that lists more than one type needs a `name`.
+`github.repository`, or a mapping of `type` and `name`. Either mapping may
+also set `many`. The `type` is one id or a list of ids, and an entry that
+lists more than one type needs a `name`.
 
 An entry without a name is named by its type id, and the block's code reads it
-under that name. Two entries that would share a name are refused. A resource's
-name stays the same across versions, because the platform records each
-resource under it.
+under that name. Two entries that would share a name are refused, and so is a
+resource name holding a slash. A resource's name stays the same across
+versions, because the platform records each resource under it.
 
 A requirement listing several types is met by whichever of them the app
 offers. The request's `requirementTypes` says which type met each
@@ -117,7 +117,29 @@ creates it.
 With `many: true`, a requirement collects every resource of its types that the
 app offers, as a list, and the block subscribes even when the list is empty.
 
-`provides` names resources from the block's own `resources`. The outputs of a
+A resource entry with `many: true` stands for zero or more members of its
+type. It suits a resource the block creates a varying number of times, such as
+the servers of a node pool. Here the block keeps one gateway and any number of
+Cloud workers:
+
+```yaml
+resources:
+  - { name: gateway, type: hetzner.server }
+  - { name: cloud-worker, type: hetzner.server, many: true }
+```
+
+The block's `EnsureResources` reports each member under `<entry>/<key>`, such
+as `cloud-worker/fsn1-1`, and reports none while the pool is empty. The key is
+1 to 40 lowercase letters, digits and hyphens, and it names the member for its
+whole life. The handler answers each member under its own name, observes it
+through the entry's observer, here `Config.Observers["cloud-worker"]`, and
+refuses a report under the entry's own name. A block marking an entry many
+must implement `handler.ResourceReporter` or `handler.OwnSecretsReporter`,
+because only a report names the members. `ManifestResource.IsMember` tells
+whether a name is one of an entry's members.
+
+`provides` names resources from the block's own `resources`, and never an
+entry marked many, because a binding names one resource. The outputs of a
 provided resource, such as a host's address, reach the other blocks of the app
 that require its type.
 
