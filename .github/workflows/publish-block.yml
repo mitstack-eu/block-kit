@@ -45,14 +45,14 @@
 # build. A tag that already has its record ends green
 # with no writes.
 #
-# Two events scan the block's image, each with the kit's scripts/scan-image.sh,
-# which refuses every finding that has a fixed version. On a pull request the
-# conformance job that runs builds the image, pushes it nowhere and scans it,
-# so a finding fails the conformance check before merge. On a push to the
-# default branch the publish job scans the image it built before any push. No
-# other event scans the image. The one exception is GO-2026-5932 in an
-# OpenTofu provider binary that scripts/go-2026-5932-exception.sh proves free
-# of openpgp code.
+# Two events scan the block's image with the kit's scripts/scan-image.sh, which
+# refuses every finding that has a fixed version. On a pull request, whichever
+# conformance job runs builds the image, pushes it nowhere and scans it, so a
+# finding fails the conformance check before merge. On a push to the default
+# branch, the publish job scans the image it built before any push. No other
+# event scans the image. The one finding the script accepts is GO-2026-5932 in
+# an OpenTofu provider binary that scripts/go-2026-5932-exception.sh proves
+# free of openpgp code.
 name: publish-block
 
 on:

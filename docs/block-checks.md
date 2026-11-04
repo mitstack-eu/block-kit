@@ -251,6 +251,14 @@ unset, so no ignore file or setting can silence a finding. Any finding that
 has a fixed version, at any severity, stops the job, with the one exception
 below. An error of Trivy's own stops the job too.
 
+A pull request runs the same scan before merge, so a finding the publish job
+would refuse fails `block / conformance` first. The conformance job for your
+block type builds your image, tags it `block:<commit>` on the runner and
+pushes it nowhere. It then runs `scripts/scan-image.sh` from the kit at
+`kit-ref`, the script and pin the publish job runs, so a block naming no image
+registry is scanned too. On a push to your default branch, the publish job
+alone scans the image.
+
 The exception covers [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932), an
 advisory in the Go vulnerability database that marks the whole
 `golang.org/x/crypto/openpgp` package unsafe. Its fix is a commit of
@@ -345,7 +353,8 @@ The `opentofu-conformance` job runs in place of the Go `conformance` job and
 reports under the same check name, so `block / conformance` stays the check
 your `main` requires. The operator image is private, so the job assumes the
 verify role to pull it. The job builds your block's image once and runs three
-checks inside it:
+checks inside it, and on a pull request it then scans the image as the
+publish job does:
 
 | Check | What it runs |
 |---|---|
