@@ -10,9 +10,6 @@ const refusedPrefix = "refused:"
 // ClassHostCannotRun refuses a resource whose host cannot run its workload, which a fresh subscribe on the same host cannot repair.
 const ClassHostCannotRun = "host-cannot-run"
 
-// ClassNeedsApp refuses a validate whose check reads something only a created app has, which the platform counts as checked at create for an app not yet created and as a refusal for one that exists.
-const ClassNeedsApp = "needs-app"
-
 // unclassifiedRefusal keeps a wire-level statusDetail from carrying an empty class segment.
 const unclassifiedRefusal = "unclassified"
 
@@ -35,11 +32,6 @@ func (e *Refused) Error() string {
 // Refuse builds a *Refused whose Detail is formatted as fmt.Errorf formats.
 func Refuse(class, format string, args ...any) error {
 	return &Refused{Class: class, Detail: fmt.Sprintf(format, args...)}
-}
-
-// NeedsApp builds the ClassNeedsApp refusal a validate gives when its check cannot run before the app exists, naming why.
-func NeedsApp(format string, args ...any) error {
-	return Refuse(ClassNeedsApp, format, args...)
 }
 
 // RefusedClass reads the class out of a decoded statusDetail, returning "" when it lacks the "refused:" prefix.
