@@ -27,7 +27,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		}
 		nr := r.resources[0]
 		r.refs[nr.name] = r.refFor(nr, r.d.ResourceType, r.d.ResourceIdentity)
-		return r.validateEach(ctx)
+		return r.withOwnSecrets(r.validateEach(ctx))
 	}
 
 	r.provided = r.h.provided
@@ -43,7 +43,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		r.d.VerbAt = r.h.now()
 		r.setRefs(reported)
 		r.ensured(reported)
-		return r.ensureEach(ctx)
+		return r.withOwnSecrets(r.ensureEach(ctx))
 	case "unsubscribe":
 		outputs, err := r.deleteBlock(ctx)
 		if w, ok := waiting(err); ok {
@@ -67,7 +67,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 			return r.h.errorResponse(err, r.secrets)
 		}
 		r.setRefs(nil)
-		status, resp := r.validateEach(ctx)
+		status, resp := r.withOwnSecrets(r.validateEach(ctx))
 		if status == http.StatusOK {
 			resp.Replaces = replaces
 		}

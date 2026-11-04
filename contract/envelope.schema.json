@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
   "title": "mitstack lifecycle webhook envelope",
   "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -138,6 +138,11 @@
     "secretInputs": {
       "type": "object",
       "description": "Resolved plaintext for the block's secret params, the inputs a type it creates marks secret, keyed by param name.",
+      "additionalProperties": { "type": "string" }
+    },
+    "ownSecrets": {
+      "type": "object",
+      "description": "The own secrets this subscription's block returned on earlier calls, keyed by the names the block chose. No request of another subscription carries them. Omitted while the subscription keeps none.",
       "additionalProperties": { "type": "string" }
     },
     "bindings": {
