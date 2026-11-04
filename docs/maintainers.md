@@ -37,6 +37,24 @@ the README in the same commit.
 a contract test fails when the committed file differs from what they generate.
 Regenerate it with `go run ./cmd/manifest-schema > contract/manifest.schema.json`.
 
+The tests of the image scan's GO-2026-5932 exception, in
+`scripts/go_2026_5932_exception_test.go`, build stand-in provider binaries
+from `scripts/testdata/fixture-provider`. That fixture is a module of its own
+requiring golang.org/x/crypto v0.58.0, so the kit's `go.mod` still requires
+nothing. One build tag adds an openpgp call and another drops x/crypto
+altogether. The tests answer govulncheck from the one-advisory database in
+`scripts/testdata/vulndb`, and the registry and `go.mod` reads from a local
+server.
+
+A pull request that changes the scan also runs
+`.github/workflows/scan-image-proof.yml`. It builds one image holding the AWS
+provider 6.71.0 and one holding the Scaleway provider 2.89.0, each fetched by
+the checksum the registry publishes, and runs `scripts/scan-image.sh` on both.
+It expects GO-2026-5932 accepted in each, with the AWS scan passing and the
+Scaleway scan failing on its x/net and standard-library findings alone. A run
+of that workflow on `main` by `workflow_dispatch` repeats the proof with no
+change.
+
 ## Release
 
 block-kit's first release, v0.4.0, is tagged by hand, because the release

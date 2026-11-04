@@ -240,6 +240,59 @@ each push to `main` that workflow does three things with the token:
 3. It posts the report to `POST https://api.mitstack.dev/v1/blocks/{id}/attestations`,
    and the platform signs a passing report as the block's attestation.
 
+### How the publish job scans the image
+
+The `publish` job builds your image and runs the kit's `scripts/scan-image.sh`
+on it before any push. The script runs the image scanner Trivy 0.76.0,
+checked by its sha256, from an empty directory with every `TRIVY_` variable
+unset, so no ignore file or setting can silence a finding. Any finding that
+has a fixed version, at any severity, stops the job, with the one exception
+below.
+
+The exception covers the advisory GO-2026-5932, which marks the whole
+`golang.org/x/crypto/openpgp` package unsafe. Its only fix is an untagged
+commit of golang.org/x/crypto, `v0.58.1-0.20261009181718-2f1f834330b2`. Trivy
+therefore reports it in every OpenTofu provider built on a tagged x/crypto,
+whether or not the provider uses openpgp. `scripts/go-2026-5932-exception.sh`
+accepts the finding only when each condition in this table holds, and refuses
+it otherwise:
+
+| Condition | How the script proves it |
+|---|---|
+| The binary is an OpenTofu provider the image installs | Its path in the image is `/var/cache/tofu-plugins/<host>/<namespace>/<type>/<version>/<platform>/terraform-provider-<type>`, with an optional `_` suffix. That directory is the plugin cache the opentofu-operator image names in `/etc/tofu.tfrc` |
+| No openpgp code is compiled into it | `cmd/gofuncnames` prints the function names in the binary's `.gopclntab`, inlined ones included. The Go runtime keeps that table for stack traces, so stripping a binary leaves it. It must name at least one `golang.org/x/crypto` function and none under `golang.org/x/crypto/openpgp` |
+| The provider has shipped no release on a fixed x/crypto | The script reads the provider's newest release from `https://<host>/v1/providers/<namespace>/<type>/versions`. It then reads that release's `go.mod` from `https://raw.githubusercontent.com/<owner>/<repo>/v<release>/go.mod`, the repository named by the binary's main module. Its `golang.org/x/crypto` requirement must sit below the fix |
+
+The script also runs govulncheck v1.9.0, checked by its module sum, on each
+such binary and prints its result, which does not decide. A provider release
+is stripped of the symbol table govulncheck reads, so govulncheck falls back
+to go.mod-level precision and lists every openpgp package as present. If
+govulncheck cannot run, the script prints why and the function table alone
+decides.
+
+For the AWS provider 6.71.0, one accepted finding reads like this:
+
+```text
+  govulncheck v1.9.0 against https://vuln.go.dev, modified 2026-11-02T22:01:43Z, ran at go.mod-level precision because the binary is stripped, so it cannot show which packages are present, and it does not decide:
+    GO-2026-5932 at module golang.org/x/crypto@v0.58.0, and in 7 package(s): golang.org/x/crypto/openpgp, ...
+accepted GO-2026-5932 in var/cache/tofu-plugins/registry.opentofu.org/hashicorp/aws/6.71.0/linux_amd64/terraform-provider-aws_v6.71.0: its Go function table names 366 golang.org/x/crypto functions and 0 in golang.org/x/crypto/openpgp, and registry.opentofu.org/hashicorp/aws's newest release 6.71.0 still requires golang.org/x/crypto v0.58.0, below the fix v0.58.1-0.20261009181718-2f1f834330b2
+```
+
+The exception ends for each provider on its own. Once a provider's newest
+release requires the fixed x/crypto or none at all, the scan refuses that
+provider's finding and names the release to lock, as in
+`move the block to registry.opentofu.org/hashicorp/aws 6.72.0`. A registry or
+`go.mod` read that gets no answer stops the job and names the read. The
+block's own binary, and any binary outside the plugin cache, keeps the full
+refusal for GO-2026-5932 as for every other finding.
+
+To scan an image you built yourself, with Docker, Go, jq and curl installed,
+run the kit's script on it:
+
+```sh
+bash ../block-kit/scripts/scan-image.sh <image>
+```
+
 ### Checks for an OpenTofu-only block
 
 An OpenTofu-only block has no Go code of its own. It is an OpenTofu module, a
