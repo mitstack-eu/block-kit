@@ -49,6 +49,19 @@ func TestHeadCommit_AndReadFileAt(t *testing.T) {
 			call: head, want: "", requests: []string{mainRef}},
 		{name: "HeadCommit fails on any other status", routes: map[string][]reply{mainRef: {{http.StatusInternalServerError, `{"message":"failure for {auth}"}`}}},
 			call: head, want: "", err: errAny, errHas: "returned 500", requests: []string{mainRef}},
+		{name: "HeadCommit refuses a ref answer past its bound, naming the call and the bound",
+			routes: map[string][]reply{mainRef: {{body: `{"object":{"sha":"` + shaRev2 + `"},"padding":"` + strings.Repeat("a", 8<<10) + `"}`}}},
+			call:   head, want: "", err: errAny, errHas: "GET " + gitops + "/git/ref/heads/main: the answer is longer than 8192 bytes", requests: []string{mainRef}},
+		{name: "HeadCommit reads a ref answer of exactly its bound", routes: map[string][]reply{mainRef: {{body: paddedTo(`"object":{"sha":"`+shaRev2+`"}`, 8<<10)}}},
+			call: head, want: shaRev2, requests: []string{mainRef}},
+		{name: "BranchHead returns the commit a named branch points at", routes: map[string][]reply{get(gitops + "/git/ref/heads/release/v2"): {{body: `{"object":{"sha":"` + shaRev2 + `"}}`}}},
+			call: branchHead("release/v2"), want: shaRev2, requests: []string{get(gitops + "/git/ref/heads/release/v2")}},
+		{name: "BranchHead escapes each segment of the branch", routes: map[string][]reply{get(gitops + "/git/ref/heads/feat/a%20b%23c"): {{body: `{"object":{"sha":"` + shaRev2 + `"}}`}}},
+			call: branchHead("feat/a b#c"), want: shaRev2, requests: []string{get(gitops + "/git/ref/heads/feat/a%20b%23c")}},
+		{name: "BranchHead is empty when the branch does not exist yet", routes: map[string][]reply{get(gitops + "/git/ref/heads/trunk"): {notFound}},
+			call: branchHead("trunk"), want: "", requests: []string{get(gitops + "/git/ref/heads/trunk")}},
+		{name: "BranchHead refuses an empty branch before any request", call: branchHead(""), want: "", err: errAny, errHas: "branch"},
+		{name: "BranchHead refuses a branch that climbs out of the refs before any request", call: branchHead("a/../../orgs"), want: "", err: errAny, errHas: "branch"},
 		{name: "ReadFileAt returns the decoded content at the revision",
 			routes: map[string][]reply{contents("apps/app-alpha/namespace.yaml"): {{body: `{"type":"file","encoding":"base64","content":` + quote(wrappedBase64(content)) + `}`}}},
 			call:   read("apps/app-alpha/namespace.yaml"), want: file{[]byte(content), true}, requests: []string{contents("apps/app-alpha/namespace.yaml")}},
@@ -63,6 +76,21 @@ func TestHeadCommit_AndReadFileAt(t *testing.T) {
 }
 
 func quote(s string) string { return `"` + strings.ReplaceAll(s, "\n", `\n`) + `"` }
+
+func branchHead(branch string) func(c *ghapi.Client) (any, error) {
+	return func(c *ghapi.Client) (any, error) { return c.BranchHead(context.Background(), revRepo, branch) }
+}
+
+func TestHeadCommit_CutsARefusalPastItsBoundToTheBound(t *testing.T) {
+	ref := get(gitops + "/git/ref/heads/main")
+	f := &fakeGitHub{routes: map[string][]reply{ref: {{http.StatusInternalServerError, `{"message":"` + strings.Repeat("a", 8<<10) + `TAIL"}`}}}}
+
+	_, err := serve(t, f).HeadCommit(context.Background(), revRepo)
+
+	if err == nil || !strings.Contains(err.Error(), "returned 500") || strings.Contains(err.Error(), "TAIL") {
+		t.Errorf("HeadCommit on a 500 longer than its bound = %v, want the refusal with its text cut to the bound", err)
+	}
+}
 
 func TestCommitChanges(t *testing.T) {
 	parentCommit, trees, commits := get(gitops+"/git/commits/"+shaParent), post(gitops+"/git/trees"), post(gitops+"/git/commits")
@@ -115,6 +143,11 @@ func TestCommitChanges(t *testing.T) {
 		{name: "a create-tree answer past the bound is an error that names its route, and nothing is committed",
 			routes: onParent(map[string][]reply{trees: {{http.StatusCreated, `{"sha":"` + shaNewTree + `","padding":"` + strings.Repeat("a", 32<<20) + `"}`}}}),
 			call:   onto(shaParent, one), want: "", err: errAny, errHas: "POST " + gitops + "/git/trees", requests: []string{parentCommit, trees}},
+		{name: "a parent commit answer over 8 KiB still yields its tree", routes: onParent(map[string][]reply{parentCommit: {{body: longCommit(shaParent, shaParentTree)}}, update: {{}}}),
+			call: onto(shaParent, one), want: shaNewCommit, requests: []string{parentCommit, trees, commits, update}, check: sentTree(commits, shaNewTree)},
+		{name: "a parent commit answer past the bound is an error naming the call and the bound, and nothing is built",
+			routes: onParent(map[string][]reply{parentCommit: {{body: `{"tree":{"sha":"` + shaParentTree + `"},"padding":"` + strings.Repeat("a", 32<<20) + `"}`}}}),
+			call:   onto(shaParent, one), want: "", err: errAny, errHas: "GET " + gitops + "/git/commits/" + shaParent + ": the answer is longer than 33554432 bytes", requests: []string{parentCommit}},
 		{name: "an unchanged tree makes no commit and returns the parent", routes: onParent(map[string][]reply{trees: {{http.StatusCreated, `{"sha":"` + shaParentTree + `"}`}}}),
 			call: onto(shaParent, one), want: shaParent, requests: []string{parentCommit, trees}},
 		{name: "a parent that is no longer the tip wraps ErrNotFastForward and does not replay", routes: onParent(map[string][]reply{update: {notFastForward}}),
@@ -132,6 +165,43 @@ func TestCommitChanges(t *testing.T) {
 			call: onto(shaParent, one), want: shaNewCommit, err: errAny, errHas: "returned 500", requests: []string{parentCommit, trees, commits, update}},
 		{name: "a tree refusal echoing the token never carries it", routes: onParent(map[string][]reply{trees: {{http.StatusUnprocessableEntity, `{"message":"failure for {auth}"}`}}}),
 			call: onto(shaParent, one), want: "", err: errAny, errHas: "returned 422", requests: []string{parentCommit, trees}},
+	})
+}
+
+func TestBuildCommit(t *testing.T) {
+	parentCommit, trees, commits := get(gitops+"/git/commits/"+shaParent), post(gitops+"/git/trees"), post(gitops+"/git/commits")
+	routes := func(extra map[string][]reply) map[string][]reply {
+		r := map[string][]reply{parentCommit: {{body: `{"tree":{"sha":"` + shaParentTree + `"}}`}}, trees: {{http.StatusCreated, `{"sha":"` + shaNewTree + `"}`}},
+			commits: {{http.StatusCreated, `{"sha":"` + shaNewCommit + `"}`}}}
+		for k, v := range extra {
+			r[k] = v
+		}
+		return r
+	}
+	build := func(parent string) func(c *ghapi.Client) (any, error) {
+		return func(c *ghapi.Client) (any, error) {
+			return c.BuildCommit(context.Background(), revRepo, parent, "app-alpha: update", map[string]*string{"a.yaml": strp("a\n")})
+		}
+	}
+	runAPICases(t, []apiCase{
+		{name: "it builds the tree and commit on the parent and moves no ref", routes: routes(nil), call: build(shaParent),
+			want: ghapi.BuiltCommit{SHA: shaNewCommit, Tree: shaNewTree}, requests: []string{parentCommit, trees, commits},
+			check: func(t *testing.T, f *fakeGitHub) {
+				want := jsonBody(t, `{"message":"app-alpha: update","tree":"`+shaNewTree+`","parents":["`+shaParent+`"]}`)
+				if got := f.bodies(commits); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+					t.Errorf("%s bodies = %v, want once %v", commits, got, want)
+				}
+			}},
+		{name: "an unchanged tree makes no commit and returns the parent and its tree", routes: routes(map[string][]reply{trees: {{http.StatusCreated, `{"sha":"` + shaParentTree + `"}`}}}),
+			call: build(shaParent), want: ghapi.BuiltCommit{SHA: shaParent, Tree: shaParentTree, Unchanged: true}, requests: []string{parentCommit, trees}},
+		{name: "an empty parent builds a root commit and moves no ref", routes: routes(nil), call: build(""),
+			want: ghapi.BuiltCommit{SHA: shaNewCommit, Tree: shaNewTree}, requests: []string{trees, commits}},
+		{name: "a create-tree answer over 8 KiB still builds on the tree's SHA", routes: routes(map[string][]reply{trees: {{http.StatusCreated, treeAnswer(shaNewTree, 48)}}}),
+			call: build(shaParent), want: ghapi.BuiltCommit{SHA: shaNewCommit, Tree: shaNewTree}, requests: []string{parentCommit, trees, commits}, check: sentTree(commits, shaNewTree)},
+		{name: "a parent commit answer over 8 KiB still builds on its tree", routes: routes(map[string][]reply{parentCommit: {{body: longCommit(shaParent, shaParentTree)}}}),
+			call: build(shaParent), want: ghapi.BuiltCommit{SHA: shaNewCommit, Tree: shaNewTree}, requests: []string{parentCommit, trees, commits}},
+		{name: "a commit answer that is not a full SHA is an error naming the call", routes: routes(map[string][]reply{commits: {{http.StatusCreated, `{"sha":""}`}}}),
+			call: build(shaParent), want: ghapi.BuiltCommit{}, err: errAny, errHas: "POST " + gitops + "/git/commits", requests: []string{parentCommit, trees, commits}},
 	})
 }
 
@@ -255,6 +325,10 @@ var revisionCalls = map[string]func(c *ghapi.Client, repo, rev string) error{
 		_, err := c.CommitChanges(context.Background(), repo, rev, "m", map[string]*string{"a.yaml": strp("a\n")})
 		return err
 	},
+	"BuildCommit": func(c *ghapi.Client, repo, rev string) error {
+		_, err := c.BuildCommit(context.Background(), repo, rev, "m", map[string]*string{"a.yaml": strp("a\n")})
+		return err
+	},
 	"TreePaths": func(c *ghapi.Client, repo, rev string) error {
 		_, err := c.TreePaths(context.Background(), repo, rev)
 		return err
@@ -286,7 +360,7 @@ func TestRevisionCalls_RefuseAnUnsafeRepositoryOrRevisionBeforeAnyRequest(t *tes
 			}
 		}
 		for label, rev := range invalidRevisions {
-			if name != "HeadCommit" && !(name == "CommitChanges" && rev == "") {
+			if name != "HeadCommit" && !((name == "CommitChanges" || name == "BuildCommit") && rev == "") {
 				probes = append(probes, probe{name + "/" + label, revRepo, rev, true})
 			}
 		}

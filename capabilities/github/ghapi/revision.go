@@ -31,12 +31,13 @@ func checkRevision(revision string) error {
 }
 
 // A contents read carries a file of up to 1 MB base64-encoded, a commits read carries each file's patch, a
-// recursive tree read or a create-tree answer lists up to 100,000 entries, and a repository answer is about 7 KB.
+// recursive tree read or a create-tree answer lists up to 100,000 entries, a repository answer is about 7 KB, and a ref answer under 1 KB.
 const (
 	maxContentsBody = 4 << 20
 	maxCommitBody   = 32 << 20
 	maxTreeBody     = 32 << 20
 	maxRepoBody     = 1 << 20
+	maxRefBody      = 8 << 10
 )
 
 // GitHub lists at most 3000 files of a commit, 300 per page.
@@ -48,7 +49,21 @@ func (c *Client) HeadCommit(ctx context.Context, repoFullName string) (string, e
 	if err != nil {
 		return "", err
 	}
-	sha, _, err := c.mainRef(ctx, repo)
+	sha, _, err := c.branchRef(ctx, repo, "main")
+	return sha, err
+}
+
+// BranchHead returns the commit refs/heads/{branch} points at, or "" when the branch does not exist yet, and refuses an empty branch or a "." or ".." segment before any request.
+func (c *Client) BranchHead(ctx context.Context, repoFullName, branch string) (string, error) {
+	repo, err := SafeRepo(repoFullName)
+	if err != nil {
+		return "", err
+	}
+	escaped, err := escapeRepoPath(branch)
+	if err != nil {
+		return "", fmt.Errorf("ghapi: invalid branch %q", branch)
+	}
+	sha, _, err := c.branchRef(ctx, repo, escaped)
 	return sha, err
 }
 
@@ -116,34 +131,61 @@ func (c *Client) CommitChanges(ctx context.Context, repoFullName, parent, messag
 			return "", err
 		}
 	}
-	entries := changeEntries(changes)
+	built, err := c.buildCommit(ctx, repo, parent, message, changes)
+	if err != nil || built.Unchanged {
+		return built.SHA, err
+	}
+	if parent == "" {
+		return built.SHA, c.createMainRef(ctx, repo, built.SHA)
+	}
+	return built.SHA, c.fastForwardMain(ctx, repo, built.SHA)
+}
 
-	tree := map[string]any{"tree": entries}
+// BuiltCommit is the commit BuildCommit made and its tree, or the parent and its tree when Unchanged reports the changes left the tree as it was.
+type BuiltCommit struct {
+	SHA       string
+	Tree      string
+	Unchanged bool
+}
+
+// BuildCommit builds one commit of changes on parent, a root commit for a parent of "", and moves no ref, so the caller lands it on a ref of its choosing.
+func (c *Client) BuildCommit(ctx context.Context, repoFullName, parent, message string, changes map[string]*string) (BuiltCommit, error) {
+	repo, err := SafeRepo(repoFullName)
+	if err != nil {
+		return BuiltCommit{}, err
+	}
+	if parent != "" {
+		if err := checkRevision(parent); err != nil {
+			return BuiltCommit{}, err
+		}
+	}
+	return c.buildCommit(ctx, repo, parent, message, changes)
+}
+
+func (c *Client) buildCommit(ctx context.Context, repo, parent, message string, changes map[string]*string) (BuiltCommit, error) {
+	tree := map[string]any{"tree": changeEntries(changes)}
 	parents := []string{}
 	var baseTree string
 	if parent != "" {
-		baseTree, err = c.commitTree(ctx, repo, parent)
-		if err != nil {
-			return "", err
+		var err error
+		if baseTree, err = c.commitTree(ctx, repo, parent); err != nil {
+			return BuiltCommit{}, err
 		}
 		tree["base_tree"] = baseTree
 		parents = []string{parent}
 	}
 	treeSHA, err := c.postForSHA(ctx, "/repos/"+repo+"/git/trees", tree)
 	if err != nil {
-		return "", err
+		return BuiltCommit{}, err
 	}
 	if parent != "" && treeSHA == baseTree {
-		return parent, nil
+		return BuiltCommit{SHA: parent, Tree: baseTree, Unchanged: true}, nil
 	}
 	commitSHA, err := c.postForSHA(ctx, "/repos/"+repo+"/git/commits", map[string]any{"message": message, "tree": treeSHA, "parents": parents})
 	if err != nil {
-		return "", err
+		return BuiltCommit{}, err
 	}
-	if parent == "" {
-		return commitSHA, c.createMainRef(ctx, repo, commitSHA)
-	}
-	return commitSHA, c.fastForwardMain(ctx, repo, commitSHA)
+	return BuiltCommit{SHA: commitSHA, Tree: treeSHA}, nil
 }
 
 // CommitParentAndPaths returns revision's first parent, "" for a root commit, and the sorted paths it touched, with a rename naming both.
@@ -299,9 +341,10 @@ func (c *Client) createMainRef(ctx context.Context, repo, commitSHA string) erro
 	return fmt.Errorf("ghapi: github POST %s returned %d: %s", path, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
 }
 
-func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain bool, err error) {
-	path := "/repos/" + repo + "/git/ref/heads/main"
-	status, raw, _, err := c.get(ctx, path, 8<<10)
+// branchRef reads refs/heads/{escapedBranch}, whose segments the caller has already escaped.
+func (c *Client) branchRef(ctx context.Context, repo, escapedBranch string) (sha string, haveBranch bool, err error) {
+	path := "/repos/" + repo + "/git/ref/heads/" + escapedBranch
+	status, raw, _, err := c.get(ctx, path, maxRefBody)
 	if err != nil {
 		return "", false, err
 	}
@@ -309,7 +352,7 @@ func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain
 		return "", false, nil
 	}
 	if status != http.StatusOK {
-		return "", false, fmt.Errorf("ghapi: github GET git/ref/heads/main returned %d: %s", status, safe.LogSafe(string(raw), c.Token))
+		return "", false, fmt.Errorf("ghapi: github GET git/ref/heads/%s returned %d: %s", escapedBranch, status, safe.LogSafe(string(raw), c.Token))
 	}
 	var ref struct {
 		Object struct {
@@ -328,7 +371,7 @@ func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain
 
 func (c *Client) commitTree(ctx context.Context, repo, sha string) (string, error) {
 	path := "/repos/" + repo + "/git/commits/" + url.PathEscape(sha)
-	status, raw, _, err := c.get(ctx, path, 8<<10)
+	status, raw, _, err := c.get(ctx, path, maxCommitBody)
 	if err != nil {
 		return "", err
 	}
@@ -346,7 +389,7 @@ func (c *Client) commitTree(ctx context.Context, repo, sha string) (string, erro
 	return c.answeredSHA("GET "+path, commit.Tree.SHA)
 }
 
-// get returns the body unscrubbed, so a caller must pass it through safe.LogSafe.
+// get refuses a 2xx answer longer than limit, cuts a refusal's text to limit, and returns the body unscrubbed for the caller to pass through safe.LogSafe.
 func (c *Client) get(ctx context.Context, path string, limit int64) (int, []byte, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+path, nil)
 	if err != nil {
@@ -358,9 +401,15 @@ func (c *Client) get(ctx context.Context, path string, limit int64) (int, []byte
 		return 0, nil, nil, fmt.Errorf("ghapi: github unreachable: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("ghapi: read response: %w", err)
+		return 0, nil, nil, fmt.Errorf("ghapi: read the answer to GET %s: %w", path, err)
+	}
+	if int64(len(raw)) > limit {
+		if resp.StatusCode < 300 {
+			return 0, nil, nil, fmt.Errorf("ghapi: read the answer to GET %s: the answer is longer than %d bytes", path, limit)
+		}
+		raw = raw[:limit]
 	}
 	return resp.StatusCode, raw, resp.Header, nil
 }

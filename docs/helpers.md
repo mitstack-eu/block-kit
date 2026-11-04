@@ -544,6 +544,20 @@ in that tree with `TreePaths`, which refuses a listing GitHub truncated past
 `CommitChanges` commits onto it, wrapping `ghapi.ErrNotFastForward` when main
 has moved on since.
 
+A block that lands its commit on a ref of its own, such as a pull request's
+branch, reads that branch's head with `BranchHead`, which answers `""` for a
+branch that does not exist yet. It then builds the commit with `BuildCommit`,
+which makes the tree and the commit on the parent you name and moves no ref.
+Its `BuiltCommit` answer carries the commit and tree SHAs, and `Unchanged`
+reports that the changes left the parent's tree as it was, so no commit was
+made.
+
+Every call reads GitHub's answer whole and refuses one longer than its bound,
+naming the call and the bound, so a cut-off copy never decodes into an empty
+SHA. An answer over 8 KiB is ordinary: a create-tree answer lists each root
+entry, and a commit answer carries the whole message. The bounds sit in
+`revision.go`.
+
 blockverify holds a block that calls the GitHub API to this rule: it must
 resolve the host through `ghapi.Base`, `ghapi.BaseFromEnv` or an allowlist of
 its own, as [Running the block checks](block-checks.md) describes.

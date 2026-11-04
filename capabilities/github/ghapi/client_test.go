@@ -136,12 +136,13 @@ func TestCommitFiles(t *testing.T) {
 		{name: "a refused tree on an empty repo echoing the token fails without carrying it",
 			routes: map[string][]reply{ref: {notFound}, trees: {{http.StatusUnprocessableEntity, `{"message":"rejected for token {auth}"}`}}},
 			call:   commit, err: errAny, errHas: "returned 422", requests: []string{ref, trees}},
-		{name: "an oversized ref lookup is refused by a bounded decode before the commit lookup",
-			routes: with(map[string][]reply{ref: {{body: huge(`"object":{"sha":"` + shaBase + `"}`)}}}), call: commit, err: errAny, errHas: "decode ref", requests: []string{ref}},
+		{name: "an oversized ref lookup is refused naming its bound before the commit lookup",
+			routes: with(map[string][]reply{ref: {{body: huge(`"object":{"sha":"` + shaBase + `"}`)}}}), call: commit, err: errAny, errHas: "longer than 8192 bytes", requests: []string{ref}},
 		{name: "an oversized ref lookup echoing the token fails without carrying it",
-			routes: with(map[string][]reply{ref: {{body: huge(`"object":{"sha":"` + shaBase + `"},"auth":"{auth}"`)}}}), call: commit, err: errAny, errHas: "decode ref", requests: []string{ref}},
-		{name: "an oversized commit lookup is refused by a bounded decode before any tree is built",
-			routes: with(map[string][]reply{base: {{body: huge(`"tree":{"sha":"` + shaBaseTree + `"}`)}}}), call: commit, err: errAny, errHas: "decode commit", requests: []string{ref, base}},
+			routes: with(map[string][]reply{ref: {{body: huge(`"object":{"sha":"` + shaBase + `"},"auth":"{auth}"`)}}}), call: commit, err: errAny, errHas: "longer than 8192 bytes", requests: []string{ref}},
+		{name: "an oversized commit lookup is refused naming its bound before any tree is built",
+			routes: with(map[string][]reply{base: {{body: `{"tree":{"sha":"` + shaBaseTree + `"},"padding":"` + strings.Repeat("a", 32<<20) + `"}`}}}), call: commit, err: errAny,
+			errHas: "longer than 33554432 bytes", requests: []string{ref, base}},
 		{name: "one lost fast forward race replays the same entries onto the new head", routes: movingMain(2, []reply{race}), call: commit, requests: twoAttempts,
 			check: func(t *testing.T, f *fakeGitHub) {
 				tb, cb := f.bodies(trees), f.bodies(commits)
