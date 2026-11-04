@@ -12,6 +12,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
+	"github.com/mitstack-eu/block-kit/capabilities/github/gitops/gitopstest"
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
@@ -136,10 +137,14 @@ func TestGitHubRepository_CommitManifestsRevertAndAStaleParentEndToEnd(t *testin
 	if err != nil || !changed2 {
 		t.Fatalf("CommitManifests v2 = (%q, %v, %v), want a new commit", v2, changed2, err)
 	}
-	reverted, err := gitops.Revert(ctx, repo, v2, "revert app-alpha: v2")
+	notes := gitopstest.NewNotifications()
+	notes.Set(gitops.Notification{App: "app-alpha", Revision: v1, Phase: "Succeeded", Health: "Healthy"})
+	notes.Set(gitops.Notification{App: "app-alpha", Revision: v2, Phase: "Failed", Health: "Degraded"})
+	out, err := gitops.Revert(ctx, repo, notes, gitops.BlockRevert{App: "app-alpha", Failed: v2, Owned: ownsAlphaDeploy, Message: "revert app-alpha: v2"})
 	if err != nil {
 		t.Fatalf("Revert: %v", err)
 	}
+	reverted := out.Revision
 	_, staleErr := repo.Commit(ctx, v2, map[string][]byte{"apps/app-alpha/deploy.yaml": []byte("image: v3\n")}, "stale")
 	headAfterStale := f.head()
 	var other string
@@ -188,13 +193,17 @@ func TestGitHubRepository_ErrorsNeverCarryTheTokenEvenWhenGitHubEchoesIt(t *test
 	_, errs["Commit"] = repo.Commit(ctx, first, map[string][]byte{"a.yaml": []byte("a2\n")}, "m")
 	_, _, errs["Changed"] = repo.Changed(ctx, first)
 	_, _, errs["CommitManifests"] = gitops.CommitManifests(ctx, repo, map[string][]byte{"a.yaml": []byte("a2\n")}, "m", nil)
-	_, errs["Revert"] = gitops.Revert(ctx, repo, first, "m")
+	_, errs["Revert"] = gitops.Revert(ctx, repo, gitopstest.NewNotifications(), gitops.BlockRevert{App: "app-alpha", Failed: first, Owned: ownsAlphaDeploy, Message: "m"})
 
 	for name, err := range errs {
 		if err == nil || strings.Contains(err.Error(), githubToken) {
 			t.Errorf("%s against a failing GitHub = %v, want an error carrying no token", name, err)
 		}
 	}
+}
+
+func ownsAlphaDeploy(context.Context, string) ([]string, error) {
+	return []string{"apps/app-alpha/deploy.yaml", "apps/app-alpha/service.yaml", "apps/app-alpha/config.yaml"}, nil
 }
 
 func githubDesired(endpoint string) contract.Desired {

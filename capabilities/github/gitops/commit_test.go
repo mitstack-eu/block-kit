@@ -1,6 +1,6 @@
 package gitops_test
 
-// CommitManifests commits on head what differs, retrying a moved tip, and refuses a secret before any write; Revert restores what a revision changed.
+// CommitManifests commits on head what differs, retrying a moved tip, and refuses a secret before any write; Revert restores the block's files to the last revision Argo CD judged healthy.
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -180,67 +181,203 @@ func refusedNaming(path string) func(t *testing.T, repo *gitopstest.Repository, 
 	}
 }
 
+const (
+	revertApp       = "app-alpha"
+	alphaDeployment = "apps/app-alpha/deployment.yaml"
+	alphaService    = "apps/app-alpha/service.yaml"
+	alphaConfig     = "apps/app-alpha/config.yaml"
+	alphaWorker     = "apps/app-alpha/worker.yaml"
+)
+
+// errSaying stands for an error whose text holds the fragment, in a case with no sentinel to match.
+type errSaying string
+
+func (e errSaying) Error() string { return string(e) }
+
+func errMatches(err, want error) bool {
+	var fragment errSaying
+	switch {
+	case want == nil:
+		return err == nil
+	case errors.As(want, &fragment):
+		return err != nil && strings.Contains(err.Error(), string(fragment))
+	default:
+		return errors.Is(err, want)
+	}
+}
+
+// revertHistory lands commits on the tip and records Argo CD's verdict on a revision, as the cluster posts it.
+type revertHistory struct {
+	t       *testing.T
+	repo    *gitopstest.Repository
+	notes   *gitopstest.Notifications
+	healthy string
+}
+
+func (h *revertHistory) commit(changes map[string][]byte) string {
+	h.t.Helper()
+	head, _ := h.repo.Head(context.Background())
+	rev, err := h.repo.Commit(context.Background(), head, changes, "seed")
+	if err != nil {
+		h.t.Fatalf("seeding a commit: %v", err)
+	}
+	return rev
+}
+
+func (h *revertHistory) judgedHealthy(rev string) string {
+	h.notes.Set(gitops.Notification{App: revertApp, Revision: rev, Phase: "Succeeded", Health: "Healthy"})
+	h.healthy = rev
+	return rev
+}
+
+func (h *revertHistory) judgedDegradedSince(rev string) string {
+	h.notes.Set(gitops.Notification{App: revertApp, Revision: rev, Phase: "Succeeded", Health: "Degraded"})
+	return rev
+}
+
+func (h *revertHistory) judgedFailed(rev string) string {
+	h.notes.Set(gitops.Notification{App: revertApp, Revision: rev, Phase: "Failed", Health: "Degraded"})
+	return rev
+}
+
+func ownsAlpha(gitops.Repository) gitops.Owned {
+	return func(context.Context, string) ([]string, error) {
+		return []string{alphaDeployment, alphaService, alphaConfig, alphaWorker}, nil
+	}
+}
+
+// ownsWorkerWhileHeld owns the worker's file only at a revision holding it, as a block reading its process list from the repository does.
+func ownsWorkerWhileHeld(repo gitops.Repository) gitops.Owned {
+	return func(ctx context.Context, revision string) ([]string, error) {
+		if _, held, err := repo.ReadFile(ctx, revision, alphaWorker); err != nil || held {
+			return []string{alphaDeployment, alphaWorker}, err
+		}
+		return []string{alphaDeployment}, nil
+	}
+}
+
+func image(tag string) []byte { return []byte("image: " + tag + "\n") }
+
 func TestRevert(t *testing.T) {
 	ctx := context.Background()
-	commit := func(t *testing.T, repo *gitopstest.Repository, parent string, changes map[string][]byte) string {
-		t.Helper()
-		rev, err := repo.Commit(ctx, parent, changes, "seed")
-		if err != nil {
-			t.Fatalf("seeding a commit: %v", err)
-		}
-		return rev
-	}
+	beta := []byte("beta: b1\n")
 	cases := []struct {
 		name string
-		// history lands commits and returns the revision to revert.
-		history     func(t *testing.T, repo *gitopstest.Repository) string
+		// history lands commits and verdicts, and returns the revision Argo CD failed.
+		history     func(h *revertHistory) string
+		owned       func(gitops.Repository) gitops.Owned
+		wantErr     error
 		wantFiles   map[string][]byte
 		wantCommits int
-		wantErr     bool
 	}{
-		{"each changed path is restored to its parent's content and an added one deleted", func(t *testing.T, repo *gitopstest.Repository) string {
-			base := commit(t, repo, "", map[string][]byte{"a.yaml": []byte("a1\n"), "b.yaml": []byte("b1\n")})
-			return commit(t, repo, base, map[string][]byte{"a.yaml": []byte("a2\n"), "b.yaml": nil, "c.yaml": []byte("c2\n")})
-		}, map[string][]byte{"a.yaml": []byte("a1\n"), "b.yaml": []byte("b1\n"), "c.yaml": nil}, 3, false},
-		{"the revert lands on the current head and leaves a later unrelated commit alone", func(t *testing.T, repo *gitopstest.Repository) string {
-			base := commit(t, repo, "", map[string][]byte{"apps/app-alpha/deploy.yaml": []byte("image: v1\n")})
-			bad := commit(t, repo, base, map[string][]byte{"apps/app-alpha/deploy.yaml": []byte("image: v2\n")})
-			commit(t, repo, bad, map[string][]byte{"apps/app-beta/deploy.yaml": []byte("image: b1\n")})
-			return bad
-		}, map[string][]byte{"apps/app-alpha/deploy.yaml": []byte("image: v1\n"), "apps/app-beta/deploy.yaml": []byte("image: b1\n")}, 4, false},
-		{"reverting the first commit deletes every path it added", func(t *testing.T, repo *gitopstest.Repository) string {
-			return commit(t, repo, "", map[string][]byte{"a.yaml": []byte("a\n"), "b.yaml": []byte("b\n")})
-		}, map[string][]byte{"a.yaml": nil, "b.yaml": nil}, 2, false},
-		{"a head already matching the parent commits nothing and returns head", func(t *testing.T, repo *gitopstest.Repository) string {
-			base := commit(t, repo, "", map[string][]byte{"a.yaml": []byte("a1\n")})
-			bad := commit(t, repo, base, map[string][]byte{"a.yaml": []byte("a2\n")})
-			commit(t, repo, bad, map[string][]byte{"a.yaml": []byte("a1\n")})
-			return bad
-		}, map[string][]byte{"a.yaml": []byte("a1\n")}, 3, false},
-		{"a revision the repository never held fails and commits nothing", func(t *testing.T, repo *gitopstest.Repository) string {
-			commit(t, repo, "", map[string][]byte{"a.yaml": []byte("a\n")})
+		{"a head two commits past the last healthy revision gets every owned file back as it stood there in one commit", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1"), alphaService: []byte("port: 80\n")}))
+			h.commit(map[string][]byte{alphaDeployment: image("v2")})
+			return h.judgedFailed(h.commit(map[string][]byte{alphaService: []byte("port: 81\n"), alphaConfig: []byte("debug: true\n")}))
+		}, ownsAlpha, nil, map[string][]byte{alphaDeployment: image("v1"), alphaService: []byte("port: 80\n"), alphaConfig: nil}, 4},
+		{"a file the block owned at the healthy revision and dropped since comes back", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1"), alphaWorker: []byte("worker: v1\n")}))
+			return h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2"), alphaWorker: nil}))
+		}, ownsWorkerWhileHeld, nil, map[string][]byte{alphaDeployment: image("v1"), alphaWorker: []byte("worker: v1\n")}, 3},
+		{"another block's file committed after the healthy revision stays as its commit left it", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			h.commit(map[string][]byte{betaPath: beta})
+			return h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+		}, ownsAlpha, nil, map[string][]byte{alphaDeployment: image("v1"), betaPath: beta}, 4},
+		{"a later commit changing only another block's file lets the revert land on top of it", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			failed := h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+			h.commit(map[string][]byte{betaPath: beta})
+			return failed
+		}, ownsAlpha, nil, map[string][]byte{alphaDeployment: image("v1"), betaPath: beta}, 4},
+		{"a first deploy Argo CD never judged healthy has every file its commit added removed", func(h *revertHistory) string {
+			h.commit(map[string][]byte{betaPath: beta})
+			return h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v1"), alphaService: []byte("port: 80\n")}))
+		}, ownsAlpha, nil, map[string][]byte{alphaDeployment: nil, alphaService: nil, betaPath: beta}, 3},
+		{"a first deploy into an empty repository Argo CD never judged healthy has every file removed", func(h *revertHistory) string {
+			return h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v1"), alphaService: []byte("port: 80\n")}))
+		}, ownsAlpha, nil, map[string][]byte{alphaDeployment: nil, alphaService: nil}, 2},
+		{"a first commit whose sync succeeded and whose newest notification reads degraded keeps its files, since it may have run healthy before", func(h *revertHistory) string {
+			h.judgedDegradedSince(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			return h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+		}, ownsAlpha, errSaying("may have run healthy"), map[string][]byte{alphaDeployment: image("v2")}, 2},
+		{"a first commit whose newest notification is a failed sync keeps its files, since a later sync may have failed after a healthy one", func(h *revertHistory) string {
+			h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			return h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+		}, ownsAlpha, errSaying("may have run healthy"), map[string][]byte{alphaDeployment: image("v2")}, 2},
+		{"a first commit Argo CD's record no longer holds, with no healthy revision since, reverts nothing", func(h *revertHistory) string {
+			h.commit(map[string][]byte{alphaDeployment: image("v1")})
+			return h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+		}, ownsAlpha, errSaying("may have run healthy"), map[string][]byte{alphaDeployment: image("v2")}, 2},
+		{"a head moved past the failed revision by a commit changing the block's files gets no revert", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			failed := h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+			h.commit(map[string][]byte{alphaDeployment: image("v3")})
+			return failed
+		}, ownsAlpha, gitops.ErrHeadMoved, map[string][]byte{alphaDeployment: image("v3")}, 3},
+		{"a head moved past the failed revision by a commit deleting a file the block owned there gets no revert", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1"), alphaWorker: []byte("worker: v1\n")}))
+			failed := h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2"), alphaWorker: []byte("worker: v2\n")}))
+			h.commit(map[string][]byte{alphaWorker: nil})
+			return failed
+		}, ownsWorkerWhileHeld, gitops.ErrHeadMoved, map[string][]byte{alphaDeployment: image("v2"), alphaWorker: nil}, 3},
+		{"a failed head whose owned files stand as at the healthy revision commits nothing and answers head", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			return h.judgedFailed(h.commit(map[string][]byte{betaPath: beta}))
+		}, ownsAlpha, nil, map[string][]byte{alphaDeployment: image("v1"), betaPath: beta}, 2},
+		{"a failed revision the repository never held fails and commits nothing", func(h *revertHistory) string {
+			h.commit(map[string][]byte{alphaDeployment: image("v1")})
 			return "no-such-revision"
-		}, nil, 1, true},
+		}, ownsAlpha, errSaying("no-such-revision is not an ancestor of head"), nil, 1},
+		{"a thousand failed deploys with none judged healthy fail the revert, which reads only a bounded stretch of history", func(h *revertHistory) string {
+			failed := h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v0")}))
+			for i := 1; i < 1000; i++ {
+				failed = h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image(strconv.Itoa(i))}))
+			}
+			return failed
+		}, ownsAlpha, errSaying("judged none of the 50 commits before"), map[string][]byte{alphaDeployment: image("999")}, 1000},
+		{"a notification the platform cannot answer fails the revert and commits nothing", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			failed := h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+			h.notes.FailWith(errors.New("platform unreachable"))
+			return failed
+		}, ownsAlpha, errSaying("platform unreachable"), map[string][]byte{alphaDeployment: image("v2")}, 2},
+		{"a commit of the block's files landing while the revert runs leaves the revert unlanded", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			failed := h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+			h.repo.MoveTip(1, map[string][]byte{alphaDeployment: image("v3")})
+			return failed
+		}, ownsAlpha, gitops.ErrHeadMoved, map[string][]byte{alphaDeployment: image("v3")}, 3},
+		{"another block's commit landing while the revert runs is read again and the revert lands on it", func(h *revertHistory) string {
+			h.judgedHealthy(h.commit(map[string][]byte{alphaDeployment: image("v1")}))
+			failed := h.judgedFailed(h.commit(map[string][]byte{alphaDeployment: image("v2")}))
+			h.repo.MoveTip(1, map[string][]byte{betaPath: beta})
+			return failed
+		}, ownsAlpha, nil, map[string][]byte{alphaDeployment: image("v1"), betaPath: beta}, 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := gitopstest.NewRepository()
-			reverted := tc.history(t, repo)
-			headBefore, _ := repo.Head(ctx)
+			h := &revertHistory{t: t, repo: gitopstest.NewRepository(), notes: gitopstest.NewNotifications()}
+			failed := tc.history(h)
+			seeded := len(h.repo.Commits())
 
-			rev, err := gitops.Revert(ctx, repo, reverted, "revert")
+			got, err := gitops.Revert(ctx, h.repo, h.notes, gitops.BlockRevert{App: revertApp, Failed: failed, Owned: tc.owned(h.repo), Message: "revert"})
 
-			commits := repo.Commits()
-			if (err != nil) != tc.wantErr || len(commits) != tc.wantCommits {
-				t.Fatalf("Revert(%s) = %q, %v with %d commits; want error %v and %d commits", reverted, rev, err, len(commits), tc.wantErr, tc.wantCommits)
+			commits := h.repo.Commits()
+			head, _ := h.repo.Head(ctx)
+			if !errMatches(err, tc.wantErr) || len(commits) != tc.wantCommits {
+				t.Fatalf("Revert(%s) = %+v, %v with %d commits; want error %v and %d commits", failed, got, err, len(commits), tc.wantErr, tc.wantCommits)
 			}
-			if tc.wantErr {
+			wantFilesAt(t, h.repo, head, tc.wantFiles)
+			if err != nil {
 				return
 			}
-			if last := commits[len(commits)-1]; last.Revision != rev || (rev != headBefore && (last.Parent != headBefore || last.Message != "revert")) {
-				t.Errorf("revert %q is commit %+v; want it head, on %q with the message handed in, or head itself when nothing changed", rev, last, headBefore)
+			if got.Revision != head || got.Healthy != h.healthy {
+				t.Errorf("Revert = %+v; want the head %q and the healthy revision %q", got, head, h.healthy)
 			}
-			wantFilesAt(t, repo, rev, tc.wantFiles)
+			if last := commits[len(commits)-1]; len(commits) > seeded && last.Message != "revert" {
+				t.Errorf("the commit at head is %+v; want the revert, carrying the message handed in", last)
+			}
 		})
 	}
 }

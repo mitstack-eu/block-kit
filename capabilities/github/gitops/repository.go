@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/mitstack-eu/block-kit/contract"
@@ -43,25 +44,206 @@ func CommitManifests(ctx context.Context, repo Repository, files map[string][]by
 	return commitFiles(ctx, repo, files, message)
 }
 
-// Revert restores, on head, each path revision changed to its content at revision's parent.
-func Revert(ctx context.Context, repo Repository, revision, message string) (string, error) {
-	parent, paths, err := repo.Changed(ctx, revision)
-	if err != nil {
-		return "", fmt.Errorf("gitops: reading what %s changed: %w", revision, err)
+// ErrHeadMoved is wrapped by Revert when a commit after the failed revision changed a file the block owns, since that commit waits for its own verdict.
+var ErrHeadMoved = errors.New("gitops: a commit after the failed revision changed the block's files")
+
+// maxRevertWalk bounds how many commits Revert reads back from head, and from the failed revision.
+const maxRevertWalk = 50
+
+// Owned returns the paths a block owns at revision, "" being the empty repository.
+type Owned func(ctx context.Context, revision string) ([]string, error)
+
+// BlockRevert names the Argo CD app whose notifications judge each revision, the revision it failed, and the files the block owns.
+type BlockRevert struct {
+	App     string
+	Failed  string
+	Owned   Owned
+	Message string
+}
+
+// Reverted is the revert's revision, head itself when nothing differed, and the healthy revision whose files it restored, "" when it removed them.
+type Reverted struct {
+	Revision string
+	Healthy  string
+}
+
+// Revert restores, on head, every file the block owns to its content at the newest ancestor of the failed revision whose newest notification succeeds, or removes them when the failed revision is the block's first commit.
+func Revert(ctx context.Context, repo Repository, src Notifications, b BlockRevert) (Reverted, error) {
+	if b.App == "" || b.Failed == "" || b.Owned == nil {
+		return Reverted{}, errors.New("gitops: a revert needs the app, the failed revision and the files the block owns")
 	}
-	restore := make(map[string][]byte, len(paths))
-	for _, path := range paths {
-		content, ok, err := readAt(ctx, repo, parent, path)
+	var err error
+	for range maxCommitTries {
+		var out Reverted
+		out, err = revertOnHead(ctx, repo, src, b)
+		if !errors.Is(err, ErrStaleBase) {
+			return out, err
+		}
+	}
+	return Reverted{}, fmt.Errorf("gitops: the tip moved on each of %d tries: %w", maxCommitTries, err)
+}
+
+func revertOnHead(ctx context.Context, repo Repository, src Notifications, b BlockRevert) (Reverted, error) {
+	head, err := repo.Head(ctx)
+	if err != nil {
+		return Reverted{}, fmt.Errorf("gitops: reading head: %w", err)
+	}
+	ownedAtHead, err := ownedAt(ctx, b, head)
+	if err != nil {
+		return Reverted{}, err
+	}
+	ownedAtFailed, err := ownedAt(ctx, b, b.Failed)
+	if err != nil {
+		return Reverted{}, err
+	}
+	if err := refuseMovedHead(ctx, repo, head, b.Failed, slices.Concat(ownedAtFailed, ownedAtHead)); err != nil {
+		return Reverted{}, err
+	}
+	base, err := findBaseline(ctx, repo, src, b)
+	if err != nil {
+		return Reverted{}, err
+	}
+	restore, err := restoreFrom(ctx, repo, b, base, ownedAtHead)
+	if err != nil {
+		return Reverted{}, err
+	}
+	changes, err := changesAt(ctx, repo, head, restore)
+	if err != nil {
+		return Reverted{}, err
+	}
+	out := Reverted{Revision: head, Healthy: base.healthy}
+	if len(changes) == 0 {
+		return out, nil
+	}
+	if out.Revision, err = repo.Commit(ctx, head, changes, b.Message); err != nil {
+		return Reverted{}, fmt.Errorf("gitops: committing the revert of %s: %w", b.Failed, err)
+	}
+	return out, nil
+}
+
+// refuseMovedHead walks from head back to failed and refuses a commit on the way that changed a file the block owns at either end.
+func refuseMovedHead(ctx context.Context, repo Repository, head, failed string, owned []string) error {
+	var moved error
+	revision := head
+	for range maxRevertWalk {
+		if revision == failed {
+			return moved
+		}
+		if revision == "" {
+			return fmt.Errorf("gitops: %s is not an ancestor of head %s", failed, head)
+		}
+		parent, paths, err := repo.Changed(ctx, revision)
 		if err != nil {
-			return "", err
+			return fmt.Errorf("gitops: reading what %s changed: %w", revision, err)
+		}
+		for _, path := range paths {
+			if moved == nil && slices.Contains(owned, path) {
+				moved = fmt.Errorf("%w: %s changed %s after %s", ErrHeadMoved, revision, path, failed)
+			}
+		}
+		revision = parent
+	}
+	return fmt.Errorf("gitops: %s is not within %d commits of head %s", failed, maxRevertWalk, head)
+}
+
+// baseline is the revision whose files a revert restores, the healthy revision it is or "" before the block's first commit, and every path changed after it up to the failed revision.
+type baseline struct {
+	revision string
+	healthy  string
+	changed  []string
+}
+
+func findBaseline(ctx context.Context, repo Repository, src Notifications, b BlockRevert) (baseline, error) {
+	var changed []string
+	revision := b.Failed
+	for range maxRevertWalk {
+		parent, paths, err := repo.Changed(ctx, revision)
+		if err != nil {
+			return baseline{}, fmt.Errorf("gitops: reading what %s changed: %w", revision, err)
+		}
+		changed = append(changed, paths...)
+		healthy, err := judgedHealthy(ctx, src, b.App, parent)
+		if err != nil {
+			return baseline{}, err
+		}
+		if healthy {
+			return baseline{revision: parent, healthy: parent, changed: changed}, nil
+		}
+		first, err := holdsNone(ctx, repo, b, parent)
+		if err != nil {
+			return baseline{}, err
+		}
+		if first {
+			return beforeFirstCommit(b, revision, parent, changed)
+		}
+		revision = parent
+	}
+	return baseline{}, fmt.Errorf("gitops: Argo CD judged none of the %d commits before %s healthy, and none of them is the block's first", maxRevertWalk, b.Failed)
+}
+
+func judgedHealthy(ctx context.Context, src Notifications, app, revision string) (bool, error) {
+	if revision == "" {
+		return false, nil
+	}
+	n, ok, err := src.Latest(ctx, app, revision)
+	if err != nil {
+		return false, fmt.Errorf("gitops: reading the notification for %s at %s: %w", app, revision, err)
+	}
+	return ok && Judge(n, revision) == VerdictSucceeded, nil
+}
+
+// beforeFirstCommit removes the block's files only when the failed revision is its first commit, since the platform answers only a revision's newest notification and keeps only an app's newest, so an earlier revision may have run healthy unseen.
+func beforeFirstCommit(b BlockRevert, first, parent string, changed []string) (baseline, error) {
+	if first != b.Failed {
+		return baseline{}, fmt.Errorf("gitops: Argo CD's newest notification of no revision of %s from its first commit %s to %s reads healthy, but one may have run healthy before, so the revert removes nothing", b.App, first, b.Failed)
+	}
+	return baseline{revision: parent, changed: changed}, nil
+}
+
+func holdsNone(ctx context.Context, repo Repository, b BlockRevert, revision string) (bool, error) {
+	owned, err := ownedAt(ctx, b, revision)
+	if err != nil {
+		return false, err
+	}
+	for _, path := range owned {
+		_, ok, err := readAt(ctx, repo, revision, path)
+		if err != nil || ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// restoreFrom is the content at the baseline of each path changed since that the block owns at head or there, nil where the baseline lacks it.
+func restoreFrom(ctx context.Context, repo Repository, b BlockRevert, base baseline, ownedAtHead []string) (map[string][]byte, error) {
+	ownedThen, err := ownedAt(ctx, b, base.revision)
+	if err != nil {
+		return nil, err
+	}
+	restore := map[string][]byte{}
+	for _, path := range base.changed {
+		_, done := restore[path]
+		if done || !(slices.Contains(ownedAtHead, path) || slices.Contains(ownedThen, path)) {
+			continue
+		}
+		content, ok, err := readAt(ctx, repo, base.revision, path)
+		if err != nil {
+			return nil, err
 		}
 		if !ok {
 			content = nil
 		}
 		restore[path] = content
 	}
-	rev, _, err := commitFiles(ctx, repo, restore, message)
-	return rev, err
+	return restore, nil
+}
+
+func ownedAt(ctx context.Context, b BlockRevert, revision string) ([]string, error) {
+	owned, err := b.Owned(ctx, revision)
+	if err != nil {
+		return nil, fmt.Errorf("gitops: reading the files the block owns at %q: %w", revision, err)
+	}
+	return owned, nil
 }
 
 type secretGroupKey struct {
