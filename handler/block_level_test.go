@@ -816,6 +816,74 @@ func TestBlockLevel_AnswerKeysEachProvidedResourcesSecretOutputsByResourceNameAn
 	}
 }
 
+func ownSecretObservers(states map[string]contract.State) map[string]handler.Observer {
+	own := map[string]map[string]string{
+		"deploy-role":   {"gatewayCaKey": "own-ca-key-first", "joinToken": "own-join-token"},
+		"ecr-push-role": {"gatewayCaKey": "own-ca-key-later"},
+		"audit-role":    {"auditKey": "own-audit-key"},
+	}
+	obs := map[string]handler.Observer{}
+	for name, secrets := range own {
+		state := contract.Present
+		if s, ok := states[name]; ok {
+			state = s
+		}
+		obs[name] = fixed(contract.Observation{State: state, OwnSecrets: secrets})
+	}
+	return obs
+}
+
+func TestBlockLevel_AnAnswerCarriesTheOwnSecretsEachObserverReturnedAndRecordsNoneOfThem(t *testing.T) {
+	every := map[string]string{"gatewayCaKey": "own-ca-key-later", "joinToken": "own-join-token", "auditKey": "own-audit-key"}
+	cases := []struct {
+		label, op string
+		states    map[string]contract.State
+		pending   bool
+		want      map[string]string
+	}{
+		{"subscribe", "subscribe", nil, false, every},
+		{"upgrade", "upgrade", nil, false, every},
+		{"validate", "validate", nil, false, every},
+		{"a pending subscribe carries those of each resource it observed, present or not", "subscribe",
+			map[string]contract.State{"ecr-push-role": contract.Unknown}, true,
+			map[string]string{"gatewayCaKey": "own-ca-key-later", "joinToken": "own-join-token"}},
+		{"a pending validate carries those of every resource", "validate",
+			map[string]contract.State{"ecr-push-role": contract.Unknown}, true, every},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			status, resp := serveRoleBlock(t, context.Background(), tc.op, ownSecretObservers(tc.states))
+
+			wantOK(t, status, resp)
+			if resp.Pending != tc.pending {
+				t.Fatalf("pending = %v, want %v; response %+v", resp.Pending, tc.pending, resp)
+			}
+			if !reflect.DeepEqual(resp.OwnSecrets, tc.want) {
+				t.Errorf("OwnSecrets = %v, want %v: every observed resource's, provided or not, and the later resource's value of a name two return", resp.OwnSecrets, tc.want)
+			}
+			if len(resp.SecretOutputs) != 0 || len(resp.ResourceSecretOutputs) != 0 {
+				t.Errorf("SecretOutputs, ResourceSecretOutputs = %v, %v; want none, since an own secret is no output", resp.SecretOutputs, resp.ResourceSecretOutputs)
+			}
+			for name, o := range resp.Resources {
+				if o.Observe == nil || len(o.Observe.Outputs) != 0 {
+					t.Errorf("resource %q outcome = %+v, want an observe carrying no own secret", name, o)
+				}
+			}
+		})
+	}
+}
+
+func TestBlockLevel_ARefusedAnswerCarriesNoOwnSecret(t *testing.T) {
+	obs := ownSecretObservers(nil)
+	obs["ecr-push-role"] = &observer{err: handler.Refuse("quota-exceeded", "no role left in the account")}
+
+	status, resp := serveRoleBlock(t, context.Background(), "subscribe", obs)
+
+	if status != http.StatusBadRequest || resp.OwnSecrets != nil {
+		t.Errorf("status, OwnSecrets = %d, %v; want 400 and none, since the platform keeps nothing from a failed call", status, resp.OwnSecrets)
+	}
+}
+
 // cancellingObserver cancels the request context once it reports settledOn, so the verb sees a done context only after this resource settled.
 type cancellingObserver struct {
 	handler.Observer

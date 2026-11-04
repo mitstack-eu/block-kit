@@ -191,6 +191,7 @@ func TestDecodeRequest_RefusesAMalformedFieldNamingIt(t *testing.T) {
 		{"settlesAt not a time", func(m map[string]any) { m["settlesAt"] = "yesterday" }, []string{`"settlesAt"`}},
 		{"settlesAt a number", func(m map[string]any) { m["settlesAt"] = 1752613200 }, []string{`"settlesAt"`}},
 		{"neverActive a string", func(m map[string]any) { m["neverActive"] = "true" }, []string{`"neverActive"`}},
+		{"own secrets not strings", func(m map[string]any) { m["ownSecrets"] = map[string]any{"gatewayCaKey": 7} }, []string{`"ownSecrets`}},
 		{"cloudIdentity without provider", without("provider"), []string{"cloudIdentity.provider"}},
 		{"cloudIdentity without roleArn", without("roleArn"), []string{"cloudIdentity.roleArn"}},
 		{"cloudIdentity without webIdentityToken", without("webIdentityToken"), []string{"cloudIdentity.webIdentityToken"}},
@@ -278,6 +279,12 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 			func(t *testing.T, req contract.Request, d contract.Desired) {
 				wantField(t, "NeverActive, Desired().NeverActive", []bool{req.NeverActive, d.NeverActive}, []bool{true, true})
 			}},
+		{"a subscription's own secrets reach Desired under their exact names", func(m map[string]any) {
+			m["operation"], m["ownSecrets"] = "upgrade", map[string]any{"gatewayCaKey": "own-secret-not-a-real-key"}
+		}, func(t *testing.T, req contract.Request, d contract.Desired) {
+			want := map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}
+			wantField(t, "OwnSecrets, Desired().OwnSecrets", []map[string]string{req.OwnSecrets, d.OwnSecrets}, []map[string]string{want, want})
+		}},
 		{"a validate settles at its settlesAt", func(m map[string]any) { m["operation"], m["settlesAt"] = "validate", settles },
 			func(t *testing.T, req contract.Request, d contract.Desired) {
 				if !d.VerbAt.Equal(settlesAt) {
@@ -331,6 +338,11 @@ var requestGoldenBehaviours = []struct {
 		d := req.Desired()
 		wantField(t, "Desired().Identity", d.Identity, identityOf(req))
 		wantField(t, "Desired().Instances", d.Instances, req.Instances)
+	}},
+	{"carries no own secrets, on the request or Desired", func(t *testing.T, req contract.Request) {
+		if req.OwnSecrets != nil || req.Desired().OwnSecrets != nil {
+			t.Errorf("OwnSecrets, Desired().OwnSecrets = %v, %v; want nil", req.OwnSecrets, req.Desired().OwnSecrets)
+		}
 	}},
 	{"hands Desired the request's params and secret inputs", func(t *testing.T, req contract.Request) {
 		d := req.Desired()
@@ -425,6 +437,9 @@ func TestRequestMarshal_EncodesEachResourceFieldUnderItsWireNameOnlyWhenSet(t *t
 			"database": {Type: "aws.ec2-postgres-database", State: contract.Absent}}}, "recordedResources",
 			map[string]any{"database": map[string]any{"type": "aws.ec2-postgres-database", "state": "absent"}}},
 		{"never active, when the engine proved it", contract.Request{NeverActive: true}, "neverActive", true},
+		{"own secrets", contract.Request{OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}},
+			"ownSecrets", map[string]any{"gatewayCaKey": "own-secret-not-a-real-key"}},
+		{"no own secrets key when the subscription keeps none", contract.Request{}, "ownSecrets", nil},
 		{"no resource type when unset", contract.Request{}, "resourceType", nil},
 		{"no never-active key when it may have been active", contract.Request{}, "neverActive", nil},
 		{"no recorded resources when unset", contract.Request{}, "recordedResources", nil},
@@ -515,6 +530,9 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 				t.Errorf("properties.neverActive type = %v, want boolean", schemaTypes(prop))
 			}
 		}},
+		{"ownSecrets", func(t *testing.T, prop map[string]any) {
+			objectOfStrings(t, doc, prop, "properties.ownSecrets")
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
@@ -528,10 +546,10 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_8_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_9_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.8.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.8.0: it drops a request property, a minor change from 1.7.0", doc["version"])
+	if doc["version"] != "1.9.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.9.0: it adds the optional request property ownSecrets, a minor change from 1.8.0", doc["version"])
 	}
 }
