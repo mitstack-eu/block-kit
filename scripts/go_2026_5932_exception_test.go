@@ -32,7 +32,6 @@ func advisoryIn(target string) finding {
 	return finding{"vuln", target, "GO-2026-5932", "golang.org/x/crypto", "v0.58.0", strings.TrimPrefix(fixedCrypto, "v")}
 }
 
-// trivyReport writes the JSON report `trivy image --format json` writes for findings.
 func trivyReport(t *testing.T, findings ...finding) string {
 	t.Helper()
 	var results []map[string]any
@@ -98,7 +97,6 @@ func imageRoot(t *testing.T, binaries map[string]string) string {
 	return root
 }
 
-// serve answers each path in routes with its body, and every other path with 500.
 func serve(t *testing.T, routes map[string]string) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

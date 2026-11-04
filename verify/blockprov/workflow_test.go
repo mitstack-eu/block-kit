@@ -113,7 +113,6 @@ func jobSteps(t *testing.T, all map[string]string, job string) []step {
 	return steps
 }
 
-// label names a step by its name, or by its action without the pinned ref when it has none.
 func (s step) label() string {
 	if n, ok := s["name"]; ok {
 		return n
@@ -149,7 +148,6 @@ func publishSteps(t *testing.T) []step {
 	return jobSteps(t, allFields(t), "publish")
 }
 
-// script returns the run body of job's step named name, as the runner hands it to bash.
 func script(t *testing.T, job, name string) kittest.WorkflowScript {
 	t.Helper()
 	s, err := kittest.ReadWorkflowScript(readWorkflow(t), job, name)
@@ -189,7 +187,6 @@ func (l *lockedBuilder) String() string {
 	return l.b.String()
 }
 
-// runBash runs the script at scriptPath in dir under the runner's bash flags, with env added to the process environment.
 func runBash(t *testing.T, scriptPath, dir string, env ...string) scriptResult {
 	t.Helper()
 	cmd := exec.Command("bash", "--noprofile", "--norc", "-e", "-o", "pipefail", scriptPath)
@@ -425,7 +422,6 @@ type probeResult struct {
 	argv         []string
 }
 
-// probedTags returns each imageTag the probe asked aws about, in order.
 func (r probeResult) probedTags() []string {
 	var tags []string
 	for _, line := range r.argv {
@@ -626,7 +622,6 @@ func TestWorkflow_TheProbeAnswerDecidesWhichWriteStepsRun(t *testing.T) {
 	}
 }
 
-// runStepBody runs a publish step's script with its ${{ }} inputs filled in and a stub blockprov that records its argv.
 func runStepBody(t *testing.T, name string, env map[string]string) string {
 	t.Helper()
 	literals := map[string]string{
@@ -744,7 +739,11 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		{"conformance", "<absent>", []string{
 			"actions/checkout", "actions/setup-go", "go vet", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck",
 			"Remove the kit checkout from the block tree", "Write the base commit's manifest and the changed files", "Judge the comments this pull request adds",
-			"blockverify (standalone contract check)", "Upload blockverify report",
+			"blockverify (standalone contract check)", "Upload blockverify report", "Build the block image", "Scan the block image",
+		}},
+		{"opentofu-conformance", "write", []string{
+			"actions/checkout", "actions/setup-go", "Checkout block-kit", "Remove the kit checkout from the block tree", "Configure AWS credentials for the verify role",
+			"Log in to the operator image's registry", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image",
 		}},
 		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks"}},
 		{"scripts", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Lint every tracked shell script with shellcheck"}},
@@ -790,6 +789,7 @@ func TestWorkflow_TheKitCheckoutLeavesTheBlockTreeBeforeItIsJudged(t *testing.T)
 	all := allFields(t)
 	for _, tc := range []struct{ job, build, firstReader string }{
 		{"conformance", "Build blockverify", "blockverify (standalone contract check)"},
+		{"opentofu-conformance", "Checkout block-kit", "Build the block image"},
 		{"publish", "Build blockverify and blockprov", "Build and push image"},
 	} {
 		t.Run(tc.job, func(t *testing.T) {
@@ -810,8 +810,8 @@ func TestWorkflow_TheKitCheckoutLeavesTheBlockTreeBeforeItIsJudged(t *testing.T)
 			temp := t.TempDir()
 			res := runBash(t, rmScript, tree, "RUNNER_TEMP="+temp)
 
-			if _, err := os.Stat(filepath.Join(temp, "block-kit", "events", "events.go")); (err == nil) != (tc.job == "publish") {
-				t.Errorf("the kit under RUNNER_TEMP after the step: stat err %v, want it there only for publish, whose image scan runs its scripts", err)
+			if _, err := os.Stat(filepath.Join(temp, "block-kit", "events", "events.go")); err != nil {
+				t.Errorf("the kit under RUNNER_TEMP after the step: stat err %v, want it there, since the image scan runs its scripts", err)
 			}
 			if b < 0 || rm < b || r < 0 || rm > r {
 				t.Errorf("%q is at %d, want it after %q at %d and before %q at %d", name, rm, tc.build, b, tc.firstReader, r)

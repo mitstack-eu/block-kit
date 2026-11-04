@@ -45,10 +45,14 @@
 # build. A tag that already has its record ends green
 # with no writes.
 #
-# Before any push, the publish job scans the image it built with the kit's
-# scripts/scan-image.sh, and a finding that has a fixed version stops the job.
-# The one exception is GO-2026-5932 in an OpenTofu provider binary that
-# scripts/go-2026-5932-exception.sh proves free of openpgp code.
+# Two events scan the block's image with the kit's scripts/scan-image.sh, which
+# refuses every finding that has a fixed version. On a pull request, whichever
+# conformance job runs builds the image, pushes it nowhere and scans it, so a
+# finding fails the conformance check before merge. On a push to the default
+# branch, the publish job scans the image it built before any push. No other
+# event scans the image. The one finding the script accepts is GO-2026-5932 in
+# an OpenTofu provider binary that scripts/go-2026-5932-exception.sh proves
+# free of openpgp code.
 name: publish-block
 
 on:
@@ -148,10 +152,10 @@ jobs:
 
       # blockverify judges `.` and the image builds from `.`, so the kit
       # checked out inside the block's tree must be gone before either reads
-      # it, or the block is judged by the kit's own source.
+      # it, or the block is judged by the kit's own source. The image scan
+      # runs the kit's scripts from where the checkout moves to.
       - name: Remove the kit checkout from the block tree
-        run: |
-          rm -rf block-kit
+        run: mv block-kit "$RUNNER_TEMP/block-kit"
 
       # On a pull request blockverify judges spec.version against the base
       # commit's manifest.yaml and the files the pull request changes. The
@@ -205,6 +209,15 @@ jobs:
           name: blockverify-report
           path: blockverify-report.json
 
+      # A push to the default branch builds and scans the image in publish.
+      - name: Build the block image
+        if: github.event_name == 'pull_request'
+        run: DOCKER_BUILDKIT=1 docker build -t "block:${GITHUB_SHA}" .
+
+      - name: Scan the block image
+        if: github.event_name == 'pull_request'
+        run: bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" "block:${GITHUB_SHA}"
+
   # The only check job with an identity token, which the verify role needs to
   # pull the private operator image, the one thing that role grants. The
   # block's own code runs only inside the image, which receives no token.
@@ -219,6 +232,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The image scan's GO-2026-5932 exception builds a Go tool of the kit's.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Checkout block-kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mitstack-eu/block-kit
+          ref: ${{ inputs.kit-ref }}
+          path: block-kit
+          persist-credentials: false
+
+      # The image builds from `.`, so the kit leaves the block's tree first.
+      - name: Remove the kit checkout from the block tree
+        run: mv block-kit "$RUNNER_TEMP/block-kit"
 
       - name: Configure AWS credentials for the verify role
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
@@ -237,7 +267,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          DOCKER_BUILDKIT=1 docker build --iidfile "$RUNNER_TEMP/block.iid" .
+          DOCKER_BUILDKIT=1 docker build --iidfile "$RUNNER_TEMP/block.iid" -t "block:${GITHUB_SHA}" .
           echo "id=$(cat "$RUNNER_TEMP/block.iid")" >> "$GITHUB_OUTPUT"
 
       - name: tofu fmt -check
@@ -256,6 +286,11 @@ jobs:
         env:
           IMAGE_ID: ${{ steps.image.outputs.id }}
         run: docker run --rm --entrypoint block-verify "$IMAGE_ID" -test.v
+
+      # A push to the default branch scans the image in publish.
+      - name: Scan the block image
+        if: github.event_name == 'pull_request'
+        run: bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" "block:${GITHUB_SHA}"
 
   secrets:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
