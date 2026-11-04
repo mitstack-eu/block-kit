@@ -40,8 +40,71 @@ func (b *block) deploy(ctx context.Context, d contract.Desired) error {
 
 The block's `Delete` ships the removal the same way, handing `Deploy` each
 rendered path with no content. Paths already gone commit nothing, so deleting
-what was never created succeeds. `gitops.Revert` restores every path one
-revision changed to its content at that revision's parent.
+what was never created succeeds.
+
+## Reverting a failed deploy
+
+When Argo CD fails a revision, `gitops.Revert` puts the block's files back as
+they stood at the last revision Argo CD judged healthy. Argo CD on the cluster
+posts a notification of each sync and health change to the platform, which
+keeps it for the block to read through the same `gitops.Notifications` source
+`Deploy` waits on.
+
+You hand `Revert` a `gitops.BlockRevert` holding four things:
+
+- `App`, the Argo CD application the notifications name.
+- `Failed`, the revision whose notification Argo CD failed, as
+  `Deployed.Revision` or a validate's check of the recorded revision gives it.
+- `Owned`, a function naming every path the block owns at a revision, such as
+  the files its render writes and any it wrote before and has since dropped.
+- `Message`, the revert commit's message.
+
+The revert leaves every other path alone, and it brings back a file the block
+owned at the healthy revision but no longer renders:
+
+```go
+reverted, err := gitops.Revert(ctx, b.repo, b.notes, gitops.BlockRevert{
+	App:    d.AppID,
+	Failed: failed,
+	Owned: func(ctx context.Context, revision string) ([]string, error) {
+		return ownedPaths(ctx, b.repo, revision)
+	},
+	Message: "revert the failed deploy " + failed,
+})
+```
+
+`Reverted.Revision` is the revert commit, or head itself when the block's files
+already stood as they did at the healthy revision. `Reverted.Healthy` names the
+healthy revision, and is empty when the revert removed the block's files.
+
+The revert walks back from the failed revision one parent at a time and reads
+the newest notification of each. The first revision whose notification has
+phase `Succeeded` and health `Healthy` is the last healthy one. Argo CD posts
+such a notification when it syncs a revision and the app turns healthy. Every
+owned file that a commit since then changed goes back to its content there, in
+one commit. A deploy that landed two commits before Argo CD's verdict is
+therefore reverted whole.
+
+The platform answers only the newest notification at a revision. A revision
+that ran healthy and later turned degraded therefore reads as unhealthy, and
+the walk passes it for an older healthy revision.
+
+The block's first commit is the one whose parent holds none of the files the
+block owns. When the walk reaches it without a healthy revision, the revert
+removes the block's files only if the failed revision is that first commit,
+since then no revision of the block came before it. An earlier revision of the
+block may have run healthy before its newest notification read otherwise, or
+had a healthy notification the platform has since pruned, so the revert would
+remove a working app. In that case it fails and changes nothing. It fails the
+same way when 50 commits back from the failed revision hold neither a healthy
+revision nor the block's first commit.
+
+The revert lands only when no commit after the failed revision changed a file
+the block owns there or at head. A later deploy of the same block waits for its
+own verdict, so the revert fails with `gitops.ErrHeadMoved` and changes
+nothing. The block then refuses with Argo CD's failed verdict and leaves the
+later deploy to its own check. A later commit that changed only other paths
+lets the revert land on top of it.
 
 ## Observing a deployed resource
 
