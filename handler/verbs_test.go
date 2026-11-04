@@ -88,6 +88,24 @@ func TestRefusedClass(t *testing.T) {
 	}
 }
 
+func TestNeedsAppName_AnswersNeedsAppOnlyForARequestNamingNeitherTheAppNorItsName(t *testing.T) {
+	cases := map[string]struct {
+		d    contract.Desired
+		want string
+	}{
+		"neither":    {contract.Desired{Params: map[string]string{handler.ParamAppName: ""}}, handler.ClassNeedsApp},
+		"nil params": {contract.Desired{}, handler.ClassNeedsApp},
+		"its name":   {contract.Desired{Params: map[string]string{handler.ParamAppName: "shop"}}, ""},
+		"the app":    {contract.Desired{Identity: contract.Identity{AppID: "app-1"}}, ""},
+	}
+	for name, c := range cases {
+		err := handler.NeedsAppName(c.d)
+		if got := handler.RefusedClass(fmt.Sprint(err)); got != c.want || (c.want == "") != (err == nil) {
+			t.Errorf("%s: NeedsAppName = %v, want class %q", name, err, c.want)
+		}
+	}
+}
+
 // The block's own error quotes the secret, so scrubbing must cover block-authored text in the answer and the log alike.
 func TestServe_NeverLeaksAnySecretTheRequestCarries(t *testing.T) {
 	const secret, input, appSecret, eventsToken = "top-secret-db-password-value", "top-secret-input-value-here", "top-secret-app-secret-value", "top-secret-events-callback-token"
