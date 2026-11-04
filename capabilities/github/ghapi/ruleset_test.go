@@ -5,6 +5,7 @@ package ghapi_test
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"reflect"
 	"testing"
@@ -14,16 +15,16 @@ import (
 )
 
 const (
-	appID      = "4175240"
-	rulesets   = widget + "/rulesets"
-	listed     = rulesets + "?includes_parents=false&per_page=100"
-	ours       = rulesets + "/42"
-	rulesetFor = "mitstack: main takes pushes from mitstack's GitHub App alone"
+	appID       = "4175240"
+	rulesets    = widget + "/rulesets"
+	listed      = rulesets + "?includes_parents=false&per_page=100"
+	ours        = rulesets + "/42"
+	rulesetName = "mitstack: main takes pushes from mitstack's GitHub App alone"
 )
 
 // wantRuleset is the ruleset EnsureRepo sends, naming app as its one bypass actor.
 func wantRuleset(app string) string {
-	return `{"name":"` + rulesetFor + `","target":"branch","enforcement":"active",` +
+	return `{"name":"` + rulesetName + `","target":"branch","enforcement":"active",` +
 		`"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},` +
 		`"rules":[{"type":"update","parameters":{"update_allows_fetch_and_merge":false}},{"type":"non_fast_forward"},{"type":"deletion"}],` +
 		`"bypass_actors":[{"actor_id":` + app + `,"actor_type":"Integration","bypass_mode":"always"}]}`
@@ -42,7 +43,7 @@ func held(edit func(r map[string]any)) reply {
 }
 
 var (
-	listingOurs    = reply{body: `[{"id":7,"name":"release tags","source_type":"Repository"},{"id":42,"name":"` + rulesetFor + `","source_type":"Repository"}]`}
+	listingOurs    = reply{body: `[{"id":7,"name":"release tags","source_type":"Repository"},{"id":42,"name":"` + rulesetName + `","source_type":"Repository"}]`}
 	listingNothing = reply{body: `[]`}
 )
 
@@ -63,13 +64,9 @@ func sent(key, app string) func(t *testing.T, f *fakeGitHub) {
 
 func TestEnsureRepo_KeepsTheRulesetOnMain(t *testing.T) {
 	existing := map[string][]reply{get(widget): {{}}}
-	with := func(routes map[string][]reply, extra map[string][]reply) map[string][]reply {
-		out := map[string][]reply{}
-		for _, m := range []map[string][]reply{routes, extra} {
-			for k, v := range m {
-				out[k] = v
-			}
-		}
+	with := func(routes, extra map[string][]reply) map[string][]reply {
+		out := maps.Clone(routes)
+		maps.Copy(out, extra)
 		return out
 	}
 	repaired := func(name string, edit func(r map[string]any)) apiCase {
@@ -130,7 +127,7 @@ func TestEnsureRepo_KeepsTheRulesetOnMain(t *testing.T) {
 			routes: with(existing, map[string][]reply{get(listed): {{http.StatusForbidden, `{"message":"Must have admin rights to Repository."}`}}}),
 			call:   ensureWith(appID), want: "", err: errAny, errHas: "returned 403", requests: []string{get(widget), get(listed)}},
 		{name: "an oversized rulesets listing is refused rather than read cut off",
-			routes: with(existing, map[string][]reply{get(listed): {{body: `[` + huge(`"id":42,"name":"`+rulesetFor+`"`) + `]`}}}),
+			routes: with(existing, map[string][]reply{get(listed): {{body: `[` + huge(`"id":42,"name":"`+rulesetName+`"`) + `]`}}}),
 			call:   ensureWith(appID), want: "", err: errAny, errHas: "GET /repos/acme/widget/rulesets", requests: []string{get(widget), get(listed)}},
 		{name: "a ruleset answer that does not decode fails and writes nothing",
 			routes: with(existing, map[string][]reply{get(listed): {listingOurs}, get(ours): {{body: `{"rules":`}}}),

@@ -3,6 +3,7 @@ package ghapi_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"reflect"
 	"slices"
@@ -17,9 +18,7 @@ func TestEnsureRepo_AndDeleteRepo(t *testing.T) {
 	createsRuleset := map[string][]reply{get(listed): {listingNothing}, post(rulesets): {{http.StatusCreated, `{"id":42}`}}}
 	created := func(answer string) map[string][]reply {
 		routes := map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusCreated, answer}}}
-		for k, v := range createsRuleset {
-			routes[k] = v
-		}
+		maps.Copy(routes, createsRuleset)
 		return routes
 	}
 	remove := func(c *ghapi.Client) (any, error) { return nil, c.DeleteRepo(context.Background(), "acme", "widget") }
