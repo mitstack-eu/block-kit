@@ -143,6 +143,43 @@ func TestCommitChanges(t *testing.T) {
 	})
 }
 
+func TestBuildCommit(t *testing.T) {
+	parentCommit, trees, commits := get(gitops+"/git/commits/"+shaParent), post(gitops+"/git/trees"), post(gitops+"/git/commits")
+	routes := func(extra map[string][]reply) map[string][]reply {
+		r := map[string][]reply{parentCommit: {{body: `{"tree":{"sha":"` + shaParentTree + `"}}`}}, trees: {{http.StatusCreated, `{"sha":"` + shaNewTree + `"}`}},
+			commits: {{http.StatusCreated, `{"sha":"` + shaNewCommit + `"}`}}}
+		for k, v := range extra {
+			r[k] = v
+		}
+		return r
+	}
+	build := func(parent string) func(c *ghapi.Client) (any, error) {
+		return func(c *ghapi.Client) (any, error) {
+			return c.BuildCommit(context.Background(), revRepo, parent, "app-alpha: update", map[string]*string{"a.yaml": strp("a\n")})
+		}
+	}
+	runAPICases(t, []apiCase{
+		{name: "it builds the tree and commit on the parent and moves no ref", routes: routes(nil), call: build(shaParent),
+			want: ghapi.BuiltCommit{SHA: shaNewCommit, Tree: shaNewTree}, requests: []string{parentCommit, trees, commits},
+			check: func(t *testing.T, f *fakeGitHub) {
+				want := jsonBody(t, `{"message":"app-alpha: update","tree":"`+shaNewTree+`","parents":["`+shaParent+`"]}`)
+				if got := f.bodies(commits); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+					t.Errorf("%s bodies = %v, want once %v", commits, got, want)
+				}
+			}},
+		{name: "an unchanged tree makes no commit and returns the parent and its tree", routes: routes(map[string][]reply{trees: {{http.StatusCreated, `{"sha":"` + shaParentTree + `"}`}}}),
+			call: build(shaParent), want: ghapi.BuiltCommit{SHA: shaParent, Tree: shaParentTree, Unchanged: true}, requests: []string{parentCommit, trees}},
+		{name: "an empty parent builds a root commit and moves no ref", routes: routes(nil), call: build(""),
+			want: ghapi.BuiltCommit{SHA: shaNewCommit, Tree: shaNewTree}, requests: []string{trees, commits}},
+		{name: "a create-tree answer over 8 KiB still builds on the tree's SHA", routes: routes(map[string][]reply{trees: {{http.StatusCreated, treeAnswer(shaNewTree, 48)}}}),
+			call: build(shaParent), want: ghapi.BuiltCommit{SHA: shaNewCommit, Tree: shaNewTree}, requests: []string{parentCommit, trees, commits}, check: sentTree(commits, shaNewTree)},
+		{name: "a parent commit answer over 8 KiB still builds on its tree", routes: routes(map[string][]reply{parentCommit: {{body: longCommit(shaParent, shaParentTree)}}}),
+			call: build(shaParent), want: ghapi.BuiltCommit{SHA: shaNewCommit, Tree: shaNewTree}, requests: []string{parentCommit, trees, commits}},
+		{name: "a commit answer that is not a full SHA is an error naming the call", routes: routes(map[string][]reply{commits: {{http.StatusCreated, `{"sha":""}`}}}),
+			call: build(shaParent), want: ghapi.BuiltCommit{}, err: errAny, errHas: "POST " + gitops + "/git/commits", requests: []string{parentCommit, trees, commits}},
+	})
+}
+
 func TestCommitParentAndPaths(t *testing.T) {
 	commitOf := func(rev string) string { return get(gitops + "/commits/" + rev) }
 	of := func(rev string) func(c *ghapi.Client) (any, error) {
@@ -263,6 +300,10 @@ var revisionCalls = map[string]func(c *ghapi.Client, repo, rev string) error{
 		_, err := c.CommitChanges(context.Background(), repo, rev, "m", map[string]*string{"a.yaml": strp("a\n")})
 		return err
 	},
+	"BuildCommit": func(c *ghapi.Client, repo, rev string) error {
+		_, err := c.BuildCommit(context.Background(), repo, rev, "m", map[string]*string{"a.yaml": strp("a\n")})
+		return err
+	},
 	"TreePaths": func(c *ghapi.Client, repo, rev string) error {
 		_, err := c.TreePaths(context.Background(), repo, rev)
 		return err
@@ -294,7 +335,7 @@ func TestRevisionCalls_RefuseAnUnsafeRepositoryOrRevisionBeforeAnyRequest(t *tes
 			}
 		}
 		for label, rev := range invalidRevisions {
-			if name != "HeadCommit" && !(name == "CommitChanges" && rev == "") {
+			if name != "HeadCommit" && !((name == "CommitChanges" || name == "BuildCommit") && rev == "") {
 				probes = append(probes, probe{name + "/" + label, revRepo, rev, true})
 			}
 		}
