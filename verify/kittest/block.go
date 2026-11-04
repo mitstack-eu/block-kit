@@ -265,7 +265,7 @@ type blockCheck struct {
 	failedRemovals map[string]bool
 }
 
-// unitNames lists each entry not marked many and, in name order, each member of an entry marked many that held names.
+// unitNames lists the names a guard reads, in manifest order: each entry not marked many, and in its place each member held names of an entry marked many, in name order.
 func unitNames[V any](spec contract.ManifestSpec, held map[string]V) []string {
 	var names []string
 	for _, entry := range spec.Resources {
@@ -526,21 +526,30 @@ func (c *blockCheck) recordReported(recorded map[string]contract.RecordedResourc
 	return recorded
 }
 
-// dropUnreported moves into dropped each recorded member the answer carries no ensure outcome for, unless the answer is pending with no ensure outcome at all, as a block waiting before its ensure answers.
+// dropUnreported moves into dropped each recorded member the answer carries no ensure outcome for, unless the answer carries none at all and is pending, as a block answers while it waits before ensuring.
 func (c *blockCheck) dropUnreported(recorded map[string]contract.RecordedResource, resp contract.Response, dropped map[string]contract.RecordedResource) {
-	ensured := false
-	for _, o := range resp.Resources {
-		ensured = ensured || o.Ensure != nil
-	}
-	if resp.Pending && !ensured {
+	if resp.Pending && !ensuredAny(resp) {
 		return
 	}
 	for _, name := range sortedKeys(recorded) {
-		if resp.Resources[name].Ensure == nil && slices.ContainsFunc(c.spec.Resources, func(e contract.ManifestResource) bool { return e.IsMember(name) }) {
+		if resp.Resources[name].Ensure == nil && isMember(c.spec, name) {
 			dropped[name] = recorded[name]
 			delete(recorded, name)
 		}
 	}
+}
+
+func ensuredAny(resp contract.Response) bool {
+	for _, o := range resp.Resources {
+		if o.Ensure != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isMember(spec contract.ManifestSpec, name string) bool {
+	return slices.ContainsFunc(spec.Resources, func(e contract.ManifestResource) bool { return e.IsMember(name) })
 }
 
 // proveDroppedAbsent validates each dropped member by name, as the engine proves a member absent before the operation that dropped it settles, then checks the provider again for a stray object.

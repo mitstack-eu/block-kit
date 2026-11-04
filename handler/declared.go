@@ -97,7 +97,7 @@ func kitObservedDeclaration(cfg Config, decl contract.ManifestResource) (bool, e
 func (h *Handler) declaredResource(name string) (namedResource, bool) {
 	for _, nr := range h.declared {
 		if nr.name == name || nr.declaration.IsMember(name) {
-			return nr.member(name), true
+			return nr.named(name), true
 		}
 	}
 	return namedResource{}, false

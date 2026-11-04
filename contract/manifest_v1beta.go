@@ -31,15 +31,15 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 		return nil, fmt.Errorf("type is %q, but the type of a %s manifest must be %q or %q",
 			b.Type, ManifestAPIVersion, ManifestTypeBlock, ManifestTypeCapability)
 	}
-	many := make(map[string]bool, len(b.Spec.Resources))
+	markedMany := make(map[string]bool, len(b.Spec.Resources))
 	for i, r := range b.Spec.Resources {
 		if strings.Contains(r.Name, "/") {
-			return nil, fmt.Errorf("spec.resources[%d].name: %q holds a slash, which only the name of a member of an entry marked many holds", i, r.Name)
+			return nil, fmt.Errorf("spec.resources[%d].name: %q holds a slash, which is kept for the members of an entry marked many, named <entry>/<key>", i, r.Name)
 		}
-		if _, ok := many[r.Name]; ok {
+		if _, ok := markedMany[r.Name]; ok {
 			return nil, fmt.Errorf("spec.resources[%d].name: %q names an earlier resource too, and a resource name appears once in a block", i, r.Name)
 		}
-		many[r.Name] = r.Many
+		markedMany[r.Name] = r.Many
 	}
 	refs := make(map[string]int, len(b.Spec.Requires))
 	for i, q := range b.Spec.Requires {
@@ -50,12 +50,12 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 		refs[ref] = i
 	}
 	for i, p := range b.Spec.Provides {
-		marked, ok := many[p]
+		marked, ok := markedMany[p]
 		if !ok {
 			return nil, fmt.Errorf("spec.provides[%d]: %q names no resource in spec.resources", i, p)
 		}
 		if marked {
-			return nil, fmt.Errorf("spec.provides[%d]: %q is marked many, but a binding names one resource, so an entry marked many is never provided", i, p)
+			return nil, fmt.Errorf("spec.provides[%d]: %q is marked many, and an entry marked many is never provided, since a binding names one resource", i, p)
 		}
 	}
 	return b, nil

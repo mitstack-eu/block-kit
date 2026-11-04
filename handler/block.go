@@ -144,7 +144,7 @@ func (r *declaredRun) ensureReporting(ctx context.Context) ([]contract.CreatedRe
 	}
 }
 
-// reportedResource refuses a name that is neither an entry's own nor a member's of an entry marked many, since the engine records each reported name as a resource.
+// reportedResource accepts the name of an entry not marked many or of a member of one marked many, and refuses any other, since the engine records each reported name as a resource of its own.
 func (h *Handler) reportedResource(name string) (namedResource, error) {
 	entry, _, member := strings.Cut(name, "/")
 	nr, ok := h.declaredResource(entry)
@@ -158,7 +158,7 @@ func (h *Handler) reportedResource(name string) (namedResource, error) {
 	case member && !nr.declaration.IsMember(name):
 		return namedResource{}, Refuse(classUndeclaredResource, "the block reported resource %q, whose key after %q is not 1 to 40 lowercase letters, digits and hyphens", name, entry+"/")
 	}
-	return nr.member(name), nil
+	return nr.named(name), nil
 }
 
 func (r *declaredRun) deleteBlock(ctx context.Context) (map[string]string, error) {

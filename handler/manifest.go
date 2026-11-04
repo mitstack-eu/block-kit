@@ -49,12 +49,13 @@ type namedResource struct {
 	declaration contract.ManifestResource
 }
 
-func (nr namedResource) member(name string) namedResource {
+// named is nr under name, which is nr's own name or one of its members'.
+func (nr namedResource) named(name string) namedResource {
 	nr.name = name
 	return nr
 }
 
-// units lists each entry not marked many and, in name order, each member of an entry marked many that held names: what a block-level verb observes, in order.
+// units lists what a block-level verb observes, in manifest order: each entry not marked many, and in its place each member held names of an entry marked many, in name order.
 func units[V any](declared []namedResource, held map[string]V) []namedResource {
 	out := make([]namedResource, 0, len(declared))
 	for _, nr := range declared {
@@ -64,7 +65,7 @@ func units[V any](declared []namedResource, held map[string]V) []namedResource {
 		}
 		for _, name := range slices.Sorted(maps.Keys(held)) {
 			if nr.declaration.IsMember(name) {
-				out = append(out, nr.member(name))
+				out = append(out, nr.named(name))
 			}
 		}
 	}
