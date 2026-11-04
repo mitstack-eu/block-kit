@@ -884,6 +884,82 @@ func TestBlockLevel_ARefusedAnswerCarriesNoOwnSecret(t *testing.T) {
 	}
 }
 
+type owningBlock struct {
+	*blockResource
+	report []contract.CreatedResource
+	own    map[string]string
+	err    error
+}
+
+func (o owningBlock) EnsureResourcesOwning(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, map[string]string, error) {
+	if err := o.Ensure(ctx, d); err != nil {
+		return nil, nil, err
+	}
+	return o.report, o.own, o.err
+}
+
+var _ handler.OwnSecretsReporter = owningBlock{}
+
+func TestBlockLevel_TheOwnSecretsAnEnsureReturnsReachEachSubscribeAndUpgradeAnswerThatDoesNotFail(t *testing.T) {
+	minted := map[string]string{"gatewayCaKey": "own-ca-key-minted", "hmacKey": "own-hmac-key-minted"}
+	cases := []struct {
+		label, op string
+		obs       map[string]handler.Observer
+		err       error
+		report    []contract.CreatedResource
+		status    int
+		pending   bool
+		want      map[string]string
+	}{
+		{"subscribe, with observers returning none", "subscribe", roleObservers(roleArns()), nil, nil, http.StatusOK, false, minted},
+		{"upgrade, with observers returning none", "upgrade", roleObservers(roleArns()), nil, nil, http.StatusOK, false, minted},
+		{"an observer's later value wins a name the ensure also returned", "subscribe", ownSecretObservers(nil), nil, nil, http.StatusOK, false,
+			map[string]string{"gatewayCaKey": "own-ca-key-later", "hmacKey": "own-hmac-key-minted", "joinToken": "own-join-token", "auditKey": "own-audit-key"}},
+		{"a subscribe pending on a resource not yet present", "subscribe", ownSecretObservers(map[string]contract.State{"deploy-role": contract.Unknown}), nil, nil, http.StatusOK, true,
+			map[string]string{"gatewayCaKey": "own-ca-key-first", "hmacKey": "own-hmac-key-minted", "joinToken": "own-join-token"}},
+		{"an ensure that waits beside them answers pending carrying them", "upgrade", roleObservers(roleArns()), handler.Wait("the builder is still writing the image"), nil, http.StatusOK, true, minted},
+		{"an ensure failing beside them answers with none", "subscribe", roleObservers(roleArns()), errors.New("the provider refused the server"), nil, http.StatusInternalServerError, false, nil},
+		{"an ensure reporting an undeclared resource is refused with none", "subscribe", roleObservers(roleArns()), nil,
+			[]contract.CreatedResource{{Name: "undeclared-role", Type: "aws.iam-role"}}, http.StatusBadRequest, false, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			block := owningBlock{blockResource: &blockResource{cloud: newFakeCloud()}, report: tc.report, own: minted, err: tc.err}
+
+			status, resp := serveBlock(t, blockCall{r: block, obs: tc.obs, op: tc.op, config: []func(*handler.Config){withManifest(roleBlockManifest)}})
+
+			if status != tc.status || resp.Pending != tc.pending {
+				t.Fatalf("status, pending = %d, %v; want %d, %v; response %+v", status, resp.Pending, tc.status, tc.pending, resp)
+			}
+			if !reflect.DeepEqual(resp.OwnSecrets, tc.want) {
+				t.Errorf("OwnSecrets = %v, want %v", resp.OwnSecrets, tc.want)
+			}
+			if block.ensureCalls != 1 {
+				t.Errorf("ensure ran %d times, want once, through EnsureResourcesOwning alone", block.ensureCalls)
+			}
+		})
+	}
+}
+
+func TestBlockLevel_TheOwnSecretsAnEnsureReturnsNeverReachTheRequestsDesired(t *testing.T) {
+	carried := map[string]string{"gatewayCaKey": "own-ca-key-carried"}
+	block := owningBlock{blockResource: &blockResource{cloud: newFakeCloud()}, own: map[string]string{"gatewayCaKey": "own-ca-key-minted"}}
+	deploy := fixed(contract.Observation{State: contract.Present})
+	obs := roleObservers(roleArns())
+	obs["deploy-role"] = deploy
+
+	status, resp := serveBlock(t, blockCall{r: block, obs: obs, op: "upgrade", fields: map[string]any{"ownSecrets": carried},
+		config: []func(*handler.Config){withManifest(roleBlockManifest)}})
+
+	wantOK(t, status, resp)
+	if got := deploy.calls()[0].Desired.OwnSecrets; !reflect.DeepEqual(got, carried) {
+		t.Errorf("the observer's Desired.OwnSecrets = %v, want the request's %v, untouched by what the ensure returned", got, carried)
+	}
+	if got := resp.OwnSecrets["gatewayCaKey"]; got != "own-ca-key-minted" {
+		t.Errorf("answered gatewayCaKey = %q, want the ensure's own-ca-key-minted", got)
+	}
+}
+
 // cancellingObserver cancels the request context once it reports settledOn, so the verb sees a done context only after this resource settled.
 type cancellingObserver struct {
 	handler.Observer
