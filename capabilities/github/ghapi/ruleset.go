@@ -1,6 +1,7 @@
 package ghapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -144,24 +145,17 @@ func (c *Client) sendRuleset(ctx context.Context, method, path string, r ruleset
 	return nil
 }
 
-// getJSON decodes a whole 200 answer into v, refusing any other status and an answer longer than limit.
+// getJSON decodes a whole 200 answer into v through get, refusing any other status and an answer longer than limit.
 func (c *Client) getJSON(ctx context.Context, path string, limit int64, v any) error {
 	route := "GET " + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+path, nil)
+	status, raw, _, err := c.get(ctx, path, limit+1)
 	if err != nil {
-		return fmt.Errorf("ghapi: build request: %w", err)
+		return err
 	}
-	c.headers(req)
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return fmt.Errorf("ghapi: github unreachable: %w", err)
+	if status != http.StatusOK {
+		return fmt.Errorf("ghapi: github %s returned %d: %s", route, status, safe.LogSafe(string(raw[:min(len(raw), 4<<10)]), c.Token))
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("ghapi: github %s returned %d: %s", route, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
-	}
-	if err := decodeAnswer(resp.Body, limit, v); err != nil {
+	if err := decodeAnswer(bytes.NewReader(raw), limit, v); err != nil {
 		return fmt.Errorf("ghapi: decode the answer to %s: %w", route, err)
 	}
 	return nil
