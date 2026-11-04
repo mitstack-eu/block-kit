@@ -40,6 +40,10 @@ func then(steps ...func(*handler.Config)) func(*handler.Config) {
 func TestNew(t *testing.T) {
 	unchanged := func(map[string]handler.Observer) {}
 	plainObserved := servesBlock(plainV1Beta(t))
+	pool := func(c *handler.Config) {
+		c.Manifest = []byte(poolManifest)
+		c.Observers = map[string]handler.Observer{"gateway": &observer{}, "cloud-worker": &observer{}}
+	}
 	type newCase struct {
 		name    string
 		config  func(*handler.Config)
@@ -73,6 +77,12 @@ func TestNew(t *testing.T) {
 			refused: true, naming: []string{`"Not A Type"`, "Config.TypeObservers"}},
 		{name: "a nil type observer is refused", config: withTypeObservers(func(o map[string]handler.Observer) { o["aws.vpc"] = nil }),
 			refused: true, naming: []string{`"aws.vpc"`, "Config.TypeObservers"}},
+		{name: "an entry marked many for a Resource reporting its members is accepted",
+			config: then(pool, func(c *handler.Config) {
+				c.Resource = reportingBlock{blockResource: &blockResource{cloud: newFakeCloud()}}
+			})},
+		{name: "an entry marked many for a Resource that cannot report its members is refused naming it", config: pool,
+			refused: true, naming: []string{`"cloud-worker"`, "handler.ResourceReporter"}},
 	}
 	for _, edit := range []struct{ path, old, new string }{
 		{"bogus", "metadata:\n", "bogus: 1\nmetadata:\n"},

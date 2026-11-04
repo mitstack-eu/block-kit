@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -547,6 +548,152 @@ func TestAssertBlock_ObservesAResourceOncePerVerb(t *testing.T) {
 		if most := counts.most[name]; most != 1 {
 			t.Errorf("one verb observed %s at most %d times; want once", name, most)
 		}
+	}
+}
+
+const poolBlockManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: pool-block
+  name: Pool Block
+spec:
+  version: 1.0.0
+  resources:
+    - name: cloud-worker
+      type: hetzner.server
+      many: true
+  lifecycle:
+    endpoint: https://pool-block.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
+const poolMax = 3
+
+// poolBlock keeps the first size of poolMax servers tagged with the subscription's id, reporting server i as cloud-worker/i, and a leaky one never removes a server the size drops.
+type poolBlock struct {
+	p     *fakeProvider
+	leaky bool
+}
+
+func (b *poolBlock) EnsureResources(_ context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	size, err := strconv.Atoi(d.Params["size"])
+	if err != nil {
+		return nil, err
+	}
+	var out []contract.CreatedResource
+	for i := 1; i <= poolMax; i++ {
+		id := fmt.Sprintf("server-%d", i)
+		switch {
+		case i <= size:
+			if !b.p.holds(id) {
+				b.p.put(id, "hetzner.server", d.SubscriptionID)
+			}
+			out = append(out, contract.CreatedResource{Name: fmt.Sprintf("cloud-worker/%d", i), Type: "hetzner.server", Identity: map[string]string{"id": id}})
+		case !b.leaky:
+			b.p.remove(id)
+		}
+	}
+	return out, nil
+}
+
+func (b *poolBlock) Ensure(ctx context.Context, d contract.Desired) error {
+	_, err := b.EnsureResources(ctx, d)
+	return err
+}
+
+func (b *poolBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
+	for i := 1; i <= poolMax; i++ {
+		b.p.remove(fmt.Sprintf("server-%d", i))
+	}
+	return nil, nil
+}
+
+// seenObserver records each name and identity the handler hands it.
+type seenObserver struct {
+	providerObserver
+	mu   *sync.Mutex
+	seen map[string]bool
+}
+
+func (o seenObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	o.mu.Lock()
+	o.seen[r.Name+"="+r.Identity["id"]] = true
+	o.mu.Unlock()
+	return o.providerObserver.ObserveResource(ctx, r)
+}
+
+// poolCheck subscribes poolBlock at size and upgrades it to upgradeTo.
+func poolCheck(t *testing.T, size, upgradeTo string, leaky bool) (kittest.Block, *fakeProvider, seenObserver) {
+	t.Helper()
+	p := newFakeProvider()
+	obs := seenObserver{providerObserver: providerObserver{p: p}, mu: &sync.Mutex{}, seen: map[string]bool{}}
+	desired := func(size string) contract.Desired {
+		return contract.Desired{Identity: contract.Identity{SubscriptionID: "sub-pool", BlockID: "pool-block", OrgID: "org-1"}, Params: map[string]string{"size": size}}
+	}
+	upgrade := desired(upgradeTo)
+	return kittest.Block{
+		Config: handler.Config{Resource: &poolBlock{p: p, leaky: leaky}, Manifest: []byte(poolBlockManifest), Types: typeSnapshot(t),
+			Observers: map[string]handler.Observer{"cloud-worker": obs}},
+		Provider: p,
+		Desired:  desired(size),
+		Upgrade:  &upgrade,
+	}, p, obs
+}
+
+func TestCheckBlock_PassesAnEntryMarkedManyWhoseTwoTaggedMembersItHandsTheObserverByName(t *testing.T) {
+	in, _, obs := poolCheck(t, "2", "2", false)
+
+	problems := kittest.CheckBlock(in)
+
+	wantNoProblems(t, problems)
+	if got, want := slices.Sorted(maps.Keys(obs.seen)), []string{"cloud-worker/1=server-1", "cloud-worker/2=server-2"}; !slices.Equal(got, want) {
+		t.Errorf("the handler handed its observer %q, want %q", got, want)
+	}
+}
+
+func TestCheckBlock_PassesAnEntryMarkedManyWithNoMemberAndFailsAStrayObjectBesideIt(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		stray bool
+	}{{"no object carries the subscription's id", false}, {"a stray server carries it", true}} {
+		t.Run(tc.label, func(t *testing.T) {
+			in, p, _ := poolCheck(t, "0", "0", false)
+			if tc.stray {
+				p.put("server-9", "hetzner.server", "sub-pool")
+			}
+
+			problems := kittest.CheckBlock(in)
+
+			if !tc.stray {
+				wantNoProblems(t, problems)
+				return
+			}
+			wantProblemNaming(t, problems, `resource "server-9"`, "hetzner.server")
+		})
+	}
+}
+
+func TestCheckBlock_AnUpgradeDroppingAMemberPassesOnlyOnceItsTaggedServerIsGone(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		leaky bool
+	}{{"a block removing the member the upgrade drops", false}, {"a block leaving the dropped member's server", true}} {
+		t.Run(tc.label, func(t *testing.T) {
+			in, p, _ := poolCheck(t, "3", "2", tc.leaky)
+
+			problems := kittest.CheckBlock(in)
+
+			if tc.leaky {
+				wantProblemNaming(t, problems, `resource "cloud-worker/3"`, "stopped reporting")
+				wantProblemNaming(t, problems, `resource "server-3"`, "hetzner.server")
+				return
+			}
+			wantNoProblems(t, problems)
+			if left, _ := p.ListTagged(context.Background(), "sub-pool"); len(left) != 0 {
+				t.Errorf("after unsubscribe the provider still lists %+v carrying the subscription's id, want nothing", left)
+			}
+		})
 	}
 }
 
