@@ -55,7 +55,6 @@ func TestPublishBlockWorkflow_ScansEveryEventBeforePublish(t *testing.T) {
 	}
 }
 
-// Each conformance job scans the block's image on a pull request with the publish job's own script from the kit at kit-ref, and the workflow holds no scanner pin or flag of its own.
 func TestPublishBlockWorkflow_APullRequestRunsThePublishScan(t *testing.T) {
 	const scan, image = `bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" `, `"block:${GITHUB_SHA}"`
 	raw, err := os.ReadFile("../.github/workflows/publish-block.yml")

@@ -113,7 +113,6 @@ func jobSteps(t *testing.T, all map[string]string, job string) []step {
 	return steps
 }
 
-// label names a step by its name, or by its action without the pinned ref when it has none.
 func (s step) label() string {
 	if n, ok := s["name"]; ok {
 		return n
@@ -149,7 +148,6 @@ func publishSteps(t *testing.T) []step {
 	return jobSteps(t, allFields(t), "publish")
 }
 
-// script returns the run body of job's step named name, as the runner hands it to bash.
 func script(t *testing.T, job, name string) kittest.WorkflowScript {
 	t.Helper()
 	s, err := kittest.ReadWorkflowScript(readWorkflow(t), job, name)
@@ -189,7 +187,6 @@ func (l *lockedBuilder) String() string {
 	return l.b.String()
 }
 
-// runBash runs the script at scriptPath in dir under the runner's bash flags, with env added to the process environment.
 func runBash(t *testing.T, scriptPath, dir string, env ...string) scriptResult {
 	t.Helper()
 	cmd := exec.Command("bash", "--noprofile", "--norc", "-e", "-o", "pipefail", scriptPath)
@@ -425,7 +422,6 @@ type probeResult struct {
 	argv         []string
 }
 
-// probedTags returns each imageTag the probe asked aws about, in order.
 func (r probeResult) probedTags() []string {
 	var tags []string
 	for _, line := range r.argv {
@@ -626,7 +622,6 @@ func TestWorkflow_TheProbeAnswerDecidesWhichWriteStepsRun(t *testing.T) {
 	}
 }
 
-// runStepBody runs a publish step's script with its ${{ }} inputs filled in and a stub blockprov that records its argv.
 func runStepBody(t *testing.T, name string, env map[string]string) string {
 	t.Helper()
 	literals := map[string]string{
