@@ -26,6 +26,17 @@ func NeedsApp(format string, args ...any) error {
 	return Refuse(ClassNeedsApp, format, args...)
 }
 
+// ParamAppName is the param the platform fills with the app's name for every block, left out only by a dry run naming neither an app nor its name.
+const ParamAppName = "appName"
+
+// NeedsAppName answers NeedsApp for a request naming neither an app nor its name, and nil otherwise.
+func NeedsAppName(d contract.Desired) error {
+	if d.AppID == "" && d.Params[ParamAppName] == "" {
+		return NeedsApp("its check reads the app's name, and the request names no app")
+	}
+	return nil
+}
+
 // dispatchDeclared refuses a name the manifest does not declare with a 400 before any resource is reached, unless a validate names a type Config.TypeObservers holds.
 //
 // A resource still converging, left standing or failing stops the verb there, and the request context is checked before each resource's first call. Every answer, an error included, carries the resources map of the resources reached.

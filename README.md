@@ -165,6 +165,14 @@ before.
 `TestDeclared_AValidateWhoseCheckNeedsACreatedAppAnswersTheNeedsAppRefusalNamingWhy`
 in `handler/declared_test.go` serves that answer through the handler.
 
+A check that reads the app's name has a one-line path. The platform fills
+`handler.ParamAppName`, the `appName` param, for every block, and leaves it
+out only for a dry run that names neither an app nor an app name, such as a
+stack page's requirement check. Call `handler.NeedsAppName(ref.Desired)`
+before reading the name, and return its error when it is not nil. It answers
+`handler.NeedsApp` for such a request and nil for any other, so a request
+with a name or an app is checked as before.
+
 ## What a block imports
 
 A block must import the four packages at the root of this repository,
