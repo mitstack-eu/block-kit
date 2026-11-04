@@ -88,6 +88,11 @@ func Wait(format string, args ...any) error {
 	return &Waiting{Detail: fmt.Sprintf(format, args...)}
 }
 
+// OwnSecretsReporter, when a block-level Resource implements it, replaces EnsureResources with EnsureResourcesOwning, whose own secrets reach every subscribe and upgrade answer that does not fail, a pending one and one beside a Wait error included, and an observer returning the same name later overrides the value the ensure returned.
+type OwnSecretsReporter interface {
+	EnsureResourcesOwning(ctx context.Context, d contract.Desired) (created []contract.CreatedResource, ownSecrets map[string]string, err error)
+}
+
 func waiting(err error) (*Waiting, bool) {
 	var w *Waiting
 	return w, errors.As(err, &w)

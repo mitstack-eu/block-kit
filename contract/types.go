@@ -69,7 +69,6 @@ type Request struct {
 
 	IssueAppID string `json:"issueAppId,omitempty"`
 
-	// OwnSecrets carries back, under the names the block chose, the own secrets the subscription's block returned on earlier calls.
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 }
 
@@ -119,8 +118,7 @@ type Response struct {
 	// ResourceSecretOutputs keeps each provided resource's secret outputs apart, since the merged SecretOutputs keeps one value of a key two resources share.
 	ResourceSecretOutputs map[string]map[string]string `json:"resourceSecretOutputs,omitempty"`
 	// Credential answers an issue alone.
-	Credential *Credential `json:"credential,omitempty"`
-	// OwnSecrets are secrets the block keeps for its own later calls, which the platform hands back to this subscription's block alone and never offers as outputs.
+	Credential *Credential       `json:"credential,omitempty"`
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 }
 

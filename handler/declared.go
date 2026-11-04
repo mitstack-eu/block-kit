@@ -124,7 +124,7 @@ func (r *declaredRun) answers(name string) bool {
 	return r.provided == nil || r.provided[name]
 }
 
-// withOwnSecrets hands a successful answer the own secrets every observation returned, since the platform keeps nothing from a failed one.
+// withOwnSecrets hands a successful answer the own secrets the ensure and each observation returned, since the platform keeps nothing from a failed one.
 func (r *declaredRun) withOwnSecrets(status int, resp contract.Response) (int, contract.Response) {
 	if status == http.StatusOK {
 		resp.OwnSecrets = r.ownSecrets

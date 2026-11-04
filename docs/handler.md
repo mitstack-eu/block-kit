@@ -108,7 +108,7 @@ and `d.Instances` read the same on every call.
 | `Instances` | Each connection's settings and endpoint, keyed by the connection's name, such as the AWS region a block works in |
 | `Secrets` | Each connection's secrets, keyed by the connection's name, as in `d.Secrets["hetzner"]["api_token"]` |
 | `SecretInputs`, `AppSecrets` | The values of the secret inputs the block's types declare, and every secret the app holds when the manifest sets `receivesAppSecrets` |
-| `OwnSecrets` | The secrets this subscription's block returned as its own on earlier calls, under the names it chose, as in `d.OwnSecrets["gatewayCaKey"]`, which the next section's [own secrets](#what-the-answer-carries) part explains |
+| `OwnSecrets` | The secrets this subscription's block returned as its own on earlier calls, under the names it chose, as in `d.OwnSecrets["gatewayCaKey"]`, which [What the answer carries](#what-the-answer-carries) explains |
 | `Params` | The subscription's values for the inputs the block's types declare, keyed by input name, as in `d.Params["location"]` and as [Writing the manifest](manifest.md) explains |
 | `Bindings`, `BindingsAll`, `RequirementTypes` | The outputs of the resources that met the block's requirements, and which type met each, as [Writing the manifest](manifest.md) explains |
 | `RecordedResources` | What the engine recorded for each resource: its type, its identity and, on an unsubscribe, `absent` when the engine already knows it is gone |
@@ -420,11 +420,12 @@ type OwnSecretsReporter interface {
 The answer to a subscribe or an upgrade carries under `ownSecrets` the own
 secrets of its ensure and of every observation, and a validate's answer those
 of every observation, pending or not. An ensure's own secrets reach the answer
-even beside `handler.Wait`. The later
-step wins a name two return: an observer overrides the value your ensure
-returned, and a later resource overrides an earlier one. A refused or failed
-answer carries none, because the platform keeps nothing from it. The platform keeps the set for the
-subscription and sends it back on each later request of that subscription:
+even beside `handler.Wait`. The later step wins a name two return: an observer
+overrides the value your ensure returned, and a later resource overrides an
+earlier one. A refused or failed answer carries none, because the platform
+keeps nothing from it, and so does a validate a `handler.Converger` answers
+without observing. The platform keeps the set for the subscription and sends
+it back on each later request of that subscription:
 
 ```json
 {"operation": "upgrade", "subscriptionId": "sub_a1b2", "ownSecrets": {"gatewayCaKey": "<the key's PEM>"}}
@@ -434,8 +435,8 @@ Your code reads it as `d.OwnSecrets["gatewayCaKey"]`. A name an answer leaves
 out keeps its value, so a block returns a key once and may omit it afterwards.
 No request of another subscription carries the set, and neither the app's
 secrets nor its secret listing holds it. The whole set, encoded as JSON, is at
-most 8 KiB, and the platform fails a call whose answer would take it past
-that. Unsubscribe deletes the set. The handler scrubs each own secret from
+most 8 KiB. The kit does not check that, but the platform fails a call whose
+answer would take the set past it. Unsubscribe deletes the set. The handler scrubs each own secret from
 every error and log line, as it does each other secret a request carries.
 
 The handler refuses to report an output whose value equals one of the

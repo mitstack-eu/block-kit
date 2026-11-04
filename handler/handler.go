@@ -35,11 +35,6 @@ type ResourceReporter interface {
 	EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error)
 }
 
-// OwnSecretsReporter, when a block-level Resource implements it, replaces EnsureResources with EnsureResourcesOwning, whose own secrets reach every subscribe and upgrade answer that does not fail, a pending one and one beside a Wait error included, and an observer returning the same name later overrides the value the ensure returned.
-type OwnSecretsReporter interface {
-	EnsureResourcesOwning(ctx context.Context, d contract.Desired) (created []contract.CreatedResource, ownSecrets map[string]string, err error)
-}
-
 // KeptReporter, when a block-level Resource implements it, replaces Delete with DeleteKeeping, whose kept files, keyed by the declared resource that landed them, answer on that resource's delete outcome; a name the manifest does not declare is refused with a 400.
 type KeptReporter interface {
 	DeleteKeeping(ctx context.Context, d contract.Desired) (outputs map[string]string, kept map[string][]contract.Kept, err error)
