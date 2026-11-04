@@ -35,7 +35,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 	case "subscribe", "upgrade":
 		reported, err := r.ensureBlock(ctx)
 		if w, ok := waiting(err); ok {
-			return http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
+			return r.withOwnSecrets(http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, r.secrets...)})
 		}
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
@@ -96,11 +96,7 @@ func waiting(err error) (*Waiting, bool) {
 // ensureBlock returns what the ensure reported by resource name, refusing a
 // resource undeclared, of an unlisted type, or with a secret in its identity.
 func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.CreatedResource, error) {
-	reporter, ok := r.h.resource.(ResourceReporter)
-	if !ok {
-		return nil, r.h.resource.Ensure(ctx, r.d)
-	}
-	created, err := reporter.EnsureResources(ctx, r.d)
+	created, err := r.ensureReporting(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +116,20 @@ func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.Crea
 		reported[c.Name] = c
 	}
 	return reported, nil
+}
+
+// ensureReporting copies the own secrets an ensure returns, even beside an error, so a Wait answer carries them and the block's map stays its own.
+func (r *declaredRun) ensureReporting(ctx context.Context) ([]contract.CreatedResource, error) {
+	switch res := r.h.resource.(type) {
+	case OwnSecretsReporter:
+		created, own, err := res.EnsureResourcesOwning(ctx, r.d)
+		r.ownSecrets = mergeOutputs(nil, own)
+		return created, err
+	case ResourceReporter:
+		return res.EnsureResources(ctx, r.d)
+	default:
+		return nil, r.h.resource.Ensure(ctx, r.d)
+	}
 }
 
 func (r *declaredRun) deleteBlock(ctx context.Context) (map[string]string, error) {
