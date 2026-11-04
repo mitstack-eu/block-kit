@@ -40,8 +40,12 @@ func (c *Client) headers(req *http.Request) {
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 }
 
-// EnsureRepo idempotently creates a private repo, treating a 200 GET as already existing and a 404 as a create.
-func (c *Client) EnsureRepo(ctx context.Context, org, name string) (string, error) {
+// EnsureRepo idempotently creates a private repo, treating a 200 GET as already existing and a 404 as a create, and keeps a ruleset on main that refuses every update, force-push and deletion but those of the GitHub App appID names.
+func (c *Client) EnsureRepo(ctx context.Context, org, name, appID string) (string, error) {
+	app, err := parseAppID(appID)
+	if err != nil {
+		return "", err
+	}
 	fullName := org + "/" + name
 	repo, err := SafeRepo(fullName)
 	if err != nil {
@@ -59,6 +63,9 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name string) (string, erro
 	}
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
+		if err := c.ensureRuleset(ctx, repo, app); err != nil {
+			return "", err
+		}
 		return fullName, nil
 	}
 	if resp.StatusCode != http.StatusNotFound {
@@ -87,6 +94,9 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name string) (string, erro
 	}
 	if out.FullName == "" {
 		return "", fmt.Errorf("ghapi: github %s answered no full_name", route)
+	}
+	if err := c.ensureRuleset(ctx, repo, app); err != nil {
+		return "", err
 	}
 	return out.FullName, nil
 }

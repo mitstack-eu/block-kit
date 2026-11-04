@@ -537,6 +537,16 @@ refuses a private, loopback, bare-IP or metadata host even when you listed it.
 `ghapi.NewClient(base.String(), token, httpClient)` then creates repositories,
 commits files and sets Actions variables, each idempotently.
 
+`EnsureRepo(ctx, org, name, appID)` creates a private repository, or finds one,
+and keeps a ruleset on its main branch. The ruleset refuses every update,
+force-push and deletion of main, except those of the GitHub App that `appID`
+names. Pass the request's `secrets.github.appId`, which is the id of the
+mitstack App whose installation minted the token, so the block's own commits
+still land. Each call repairs the ruleset: it creates a missing one, puts back
+one whose rules, branch or bypass list changed, and leaves a matching one
+alone. An empty `appID` fails with `ghapi.ErrNoAppID` before any request. An
+org owner can still delete the ruleset, and the next call restores it.
+
 A block that reads a repository at one commit takes main's head with
 `HeadCommit`, the commit's tree with `CommitTree`, and the path of every file
 in that tree with `TreePaths`, which refuses a listing GitHub truncated past
