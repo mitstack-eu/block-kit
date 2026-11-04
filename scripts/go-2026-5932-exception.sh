@@ -152,7 +152,8 @@ no_openpgp_code() {
   fi
   openpgp=$(grep -cF "$OPENPGP" "$work/names" || true)
   if [ "$openpgp" -gt 0 ]; then
-    echo "its Go function table names $openpgp functions in $OPENPGP, such as $(grep -m1 -F "$OPENPGP" "$work/names")"
+    echo "its Go function table names $openpgp functions in $OPENPGP:"
+    grep -F "$OPENPGP" "$work/names" | sed 's/^/    /'
     return 1
   fi
   crypto=$(grep -cF "$CRYPTO/" "$work/names" || true)
