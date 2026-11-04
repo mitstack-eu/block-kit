@@ -146,9 +146,8 @@ it as a pass.
 
 A builder runs a dry run before the app exists, so its request carries no
 `appId`. Some checks read something only a created app has, such as a record
-the platform keys by the app's id. Such a check returns
-`handler.NeedsApp`, a refusal of class `needs-app` that names why
-the check waits:
+the platform keys by the app's id. Such a check returns `handler.NeedsApp`,
+a refusal of class `needs-app` that names why the check waits:
 
 ```go
 if ref.Desired.AppID == "" {
