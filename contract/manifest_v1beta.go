@@ -21,7 +21,7 @@ var v1betaDecoder = manifestDecoder{version: ManifestAPIVersion, tag: "json"}
 
 var typeIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*\.[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
-// decodeBlockManifest also holds what the types cannot say: type is block or capability, names and references are unique, and every provides entry names a resource.
+// decodeBlockManifest also holds what the types cannot say: type is block or capability, names and references are unique, no resource name holds a slash, and every provides entry names a resource not marked many.
 func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 	b := &BlockManifest{}
 	if err := v1betaDecoder.decode(root, reflect.ValueOf(b).Elem(), ""); err != nil {
@@ -31,12 +31,15 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 		return nil, fmt.Errorf("type is %q, but the type of a %s manifest must be %q or %q",
 			b.Type, ManifestAPIVersion, ManifestTypeBlock, ManifestTypeCapability)
 	}
-	names := make(map[string]bool, len(b.Spec.Resources))
+	markedMany := make(map[string]bool, len(b.Spec.Resources))
 	for i, r := range b.Spec.Resources {
-		if names[r.Name] {
+		if strings.Contains(r.Name, "/") {
+			return nil, fmt.Errorf("spec.resources[%d].name: %q holds a slash, which is kept for the members of an entry marked many, named <entry>/<key>", i, r.Name)
+		}
+		if _, ok := markedMany[r.Name]; ok {
 			return nil, fmt.Errorf("spec.resources[%d].name: %q names an earlier resource too, and a resource name appears once in a block", i, r.Name)
 		}
-		names[r.Name] = true
+		markedMany[r.Name] = r.Many
 	}
 	refs := make(map[string]int, len(b.Spec.Requires))
 	for i, q := range b.Spec.Requires {
@@ -47,8 +50,12 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 		refs[ref] = i
 	}
 	for i, p := range b.Spec.Provides {
-		if !names[p] {
+		marked, ok := markedMany[p]
+		if !ok {
 			return nil, fmt.Errorf("spec.provides[%d]: %q names no resource in spec.resources", i, p)
+		}
+		if marked {
+			return nil, fmt.Errorf("spec.provides[%d]: %q is marked many, and an entry marked many is never provided, since a binding names one resource", i, p)
 		}
 	}
 	return b, nil
@@ -61,7 +68,7 @@ type manifestEntry struct {
 }
 
 func (d manifestDecoder) requirement(n *yamlNode, path string) (ManifestRequirement, error) {
-	e, err := d.entry(n, path, true)
+	e, err := d.entry(n, path)
 	if err != nil {
 		return ManifestRequirement{}, err
 	}
@@ -70,11 +77,11 @@ func (d manifestDecoder) requirement(n *yamlNode, path string) (ManifestRequirem
 
 // resource names an entry without a name by the one type id it lists.
 func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, error) {
-	e, err := d.entry(n, path, false)
+	e, err := d.entry(n, path)
 	if err != nil {
 		return ManifestResource{}, err
 	}
-	r := ManifestResource{Name: e.name, Types: e.types}
+	r := ManifestResource{Name: e.name, Types: e.types, Many: e.many}
 	if len(e.types) == 1 {
 		r.Type = e.types[0]
 		if r.Name == "" {
@@ -85,7 +92,7 @@ func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, e
 }
 
 // entry refuses a key that is not a field of an entry, and an entry listing several types without a name.
-func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (manifestEntry, error) {
+func (d manifestDecoder) entry(n *yamlNode, path string) (manifestEntry, error) {
 	if n.kind == yamlScalar {
 		id, err := typeID(n, path)
 		return manifestEntry{types: []string{id}}, err
@@ -111,7 +118,7 @@ func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (mani
 			if err == nil && e.name == "" {
 				err = fmt.Errorf("%s must not be empty; leave it out to name the entry by its type", keyPath)
 			}
-		case key == "many" && requirement:
+		case key == "many":
 			err = d.decode(val, reflect.ValueOf(&e.many).Elem(), keyPath)
 		default:
 			err = fmt.Errorf("%s is not a field of a %s manifest", keyPath, d.version)

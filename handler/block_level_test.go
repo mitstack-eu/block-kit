@@ -32,6 +32,7 @@ var (
 	roleBlockManifest  = v1betaManifest("role-block",
 		[]string{"{ name: deploy-role, type: aws.iam-role }", "{ name: ecr-push-role, type: aws.iam-role }", "{ name: audit-role, type: aws.iam-role }"},
 		"deploy-role", "ecr-push-role")
+	poolManifest = v1betaManifest("pool-block", []string{"{ name: gateway, type: hetzner.server }", "{ name: cloud-worker, type: hetzner.server, many: true }"})
 )
 
 var declaredTypes = map[string]string{"aws.vpc": "aws.vpc", "aws.ec2-instance": "aws.ec2-instance", "a": "aws.iam-role", "b": "aws.iam-role"}
@@ -388,9 +389,9 @@ func TestBlockLevel_APendingSubscribeOrUpgradeNamesTheResourceNotPresentAndCarri
 }
 
 func TestBlockLevel_RefusesWhatTheManifestDoesNotDeclare(t *testing.T) {
-	report := func(c contract.CreatedResource) func(*fakeCloud) handler.Resource {
+	report := func(cs ...contract.CreatedResource) func(*fakeCloud) handler.Resource {
 		return func(cloud *fakeCloud) handler.Resource {
-			return reportingBlock{blockResource: &blockResource{cloud: cloud}, report: []contract.CreatedResource{c}}
+			return reportingBlock{blockResource: &blockResource{cloud: cloud}, report: cs}
 		}
 	}
 	plan := func(name string) func(*fakeCloud) handler.Resource {
@@ -409,6 +410,8 @@ func TestBlockLevel_RefusesWhatTheManifestDoesNotDeclare(t *testing.T) {
 	}{
 		{"a reported name the manifest does not declare", report(contract.CreatedResource{Name: "c", Type: "aws.iam-role"}), "subscribe", nil, "", []string{`"c"`}},
 		{"a reported type its entry does not list", report(contract.CreatedResource{Name: "b", Type: "aws.vpc"}), "subscribe", nil, "", []string{`"b"`, "aws.vpc"}},
+		{"a name reported twice", report(contract.CreatedResource{Name: "a", Type: "aws.iam-role"}, contract.CreatedResource{Name: "a", Type: "aws.iam-role"}),
+			"subscribe", nil, "repeated-resource", []string{`"a"`, "twice"}},
 		{"a planned replacement the manifest does not declare", plan("c"), "validate", nil, "", []string{`"c"`}},
 		{"a validate naming an undeclared resource", plain, "validate", map[string]any{"resource": "c"}, "undeclared-resource", nil},
 		{"a subscribe naming one resource", plain, "subscribe", map[string]any{"resource": "b"}, "", []string{`"b"`, "block-level handler"}},
@@ -427,6 +430,82 @@ func TestBlockLevel_RefusesWhatTheManifestDoesNotDeclare(t *testing.T) {
 				t.Errorf("a refused %s ran Ensure %d and Delete %d times", tc.op, b.ensureCalls, b.deleteCalls)
 			}
 		})
+	}
+}
+
+// servePool serves poolManifest to a block whose ensure reports report, every entry's observer reading present.
+func servePool(t *testing.T, op string, fields map[string]any, report ...contract.CreatedResource) (int, contract.Response, map[string]*observer) {
+	t.Helper()
+	obs := map[string]*observer{"gateway": fixed(contract.Observation{State: contract.Present}), "cloud-worker": fixed(contract.Observation{State: contract.Present})}
+	block := reportingBlock{blockResource: &blockResource{cloud: newFakeCloud()}, report: report}
+	status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(obs), op: op, fields: fields, config: []func(*handler.Config){withManifest(poolManifest)}})
+	return status, resp, obs
+}
+
+func server(name string) contract.CreatedResource {
+	return contract.CreatedResource{Name: name, Type: "hetzner.server", Identity: map[string]string{"id": name}}
+}
+
+func TestBlockLevel_RefusesAReportThatNamesNoMemberOfAnEntryMarkedManyOrRepeatsAName(t *testing.T) {
+	const keyRule = "1 to 40 lowercase letters, digits and hyphens"
+	cases := []struct {
+		label  string
+		report []contract.CreatedResource
+		class  string
+		names  []string
+	}{
+		{"a member reported twice", []contract.CreatedResource{server("cloud-worker/1"), server("cloud-worker/1")}, "repeated-resource", []string{`"cloud-worker/1"`, "twice"}},
+		{"a member of an entry not marked many", []contract.CreatedResource{server("gateway/1")}, "undeclared-resource", []string{`"gateway/1"`, "not mark many"}},
+		{"the entry marked many by its own name", []contract.CreatedResource{server("cloud-worker")}, "undeclared-resource", []string{`"cloud-worker"`, "cloud-worker/<key>"}},
+		{"a member key holding a capital letter", []contract.CreatedResource{server("cloud-worker/Fsn1")}, "undeclared-resource", []string{`"cloud-worker/Fsn1"`, keyRule}},
+		{"an empty member key", []contract.CreatedResource{server("cloud-worker/")}, "undeclared-resource", []string{`"cloud-worker/"`, keyRule}},
+		{"a member key of 41 characters", []contract.CreatedResource{server("cloud-worker/" + strings.Repeat("a", 41))}, "undeclared-resource", []string{keyRule}},
+		{"a member key holding a slash", []contract.CreatedResource{server("cloud-worker/fsn1/1")}, "undeclared-resource", []string{`"cloud-worker/fsn1/1"`, keyRule}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			status, resp, _ := servePool(t, "subscribe", nil, tc.report...)
+
+			wantRefusal(t, status, resp, tc.class, tc.names...)
+		})
+	}
+}
+
+func TestBlockLevel_AValidateNamingAMemberAsksItsEntrysObserverAboutThatMemberAlone(t *testing.T) {
+	members := map[string]any{"cloud-worker/1": map[string]any{"type": "hetzner.server", "identity": map[string]any{"id": "server-101"}},
+		"cloud-worker/2": map[string]any{"type": "hetzner.server", "identity": map[string]any{"id": "server-102"}}}
+	fields := map[string]any{"resource": "cloud-worker/2", "resourceType": "hetzner.server", "resourceIdentity": map[string]any{"id": "server-102"}, "recordedResources": members}
+
+	status, resp, obs := servePool(t, "validate", fields)
+
+	wantOK(t, status, resp)
+	refs := obs["cloud-worker"].calls()
+	if len(refs) != 1 || refs[0].Name != "cloud-worker/2" || refs[0].Identity["id"] != "server-102" || len(obs["gateway"].calls()) != 0 {
+		t.Errorf("cloud-worker observer handed %+v and gateway's %d refs, want cloud-worker/2 as server-102 alone", refs, len(obs["gateway"].calls()))
+	}
+	if o := resp.Resources["cloud-worker/2"].Observe; len(resp.Resources) != 1 || o == nil || o.State != contract.Present {
+		t.Errorf("resources = %+v, want cloud-worker/2 alone, present", resp.Resources)
+	}
+}
+
+type memberSecrets struct{}
+
+func (memberSecrets) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	_, key, _ := strings.Cut(r.Name, "/")
+	return contract.Observation{State: contract.Present, OwnSecrets: map[string]string{"joinToken": "token-" + key, "key-" + key: key}}, nil
+}
+
+func TestBlockLevel_EachMemberAnOwnSecretsReporterReportsCarriesItsObserversOwnSecrets(t *testing.T) {
+	block := owningBlock{blockResource: &blockResource{cloud: newFakeCloud()}, report: []contract.CreatedResource{server("cloud-worker/2"), server("cloud-worker/1")},
+		own: map[string]string{"joinToken": "minted", "caKey": "minted"}}
+	obs := map[string]handler.Observer{"gateway": fixed(contract.Observation{State: contract.Present}), "cloud-worker": memberSecrets{}}
+
+	status, resp := serveBlock(t, blockCall{r: block, obs: obs, op: "subscribe", config: []func(*handler.Config){withManifest(poolManifest)}})
+
+	wantOK(t, status, resp)
+	want := map[string]string{"caKey": "minted", "joinToken": "token-2", "key-1": "1", "key-2": "2"}
+	if !reflect.DeepEqual(resp.OwnSecrets, want) {
+		t.Errorf("OwnSecrets = %v, want %v: each member's, the later member's value of a name winning", resp.OwnSecrets, want)
 	}
 }
 

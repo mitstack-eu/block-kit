@@ -25,7 +25,7 @@
   "$id": "https://mitstack.dev/schemas/block/manifest.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A block manifest under mitstack/v1beta: its requirements by exact type, the resources it creates by exact type, the resources it provides, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice, a requirement reference used twice, an entry listing several types without a name, and a provides entry that names no resource.",
+  "description": "A block manifest under mitstack/v1beta: its requirements by exact type, the resources it creates by exact type, the resources it provides, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice or holding a slash, a requirement reference used twice, an entry listing several types without a name, and a provides entry that names no resource or one marked many.",
   "properties": {
     "apiVersion": {
       "const": "mitstack/v1beta",
@@ -236,7 +236,7 @@
         },
         "resources": {
           "items": {
-            "description": "A resource the block creates: a type id, or an object of its type and its name.",
+            "description": "A resource the block creates: a type id, or an object of its type, its name and many.",
             "oneOf": [
               {
                 "$ref": "#/$defs/typeId"
@@ -244,6 +244,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "many": {
+                    "type": "boolean"
+                  },
                   "name": {
                     "minLength": 1,
                     "type": "string"

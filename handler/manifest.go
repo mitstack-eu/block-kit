@@ -3,6 +3,8 @@ package handler
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,11 +49,34 @@ type namedResource struct {
 	declaration contract.ManifestResource
 }
 
-// observedResources refuses a declared resource with no observer and an observer under an undeclared name.
+// named is nr under name, which is nr's own name or one of its members'.
+func (nr namedResource) named(name string) namedResource {
+	nr.name = name
+	return nr
+}
+
+// units lists what a block-level verb observes, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
+func units[V any](declared []namedResource, held map[string]V) []namedResource {
+	names := slices.Collect(maps.Keys(held))
+	out := make([]namedResource, 0, len(declared))
+	for _, nr := range declared {
+		for _, name := range nr.declaration.Names(names) {
+			out = append(out, nr.named(name))
+		}
+	}
+	return out
+}
+
+// observedResources refuses a declared resource with no observer, an observer under an undeclared name, and an entry marked many whose members the block cannot report.
 func observedResources(cfg Config, declared manifestDeclarations) ([]namedResource, error) {
 	declaredSet := make(map[string]bool, len(declared.resources))
 	out := make([]namedResource, 0, len(declared.resources))
+	_, reports := cfg.Resource.(ResourceReporter)
+	_, owning := cfg.Resource.(OwnSecretsReporter)
 	for _, decl := range declared.resources {
+		if decl.Many && !reports && !owning {
+			return nil, fmt.Errorf("handler: the manifest marks resource %q many, but Config.Resource is neither a handler.ResourceReporter nor a handler.OwnSecretsReporter, so it cannot report the entry's members", decl.Name)
+		}
 		declaredSet[decl.Name] = true
 		o := cfg.Observers[decl.Name]
 		kitObserved, err := kitObservedDeclaration(cfg, decl)

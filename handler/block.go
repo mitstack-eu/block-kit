@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	classUndeclaredType = "undeclared-type"
-	classBlockLevelVerb = "block-level-verb"
+	classUndeclaredType   = "undeclared-type"
+	classBlockLevelVerb   = "block-level-verb"
+	classRepeatedResource = "repeated-resource"
 )
 
 // serveBlock serves a request naming one resource for validate alone, and a recorded or requested type reaches the observer even when the entry no longer lists it, since the resource was created as it.
@@ -41,6 +42,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 			return r.h.errorResponse(err, r.secrets)
 		}
 		r.d.VerbAt = r.h.now()
+		r.resources = units(r.h.declared, reported)
 		r.setRefs(reported)
 		r.ensured(reported)
 		return r.withOwnSecrets(r.ensureEach(ctx))
@@ -55,6 +57,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		}
 		r.deleteOutputs = outputs
 		r.d.VerbAt = r.h.now()
+		r.resources = units(r.h.declared, r.d.RecordedResources)
 		r.setRefs(nil)
 		for name, ref := range r.refs {
 			ref.Unsubscribing = true
@@ -66,6 +69,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
+		r.resources = units(r.h.declared, r.d.RecordedResources)
 		r.setRefs(nil)
 		status, resp := r.withOwnSecrets(r.validateEach(ctx))
 		if status == http.StatusOK {
@@ -99,7 +103,8 @@ func waiting(err error) (*Waiting, bool) {
 }
 
 // ensureBlock returns what the ensure reported by resource name, refusing a
-// resource undeclared, of an unlisted type, or with a secret in its identity.
+// resource undeclared, reported twice, of an unlisted type, or with a secret
+// in its identity.
 func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.CreatedResource, error) {
 	created, err := r.ensureReporting(ctx)
 	if err != nil {
@@ -107,10 +112,12 @@ func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.Crea
 	}
 	reported := make(map[string]contract.CreatedResource, len(created))
 	for _, c := range created {
-		nr, ok := r.h.declaredResource(c.Name)
-		if !ok {
-			return nil, Refuse(classUndeclaredResource,
-				"the block reported resource %q, which the manifest's spec.resources does not declare", c.Name)
+		nr, err := r.h.reportedResource(c.Name)
+		if err != nil {
+			return nil, err
+		}
+		if _, repeated := reported[c.Name]; repeated {
+			return nil, Refuse(classRepeatedResource, "the block reported resource %q twice, and an ensure reports each resource once", c.Name)
 		}
 		if !slices.Contains(nr.declaration.Types, c.Type) {
 			return nil, typeNotListed(nr, c.Type)
@@ -135,6 +142,23 @@ func (r *declaredRun) ensureReporting(ctx context.Context) ([]contract.CreatedRe
 	default:
 		return nil, r.h.resource.Ensure(ctx, r.d)
 	}
+}
+
+// reportedResource accepts the name of an entry not marked many or of a member of one marked many, and refuses any other, since the engine records each reported name as a resource of its own.
+func (h *Handler) reportedResource(name string) (namedResource, error) {
+	entry, _, member := strings.Cut(name, "/")
+	nr, ok := h.declaredResource(entry)
+	switch {
+	case !ok:
+		return namedResource{}, Refuse(classUndeclaredResource, "the block reported resource %q, which the manifest's spec.resources does not declare", name)
+	case !member && nr.declaration.Many:
+		return namedResource{}, Refuse(classUndeclaredResource, "the block reported resource %q, which the manifest marks many, so the block reports each of its members as %s/<key>", name, name)
+	case member && !nr.declaration.Many:
+		return namedResource{}, Refuse(classUndeclaredResource, "the block reported resource %q, a member of %q, which the manifest does not mark many", name, entry)
+	case member && !nr.declaration.IsMember(name):
+		return namedResource{}, Refuse(classUndeclaredResource, "the block reported resource %q, whose key after %q is not 1 to 40 lowercase letters, digits and hyphens", name, entry+"/")
+	}
+	return nr.named(name), nil
 }
 
 func (r *declaredRun) deleteBlock(ctx context.Context) (map[string]string, error) {

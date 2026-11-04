@@ -34,9 +34,9 @@ func GenerateManifestSchema() ([]byte, error) {
 	doc["title"] = "mitstack block manifest " + ManifestAPIVersion
 	doc["description"] = "A block manifest under " + ManifestAPIVersion + ": its requirements by exact type, " +
 		"the resources it creates by exact type, the resources it provides, its lifecycle and its observability. " +
-		"Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice, " +
-		"a requirement reference used twice, an entry listing several types without a name, " +
-		"and a provides entry that names no resource."
+		"Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice " +
+		"or holding a slash, a requirement reference used twice, an entry listing several types without a name, " +
+		"and a provides entry that names no resource or one marked many."
 	doc["$defs"] = map[string]any{
 		"typeId": map[string]any{
 			"description": "A resource type id, <capability>.<name> in lowercase kebab case.",
@@ -65,9 +65,9 @@ func GenerateManifestSchema() ([]byte, error) {
 func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 	switch t {
 	case requirementType:
-		return entrySchema("A requirement: a type id, or an object of its type, its name and many.", true), nil
+		return entrySchema("A requirement: a type id, or an object of its type, its name and many."), nil
 	case resourceType:
-		return entrySchema("A resource the block creates: a type id, or an object of its type and its name.", false), nil
+		return entrySchema("A resource the block creates: a type id, or an object of its type, its name and many."), nil
 	case durationType:
 		return map[string]any{"description": "A positive Go duration, such as 75m.", "type": "string"}, nil
 	}
@@ -124,13 +124,11 @@ func structSchema(t reflect.Type) (map[string]any, error) {
 	return s, nil
 }
 
-func entrySchema(description string, requirement bool) map[string]any {
+func entrySchema(description string) map[string]any {
 	props := map[string]any{
 		"type": map[string]any{"$ref": typeIDsRef},
 		"name": map[string]any{"type": "string", "minLength": 1},
-	}
-	if requirement {
-		props["many"] = map[string]any{"type": "boolean"}
+		"many": map[string]any{"type": "boolean"},
 	}
 	return map[string]any{
 		"description": description,

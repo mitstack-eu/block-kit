@@ -3,7 +3,10 @@ package contract_test
 // CheckManifestTypes and CheckBinding judge a v1beta manifest's requirements, resources and bindings against the platform's type snapshot.
 
 import (
+	"bytes"
+	"encoding/json"
 	"io/fs"
+	"os"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/contract"
@@ -45,6 +48,45 @@ func TestParseManifest_ParsesEveryManifestGolden(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A golden marking no entry many encodes as the release before many was a resource key pinned it, and marking one entry many adds that key alone.
+func TestParseManifest_AGoldenMarkingNoEntryManyEncodesAsPinnedAndMarkingOneAddsOnlyItsKey(t *testing.T) {
+	raw, err := os.ReadFile("testdata/manifest-golden-encodings.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pinned map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &pinned); err != nil {
+		t.Fatalf("testdata/manifest-golden-encodings.json: %v", err)
+	}
+	entries, err := fs.ReadDir(contract.ManifestGoldens, contract.ManifestGoldensDir)
+	if err != nil {
+		t.Fatalf("fs.ReadDir(contract.ManifestGoldens, contract.ManifestGoldensDir): %v", err)
+	}
+	for _, e := range entries {
+		t.Run(e.Name(), func(t *testing.T) {
+			b := parseBeta(t, readManifestGolden(t, e.Name()))
+
+			got, err := json.Marshal(b)
+
+			if err != nil {
+				t.Fatalf("json.Marshal(ParseManifest(%s)): %v", e.Name(), err)
+			}
+			if want, ok := pinned[e.Name()]; !ok || !bytes.Equal(got, want) {
+				t.Errorf("json.Marshal(ParseManifest(%s)) = %s; want the pinned %s", e.Name(), got, want)
+			}
+		})
+	}
+	t.Run("aws-app-infra with ecr-push-role marked many", func(t *testing.T) {
+		want := jsonObject(t, pinned[awsAppInfraGolden])
+		want["spec"].(map[string]any)["resources"].([]any)[6].(map[string]any)["many"] = true
+		marked := editGolden(t, awsAppInfraGolden, "    - { name: ecr-push-role, type: aws.iam-role }\n", "    - { name: ecr-push-role, type: aws.iam-role, many: true }\n")
+
+		got := marshalObject(t, parseBeta(t, marked))
+
+		wantField(t, "the golden with ecr-push-role marked many", got, want)
+	})
 }
 
 func TestCheckManifestTypes_RefusesExactlyTheTypesTheSnapshotLacksNamingTheEntry(t *testing.T) {

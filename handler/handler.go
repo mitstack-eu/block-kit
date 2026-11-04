@@ -30,7 +30,7 @@ type Observer interface {
 	ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error)
 }
 
-// ResourceReporter, when a block-level Resource implements it, replaces Ensure with EnsureResources, and a reported resource the manifest does not declare is refused with a 400.
+// ResourceReporter, when a block-level Resource implements it, replaces Ensure with EnsureResources, which reports each resource once and each member of an entry marked many as <entry>/<key>, and any other name is refused with a 400.
 type ResourceReporter interface {
 	EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error)
 }
