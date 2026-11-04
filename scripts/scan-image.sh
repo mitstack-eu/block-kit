@@ -13,18 +13,24 @@
 # built before any push, and a pull-request job can run the same scan.
 set -euo pipefail
 
-readonly TRIVY_VERSION=0.76.0
-readonly TRIVY_SHA256=1f889576636db0623539cb339df7d06c40ebf39e7919489eafa1160e29808f19
-readonly TRIVY_URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+# No name here starts with TRIVY_, since every TRIVY_ variable is unset before
+# the scan.
+readonly SCANNER_VERSION=0.76.0
+readonly SCANNER_SHA256=1f889576636db0623539cb339df7d06c40ebf39e7919489eafa1160e29808f19
+readonly SCANNER_URL="https://github.com/aquasecurity/trivy/releases/download/v${SCANNER_VERSION}/trivy_${SCANNER_VERSION}_Linux-64bit.tar.gz"
+# Trivy exits 1 on an error of its own, so its findings take a code of their own.
+readonly FOUND=3
 readonly PROVIDERS=/var/cache/tofu-plugins
 
 # shellcheck source=scripts/pinned-tool.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pinned-tool.sh"
 
+work=""
+
 main() {
-  local image="${1:?usage: scan-image.sh <image>}" here trivy work container status=0
+  local image="${1:?usage: scan-image.sh <image>}" here trivy container status=0
   here=$(dirname "${BASH_SOURCE[0]}")
-  trivy=$(pinned_tool trivy "$TRIVY_VERSION" "$TRIVY_URL" trivy "$TRIVY_SHA256")
+  trivy=$(pinned_tool trivy "$SCANNER_VERSION" "$SCANNER_URL" trivy "$SCANNER_SHA256")
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
   mkdir -p "$work/empty" "$work/root$(dirname "$PROVIDERS")"
@@ -32,7 +38,7 @@ main() {
   # could silence a finding. The databases come from the first mirror that
   # answers.
   unset "${!TRIVY_@}"
-  (cd "$work/empty" && "$trivy" image --image-src docker --exit-code 1 --ignore-unfixed --no-progress \
+  (cd "$work/empty" && "$trivy" image --image-src docker --exit-code "$FOUND" --ignore-unfixed --no-progress \
     --db-repository mirror.gcr.io/aquasec/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2 \
     --java-db-repository mirror.gcr.io/aquasec/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1 \
     --format json --output "$work/report.json" "$image") || status=$?
@@ -44,7 +50,7 @@ main() {
       echo "scan-image: Trivy found nothing with a fixed version in $image"
       return 0
       ;;
-    1) ;;
+    "$FOUND") ;;
     *)
       echo "scan-image: Trivy exited $status scanning $image, so the image is refused" >&2
       return 1
