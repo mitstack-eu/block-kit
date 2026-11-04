@@ -355,7 +355,11 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 			if slices.Contains(sortedStrings(doc["required"]), "ownSecrets") {
 				t.Error(`response.schema.json requires "ownSecrets", but a response that returns none must stay valid`)
 			}
-			objectOfStrings(t, doc, schemaAt(t, doc, props, "ownSecrets"), "properties.ownSecrets")
+			node := schemaAt(t, doc, props, "ownSecrets")
+			objectOfStrings(t, doc, node, "properties.ownSecrets")
+			if !hasType(node, "null") {
+				t.Errorf("properties.ownSecrets type = %v, want null allowed, as the engine and kittest read null as none", schemaTypes(node))
+			}
 		}},
 		{"redrive is a boolean", func(t *testing.T) {
 			if f := schemaAt(t, doc, props, "redrive"); !hasType(f, "boolean") {
