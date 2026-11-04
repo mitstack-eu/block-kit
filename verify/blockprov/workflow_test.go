@@ -380,7 +380,7 @@ func TestWorkflow_HeaderStatesThePublishEventAndWhatARerunCompletes(t *testing.T
 
 // imageSteps push the image; recordSteps build and push the provenance record; writeSteps write to the registry or mint a signed record.
 var (
-	imageSteps  = []string{"Install Trivy", "Build and push image"}
+	imageSteps  = []string{"Build and push image"}
 	recordSteps = []string{
 		"Determine the kit version pinned in go.mod",
 		"blockverify (standalone, for blockprov build's report)",
@@ -716,24 +716,20 @@ func TestWorkflow_ATrivyIgnoreOrConfigFileFailsThePublishJob(t *testing.T) {
 	}
 }
 
-// A finding fails the build step after the build and before any push, and no file, variable or flag narrows the scan.
+// A refused scan fails the build step after the build and before any push, and the scan is the kit's script run on the sha tag.
 func TestWorkflow_AFindingStopsThePushOfTheImageItScanned(t *testing.T) {
-	if install := script(t, "publish", "Install Trivy").Run; !strings.Contains(install, "1f889576636db0623539cb339df7d06c40ebf39e7919489eafa1160e29808f19  $RUNNER_TEMP/trivy\" | sha256sum -c -") {
-		t.Errorf("Install Trivy run =\n%s\nwant it to check the binary against its pinned sha256", install)
-	}
 	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "block-kit", "scripts"), 0o755)
 	writeExecutable(t, filepath.Join(dir, "docker"), "#!/bin/sh\necho docker $*\n")
-	writeExecutable(t, filepath.Join(dir, "trivy"), "#!/bin/sh\necho \"trivy $* cwd=[$(ls -A)] env=[$(env | grep ^TRIVY_)]\"\nexit 1\n")
+	writeExecutable(t, filepath.Join(dir, "block-kit", "scripts", "scan-image.sh"), "echo scan-image.sh \"$@\"\nexit 1\n")
 	writeExecutable(t, filepath.Join(dir, "manifest.yaml"), "spec:\n  version: 1.2.0\n")
 	writeExecutable(t, filepath.Join(dir, "build.sh"), strings.ReplaceAll(script(t, "publish", "Build and push image").Run, "${{ inputs.ecr-repository }}", "repo"))
 
-	res := runBash(t, filepath.Join(dir, "build.sh"), dir, "PATH="+dir+":"+os.Getenv("PATH"), "RUNNER_TEMP="+dir, "REGISTRY=r", "GITHUB_SHA=c0ffee", "TRIVY_SEVERITY=CRITICAL")
+	res := runBash(t, filepath.Join(dir, "build.sh"), dir, "PATH="+dir+":"+os.Getenv("PATH"), "RUNNER_TEMP="+dir, "REGISTRY=r", "GITHUB_SHA=c0ffee")
 
-	lines := strings.Split(strings.TrimSuffix(res.stdout, "\n"), "\n")
-	if res.exitCode == 0 || len(lines) != 2 || lines[0] != "docker build -t r/repo:v1.2.0 -t r/repo:c0ffee ." ||
-		!strings.HasPrefix(lines[1], "trivy image --image-src docker --exit-code 1 --ignore-unfixed ") ||
-		!strings.HasSuffix(lines[1], " r/repo:c0ffee cwd=[] env=[]") || strings.Contains(lines[1], "--severity") {
-		t.Errorf("exit %d, output =\n%s\nwant the build, then one scan of its sha tag with no --severity that fails the step before any push", res.exitCode, res.combined)
+	want := "docker build -t r/repo:v1.2.0 -t r/repo:c0ffee .\nscan-image.sh r/repo:c0ffee\n"
+	if res.exitCode == 0 || res.stdout != want {
+		t.Errorf("exit %d, output =\n%s\nwant the build, then the kit's scan of its sha tag failing the step before any push:\n%s", res.exitCode, res.combined, want)
 	}
 }
 
@@ -755,7 +751,7 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		{"publish", "write", []string{
 			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Configure AWS credentials", "Checkout block-kit",
 			"Build blockverify and blockprov", "Remove the kit checkout from the block tree", "Log in to ECR", "Probe the version tag and its provenance record",
-			"Install Trivy", "Build and push image", "Determine the kit version pinned in go.mod", "Determine the kit version the operator image was built with",
+			"Build and push image", "Determine the kit version pinned in go.mod", "Determine the kit version the operator image was built with",
 			"blockverify (standalone, for blockprov build's report)", "block-verify inside the image, for blockprov build's result",
 			"blockprov build", "Fetch ECR password", "blockprov push",
 		}},
@@ -811,8 +807,12 @@ func TestWorkflow_TheKitCheckoutLeavesTheBlockTreeBeforeItIsJudged(t *testing.T)
 			rmScript := filepath.Join(t.TempDir(), "rm.sh")
 			writeExecutable(t, rmScript, script(t, tc.job, name).Run)
 
-			res := runBash(t, rmScript, tree)
+			temp := t.TempDir()
+			res := runBash(t, rmScript, tree, "RUNNER_TEMP="+temp)
 
+			if _, err := os.Stat(filepath.Join(temp, "block-kit", "events", "events.go")); (err == nil) != (tc.job == "publish") {
+				t.Errorf("the kit under RUNNER_TEMP after the step: stat err %v, want it there only for publish, whose image scan runs its scripts", err)
+			}
 			if b < 0 || rm < b || r < 0 || rm > r {
 				t.Errorf("%q is at %d, want it after %q at %d and before %q at %d", name, rm, tc.build, b, tc.firstReader, r)
 			}

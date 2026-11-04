@@ -173,7 +173,9 @@ jobs:
 
 `ecr-repository` names the repository in Amazon Elastic Container Registry
 (ECR), AWS's image registry, that receives the image, and `kit-ref` the
-block-kit tag the workflow builds blockverify and `blockprov` from. A mitstack
+block-kit tag the workflow builds blockverify and `blockprov` from. The
+workflow also runs its scan scripts from that tag, so name the same tag in
+`uses:` and in `kit-ref`. A mitstack
 maintainer creates that ECR repository and a publish role in the platform
 repository, mitstack-eu/mitstack, in `deploy/tofu/operators.tf` and
 `deploy/tofu/block_publish.tf`. The maintainer then sets the
@@ -239,6 +241,73 @@ each push to `main` that workflow does three things with the token:
 2. It runs `blockverify --standalone --json .` into `report.json`.
 3. It posts the report to `POST https://api.mitstack.dev/v1/blocks/{id}/attestations`,
    and the platform signs a passing report as the block's attestation.
+
+### How the publish job scans the image
+
+The `publish` job builds your image and runs the kit's `scripts/scan-image.sh`
+on it before any push. The script runs the image scanner Trivy 0.76.0,
+checked by its sha256, from an empty directory with every `TRIVY_` variable
+unset, so no ignore file or setting can silence a finding. Any finding that
+has a fixed version, at any severity, stops the job, with the one exception
+below. An error of Trivy's own stops the job too.
+
+The exception covers [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932), an
+advisory in the Go vulnerability database that marks the whole
+`golang.org/x/crypto/openpgp` package unsafe. Its fix is a commit of
+golang.org/x/crypto that no release names yet. Go knows that commit only by
+the pseudo-version `v0.58.1-0.20261009181718-2f1f834330b2`, which Go's
+version order puts above v0.58.0 and below v0.58.1. Every x/crypto release up
+to v0.58.0 therefore counts as affected. Trivy reports the advisory in every
+OpenTofu provider built on such a release, whether or not the provider uses
+openpgp.
+
+An OpenTofu provider is the plugin OpenTofu downloads to call a cloud's API,
+and `tofu init` keeps it in the image's plugin cache. The exception covers a
+provider binary in that cache and no other binary. Your block's own binary, such as its operator, keeps the full
+refusal for GO-2026-5932, as for every other finding.
+`scripts/go-2026-5932-exception.sh` accepts the finding only when each
+condition in this table holds, and refuses it otherwise:
+
+| Condition | How the script proves it |
+|---|---|
+| The binary is an OpenTofu provider the image installs | Its path in the image is `/var/cache/tofu-plugins/<host>/<namespace>/<type>/<version>/<platform>/terraform-provider-<type>`, with an optional `_` suffix. That directory is the plugin cache the opentofu-operator image names in `/etc/tofu.tfrc` |
+| No openpgp code is compiled into it | `cmd/gofuncnames` prints the names in the binary's `.gopclntab` section. That is the table of every function, inlined ones included, that the Go runtime keeps for its stack traces. Stripping a binary removes its symbol table but leaves this one. The names must include at least one `golang.org/x/crypto` function and none under `golang.org/x/crypto/openpgp`. A refusal for openpgp code lists every openpgp name the table holds |
+| The provider has shipped no release on a fixed x/crypto | The script reads the provider's newest release from `https://<host>/v1/providers/<namespace>/<type>/versions`. It then reads that release's `go.mod` from `https://raw.githubusercontent.com/<owner>/<repo>/v<release>/go.mod`. `<owner>/<repo>` comes from the binary's main module, the path `go version -m <binary>` prints on its `mod` line. The release's `golang.org/x/crypto` requirement must order below the fixed version above |
+
+The script also runs govulncheck v1.9.0, the Go team's vulnerability scanner,
+on each provider binary that holds the finding. Its install is checked against
+its module sum, the hash the Go checksum database records for that release. It
+prints govulncheck's result, which does not decide. A provider release is
+stripped, which means it is built without the symbol table govulncheck reads
+to see which packages a binary holds. govulncheck then judges by module
+versions alone, which its output calls go.mod-level precision, and lists every
+openpgp package as present. If govulncheck cannot run, the script prints why
+and the function table alone decides.
+
+The script names each binary by its path inside the image, with no leading
+slash. For the AWS provider 6.71.0, one accepted finding reads like this:
+
+```text
+  govulncheck v1.9.0 against https://vuln.go.dev, modified 2026-11-02T22:01:43Z, ran at go.mod-level precision because the binary is stripped, so it cannot show which packages are present, and it does not decide:
+    GO-2026-5932 at module golang.org/x/crypto@v0.58.0, and in 7 package(s): golang.org/x/crypto/openpgp, ...
+accepted GO-2026-5932 in var/cache/tofu-plugins/registry.opentofu.org/hashicorp/aws/6.71.0/linux_amd64/terraform-provider-aws_v6.71.0: its Go function table names 366 golang.org/x/crypto functions and 0 in golang.org/x/crypto/openpgp, and registry.opentofu.org/hashicorp/aws's newest release 6.71.0 still requires golang.org/x/crypto v0.58.0, below the fix v0.58.1-0.20261009181718-2f1f834330b2
+```
+
+The exception ends for each provider on its own. Once a provider's newest
+release requires the fixed x/crypto or none at all, the scan refuses that
+provider's finding and names the release to lock, as in
+`move the block to registry.opentofu.org/hashicorp/aws 6.72.0`. A registry or
+`go.mod` read that gets no answer stops the job and names the read.
+
+To scan an image you built yourself, install Docker, Go, jq and curl, and
+clone the kit beside your block at the tag your `kit-ref` names. Then build
+and scan the image from your block's directory:
+
+```sh
+git clone --branch <tag> https://github.com/mitstack-eu/block-kit ../block-kit
+docker build -t my-block:dev .
+bash ../block-kit/scripts/scan-image.sh my-block:dev
+```
 
 ### Checks for an OpenTofu-only block
 

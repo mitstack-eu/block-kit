@@ -37,6 +37,36 @@ the README in the same commit.
 a contract test fails when the committed file differs from what they generate.
 Regenerate it with `go run ./cmd/manifest-schema > contract/manifest.schema.json`.
 
+The publish job's image scan accepts the advisory GO-2026-5932 in an OpenTofu
+provider binary that holds no openpgp code, as
+[How the publish job scans the image](block-checks.md#how-the-publish-job-scans-the-image)
+describes. The tests of that exception, in
+`scripts/go_2026_5932_exception_test.go`, build stand-in provider binaries
+from `scripts/testdata/fixture-provider`. That fixture is a module of its own
+requiring golang.org/x/crypto v0.58.0, so the kit's `go.mod` still requires
+nothing. The `openpgp` build tag adds an openpgp call, and the `nocrypto` tag
+drops x/crypto altogether.
+
+`scripts/testdata/vulndb` stands in for the Go vulnerability database at
+vuln.go.dev and holds GO-2026-5932 alone, so the tests never read vuln.go.dev.
+A local server answers the registry and `go.mod` reads. The tests still fetch
+golang.org/x/crypto and govulncheck through the Go module proxy, so they need
+network access. `scripts/scan_image_test.go` drives `scripts/scan-image.sh`
+with stand-in `trivy` and `docker` commands, so it needs neither installed.
+
+A pull request that changes the scan also runs
+`.github/workflows/scan-image-proof.yml`. It builds one image holding the AWS
+provider 6.71.0 and one holding the Scaleway provider 2.89.0, each fetched by
+the checksum the registry publishes, and runs `scripts/scan-image.sh` on both.
+It expects GO-2026-5932 accepted in each and refused nowhere.
+
+The AWS scan is expected to pass. The Scaleway release also carries x/net and
+standard-library findings that have fixes, which the scan refuses as it should,
+so its scan is expected to exit 1. Once a Scaleway release clears them, that
+job fails until its matrix row moves to the new release. To repeat the proof
+on `main` with no change, start the workflow by hand from the repository's
+Actions tab, which its `workflow_dispatch` trigger allows.
+
 ## Release
 
 block-kit's first release, v0.4.0, is tagged by hand, because the release
