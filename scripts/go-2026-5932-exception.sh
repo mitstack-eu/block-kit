@@ -13,7 +13,8 @@
 #   needs only the provider binaries the report names.
 #
 #   exit 0  every finding is GO-2026-5932 in a provider binary proven so
-#   exit 1  a finding is refused, naming it and why, or a read failed
+#   exit 1  a finding is refused, naming it and why, a read failed, or the
+#           report holds no finding at all
 #
 # PROVIDER_REGISTRY_URL replaces https://<registry host>, PROVIDER_SOURCE_URL
 # replaces https://raw.githubusercontent.com and GOVULNCHECK_DB_URL replaces
@@ -252,6 +253,10 @@ main() {
   local rows refused=0 total=0 kind target type id pkg installed fixed
   if ! rows=$(findings "$report"); then
     echo "go-2026-5932-exception: could not read the Trivy report $report, so no finding is accepted"
+    return 1
+  fi
+  if [ -z "$rows" ]; then
+    echo "go-2026-5932-exception: the Trivy report $report holds no finding, so nothing in it explains why the scan failed"
     return 1
   fi
   work=$(mktemp -d)
