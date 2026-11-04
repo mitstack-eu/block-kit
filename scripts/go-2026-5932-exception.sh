@@ -44,7 +44,8 @@ funcnames=""
 govulncheck=""
 govulncheck_missing=""
 
-# findings prints one row per finding in the report, its fields split by SEP, and fails on a report that is not Trivy's schema 2.
+# findings prints one row per finding in the report, its fields split by SEP,
+# and fails on a report that is not Trivy's schema 2.
 findings() {
   jq -r --arg sep "$SEP" '
     if .SchemaVersion != 2 then error("not a Trivy schema 2 report") else . end
@@ -66,7 +67,8 @@ fetch() {
   cat "$work/body"
 }
 
-# version_at_least succeeds when Go module version $1 orders at or above $2 under semver, so a pseudo-version orders below the release it precedes.
+# version_at_least succeeds when Go module version $1 orders at or above $2
+# under semver, so a pseudo-version orders below the release it precedes.
 version_at_least() {
   local -a a b x y
   [[ $1 =~ $SEMVER ]] && a=("${BASH_REMATCH[@]:1:3}" "${BASH_REMATCH[5]}")
@@ -96,7 +98,8 @@ version_at_least() {
   ((${#x[@]} >= ${#y[@]}))
 }
 
-# install_tools builds gofuncnames from this kit, failing without it, and installs govulncheck, which runs only when its module sum matches its pin.
+# install_tools builds gofuncnames from this kit, failing without it, and
+# installs govulncheck, which runs only when its module sum matches its pin.
 install_tools() {
   local bin="${XDG_CACHE_HOME:-$HOME/.cache}/block-kit/govulncheck-v1.9.0" sum
   GOFLAGS='' GOWORK=off go build -C "$(dirname "${BASH_SOURCE[0]}")/.." -o "$work/gofuncnames" ./cmd/gofuncnames || return 1
@@ -113,7 +116,8 @@ install_tools() {
   govulncheck="$bin/govulncheck"
 }
 
-# govulncheck_result prints govulncheck's binary-mode result for binary $1 under a heading saying why it does not decide, or why it did not run.
+# govulncheck_result prints govulncheck's binary-mode result for binary $1
+# under a heading saying why it does not decide, or why it did not run.
 govulncheck_result() {
   local bin="$1" db="${GOVULNCHECK_DB_URL:-https://vuln.go.dev}" precision
   if [ -z "$govulncheck" ]; then
@@ -138,7 +142,8 @@ govulncheck_result() {
        else "    \($a) at module \($mods | join(", ")), and in \($pkgs | length) package(s): \($pkgs | join(", "))" end)' "$work/vuln.json"
 }
 
-# no_openpgp_code prints what the function table of binary $1 holds, failing unless it names x/crypto code and no openpgp code.
+# no_openpgp_code prints what the function table of binary $1 holds, failing
+# unless it names x/crypto code and no openpgp code.
 no_openpgp_code() {
   local bin="$1" crypto openpgp
   if ! "$funcnames" "$bin" >"$work/names" 2>"$work/names.err"; then
@@ -158,7 +163,8 @@ no_openpgp_code() {
   echo "its Go function table names $crypto $CRYPTO functions and 0 in $OPENPGP"
 }
 
-# no_fixed_release prints what provider $1/$2/$3's newest release requires, failing once that release requires the fix or no x/crypto at all.
+# no_fixed_release prints what provider $1/$2/$3's newest release requires,
+# failing once that release requires the fix or no x/crypto at all.
 no_fixed_release() {
   local host="$1" namespace="$2" type="$3" installed="$4" bin="$5"
   local provider="$1/$2/$3" list newest module repo url gomod required
