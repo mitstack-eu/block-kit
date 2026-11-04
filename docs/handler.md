@@ -284,6 +284,12 @@ server whose Docker does not answer, refuses with the class
 `handler.ClassHostCannotRun`. The class tells the platform that a fresh
 subscribe on the same host cannot repair the resource.
 
+A validate whose check reads something only a created app has, such as a record
+keyed by the app's id, answers `handler.NeedsApp` when the request names no
+app. Its class is `handler.ClassNeedsApp`. The platform counts it as checked at
+create for an app not yet created, and as a refusal once the app exists, as
+the README's "A check that needs a created app" describes.
+
 A panic in your code answers 500 with a fixed error naming the call, such as
 `handler: the block panicked during subscribe`, and the answer never carries
 the panic value. The handler logs the panic with the block, subscription and
