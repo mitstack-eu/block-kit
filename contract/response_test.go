@@ -34,7 +34,7 @@ func TestDecodeResponse_CarriesEveryGoldenFieldOntoTheResponse(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := jsonObject(t, raw)
 			want := contract.Response{Outputs: strMap(m["outputs"]), SecretOutputs: strMap(m["secretOutputs"]), Error: strOf(m, "error"),
-				StatusDetail: strOf(m, "statusDetail"), LastError: strOf(m, "lastError")}
+				StatusDetail: strOf(m, "statusDetail"), LastError: strOf(m, "lastError"), OwnSecrets: strMap(m["ownSecrets"])}
 			want.Pending, _ = m["pending"].(bool)
 			want.Redrive, _ = m["redrive"].(bool)
 			if absent, ok := m["absent"].(bool); ok {
@@ -58,6 +58,7 @@ func TestDecodeResponse_EveryResponseGoldenDecodesAsBefore(t *testing.T) {
 		"outputs":         {Outputs: map[string]string{"instanceId": "i-0123456789abcdef0", "endpoint": "https://example.apps.mitstack.dev"}},
 		"pending":         {Pending: true, StatusDetail: "waiting for the VPC to finish provisioning"},
 		"pending-redrive": {Pending: true, Redrive: true, StatusDetail: "the builder powered off; the snapshot comes next"},
+		"own-secrets":     {OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}},
 		"secret-outputs":  {SecretOutputs: map[string]string{"apiKey": "sk-example-not-a-real-secret"}},
 		"still-present":   {Absent: &f},
 	}
@@ -102,6 +103,7 @@ func TestDecodeResponse_RejectsInvalidGoldensNamingField(t *testing.T) {
 		"invalid-pending-not-bool":                         "pending",
 		"invalid-pending-redrive-not-bool":                 "redrive",
 		"invalid-secret-outputs-not-strings":               "secretOutputs",
+		"invalid-own-secrets-not-strings":                  "ownSecrets",
 		"invalid-resource-secret-outputs-not-object":       "resourceSecretOutputs",
 		"invalid-resource-secret-outputs-entry-not-object": "resourceSecretOutputs",
 		"invalid-resource-secret-outputs-value-not-string": "resourceSecretOutputs",

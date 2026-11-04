@@ -15,6 +15,7 @@ var invalidGoldenField = map[string]string{
 	"invalid-pending-redrive-not-bool":   "redrive",
 	"invalid-absent-not-bool":            "absent",
 	"invalid-secret-outputs-not-strings": "secretOutputs",
+	"invalid-own-secrets-not-strings":    "ownSecrets",
 
 	"invalid-resource-secret-outputs-not-object":       "resourceSecretOutputs",
 	"invalid-resource-secret-outputs-entry-not-object": "resourceSecretOutputs",
