@@ -203,6 +203,11 @@ func huge(fields string) string {
 	return `{` + fields + `,"padding":"` + strings.Repeat("a", 2<<20) + `"}`
 }
 
+// longCommit is GitHub's answer for commit sha on tree with a 9,500-byte message after the tree, as GitHub orders the fields.
+func longCommit(sha, tree string) string {
+	return `{"sha":"` + sha + `","tree":{"sha":"` + tree + `"},"message":"` + strings.Repeat("Merge the release notes. ", 380) + `","parents":[]}`
+}
+
 // treeAnswer is GitHub's create-tree answer for a root of n files, led by the tree's SHA as GitHub sends it, at about 231 bytes an entry.
 func treeAnswer(sha string, n int) string {
 	entries := make([]string, n)
