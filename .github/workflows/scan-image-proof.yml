@@ -1,0 +1,80 @@
+name: scan-image-proof
+
+# The image scan's GO-2026-5932 exception exists for the AWS and Scaleway
+# provider releases OpenTofu blocks install, so a pull request that changes the
+# scan runs it on an image holding each one where the operator image keeps its
+# providers, fetched by the checksum the registry publishes. Scaleway 2.89.0
+# also carries x/net and standard-library findings that the scan refuses, so
+# its run is expected to fail on those alone.
+on:
+  pull_request:
+    paths:
+      - scripts/scan-image.sh
+      - scripts/go-2026-5932-exception.sh
+      - scripts/pinned-tool.sh
+      - cmd/gofuncnames/**
+      - .github/workflows/scan-image-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-provider:
+    name: scan ${{ matrix.provider }} ${{ matrix.version }}
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: hashicorp/aws
+            version: 6.71.0
+            zip-sha256: fa881c390793ba47d0758fb5d4834dd8a0bb28bbc6eedea2ddc164f99e83186d
+            exit: 0
+          - provider: scaleway/scaleway
+            version: 2.89.0
+            zip-sha256: c60b9bbd7c5875bf705f8ffc966574266f7293daf1dc632b1f4443aea23c2fe2
+            exit: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+      - name: Build an image holding the provider where the operator image keeps it
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          VERSION: ${{ matrix.version }}
+          ZIP_SHA256: ${{ matrix.zip-sha256 }}
+        run: |
+          set -euo pipefail
+          meta=$(curl -fsSL "https://registry.opentofu.org/v1/providers/$PROVIDER/$VERSION/download/linux/amd64")
+          shasum=$(jq -r .shasum <<<"$meta")
+          if [ "$shasum" != "$ZIP_SHA256" ]; then
+            echo "the registry publishes sha256 $shasum for $PROVIDER $VERSION, not the pinned $ZIP_SHA256" >&2
+            exit 1
+          fi
+          curl -fsSL -o "$RUNNER_TEMP/provider.zip" "$(jq -r .download_url <<<"$meta")"
+          echo "$ZIP_SHA256  $RUNNER_TEMP/provider.zip" | sha256sum -c -
+          dir="$RUNNER_TEMP/image/var/cache/tofu-plugins/registry.opentofu.org/$PROVIDER/$VERSION/linux_amd64"
+          mkdir -p "$dir"
+          unzip -q "$RUNNER_TEMP/provider.zip" -d "$dir"
+          printf 'FROM scratch\nCOPY var /var\n' > "$RUNNER_TEMP/image/Dockerfile"
+          docker build -q -t scan-image-proof "$RUNNER_TEMP/image"
+      - name: Scan the image, expecting GO-2026-5932 accepted and exit ${{ matrix.exit }}
+        shell: bash
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          VERSION: ${{ matrix.version }}
+          WANT_EXIT: ${{ matrix.exit }}
+        run: |
+          set -uo pipefail
+          bash scripts/scan-image.sh scan-image-proof | tee "$RUNNER_TEMP/scan.txt"
+          status=${PIPESTATUS[0]}
+          { echo '```'; cat "$RUNNER_TEMP/scan.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          accepted="accepted GO-2026-5932 in var/cache/tofu-plugins/registry.opentofu.org/$PROVIDER/$VERSION/"
+          if [ "$status" != "$WANT_EXIT" ] || ! grep -qF "$accepted" "$RUNNER_TEMP/scan.txt" || grep -q '^refused GO-2026-5932' "$RUNNER_TEMP/scan.txt"; then
+            echo "scan-image.sh exited $status on $PROVIDER $VERSION; want $WANT_EXIT, with a line starting '$accepted' and no GO-2026-5932 refused" >&2
+            exit 1
+          fi
