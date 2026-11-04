@@ -80,6 +80,9 @@ func requestFromGolden(m map[string]any) contract.Request {
 		r.CloudIdentity = &contract.CloudIdentity{Provider: strOf(ci, "provider"), RoleARN: strOf(ci, "roleArn"),
 			WebIdentityToken: strOf(ci, "webIdentityToken"), AccountRef: strOf(ci, "accountRef")}
 	}
+	if cb, ok := m["eventsCallback"].(map[string]any); ok {
+		r.EventsCallback = &contract.EventsCallback{URL: strOf(cb, "url"), Token: strOf(cb, "token")}
+	}
 	return r
 }
 
@@ -116,7 +119,7 @@ func TestDecodeRequest_CarriesEveryGoldenFieldOntoTheRequest(t *testing.T) {
 func TestDecodeRequest_EveryRequestGoldenDecodesOrIsRefusedExactlyAsPinned(t *testing.T) {
 	refusals := map[string]string{
 		"invalid-missing-nonce": `contract: envelope field "nonce" is required`,
-		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, got "reticulate"`,
+		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, got "reticulate"`,
 	}
 	pinned, err := os.ReadFile("testdata/request-golden-encodings.json")
 	if err != nil {
@@ -388,6 +391,12 @@ func TestRequest_IdentityCarriesWhatEachGoldenHoldsForItsResource(t *testing.T) 
 			func(r contract.Request) any { return r.Desired().Instances["aws"].Config["region"] }, "eu-west-1"},
 		{"Desired carries unsubscribe's instance region", "unsubscribe",
 			func(r contract.Request) any { return r.Desired().Instances["aws"].Config["region"] }, "eu-west-1"},
+		{"Desired carries a logs request's binding", "logs",
+			func(r contract.Request) any { return r.Desired().Bindings["docker-host"]["subscriptionId"] }, "sub_h0st5e1f2a"},
+		{"Desired carries every binding of a logs request's requirement", "logs",
+			func(r contract.Request) any { return len(r.Desired().BindingsAll["docker-host"]) }, 1},
+		{"a logs request carries the events callback", "logs",
+			func(r contract.Request) any { return r.EventsCallback.URL }, "https://api.mitstack.dev/v1/webhooks/operator-events"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -546,10 +555,19 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_9_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_10_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.9.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.9.0: it adds the optional request property ownSecrets, a minor change from 1.8.0", doc["version"])
+	if doc["version"] != "1.10.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.10.0: it adds the operation logs, a minor change from 1.9.0", doc["version"])
+	}
+}
+
+func TestEnvelopeSchema_ListsTheLogsOperation(t *testing.T) {
+	doc := jsonObject(t, contract.EnvelopeSchema)
+	operation, _ := doc["properties"].(map[string]any)["operation"].(map[string]any)
+
+	if enum, _ := operation["enum"].([]any); !slices.Contains(enum, any("logs")) {
+		t.Errorf("envelope.schema.json operation enum = %v, want it to list \"logs\"", operation["enum"])
 	}
 }

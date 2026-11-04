@@ -1,0 +1,33 @@
+{
+  "operation": "logs",
+  "subscriptionId": "sub_a1b2c3d4e5",
+  "idempotencyKey": "sub_a1b2c3d4e5:logs:j0f1a2b3",
+  "blockId": "blk_docker_app_slice",
+  "blockVersion": "1.0.0",
+  "orgId": "org_acme",
+  "appId": "app_webapp01",
+  "params": {
+    "appName": "myapp"
+  },
+  "obo": "eyJvcmdfaWQiOiJvcmdfYWNtZSJ9.c2lnbmF0dXJlLXBsYWNlaG9sZGVy",
+  "eventsCallback": {
+    "url": "https://api.mitstack.dev/v1/webhooks/operator-events",
+    "token": "events-callback-token-placeholder"
+  },
+  "bindings": {
+    "docker-host": {
+      "subscriptionId": "sub_h0st5e1f2a",
+      "address": "203.0.113.10"
+    }
+  },
+  "bindingsAll": {
+    "docker-host": [
+      {
+        "subscriptionId": "sub_h0st5e1f2a",
+        "address": "203.0.113.10"
+      }
+    ]
+  },
+  "createdAt": "2026-07-15T21:15:06Z",
+  "nonce": "n0nce-logs-0005"
+}
