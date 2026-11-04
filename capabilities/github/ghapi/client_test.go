@@ -13,16 +13,24 @@ import (
 )
 
 func TestEnsureRepo_AndDeleteRepo(t *testing.T) {
-	ensure := func(c *ghapi.Client) (any, error) { return c.EnsureRepo(context.Background(), "acme", "widget") }
+	ensure := ensureWith(appID)
+	createsRuleset := map[string][]reply{get(listed): {listingNothing}, post(rulesets): {{http.StatusCreated, `{"id":42}`}}}
+	created := func(answer string) map[string][]reply {
+		routes := map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusCreated, answer}}}
+		for k, v := range createsRuleset {
+			routes[k] = v
+		}
+		return routes
+	}
 	remove := func(c *ghapi.Client) (any, error) { return nil, c.DeleteRepo(context.Background(), "acme", "widget") }
 	runAPICases(t, []apiCase{
-		{name: "an existing repo makes no create call", routes: map[string][]reply{get(widget): {{}}},
-			call: ensure, want: "acme/widget", requests: []string{get(widget)}},
-		{name: "a missing repo is created once", routes: map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusCreated, `{"full_name":"acme/widget"}`}}},
-			call: ensure, want: "acme/widget", requests: []string{get(widget), post("/orgs/acme/repos")}},
-		{name: "a create answer as large as GitHub's whole repository object yields its full name", routes: map[string][]reply{get(widget): {notFound},
-			post("/orgs/acme/repos"): {{http.StatusCreated, `{"description":"` + strings.Repeat("a", 16<<10) + `","full_name":"acme/Widget"}`}}},
-			call: ensure, want: "acme/Widget", requests: []string{get(widget), post("/orgs/acme/repos")}},
+		{name: "an existing repo makes no create call", routes: map[string][]reply{get(widget): {{}}, get(listed): {listingOurs}, get(ours): {held(nil)}},
+			call: ensure, want: "acme/widget", requests: []string{get(widget), get(listed), get(ours)}},
+		{name: "a missing repo is created once", routes: created(`{"full_name":"acme/widget"}`),
+			call: ensure, want: "acme/widget", requests: []string{get(widget), post("/orgs/acme/repos"), get(listed), post(rulesets)}},
+		{name: "a create answer as large as GitHub's whole repository object yields its full name",
+			routes: created(`{"description":"` + strings.Repeat("a", 16<<10) + `","full_name":"acme/Widget"}`),
+			call:   ensure, want: "acme/Widget", requests: []string{get(widget), post("/orgs/acme/repos"), get(listed), post(rulesets)}},
 		{name: "a create answer that does not decode fails naming its route", routes: map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusCreated, `{"full_name":`}}},
 			call: ensure, want: "", err: errAny, errHas: "POST /orgs/acme/repos", requests: []string{get(widget), post("/orgs/acme/repos")}},
 		{name: "a create answer with no full name fails naming its route", routes: map[string][]reply{get(widget): {notFound}, post("/orgs/acme/repos"): {{http.StatusCreated, `{"name":"widget"}`}}},
