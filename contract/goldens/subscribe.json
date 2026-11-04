@@ -20,7 +20,11 @@
       }
     }
   },
-  "secrets": {},
+  "secrets": {
+    "github": {
+      "appId": "1234567"
+    }
+  },
   "obo": "eyJvcmdfaWQiOiJvcmdfYWNtZSJ9.c2lnbmF0dXJlLXBsYWNlaG9sZGVy",
   "secretInputs": {
     "dbPassword": "golden-fixture-not-a-secret"
