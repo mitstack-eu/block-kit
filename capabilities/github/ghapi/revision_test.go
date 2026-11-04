@@ -52,6 +52,16 @@ func TestHeadCommit_AndReadFileAt(t *testing.T) {
 		{name: "HeadCommit refuses a ref answer past its bound, naming the call and the bound",
 			routes: map[string][]reply{mainRef: {{body: `{"object":{"sha":"` + shaRev2 + `"},"padding":"` + strings.Repeat("a", 8<<10) + `"}`}}},
 			call:   head, want: "", err: errAny, errHas: "GET " + gitops + "/git/ref/heads/main: the answer is longer than 8192 bytes", requests: []string{mainRef}},
+		{name: "HeadCommit reads a ref answer of exactly its bound", routes: map[string][]reply{mainRef: {{body: paddedTo(`"object":{"sha":"`+shaRev2+`"}`, 8<<10)}}},
+			call: head, want: shaRev2, requests: []string{mainRef}},
+		{name: "BranchHead returns the commit a named branch points at", routes: map[string][]reply{get(gitops + "/git/ref/heads/release/v2"): {{body: `{"object":{"sha":"` + shaRev2 + `"}}`}}},
+			call: branchHead("release/v2"), want: shaRev2, requests: []string{get(gitops + "/git/ref/heads/release/v2")}},
+		{name: "BranchHead escapes each segment of the branch", routes: map[string][]reply{get(gitops + "/git/ref/heads/feat/a%20b%23c"): {{body: `{"object":{"sha":"` + shaRev2 + `"}}`}}},
+			call: branchHead("feat/a b#c"), want: shaRev2, requests: []string{get(gitops + "/git/ref/heads/feat/a%20b%23c")}},
+		{name: "BranchHead is empty when the branch does not exist yet", routes: map[string][]reply{get(gitops + "/git/ref/heads/trunk"): {notFound}},
+			call: branchHead("trunk"), want: "", requests: []string{get(gitops + "/git/ref/heads/trunk")}},
+		{name: "BranchHead refuses an empty branch before any request", call: branchHead(""), want: "", err: errAny, errHas: "branch"},
+		{name: "BranchHead refuses a branch that climbs out of the refs before any request", call: branchHead("a/../../orgs"), want: "", err: errAny, errHas: "branch"},
 		{name: "ReadFileAt returns the decoded content at the revision",
 			routes: map[string][]reply{contents("apps/app-alpha/namespace.yaml"): {{body: `{"type":"file","encoding":"base64","content":` + quote(wrappedBase64(content)) + `}`}}},
 			call:   read("apps/app-alpha/namespace.yaml"), want: file{[]byte(content), true}, requests: []string{contents("apps/app-alpha/namespace.yaml")}},
@@ -66,6 +76,21 @@ func TestHeadCommit_AndReadFileAt(t *testing.T) {
 }
 
 func quote(s string) string { return `"` + strings.ReplaceAll(s, "\n", `\n`) + `"` }
+
+func branchHead(branch string) func(c *ghapi.Client) (any, error) {
+	return func(c *ghapi.Client) (any, error) { return c.BranchHead(context.Background(), revRepo, branch) }
+}
+
+func TestHeadCommit_CutsARefusalPastItsBoundToTheBound(t *testing.T) {
+	ref := get(gitops + "/git/ref/heads/main")
+	f := &fakeGitHub{routes: map[string][]reply{ref: {{http.StatusInternalServerError, `{"message":"` + strings.Repeat("a", 8<<10) + `TAIL"}`}}}}
+
+	_, err := serve(t, f).HeadCommit(context.Background(), revRepo)
+
+	if err == nil || !strings.Contains(err.Error(), "returned 500") || strings.Contains(err.Error(), "TAIL") {
+		t.Errorf("HeadCommit on a 500 longer than its bound = %v, want the refusal with its text cut to the bound", err)
+	}
+}
 
 func TestCommitChanges(t *testing.T) {
 	parentCommit, trees, commits := get(gitops+"/git/commits/"+shaParent), post(gitops+"/git/trees"), post(gitops+"/git/commits")
