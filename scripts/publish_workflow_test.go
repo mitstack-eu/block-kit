@@ -118,7 +118,7 @@ func TestPublishBlockWorkflow_ThePullRequestScanFailsTheCheckNamingARefusedFindi
 }
 
 const (
-	onAPushToMain ="github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+	onAPushToMain = "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
 	everyCheck    = "[conformance, opentofu-conformance, secrets, scripts]"
 )
 
