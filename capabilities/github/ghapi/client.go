@@ -200,7 +200,7 @@ func (c *Client) commitOnto(ctx context.Context, repo, message string, entries [
 
 // baseCommit reports haveBase false for an empty repo with no heads/main ref yet.
 func (c *Client) baseCommit(ctx context.Context, repo string) (commitSHA, treeSHA string, haveBase bool, err error) {
-	commitSHA, haveBase, err = c.mainRef(ctx, repo)
+	commitSHA, haveBase, err = c.branchRef(ctx, repo, "main")
 	if err != nil || !haveBase {
 		return "", "", false, err
 	}

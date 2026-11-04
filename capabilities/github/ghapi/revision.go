@@ -49,7 +49,21 @@ func (c *Client) HeadCommit(ctx context.Context, repoFullName string) (string, e
 	if err != nil {
 		return "", err
 	}
-	sha, _, err := c.mainRef(ctx, repo)
+	sha, _, err := c.branchRef(ctx, repo, "main")
+	return sha, err
+}
+
+// BranchHead returns the commit refs/heads/{branch} points at, or "" when the branch does not exist yet, and refuses an empty branch or a "." or ".." segment before any request.
+func (c *Client) BranchHead(ctx context.Context, repoFullName, branch string) (string, error) {
+	repo, err := SafeRepo(repoFullName)
+	if err != nil {
+		return "", err
+	}
+	escaped, err := escapeRepoPath(branch)
+	if err != nil {
+		return "", fmt.Errorf("ghapi: invalid branch %q", branch)
+	}
+	sha, _, err := c.branchRef(ctx, repo, escaped)
 	return sha, err
 }
 
@@ -327,8 +341,9 @@ func (c *Client) createMainRef(ctx context.Context, repo, commitSHA string) erro
 	return fmt.Errorf("ghapi: github POST %s returned %d: %s", path, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
 }
 
-func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain bool, err error) {
-	path := "/repos/" + repo + "/git/ref/heads/main"
+// branchRef reads refs/heads/{escapedBranch}, whose segments the caller has already escaped.
+func (c *Client) branchRef(ctx context.Context, repo, escapedBranch string) (sha string, haveBranch bool, err error) {
+	path := "/repos/" + repo + "/git/ref/heads/" + escapedBranch
 	status, raw, _, err := c.get(ctx, path, maxRefBody)
 	if err != nil {
 		return "", false, err
@@ -337,7 +352,7 @@ func (c *Client) mainRef(ctx context.Context, repo string) (sha string, haveMain
 		return "", false, nil
 	}
 	if status != http.StatusOK {
-		return "", false, fmt.Errorf("ghapi: github GET git/ref/heads/main returned %d: %s", status, safe.LogSafe(string(raw), c.Token))
+		return "", false, fmt.Errorf("ghapi: github GET git/ref/heads/%s returned %d: %s", escapedBranch, status, safe.LogSafe(string(raw), c.Token))
 	}
 	var ref struct {
 		Object struct {
@@ -374,7 +389,7 @@ func (c *Client) commitTree(ctx context.Context, repo, sha string) (string, erro
 	return c.answeredSHA("GET "+path, commit.Tree.SHA)
 }
 
-// get returns the body unscrubbed, so a caller must pass it through safe.LogSafe, and refuses a 2xx answer longer than limit rather than return a cut-off copy, while a refusal's text is cut to limit.
+// get refuses a 2xx answer longer than limit, cuts a refusal's text to limit, and returns the body unscrubbed for the caller to pass through safe.LogSafe.
 func (c *Client) get(ctx context.Context, path string, limit int64) (int, []byte, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+path, nil)
 	if err != nil {
