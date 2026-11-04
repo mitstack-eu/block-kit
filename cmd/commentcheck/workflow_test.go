@@ -117,7 +117,7 @@ func TestWorkflow_CommentCheckRunsOnEveryPullRequest(t *testing.T) {
 	ci := job(t, "ci.yml", "comment-check")
 	ciRun := entry(ci, find(ci, 0, `cmd/commentcheck`))
 	conformance := job(t, "publish-block.yml", "conformance")
-	removal := find(conformance, 0, `rm -rf block-kit`)
+	removal := find(conformance, 0, `mv block-kit "\$RUNNER_TEMP/block-kit"`)
 	buildAt := find(conformance, 0, `\./cmd/commentcheck`)
 	build := entry(conformance, buildAt)
 	check := entry(conformance, find(conformance, find(conformance, 0, `git fetch .*"\$BASE_SHA"`)+1, `\./commentcheck\b`))

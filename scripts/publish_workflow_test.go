@@ -1,6 +1,6 @@
 package scripts_test
 
-// publish-block.yml runs the kit's scan scripts on every event before publish, publishes only for a caller naming its image registry, hands blockverify what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
+// publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
 
 import (
 	"io"
@@ -55,8 +55,71 @@ func TestPublishBlockWorkflow_ScansEveryEventBeforePublish(t *testing.T) {
 	}
 }
 
+// Each conformance job scans the block's image on a pull request with the publish job's own script from the kit at kit-ref, and the workflow holds no scanner pin or flag of its own.
+func TestPublishBlockWorkflow_APullRequestRunsThePublishScan(t *testing.T) {
+	const scan, image = `bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" `, `"block:${GITHUB_SHA}"`
+	raw, err := os.ReadFile("../.github/workflows/publish-block.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := workflowFields(string(raw))
+	if run := all[stepOf(all, "publish", "name", "Build and push image")+"run"]; !strings.Contains(run, scan) {
+		t.Fatalf("the publish job's build runs\n%s\nwant it to run %s", run, scan)
+	}
+	for _, copied := range []string{"aquasecurity/trivy", "trivy image", "--ignore-unfixed", "--exit-code"} {
+		if strings.Contains(string(raw), copied) {
+			t.Errorf("publish-block.yml holds %q, a second copy of what scan-image.sh pins", copied)
+		}
+	}
+	for _, job := range []string{"conformance", "opentofu-conformance"} {
+		index := func(key, value string) int {
+			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(stepOf(all, job, key, value), "jobs."+job+".steps."), "."))
+			if err != nil {
+				return -1
+			}
+			return n
+		}
+		step := func(i int, key string) string { return all["jobs."+job+".steps."+strconv.Itoa(i)+"."+key] }
+		kit, moved, goAt := index("with.ref", "${{ inputs.kit-ref }}"), index("run", `mv block-kit "$RUNNER_TEMP/block-kit"`), index("with.go-version", "${{ inputs.go-version }}")
+		built, scanned := index("name", "Build the block image"), index("name", "Scan the block image")
+		cases := []struct{ name, got, want string }{
+			{"the kit comes from kit-ref", step(kit, "with.repository"), "mitstack-eu/block-kit"},
+			{"the kit leaves the tree for RUNNER_TEMP before the image builds", strconv.FormatBool(kit >= 0 && kit < moved && moved < built), "true"},
+			{"the build tags the image the scan reads", strconv.FormatBool(strings.Contains(step(built, "run"), "-t "+image)), "true"},
+			{"Go, which the scan's exception builds with, is set up before the scan", strconv.FormatBool(goAt >= 0 && goAt < scanned), "true"},
+			{"the scan reads the image after it is built", strconv.FormatBool(built >= 0 && built < scanned), "true"},
+			{"the scan runs on a pull request alone, since publish scans a push", step(scanned, "if"), "github.event_name == 'pull_request'"},
+			{"the scan runs the publish job's script", step(scanned, "run"), scan + image},
+		}
+		for _, tc := range cases {
+			t.Run(job+": "+tc.name, func(t *testing.T) {
+				if tc.got != tc.want {
+					t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
+				}
+			})
+		}
+	}
+}
+
+func TestPublishBlockWorkflow_ThePullRequestScanFailsTheCheckNamingARefusedFinding(t *testing.T) {
+	for _, job := range []string{"conformance", "opentofu-conformance"} {
+		for _, refused := range []string{"", "GO-2026-5932"} {
+			t.Run(job+" refusing "+refused, func(t *testing.T) {
+				temp := t.TempDir()
+				writeFile(t, filepath.Join(temp, "block-kit", "scripts", "scan-image.sh"), "echo \"scanned $1\"\n[ -z \"$REFUSED\" ] || { echo \"refused $REFUSED\"; exit 1; }\n")
+
+				out, exit := runNamed(t, job, "Scan the block image", t.TempDir(), "", "RUNNER_TEMP="+temp, "GITHUB_SHA=c0ffee", "REFUSED="+refused)
+
+				if (exit != 0) != (refused != "") || !strings.Contains(out, "scanned block:c0ffee") || !strings.Contains(out, "refused "+refused) && refused != "" {
+					t.Errorf("exit %d, output:\n%s\nwant the scan of block:c0ffee to fail the step exactly when it refuses %q, naming it", exit, out, refused)
+				}
+			})
+		}
+	}
+}
+
 const (
-	onAPushToMain = "github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+	onAPushToMain ="github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
 	everyCheck    = "[conformance, opentofu-conformance, secrets, scripts]"
 )
 
