@@ -265,19 +265,12 @@ type blockCheck struct {
 	failedRemovals map[string]bool
 }
 
-// unitNames lists the names a guard reads, in manifest order: each entry not marked many, and in its place each member held names of an entry marked many, in name order.
+// unitNames lists the names a guard reads, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
 func unitNames[V any](spec contract.ManifestSpec, held map[string]V) []string {
+	keys := sortedKeys(held)
 	var names []string
 	for _, entry := range spec.Resources {
-		if !entry.Many {
-			names = append(names, entry.Name)
-			continue
-		}
-		for _, name := range sortedKeys(held) {
-			if entry.IsMember(name) {
-				names = append(names, name)
-			}
-		}
+		names = append(names, entry.Names(keys)...)
 	}
 	return names
 }
@@ -472,7 +465,7 @@ var settleBudget = 10 * time.Second
 
 const settlePause = 20 * time.Millisecond
 
-// converge settles operation as the engine does: while the answer leaves a declared resource not present, it validates with what every answer so far reported of each resource, and sends operation again when a validate asks for a re-drive. A member the operation stops reporting leaves the record, and is proven absent once the rest settles.
+// converge settles operation as the engine does: while the answer leaves a declared resource not present, it validates with what every answer so far reported of each resource, and sends operation again when a validate asks for a re-drive.
 func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 	recorded := maps.Clone(c.desired.RecordedResources)
 	dropped := map[string]contract.RecordedResource{}
@@ -531,10 +524,16 @@ func (c *blockCheck) dropUnreported(recorded map[string]contract.RecordedResourc
 	if resp.Pending && !ensuredAny(resp) {
 		return
 	}
-	for _, name := range sortedKeys(recorded) {
-		if resp.Resources[name].Ensure == nil && isMember(c.spec, name) {
-			dropped[name] = recorded[name]
-			delete(recorded, name)
+	held := sortedKeys(recorded)
+	for _, entry := range c.spec.Resources {
+		if !entry.Many {
+			continue
+		}
+		for _, name := range entry.Names(held) {
+			if resp.Resources[name].Ensure == nil {
+				dropped[name] = recorded[name]
+				delete(recorded, name)
+			}
 		}
 	}
 }
@@ -546,10 +545,6 @@ func ensuredAny(resp contract.Response) bool {
 		}
 	}
 	return false
-}
-
-func isMember(spec contract.ManifestSpec, name string) bool {
-	return slices.ContainsFunc(spec.Resources, func(e contract.ManifestResource) bool { return e.IsMember(name) })
 }
 
 // proveDroppedAbsent validates each dropped member by name, as the engine proves a member absent before the operation that dropped it settles, then checks the provider again for a stray object.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -165,6 +166,21 @@ var memberKeyPattern = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
 func (r ManifestResource) IsMember(name string) bool {
 	entry, key, ok := strings.Cut(name, "/")
 	return r.Many && ok && entry == r.Name && memberKeyPattern.MatchString(key)
+}
+
+// Names lists the resource names this entry stands for among held: its own name when it is not marked many, and otherwise each member held names, in name order.
+func (r ManifestResource) Names(held []string) []string {
+	if !r.Many {
+		return []string{r.Name}
+	}
+	var members []string
+	for _, name := range held {
+		if r.IsMember(name) {
+			members = append(members, name)
+		}
+	}
+	slices.Sort(members)
+	return members
 }
 
 type ManifestLifecycle struct {

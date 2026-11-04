@@ -55,18 +55,13 @@ func (nr namedResource) named(name string) namedResource {
 	return nr
 }
 
-// units lists what a block-level verb observes, in manifest order: each entry not marked many, and in its place each member held names of an entry marked many, in name order.
+// units lists what a block-level verb observes, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
 func units[V any](declared []namedResource, held map[string]V) []namedResource {
+	names := slices.Collect(maps.Keys(held))
 	out := make([]namedResource, 0, len(declared))
 	for _, nr := range declared {
-		if !nr.declaration.Many {
-			out = append(out, nr)
-			continue
-		}
-		for _, name := range slices.Sorted(maps.Keys(held)) {
-			if nr.declaration.IsMember(name) {
-				out = append(out, nr.named(name))
-			}
+		for _, name := range nr.declaration.Names(names) {
+			out = append(out, nr.named(name))
 		}
 	}
 	return out

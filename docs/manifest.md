@@ -136,7 +136,9 @@ through the entry's observer, here `Config.Observers["cloud-worker"]`, and
 refuses a report under the entry's own name. A block marking an entry many
 must implement `handler.ResourceReporter` or `handler.OwnSecretsReporter`,
 because only a report names the members. `ManifestResource.IsMember` tells
-whether a name is one of an entry's members.
+whether a name is one of an entry's members, and `ManifestResource.Names` lists
+the names an entry stands for among the names a request or a report holds, in
+the order the handler observes them.
 
 `provides` names resources from the block's own `resources`, and never an
 entry marked many, because a binding names one resource. The outputs of a
