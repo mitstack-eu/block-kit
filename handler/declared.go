@@ -18,6 +18,14 @@ const classUndeclaredResource = "undeclared-resource"
 // ClassBlocker refuses a validate whose observations carry a blocker finding.
 const ClassBlocker = "blocker"
 
+// ClassNeedsApp refuses a validate whose check reads something only a created app has, which the platform counts as checked at create for an app not yet created and as a refusal for one that exists.
+const ClassNeedsApp = "needs-app"
+
+// NeedsApp builds the ClassNeedsApp refusal a validate gives when its check cannot run before the app exists, naming why.
+func NeedsApp(format string, args ...any) error {
+	return Refuse(ClassNeedsApp, format, args...)
+}
+
 // dispatchDeclared refuses a name the manifest does not declare with a 400 before any resource is reached, unless a validate names a type Config.TypeObservers holds.
 //
 // A resource still converging, left standing or failing stops the verb there, and the request context is checked before each resource's first call. Every answer, an error included, carries the resources map of the resources reached.

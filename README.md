@@ -142,6 +142,29 @@ when the answer differs from the file. `kittest.CheckResponse` fails an answer
 that carries a blocker finding but is no refusal, since the engine would read
 it as a pass.
 
+### A check that needs a created app
+
+A builder runs a dry run before the app exists, so its request carries no
+`appId`. Some checks read something only a created app has, such as a record
+the platform keys by the app's id. Such a check returns `handler.NeedsApp`,
+a refusal of class `needs-app` that names why the check waits:
+
+```go
+if ref.Desired.AppID == "" {
+	return contract.Observation{}, handler.NeedsApp("its check reads the app's delivery record, which exists once the app is created")
+}
+```
+
+The platform counts that answer as checked at create when the dry run names
+no app, and lists the block and its reason in the report. Once the app exists
+the request carries its id, and the platform reads the same answer as a
+refusal, so no block can skip a check on a created app. Give it only for a
+request with no `appId`. A check that fails for any other cause refuses as
+before.
+
+`TestDeclared_AValidateWhoseCheckNeedsACreatedAppAnswersTheNeedsAppRefusalNamingWhy`
+in `handler/declared_test.go` serves that answer through the handler.
+
 ## What a block imports
 
 A block must import the four packages at the root of this repository,

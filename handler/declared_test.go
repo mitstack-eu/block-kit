@@ -75,6 +75,18 @@ func TestDeclared_AValidateAnswersAPlanAndRefusesOnABlockerCarryingEveryFindingS
 	}
 }
 
+func TestDeclared_AValidateWhoseCheckNeedsACreatedAppAnswersTheNeedsAppRefusalNamingWhy(t *testing.T) {
+	const why = "the scaffold commit's build is read by the app's id, and the request names no app"
+	obs := asObservers(blockObservers(standingCloud()))
+	obs["a"] = &observer{err: handler.NeedsApp("%s", why)}
+
+	status, resp := serveBlock(t, blockCall{r: &blockResource{}, obs: obs, op: "validate"})
+
+	if want := "refused:needs-app: " + why; status != http.StatusBadRequest || resp.StatusDetail != want || handler.RefusedClass(resp.StatusDetail) != handler.ClassNeedsApp {
+		t.Fatalf("validate = %d %q; want 400 %q, the class the platform reads as checked at create", status, resp.StatusDetail, want)
+	}
+}
+
 func TestDeclared_AValidateWithFindingsAnswersTheBytesTheReadmeShows(t *testing.T) {
 	manifest := v1betaManifest("app-build", []string{"{ name: ci-workflows, type: github.workflow-file }"})
 	serve := func(findings []contract.Finding) []byte {
