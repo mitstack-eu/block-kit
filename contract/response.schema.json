@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/response.schema.json",
   "title": "mitstack lifecycle webhook response",
   "description": "Versioned wire-shape contract for the JSON body a block owner's registered webhook endpoint returns to mitstack's lifecycle engine for a subscribe/unsubscribe/upgrade/validate call (MIT-1136, the response half of the bidirectional contract envelope.schema.json pins on the request side). Mirrors api/internal/lifecycle.webhookResponse byte-for-byte for every property but resources, which reports the outcome of each declared resource's ensure, observe and delete calls by name. Additive-friendly: additionalProperties is true at every level so a new optional response field never breaks an existing operator or this contract test. Nothing is required: a verb with nothing to report legitimately answers {}.",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "type": "object",
   "additionalProperties": true,
   "properties": {
@@ -28,6 +28,11 @@
     },
     "secretOutputs": {
       "description": "Secret outputs the operator produced, resolved server-side into the org secret store. Same null tolerance as outputs.",
+      "type": ["object", "null"],
+      "additionalProperties": { "type": "string" }
+    },
+    "ownSecrets": {
+      "description": "Secrets the block keeps for its own later calls, keyed by names it chooses. The platform lays them over the subscription's stored set on a subscribe, an upgrade or a settle validate that succeeds, pending or not, hands that set back on every later request of this subscription alone, and deletes it at unsubscribe. A name the answer leaves out keeps its value. The whole set, encoded as JSON, is at most 8 KiB (8192 bytes), which the platform checks, failing the call that would pass it. They are never outputs, so no other block or listing receives them. Same null tolerance as outputs.",
       "type": ["object", "null"],
       "additionalProperties": { "type": "string" }
     },

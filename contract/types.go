@@ -68,6 +68,8 @@ type Request struct {
 	NeverActive       bool                        `json:"neverActive,omitempty"`
 
 	IssueAppID string `json:"issueAppId,omitempty"`
+
+	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 }
 
 // OperationIssue asks a capability for one app's credential, beside the four lifecycle verbs.
@@ -116,7 +118,8 @@ type Response struct {
 	// ResourceSecretOutputs keeps each provided resource's secret outputs apart, since the merged SecretOutputs keeps one value of a key two resources share.
 	ResourceSecretOutputs map[string]map[string]string `json:"resourceSecretOutputs,omitempty"`
 	// Credential answers an issue alone.
-	Credential *Credential `json:"credential,omitempty"`
+	Credential *Credential       `json:"credential,omitempty"`
+	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 }
 
 // ResourceOutcome is what a verb's calls did to one declared resource; a nil call did not run.
@@ -192,6 +195,8 @@ type Desired struct {
 	RequirementTypes  map[string]string
 	VerbAt            time.Time
 	NeverActive       bool
+
+	OwnSecrets map[string]string
 }
 
 type Observation struct {
@@ -205,6 +210,8 @@ type Observation struct {
 	Unhealthy *Unhealthy
 	Removing  *Removing
 	Findings  []Finding
+	// OwnSecrets are the block's own secrets, which the handler returns beside the answer's outputs whatever State reads.
+	OwnSecrets map[string]string
 }
 
 // Unhealthy, read beside State Present alone, names one failure a resource meets while the engine still reads it present: Cause is a cause its catalogue type lists under failures, word for word, and Detail says what was seen.
@@ -363,6 +370,7 @@ func (r Request) Desired() Desired {
 		RequirementTypes:  r.RequirementTypes,
 		VerbAt:            r.verbAt(),
 		NeverActive:       r.NeverActive,
+		OwnSecrets:        r.OwnSecrets,
 	}
 }
 
@@ -379,6 +387,7 @@ func (o Observation) Response() Response {
 		Outputs:       o.Outputs,
 		SecretOutputs: o.SecretOutputs,
 		StatusDetail:  o.StatusDetail,
+		OwnSecrets:    o.OwnSecrets,
 	}
 
 	switch o.State {

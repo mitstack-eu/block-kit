@@ -129,3 +129,19 @@ func TestServe_NeverLeaksAnySecretTheRequestCarries(t *testing.T) {
 		kittest.AssertNoSecret(t, what, haystack, secret, input, appSecret, obo, eventsToken)
 	}
 }
+
+// A block's own secret comes back on every later request, so an error quoting it must reach neither the answer nor the log.
+func TestServe_NeverLeaksAnOwnSecretTheRequestCarries(t *testing.T) {
+	const own = "top-secret-own-gateway-ca-key"
+	logged := captureLog(t)
+	x := newHarness(t, &kittest.FakeResource{EnsureErr: fmt.Errorf("could not sign the gateway certificate with %s", own)})
+
+	status, raw := x.post(map[string]any{"operation": "upgrade", "ownSecrets": map[string]any{"gatewayCaKey": own}})
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for the Ensure error, body: %s", status, raw)
+	}
+	for what, haystack := range map[string]string{"response body": string(raw), "log output": logged.String()} {
+		kittest.AssertNoSecret(t, what, haystack, own)
+	}
+}

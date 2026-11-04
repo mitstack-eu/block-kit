@@ -185,6 +185,9 @@ func (h *Handler) secretsFor(req contract.Request) []string {
 	for _, v := range req.AppSecrets {
 		out = append(out, v)
 	}
+	for _, v := range req.OwnSecrets {
+		out = append(out, v)
+	}
 	if req.OBO != "" {
 		out = append(out, req.OBO)
 	}

@@ -34,7 +34,7 @@ func TestDecodeResponse_CarriesEveryGoldenFieldOntoTheResponse(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := jsonObject(t, raw)
 			want := contract.Response{Outputs: strMap(m["outputs"]), SecretOutputs: strMap(m["secretOutputs"]), Error: strOf(m, "error"),
-				StatusDetail: strOf(m, "statusDetail"), LastError: strOf(m, "lastError")}
+				StatusDetail: strOf(m, "statusDetail"), LastError: strOf(m, "lastError"), OwnSecrets: strMap(m["ownSecrets"])}
 			want.Pending, _ = m["pending"].(bool)
 			want.Redrive, _ = m["redrive"].(bool)
 			if absent, ok := m["absent"].(bool); ok {
@@ -58,6 +58,7 @@ func TestDecodeResponse_EveryResponseGoldenDecodesAsBefore(t *testing.T) {
 		"outputs":         {Outputs: map[string]string{"instanceId": "i-0123456789abcdef0", "endpoint": "https://example.apps.mitstack.dev"}},
 		"pending":         {Pending: true, StatusDetail: "waiting for the VPC to finish provisioning"},
 		"pending-redrive": {Pending: true, Redrive: true, StatusDetail: "the builder powered off; the snapshot comes next"},
+		"own-secrets":     {OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}},
 		"secret-outputs":  {SecretOutputs: map[string]string{"apiKey": "sk-example-not-a-real-secret"}},
 		"still-present":   {Absent: &f},
 	}
@@ -102,6 +103,7 @@ func TestDecodeResponse_RejectsInvalidGoldensNamingField(t *testing.T) {
 		"invalid-pending-not-bool":                         "pending",
 		"invalid-pending-redrive-not-bool":                 "redrive",
 		"invalid-secret-outputs-not-strings":               "secretOutputs",
+		"invalid-own-secrets-not-strings":                  "ownSecrets",
 		"invalid-resource-secret-outputs-not-object":       "resourceSecretOutputs",
 		"invalid-resource-secret-outputs-entry-not-object": "resourceSecretOutputs",
 		"invalid-resource-secret-outputs-value-not-string": "resourceSecretOutputs",
@@ -132,6 +134,7 @@ func TestDecodeResponse_RefusesAFieldOfTheWrongTypeNamingIt(t *testing.T) {
 		{"observe outputs not strings", `{"resources": {"network": {"observe": {"outputs": {"port": 8080}}}}}`, "resources"},
 		{"call outcome error not string", `{"resources": {"network": {"delete": {"error": 7}}}}`, "resources"},
 		{"statusDetail not a string", `{"statusDetail": 5}`, "statusDetail"},
+		{"own secrets not strings", `{"ownSecrets": {"gatewayCaKey": 7}}`, "ownSecrets"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -205,12 +208,13 @@ func TestDecodeResponse_ReadsEachResourceOutcomeByName(t *testing.T) {
 func TestObservationResponse_MarksAbsenceByState(t *testing.T) {
 	f, tr := false, true
 	outputs, secrets := map[string]string{"instanceId": "i-0123456789abcdef0"}, map[string]string{"apiKey": "sk-example-not-a-real-secret"}
+	own := map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}
 	cases := []struct {
 		obs  contract.Observation
 		want contract.Response
 	}{
-		{contract.Observation{State: contract.Present, Outputs: outputs, SecretOutputs: secrets, StatusDetail: "converged"},
-			contract.Response{Outputs: outputs, SecretOutputs: secrets, StatusDetail: "converged", Absent: &f}},
+		{contract.Observation{State: contract.Present, Outputs: outputs, SecretOutputs: secrets, OwnSecrets: own, StatusDetail: "converged"},
+			contract.Response{Outputs: outputs, SecretOutputs: secrets, OwnSecrets: own, StatusDetail: "converged", Absent: &f}},
 		{contract.Observation{State: contract.Absent, StatusDetail: "resource is gone"},
 			contract.Response{StatusDetail: "resource is gone", Absent: &tr}},
 		{contract.Observation{State: contract.Unknown, StatusDetail: "checking"},
@@ -234,6 +238,8 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 	}{
 		{"a response with nil outputs encodes JSON null, which the engine tolerates", contract.Response{}, `{"outputs":null}`, true},
 		{"a response reporting no resources encodes as before", contract.Response{Pending: true}, `{"outputs":null,"pending":true}`, false},
+		{"a response returning own secrets encodes them under ownSecrets", contract.Response{OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}},
+			`{"outputs":null,"ownSecrets":{"gatewayCaKey":"own-secret-not-a-real-key"}}`, true},
 		{"an ensure reporting an identity", contract.CallOutcome{Identity: map[string]string{"groupId": "sg-0abc"}}, `{"identity":{"groupId":"sg-0abc"}}`, false},
 		{"an ensure reporting no identity encodes as before", contract.CallOutcome{}, `{}`, false},
 		{"an observe naming the failure its type lists encodes it beside present", contract.Response{Resources: map[string]contract.ResourceOutcome{
@@ -278,6 +284,13 @@ func TestResponse_RoundTripsThroughJSONUnderItsWireNames(t *testing.T) {
 		}, func(t *testing.T, m map[string]any) {
 			if _, ok := m["resourceSecretOutputs"]; !ok {
 				t.Errorf("encoded response %v has no resourceSecretOutputs key", m)
+			}
+		}},
+		{"own secrets", contract.Response{
+			OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key", "joinToken": "own-secret-not-a-real-token"},
+		}, func(t *testing.T, m map[string]any) {
+			if _, ok := m["ownSecrets"]; !ok {
+				t.Errorf("encoded response %v has no ownSecrets key", m)
 			}
 		}},
 		{"resources by name", contract.Response{
@@ -336,6 +349,16 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 			replaces := schemaAt(t, doc, props, "replaces")
 			if !hasType(replaces, "array") || !hasType(schemaAt(t, doc, replaces, "items"), "string") {
 				t.Errorf("properties.replaces = %v, want an array of strings", replaces)
+			}
+		}},
+		{"ownSecrets is an optional object of strings", func(t *testing.T) {
+			if slices.Contains(sortedStrings(doc["required"]), "ownSecrets") {
+				t.Error(`response.schema.json requires "ownSecrets", but a response that returns none must stay valid`)
+			}
+			node := schemaAt(t, doc, props, "ownSecrets")
+			objectOfStrings(t, doc, node, "properties.ownSecrets")
+			if !hasType(node, "null") {
+				t.Errorf("properties.ownSecrets type = %v, want null allowed, as the engine and kittest read null as none", schemaTypes(node))
 			}
 		}},
 		{"redrive is a boolean", func(t *testing.T) {

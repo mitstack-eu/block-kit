@@ -117,10 +117,19 @@ type declaredRun struct {
 	healthCheck bool
 
 	resourceSecretOutputs map[string]map[string]string
+	ownSecrets            map[string]string
 }
 
 func (r *declaredRun) answers(name string) bool {
 	return r.provided == nil || r.provided[name]
+}
+
+// withOwnSecrets hands a successful answer the own secrets the ensure and each observation returned, since the platform keeps nothing from a failed one.
+func (r *declaredRun) withOwnSecrets(status int, resp contract.Response) (int, contract.Response) {
+	if status == http.StatusOK {
+		resp.OwnSecrets = r.ownSecrets
+	}
+	return status, resp
 }
 
 // keepSecretOutputs holds a resource's secret outputs apart from outcomes, which the engine records.
@@ -376,6 +385,7 @@ func (r *declaredRun) observeOnce(ctx context.Context, nr namedResource, entry *
 		return obs, err
 	}
 	entry.Observe = call
+	r.ownSecrets = mergeOutputs(r.ownSecrets, obs.OwnSecrets)
 	return obs, nil
 }
 
