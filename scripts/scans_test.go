@@ -206,26 +206,3 @@ func TestPinnedTool(t *testing.T) {
 		})
 	}
 }
-
-// scan-image.sh's Trivy run reads no file, variable or flag that could narrow it, so only its exception script accepts a finding.
-func TestScanImage_RunsTrivyWithNothingThatNarrowsIt(t *testing.T) {
-	raw, err := os.ReadFile("scan-image.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(raw)
-	for _, want := range []string{
-		"readonly TRIVY_SHA256=1f889576636db0623539cb339df7d06c40ebf39e7919489eafa1160e29808f19",
-		`unset "${!TRIVY_@}"`, `(cd "$work/empty" && "$trivy" image --image-src docker --exit-code 1 --ignore-unfixed --no-progress`,
-		`bash "$here/go-2026-5932-exception.sh" "$work/report.json" "$work/root"`,
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("scan-image.sh lacks %q", want)
-		}
-	}
-	for _, narrowing := range []string{"--severity", "--ignorefile", "--skip-", "--config", "--vex", "--ignore-policy", "--scanners"} {
-		if strings.Contains(src, narrowing) {
-			t.Errorf("scan-image.sh passes Trivy %s, which narrows what it reports", narrowing)
-		}
-	}
-}

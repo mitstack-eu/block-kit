@@ -284,11 +284,20 @@ func TestException_PrintsGovulncheckFailingAndLetsTheFunctionTableDecide(t *test
 	wantOutput(t, out, exit, 0, []string{"govulncheck could not scan it against " + url + ", so the function table alone decides", "accepted GO-2026-5932 in " + fixtureTarget}, "")
 }
 
-func TestException_RefusesAReportItCannotRead(t *testing.T) {
-	report := filepath.Join(t.TempDir(), "report.json")
-	writeFile(t, report, "{\"Results\": [")
+func TestException_RefusesAReportItCannotReadOrThatHoldsNoFinding(t *testing.T) {
+	cases := []struct{ name, report, want string }{
+		{"a report cut short", `{"Results": [`, "could not read the Trivy report %s, so no finding is accepted"},
+		{"a report holding no finding", `{"SchemaVersion": 2, "Results": [{"Target": "` + fixtureTarget + `", "Type": "gobinary"}]}`,
+			"the Trivy report %s holds no finding, so nothing in it explains why the scan failed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			report := filepath.Join(t.TempDir(), "report.json")
+			writeFile(t, report, c.report)
 
-	out, exit := runException(t, report, t.TempDir(), serve(t, nil))
+			out, exit := runException(t, report, t.TempDir(), serve(t, nil))
 
-	wantOutput(t, out, exit, 1, []string{"could not read the Trivy report " + report}, "")
+			wantOutput(t, out, exit, 1, []string{fmt.Sprintf(c.want, report)}, "accepted all")
+		})
+	}
 }
