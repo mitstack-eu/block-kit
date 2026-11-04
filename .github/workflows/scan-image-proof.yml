@@ -69,9 +69,11 @@ jobs:
           VERSION: ${{ matrix.version }}
           WANT_EXIT: ${{ matrix.exit }}
         run: |
-          set -uo pipefail
-          bash scripts/scan-image.sh scan-image-proof | tee "$RUNNER_TEMP/scan.txt"
+          # The runner's bash -e would end the step at the scan's expected exit 1.
+          set +e
+          bash scripts/scan-image.sh scan-image-proof 2>&1 | tee "$RUNNER_TEMP/scan.txt"
           status=${PIPESTATUS[0]}
+          set -e
           { echo '```'; cat "$RUNNER_TEMP/scan.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           accepted="accepted GO-2026-5932 in var/cache/tofu-plugins/registry.opentofu.org/$PROVIDER/$VERSION/"
           if [ "$status" != "$WANT_EXIT" ] || ! grep -qF "$accepted" "$RUNNER_TEMP/scan.txt" || grep -q '^refused GO-2026-5932' "$RUNNER_TEMP/scan.txt"; then
