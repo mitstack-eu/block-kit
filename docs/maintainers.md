@@ -37,14 +37,22 @@ the README in the same commit.
 a contract test fails when the committed file differs from what they generate.
 Regenerate it with `go run ./cmd/manifest-schema > contract/manifest.schema.json`.
 
-The tests of the image scan's GO-2026-5932 exception, in
+The publish job's image scan accepts the advisory GO-2026-5932 in an OpenTofu
+provider binary that holds no openpgp code, as
+[How the publish job scans the image](block-checks.md#how-the-publish-job-scans-the-image)
+describes. The tests of that exception, in
 `scripts/go_2026_5932_exception_test.go`, build stand-in provider binaries
 from `scripts/testdata/fixture-provider`. That fixture is a module of its own
 requiring golang.org/x/crypto v0.58.0, so the kit's `go.mod` still requires
-nothing. One build tag adds an openpgp call and another drops x/crypto
-altogether. The tests answer govulncheck from the one-advisory database in
-`scripts/testdata/vulndb`, and the registry and `go.mod` reads from a local
-server.
+nothing. The `openpgp` build tag adds an openpgp call, and the `nocrypto` tag
+drops x/crypto altogether.
+
+`scripts/testdata/vulndb` stands in for the Go vulnerability database at
+vuln.go.dev and holds GO-2026-5932 alone, so the tests never read vuln.go.dev.
+A local server answers the registry and `go.mod` reads. The tests still fetch
+golang.org/x/crypto and govulncheck through the Go module proxy, so they need
+network access. `scripts/scan_image_test.go` drives `scripts/scan-image.sh`
+with stand-in `trivy` and `docker` commands, so it needs neither installed.
 
 A pull request that changes the scan also runs
 `.github/workflows/scan-image-proof.yml`. It builds one image holding the AWS
