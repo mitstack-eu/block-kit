@@ -108,6 +108,7 @@ and `d.Instances` read the same on every call.
 | `Instances` | Each connection's settings and endpoint, keyed by the connection's name, such as the AWS region a block works in |
 | `Secrets` | Each connection's secrets, keyed by the connection's name, as in `d.Secrets["hetzner"]["api_token"]` |
 | `SecretInputs`, `AppSecrets` | The values of the secret inputs the block's types declare, and every secret the app holds when the manifest sets `receivesAppSecrets` |
+| `OwnSecrets` | The secrets this subscription's block returned as its own on earlier calls, under the names it chose, as in `d.OwnSecrets["gatewayCaKey"]`, which the next section's [own secrets](#what-the-answer-carries) part explains |
 | `Params` | The subscription's values for the inputs the block's types declare, keyed by input name, as in `d.Params["location"]` and as [Writing the manifest](manifest.md) explains |
 | `Bindings`, `BindingsAll`, `RequirementTypes` | The outputs of the resources that met the block's requirements, and which type met each, as [Writing the manifest](manifest.md) explains |
 | `RecordedResources` | What the engine recorded for each resource: its type, its identity and, on an unsubscribe, `absent` when the engine already knows it is gone |
@@ -159,7 +160,7 @@ whose answer depends on the verb can tell that pass apart.
 
 | Call | What the handler does |
 |---|---|
-| `subscribe`, `upgrade` | Runs one `EnsureResources`, then observes each declared resource once, in manifest order, and stops at the first not yet `present` |
+| `subscribe`, `upgrade` | Runs one `EnsureResources`, or `EnsureResourcesOwning` for a block that implements `handler.OwnSecretsReporter`, then observes each declared resource once, in manifest order, and stops at the first not yet `present` |
 | `unsubscribe` | Runs one `Delete`, or `DeleteKeeping` for a block that implements `handler.KeptReporter`, then observes each declared resource once, in reverse order, stops at the first not yet `absent`, and adds the outputs `Delete` returned to the answer once all are absent |
 | `validate` | Asks a block that implements `handler.Converger` whether its work still runs, and while it does or until a subscribe reports it, answers without observing; otherwise observes each declared resource once. For a block that implements `handler.ReplacementPlanner` it names the resources an upgrade would replace. An observation carrying a blocker finding answers a refusal of class `handler.ClassBlocker` |
 
@@ -397,6 +398,46 @@ A pending answer still carries the secret outputs of each provided resource
 already observed present, and the platform stores them once the remaining
 resources are confirmed.
 
+A block keeps a secret for its own later calls, such as the key of a
+certificate authority it made, as an own secret. Any observer returns one in
+`Observation.OwnSecrets`:
+
+```go
+return contract.Observation{State: contract.Present,
+	OwnSecrets: map[string]string{"gatewayCaKey": keyPEM}}, nil
+```
+
+A block whose ensure makes the secret, such as a key it mints on the first
+subscribe, implements `handler.OwnSecretsReporter`, and the handler calls its
+`EnsureResourcesOwning` in place of `EnsureResources`:
+
+```go
+type OwnSecretsReporter interface {
+	EnsureResourcesOwning(ctx context.Context, d contract.Desired) (created []contract.CreatedResource, ownSecrets map[string]string, err error)
+}
+```
+
+The answer to a subscribe or an upgrade carries under `ownSecrets` the own
+secrets of its ensure and of every observation, and a validate's answer those
+of every observation, pending or not. An ensure's own secrets reach the answer
+even beside `handler.Wait`. The later
+step wins a name two return: an observer overrides the value your ensure
+returned, and a later resource overrides an earlier one. A refused or failed
+answer carries none, because the platform keeps nothing from it. The platform keeps the set for the
+subscription and sends it back on each later request of that subscription:
+
+```json
+{"operation": "upgrade", "subscriptionId": "sub_a1b2", "ownSecrets": {"gatewayCaKey": "<the key's PEM>"}}
+```
+
+Your code reads it as `d.OwnSecrets["gatewayCaKey"]`. A name an answer leaves
+out keeps its value, so a block returns a key once and may omit it afterwards.
+No request of another subscription carries the set, and neither the app's
+secrets nor its secret listing holds it. The whole set, encoded as JSON, is at
+most 8 KiB, and the platform fails a call whose answer would take it past
+that. Unsubscribe deletes the set. The handler scrubs each own secret from
+every error and log line, as it does each other secret a request carries.
+
 The handler refuses to report an output whose value equals one of the
 request's `secrets` values. It checks every output an observer reports, every
 identity `EnsureResources` reports and the outputs `Delete` returns. The
@@ -441,6 +482,6 @@ and it sends no lifecycle event for one.
 | A credential value equals a secret the request carried | 500, naming the key and never the value |
 
 The last row compares the credential with every secret the request carried:
-each connection secret, each secret input, each app secret and the call's
-tokens. It compares whole values only, so a value derived from a secret
+each connection secret, each secret input, each app secret, each own secret
+and the call's tokens. It compares whole values only, so a value derived from a secret
 passes, and the capability's own code keeps such a credential from an app.
