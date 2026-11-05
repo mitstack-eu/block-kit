@@ -369,6 +369,30 @@ if err != nil {
 }
 ```
 
+### How a block waits for its final backup
+
+A per-app block that keeps data on the host takes a last backup before it
+removes that data. `dockerhost.FinalBackup` holds that wait, so each block runs
+one copy. The block gives it two functions over its own repository client:
+`Held` reads the request in `<block>.backup-request`, and `Ask` commits a new
+one.
+
+```go
+done, err := dockerhost.FinalBackup{
+	App: "shop", Block: "docker-app-slice", Kept: "shop's persisted files", Now: time.Now(),
+	Held: readRequest, Ask: commitRequest,
+}.Done(ctx, observe.NodeReportsClient{}, d, hostSubscription)
+if err != nil || !done {
+	return err
+}
+```
+
+`Done` answers true once the newest node report names that request uploaded,
+and at once when the report lists no volume of the block, which then holds
+nothing. While the host has not uploaded it, the error is a `handler.Wait`. A
+failed run, or a host that takes no backups, gives an error naming why and
+nothing may be removed.
+
 ## Reporting whether an app answers
 
 `helpers/reach` judges whether an app is serving at its URL and records the
