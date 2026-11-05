@@ -4,6 +4,7 @@ package handler_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/contract"
@@ -128,6 +129,29 @@ func TestServe_NeverLeaksAnySecretTheRequestCarries(t *testing.T) {
 		}
 		for what, haystack := range map[string]string{"response body": string(raw), "log output": logged.String()} {
 			kittest.AssertNoSecret(t, op+" "+what, haystack, secret, input, appSecret, own, obo, eventsToken)
+		}
+	}
+}
+
+func TestRequireBound_AnswersTheUnboundRequirementRefusalNamingTheRequirementOnlyWhenTheRequestBindsNothingForIt(t *testing.T) {
+	bound := map[string]map[string]string{"cluster": {"endpoint": "https://10.0.0.1"}}
+	boundAll := map[string][]map[string]string{"cluster": {{"endpoint": "https://10.0.0.1"}}}
+	cases := map[string]struct {
+		d    contract.Desired
+		want string
+	}{
+		"nothing":     {contract.Desired{}, handler.ClassUnboundRequirement},
+		"another one": {contract.Desired{Bindings: map[string]map[string]string{"volume": {"id": "v1"}}}, handler.ClassUnboundRequirement},
+		"one binding": {contract.Desired{Bindings: bound}, ""},
+		"every offer": {contract.Desired{BindingsAll: boundAll}, ""},
+	}
+	for name, c := range cases {
+		err := handler.RequireBound(c.d, "cluster")
+		if got := handler.RefusedClass(fmt.Sprint(err)); got != c.want || (c.want == "") != (err == nil) {
+			t.Errorf("%s: RequireBound = %v, want class %q", name, err, c.want)
+		}
+		if err != nil && !strings.Contains(err.Error(), `"cluster"`) {
+			t.Errorf("%s: %v, want it to name the requirement", name, err)
 		}
 	}
 }
