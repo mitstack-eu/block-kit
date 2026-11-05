@@ -368,3 +368,77 @@ func TestObserver_ReadsAnUnreadableRemovalPullRequestUnknown(t *testing.T) {
 		t.Errorf("observe while the removal pull request cannot be read = %s (%s), want unknown, since a failed read proves nothing", obs.State, obs.StatusDetail)
 	}
 }
+
+func TestUnsubscribe_WaitsAsARemovalWaitWhileItsCheckRunsAndGitHubRefusesTheStatusRead(t *testing.T) {
+	for _, status := range []string{"queued", "in_progress"} {
+		t.Run(status, func(t *testing.T) {
+			f, rec := waitingRemoval(t)
+			f.RunCheck("managed-ci", status)
+			f.RefuseCommitStatus()
+
+			_, err := remove(client(f), rec)
+
+			var w *handler.Waiting
+			if !errors.As(err, &w) || !w.Removal {
+				t.Errorf("Remove while its check is %s and the status read answers 403 = %#v, want a handler.Waiting with Removal set, so the wait spends no attempt", status, err)
+			}
+		})
+	}
+}
+
+func TestUnsubscribe_NamesThePermissionAndTheInstallationWhenGitHubRefusesTheStatusRead(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.RefuseCommitStatus()
+
+	_, err := remove(client(f), rec)
+
+	var w *handler.Waiting
+	if !errors.As(err, &w) {
+		t.Fatalf("Remove with no check reported and the status read refused = %v, want a handler.Waiting", err)
+	}
+	for _, naming := range []string{"the installation of acme lacks the permission statuses=read", `"managed-ci"`} {
+		if !strings.Contains(w.Detail, naming) {
+			t.Errorf("wait detail = %q, want it to name %q", w.Detail, naming)
+		}
+	}
+}
+
+func TestUnsubscribe_WaitsNamingTheFailedCheckWhenGitHubRefusesTheStatusRead(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ReportCheck("managed-ci", "failure")
+	f.RefuseCommitStatus()
+
+	_, err := remove(client(f), rec)
+
+	waiting(t, err, "managed-ci")
+	if pulls := f.Pulls(); len(pulls) != 1 || pulls[0].Merged {
+		t.Errorf("pull requests = %+v, want one, unmerged, since a failed check never lets it past", pulls)
+	}
+}
+
+func TestUnsubscribe_MergesOnAPassedCheckWhileGitHubRefusesTheStatusRead(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ReportCheck("managed-ci", "success")
+	f.RefuseCommitStatus()
+
+	_, err := remove(client(f), rec)
+
+	if err != nil {
+		t.Fatalf("Remove once the check passed with the status read refused: %v", err)
+	}
+	if pulls := f.Pulls(); len(pulls) != 1 || !pulls[0].Merged {
+		t.Errorf("pull requests = %+v, want the one removal merged", pulls)
+	}
+}
+
+func TestObserver_ReadsTheRemovalUnderWayWhileItsCheckRunsAndGitHubRefusesTheStatusRead(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.RunCheck("managed-ci", "in_progress")
+	f.RefuseCommitStatus()
+
+	obs := observeRemoval(t, f, rec, true)
+
+	if obs.State != contract.Present || obs.Removing == nil {
+		t.Errorf("observe while the check runs and the status read answers 403 = %s with removing %+v (%s), want present with removing", obs.State, obs.Removing, obs.StatusDetail)
+	}
+}
