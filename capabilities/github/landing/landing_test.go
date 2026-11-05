@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -281,5 +282,23 @@ func TestOfferObserver_ReadsADeletedRepositoryAbsentAndAnUnreadableOneUnknownEit
 		if obs := observeOffer(t, unreadable, rec, unsubscribing); obs.State != contract.Unknown {
 			t.Errorf("unsubscribing %v: observe of a repository answering 500 = %s (%s), want unknown", unsubscribing, obs.State, obs.StatusDetail)
 		}
+	}
+}
+
+func TestOfferObserver_AnInstallationListPastItsBoundIsUnknownNamingTheCallAndTheBound(t *testing.T) {
+	rec := offer(t, landingtest.New(t, repo), threeFiles, landing.Record{})
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/installation/repositories" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"pad":"` + strings.Repeat("a", 1<<20+1-len(`{"pad":""}`)) + `"}`))
+	}))
+	t.Cleanup(github.Close)
+
+	obs := observeOffer(t, &landingtest.Fake{Server: github}, rec, false)
+
+	if want := "GET /installation/repositories?per_page=1: the answer is longer than 1048576 bytes"; obs.State != contract.Unknown || !strings.Contains(obs.StatusDetail, want) {
+		t.Errorf("observe = %s (%s); want unknown naming %q", obs.State, obs.StatusDetail, want)
 	}
 }

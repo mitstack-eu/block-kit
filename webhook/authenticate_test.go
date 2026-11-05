@@ -310,6 +310,19 @@ func TestKeyCache_AnOutageLeavesHeldKeysAndAnswersEveryOtherKidUnavailable(t *te
 	}
 }
 
+func TestKeyCache_AJWKSPastItsBoundAnswersUnavailableNamingTheURLAndTheBound(t *testing.T) {
+	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"keys":[],"pad":"` + strings.Repeat("a", 64<<10+1-len(`{"keys":[],"pad":""}`)) + `"}`))
+	}))
+	t.Cleanup(platform.Close)
+
+	_, err := webhook.NewKeyCache().PublicKey(platform.URL, nil, "kid-1", time.Now())
+
+	if want := "GET " + platform.URL + ": the answer is longer than 65536 bytes"; !errors.Is(err, webhook.ErrKeysUnavailable) || !strings.Contains(err.Error(), want) {
+		t.Errorf("PublicKey = %v; want ErrKeysUnavailable naming %q", err, want)
+	}
+}
+
 func (j *jwks) count() int {
 	j.mu.Lock()
 	defer j.mu.Unlock()

@@ -182,6 +182,8 @@ func TestPlatformNotifications_Latest(t *testing.T) {
 		{"a 404 means no notification yet", adrRevision, 404, `{"error":"no notification"}`, false, false, seenRequest{}, nil},
 		{"any other status is an error carrying status and body but never the token", adrRevision, 502, "upstream rejected ", false, false, seenRequest{},
 			[]string{"502", "upstream rejected"}},
+		{"an answer a byte past its bound fails naming the app and the bound", adrRevision, 200, `{"pad":"` + strings.Repeat("a", 64<<10+1-len(`{"pad":""}`)) + `"}`, false, false, seenRequest{},
+			[]string{"app-alpha", "the answer is longer than 65536 bytes"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

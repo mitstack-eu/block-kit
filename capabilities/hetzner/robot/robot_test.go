@@ -5,6 +5,8 @@ package robot_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"slices"
 	"strings"
@@ -275,5 +277,18 @@ func TestName_KeepsTheWholeSubscriptionIDSoNoOtherSubscriptionMatchesIt(t *testi
 		if got := robot.Name(id); got != want {
 			t.Errorf("Name(%q) = %q, want %q", id, got, want)
 		}
+	}
+}
+
+func TestGetServer_AnAnswerPastItsBoundFailsNamingTheCallAndTheBound(t *testing.T) {
+	webservice := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"pad":"` + strings.Repeat("a", 1<<20+1-len(`{"pad":""}`)) + `"}`))
+	}))
+	t.Cleanup(webservice.Close)
+
+	_, err := robot.NewAt(webservice.URL, robottest.User, robottest.Password).GetServer(context.Background(), number)
+
+	if want := "GET /server/3041839: the answer is longer than 1048576 bytes"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("GetServer = %v; want an error naming %q", err, want)
 	}
 }
