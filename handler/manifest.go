@@ -24,6 +24,7 @@ type manifestDeclarations struct {
 	resources  []contract.ManifestResource
 	provided   map[string]bool
 	capability bool
+	logs       bool
 }
 
 func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
@@ -40,6 +41,7 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 		resources:  m.Block.Spec.Resources,
 		provided:   provided,
 		capability: m.Block.Type == contract.ManifestTypeCapability,
+		logs:       slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs),
 	}, nil
 }
 

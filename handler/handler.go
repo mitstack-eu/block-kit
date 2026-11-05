@@ -65,7 +65,7 @@ type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)
 }
 
-// Config wires a Handler; Resource, Manifest and JWKSURL are required, and a nil Logs answers GET /logs with 404.
+// Config wires a Handler; Resource, Manifest and JWKSURL are required, a nil Logs answers GET /logs with 404, and SubscriptionLogs, required exactly when the manifest lists the operation logs, answers a signed POST /logs with the lines of the subscription its request names.
 type Config struct {
 	Resource Resource
 
@@ -91,6 +91,8 @@ type Config struct {
 
 	Logs *webhook.LogBuffer
 
+	SubscriptionLogs func(ctx context.Context, d contract.Desired) ([]string, error)
+
 	Now func() time.Time
 }
 
@@ -113,6 +115,8 @@ type Handler struct {
 	publicKey func(kid string) (ed25519.PublicKey, error)
 	replay    *webhook.Replay
 	logs      *webhook.LogBuffer
+
+	subscriptionLogs func(ctx context.Context, d contract.Desired) ([]string, error)
 
 	now func() time.Time
 
@@ -141,23 +145,27 @@ func New(cfg Config) (*Handler, error) {
 	if err := validateTypeObservers(cfg.TypeObservers); err != nil {
 		return nil, err
 	}
+	if err := checkSubscriptionLogs(cfg, declared); err != nil {
+		return nil, err
+	}
 
 	h := &Handler{
-		resource:      cfg.Resource,
-		declared:      resources,
-		typeObservers: cfg.TypeObservers,
-		provided:      declared.provided,
-		types:         cfg.Types,
-		capability:    declared.capability,
-		audience:      declared.id,
-		jwksURL:       cfg.JWKSURL,
-		publicKey:     cfg.PublicKey,
-		replay:        cfg.Replay,
-		logs:          cfg.Logs,
-		now:           cfg.Now,
-		idempotency:   newIdempotencyCache(),
-		kit:           cfg.KitObserver,
-		fullReads:     newFullReadClock(),
+		resource:         cfg.Resource,
+		declared:         resources,
+		typeObservers:    cfg.TypeObservers,
+		provided:         declared.provided,
+		types:            cfg.Types,
+		capability:       declared.capability,
+		audience:         declared.id,
+		jwksURL:          cfg.JWKSURL,
+		publicKey:        cfg.PublicKey,
+		replay:           cfg.Replay,
+		logs:             cfg.Logs,
+		subscriptionLogs: cfg.SubscriptionLogs,
+		now:              cfg.Now,
+		idempotency:      newIdempotencyCache(),
+		kit:              cfg.KitObserver,
+		fullReads:        newFullReadClock(),
 	}
 	h.fullReadChecker, _ = cfg.Resource.(FullReadChecker)
 
@@ -186,11 +194,14 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 		}
 		h.serveHook(w, r)
 	case "/logs":
-		if r.Method != http.MethodGet {
+		switch {
+		case r.Method == http.MethodGet:
+			h.serveLogs(w, r)
+		case r.Method == http.MethodPost && h.subscriptionLogs != nil:
+			h.serveSubscriptionLogs(w, r)
+		default:
 			h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
 		}
-		h.serveLogs(w, r)
 	default:
 		h.writeError(w, http.StatusNotFound, "no such path")
 	}
@@ -217,43 +228,55 @@ func (h *Handler) serveLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveHook(w http.ResponseWriter, r *http.Request) {
+	req, ok := h.authenticatedRequest(w, r)
+	if !ok {
+		return
+	}
+	if req.Operation == contract.OperationLogs {
+		h.writeError(w, http.StatusBadRequest, "a logs request is served on /logs, not /hook")
+		return
+	}
+	h.dispatchRequest(w, r, req)
+}
+
+// authenticatedRequest reads, verifies and decodes a signed request body and checks that its OBO token names this block and the request's subscription, returning false once a refusal has been written.
+func (h *Handler) authenticatedRequest(w http.ResponseWriter, r *http.Request) (contract.Request, bool) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxHookBodyBytes+1))
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "cannot read request body: "+err.Error())
-		return
+		return contract.Request{}, false
 	}
 	if len(body) > maxHookBodyBytes {
 		h.writeError(w, http.StatusBadRequest, "request body exceeds the maximum allowed size")
-		return
+		return contract.Request{}, false
 	}
 
 	pub, ok := webhook.AuthenticateHook(h.webhookDeps(), w, r, body)
 	if !ok {
-		return
+		return contract.Request{}, false
 	}
 
 	req, err := contract.DecodeRequest(body)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return contract.Request{}, false
 	}
 
 	if req.OBO == "" {
 		h.writeError(w, http.StatusUnauthorized, "missing OBO token")
-		return
+		return contract.Request{}, false
 	}
 
 	claims, err := webhook.VerifyOBO(pub, req.OBO, h.now())
 	if err != nil {
 		h.writeError(w, http.StatusUnauthorized, "invalid OBO token: "+err.Error())
-		return
+		return contract.Request{}, false
 	}
 	if claims != (webhook.OBOClaims{Audience: h.audience, OrgID: req.OrgID, AppID: req.AppID, SubscriptionID: req.SubscriptionID}) {
 		h.writeError(w, http.StatusUnauthorized, "the OBO token was minted for another block, org, app or subscription")
-		return
+		return contract.Request{}, false
 	}
-
-	h.dispatchRequest(w, r, req)
+	return req, true
 }
 
 // requestRefusals classes each 4xx the handler answers before a block is consulted, so the engine reads every 4xx as a refusal.

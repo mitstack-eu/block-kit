@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
   "title": "mitstack lifecycle webhook envelope",
   "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -75,8 +75,8 @@
     },
     "operation": {
       "type": "string",
-      "description": "The lifecycle verb being dispatched, or issue, which asks a capability for one app's credential.",
-      "enum": ["subscribe", "unsubscribe", "upgrade", "validate", "issue"]
+      "description": "The lifecycle verb being dispatched, issue, which asks a capability for one app's credential, or logs, which asks a block for the subscription's recent lines on /logs.",
+      "enum": ["subscribe", "unsubscribe", "upgrade", "validate", "issue", "logs"]
     },
     "subscriptionId": {
       "type": "string",

@@ -21,7 +21,7 @@ type goldenSet struct {
 
 var goldenSets = []goldenSet{
 	{"request goldens", contract.Goldens, contract.GoldensDir, contract.ValidGoldens, contract.InvalidGoldens,
-		[]string{"subscribe", "unsubscribe", "upgrade", "validate"},
+		[]string{"logs", "subscribe", "unsubscribe", "upgrade", "validate"},
 		[]string{"invalid-missing-nonce", "invalid-unknown-verb"}},
 	{"response goldens", contract.ResponseGoldens, contract.ResponseGoldensDir, contract.ValidResponseGoldens, contract.InvalidResponseGoldens,
 		[]string{"absent", "error", "last-error", "null-outputs", "outputs", "own-secrets", "pending", "pending-redrive", "secret-outputs", "still-present"},

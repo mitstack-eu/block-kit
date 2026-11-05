@@ -18,7 +18,7 @@ type CheckOptions struct {
 }
 
 // LifecycleOperations are the verbs a manifest's lifecycle may declare.
-var LifecycleOperations = []string{"subscribe", "unsubscribe", "upgrade", "validate", "rotate"}
+var LifecycleOperations = []string{"subscribe", "unsubscribe", "upgrade", "validate", "rotate", OperationLogs}
 
 // ReleaseClasses are the kinds of change a release may declare.
 var ReleaseClasses = []string{"breaking", "correctness-fix", "feature"}
