@@ -158,6 +158,13 @@ func TestTeardownAfterBrokenSetup_PassesATeardownThatFindsEverything(t *testing.
 	kittest.AssertTeardownAfterBrokenSetup(t, brokenSetup(t, func(p *heldProvider) { p.findsOnTeardown = true }))
 }
 
+func TestTeardownAfterBrokenSetup_ServesABlockWhoseManifestListsLogs(t *testing.T) {
+	listsLogs := brokenSetup(t, func(p *heldProvider) { p.findsOnTeardown = true })
+	listsLogs.Manifest = []byte(strings.Replace(containerOnlyManifest, "validate]", "validate, logs]", 1))
+
+	kittest.AssertTeardownAfterBrokenSetup(t, listsLogs)
+}
+
 func TestTeardownAfterBrokenSetup_RefusesASetupThatCannotBreakAnything(t *testing.T) {
 	noSideEffect := brokenSetup(t, func(p *heldProvider) { p.ignoresFaults = true })
 	noProvider := brokenSetup(t, func(*heldProvider) {})
