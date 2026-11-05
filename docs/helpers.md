@@ -531,19 +531,22 @@ for the same name is refused rather than moving the first app's visitors.
    subscription's.
 5. `apphostname.Release(ctx, w, rec, subscriptionID)` deletes only what the
    subscription holds, and counts records already gone as deleted.
-6. `apphostname.Observe(ctx, w, rec, subscriptionID)` reads the hostname present,
-   with the `appHostname`, `address` and `appUrl` outputs of
-   `mitstack.app-hostname`, while it points at the record's addresses.
-   `apphostname.ObserveRecorded(ctx, w, identity, subscriptionID)` does the same
-   for a recorded identity and answers absent with no read when none is
-   recorded. Use it when a hostname your block has not recorded changes nothing
-   its validate reports, so a new app's dry run spends no time on Route 53. A
-   block that refuses a taken hostname on validate keeps its read and calls
-   `Observe`.
+6. `apphostname.Observe(ctx, w, rec, subscriptionID)` reads the hostname present
+   while it points at the record's addresses. It then gives the `appHostname`,
+   `address` and `appUrl` outputs of the resource type `mitstack.app-hostname`.
+
+Your observer can call `apphostname.ObserveRecorded(ctx, w, r.Identity,
+subscriptionID)` in place of `Observe`. It does the same for an identity your
+block recorded, and answers absent with no read when the request carries none.
+A new app has none yet, so its dry run spends no time on Route 53. That dry run
+also says nothing about a taken hostname, which `ReadClaim` refuses at
+subscribe. If your block must refuse a taken hostname on validate, call
+`Observe`, because only a read can see another subscription's record.
 
 `w` is `apphostname.Route53{}` in the operator. Record the resource's identity
-with `apphostname.Identity(rec)`, and read it back on a later call with
-`apphostname.FromIdentity`. Your tests pass an `apphostnametest.Zone` instead
+by returning `apphostname.Identity(rec)` from your ensure. The platform stores
+it and sends it back as `ResourceRef.Identity`, and
+`apphostname.FromIdentity` reads the record from it. Your tests pass an `apphostnametest.Zone` instead
 of Route 53, which applies a batch whole or not at all, as Route 53 does. Its
 `HeldBy(subscriptionID)` names what a subscription left in the zone, and its
 `Lookups()` counts the reads it answered.

@@ -267,17 +267,19 @@ context is done, the call stops before that resource, names it in
 `statusDetail`, and answers `pending:true`, or `absent:false` on an
 unsubscribe.
 
-A validate whose request ends writes one line to the operator's log, because
-its caller reads only that its deadline passed. The line says how long the
-validate ran and the resource it had reached:
+A request ends when the platform stops waiting for the answer, for example when
+the time it allows one block's validate runs out. The platform then knows only
+that its deadline passed, so the handler writes one line to your operator's log
+for a validate whose request ended. The line names the request's subscription,
+how long the validate ran, and the resource from your manifest it had reached:
 
 ```
 validate: subscription sub-1: the request ended after 5.001s at resource "hostname"
 ```
 
-The line reads `before any resource` when the request ended sooner. It carries
-no output or identity value, and `logEnded` in `handler/declared.go` scrubs the
-request's secrets from it.
+The line reads `before any resource` when the request ended sooner, in
+`PlanReplacements` or `Converging`. It carries no output or identity value, and
+`logEnded` in `handler/declared.go` scrubs the request's secrets from it.
 
 ## Errors, refusals and panics
 
