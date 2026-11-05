@@ -157,7 +157,6 @@ func keyFor(keys map[string]ed25519.PublicKey, kid string) (ed25519.PublicKey, e
 	return pub, nil
 }
 
-// maxJWKSBody fits a JWKS, which holds a handful of Ed25519 keys.
 const maxJWKSBody = 64 << 10
 
 func fetchJWKS(jwksURL string, client *http.Client) (map[string]ed25519.PublicKey, error) {
