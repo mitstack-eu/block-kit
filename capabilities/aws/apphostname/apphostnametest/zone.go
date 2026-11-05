@@ -23,6 +23,7 @@ type Zone struct {
 	addresses    map[string][]string
 	owners       map[string]string
 	batches      []Batch
+	lookups      int
 	beforeChange func(name string) error
 }
 
@@ -83,9 +84,17 @@ func (z *Zone) HeldBy(subscription string) []string {
 	return names
 }
 
+// Lookups counts the reads the zone has answered, so a block's tests can pin a call that must not read it.
+func (z *Zone) Lookups() int {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	return z.lookups
+}
+
 func (z *Zone) LookupHost(_ context.Context, _, name string) (apphostname.Held, error) {
 	z.mu.Lock()
 	defer z.mu.Unlock()
+	z.lookups++
 	return apphostname.Held{Addresses: slices.Clone(z.addresses[name]), Owner: z.owners[name]}, nil
 }
 
