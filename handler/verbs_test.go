@@ -106,42 +106,28 @@ func TestNeedsAppName_AnswersNeedsAppOnlyForARequestNamingNeitherTheAppNorItsNam
 	}
 }
 
-// The block's own error quotes the secret, so scrubbing must cover block-authored text in the answer and the log alike.
+// The block's own error quotes the secrets, so scrubbing must cover block-authored text in the answer and the log alike, a block's own secret included, since it comes back on every later request.
 func TestServe_NeverLeaksAnySecretTheRequestCarries(t *testing.T) {
-	const secret, input, appSecret, eventsToken = "top-secret-db-password-value", "top-secret-input-value-here", "top-secret-app-secret-value", "top-secret-events-callback-token"
+	const secret, input, appSecret, eventsToken, own = "top-secret-db-password-value", "top-secret-input-value-here", "top-secret-app-secret-value", "top-secret-events-callback-token", "top-secret-own-gateway-ca-key"
 	logged := captureLog(t)
-	x := newHarness(t, &kittest.FakeResource{EnsureErr: fmt.Errorf("upstream rejected credential %s", secret)})
+	x := newHarness(t, &kittest.FakeResource{EnsureErr: fmt.Errorf("upstream rejected credential %s signed with %s", secret, own)})
 	obo := mintOBO(t, x.s, webhook.OBOClaims{Audience: x.audience, OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-1"})
 
-	status, raw := x.post(map[string]any{
-		"appId":          "app-1",
-		"obo":            obo,
-		"secrets":        map[string]any{"db": map[string]any{"password": secret}},
-		"secretInputs":   map[string]any{"apiKey": input},
-		"appSecrets":     map[string]any{"masterKey": appSecret},
-		"eventsCallback": map[string]any{"url": "http://127.0.0.1:1/events", "token": eventsToken},
-	})
+	for _, op := range []string{"subscribe", "upgrade"} {
+		status, raw := x.post(map[string]any{
+			"operation": op, "appId": "app-1", "obo": obo,
+			"secrets":        map[string]any{"db": map[string]any{"password": secret}},
+			"secretInputs":   map[string]any{"apiKey": input},
+			"appSecrets":     map[string]any{"masterKey": appSecret},
+			"ownSecrets":     map[string]any{"gatewayCaKey": own},
+			"eventsCallback": map[string]any{"url": "http://127.0.0.1:1/events", "token": eventsToken},
+		})
 
-	if status != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500 for the Ensure error, body: %s", status, raw)
-	}
-	for what, haystack := range map[string]string{"response body": string(raw), "log output": logged.String()} {
-		kittest.AssertNoSecret(t, what, haystack, secret, input, appSecret, obo, eventsToken)
-	}
-}
-
-// A block's own secret comes back on every later request, so an error quoting it must reach neither the answer nor the log.
-func TestServe_NeverLeaksAnOwnSecretTheRequestCarries(t *testing.T) {
-	const own = "top-secret-own-gateway-ca-key"
-	logged := captureLog(t)
-	x := newHarness(t, &kittest.FakeResource{EnsureErr: fmt.Errorf("could not sign the gateway certificate with %s", own)})
-
-	status, raw := x.post(map[string]any{"operation": "upgrade", "ownSecrets": map[string]any{"gatewayCaKey": own}})
-
-	if status != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500 for the Ensure error, body: %s", status, raw)
-	}
-	for what, haystack := range map[string]string{"response body": string(raw), "log output": logged.String()} {
-		kittest.AssertNoSecret(t, what, haystack, own)
+		if status != http.StatusInternalServerError {
+			t.Fatalf("%s: status = %d, want 500 for the Ensure error, body: %s", op, status, raw)
+		}
+		for what, haystack := range map[string]string{"response body": string(raw), "log output": logged.String()} {
+			kittest.AssertNoSecret(t, op+" "+what, haystack, secret, input, appSecret, own, obo, eventsToken)
+		}
 	}
 }

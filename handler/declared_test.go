@@ -38,6 +38,50 @@ func githubToken(token string) map[string]any {
 	return map[string]any{"secrets": map[string]any{"github": map[string]any{"token": token}}}
 }
 
+func TestDeclared_AValidateWhoseRequestEndsLogsItsElapsedTimeAndTheResourceItReachedAndNoSecret(t *testing.T) {
+	const token = "ghp_ended-validate-leak-7c1f"
+	for _, tc := range []struct {
+		name, ending, want string
+		err                error
+	}{
+		{name: "during a read that fails", ending: "aws.ec2-instance", want: `at resource "aws.ec2-instance"`, err: errors.New("killed reading with " + token)},
+		{name: "after one read, before the next", ending: "aws.vpc", want: `at resource "aws.ec2-instance"`},
+		{name: "during the last read, which still answers", ending: "b", want: `at resource "b"`},
+		{name: "before any resource", want: "before any resource"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLog(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			clock := &tickingClock{now: time.Now()}
+			end := func() { clock.set(clock.Now().Add(5 * time.Second)); cancel() }
+			obs := asObservers(blockObservers(standingCloud()))
+			var block handler.Resource = convergingBlock{reportingBlock: reportingBlock{blockResource: &blockResource{}}, before: end, err: context.Canceled}
+			if tc.ending != "" {
+				block, obs[tc.ending] = &blockResource{}, cancellingObserver{Observer: &observer{obs: contract.Observation{State: contract.Present}, err: tc.err}, settledOn: contract.Present, cancel: end}
+			}
+			fields := githubToken(token)
+			fields["subscriptionId"] = "sub-" + token
+
+			serveBlock(t, blockCall{ctx: ctx, r: block, obs: obs, op: "validate", fields: fields, config: []func(*handler.Config){func(c *handler.Config) { c.Now = clock.Now }}})
+
+			want := "validate: subscription sub-[REDACTED]: the request ended after 5s " + tc.want
+			if got := logs.String(); !strings.Contains(got, want) || strings.Contains(got, token) {
+				t.Errorf("logs = %q; want them to carry %q and not the secret", got, want)
+			}
+		})
+	}
+}
+
+func TestDeclared_AValidateAnsweredBeforeItsRequestEndsLogsNoEnding(t *testing.T) {
+	logs := captureLog(t)
+
+	serveBlock(t, blockCall{r: &blockResource{}, obs: asObservers(blockObservers(standingCloud())), op: "validate"})
+
+	if got := logs.String(); strings.Contains(got, "the request ended") {
+		t.Errorf("logs = %q; want no ending", got)
+	}
+}
+
 func TestDeclared_AValidateAnswersAPlanAndRefusesOnABlockerCarryingEveryFindingScrubbed(t *testing.T) {
 	const token = "ghp_finding-leak-0c4e2b19"
 	plan := contract.Finding{Kind: contract.FindingPlan, Text: "adds the build workflow"}
@@ -333,9 +377,13 @@ type convergingBlock struct {
 	detail   string
 	finished bool
 	err      error
+	before   func()
 }
 
 func (c convergingBlock) Converging(context.Context, contract.Desired) (string, bool, error) {
+	if c.before != nil {
+		c.before()
+	}
 	return c.detail, c.finished, c.err
 }
 

@@ -54,8 +54,12 @@ func (h *Handler) dispatchDeclared(ctx context.Context, operation string, d cont
 		resources = []namedResource{nr}
 	}
 
-	run := &declaredRun{h: h, d: d, secrets: secrets, resources: resources, outcomes: map[string]contract.ResourceOutcome{}}
-	return run.serveBlock(ctx, operation)
+	run := &declaredRun{h: h, d: d, secrets: secrets, resources: resources, outcomes: map[string]contract.ResourceOutcome{}, started: h.now()}
+	status, resp := run.serveBlock(ctx, operation)
+	if operation == "validate" && ctx.Err() != nil {
+		run.logEnded()
+	}
+	return status, resp
 }
 
 func (h *Handler) typeObserved(operation string, d contract.Desired) (namedResource, bool) {
@@ -119,6 +123,10 @@ type declaredRun struct {
 
 	resourceSecretOutputs map[string]map[string]string
 	ownSecrets            map[string]string
+
+	// started and reached are what a validate's log says when its request ends: how long it ran and the resource it had got to.
+	started time.Time
+	reached string
 }
 
 func (r *declaredRun) answers(name string) bool {
@@ -334,6 +342,7 @@ func (r *declaredRun) validateObserved(ctx context.Context) (int, contract.Respo
 	r.healthCheck = true
 	states := make([]string, 0, len(r.resources))
 	for _, nr := range r.resources {
+		r.reached = nr.name
 		if ctx.Err() != nil {
 			return http.StatusOK, contract.Response{Pending: true, StatusDetail: r.notReached(nr.name), Resources: r.outcomes, SecretOutputs: secretOutputs, ResourceSecretOutputs: r.resourceSecretOutputs}
 		}
@@ -390,6 +399,16 @@ func (r *declaredRun) converging(detail string, done bool) (int, contract.Respon
 		r.outcomes[nr.name] = contract.ResourceOutcome{Observe: &contract.CallOutcome{State: contract.Unknown, StatusDetail: detail, Identity: ref.Identity, Type: ref.Type}}
 	}
 	return http.StatusOK, contract.Response{Pending: true, Redrive: done, StatusDetail: detail, Resources: r.outcomes}
+}
+
+// logEnded writes one line for a validate whose request ended, naming no output or identity value, since the caller reads only that its deadline passed.
+func (r *declaredRun) logEnded() {
+	at := "before any resource"
+	if r.reached != "" {
+		at = fmt.Sprintf("at resource %q", safe.LogSafe(r.reached, r.secrets...))
+	}
+	log.Printf("validate: subscription %s: the request ended after %s %s",
+		safe.LogSafe(r.d.SubscriptionID, r.secrets...), r.h.now().Sub(r.started).Round(time.Millisecond), at)
 }
 
 func (r *declaredRun) notReached(name string) string {

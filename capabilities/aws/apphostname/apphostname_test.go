@@ -324,12 +324,35 @@ func TestObserve_ReadsTheHostnamePresentOnlyWhileItPointsAtItsAddressesForItsSub
 			if err != nil || obs.State != tc.want {
 				t.Fatalf("Observe = %+v, %v; want %s", obs, err, tc.want)
 			}
-			if tc.want != contract.Present {
-				return
+			read, err := apphostname.ObserveRecorded(context.Background(), zone, apphostname.Identity(record()), sub)
+			if err != nil || !reflect.DeepEqual(read, obs) || zone.Lookups() != 2 {
+				t.Errorf("ObserveRecorded of its identity = %+v, %v, the zone read %d times with Observe's one; want %+v and one read of its own", read, err, zone.Lookups(), obs)
 			}
 			wantOutputs := map[string]string{"appHostname": host, "address": address, "appUrl": "https://" + host}
-			if !reflect.DeepEqual(obs.Outputs, wantOutputs) || !reflect.DeepEqual(obs.Identity, apphostname.Identity(record())) {
+			if tc.want == contract.Present && (!reflect.DeepEqual(obs.Outputs, wantOutputs) || !reflect.DeepEqual(obs.Identity, apphostname.Identity(record()))) {
 				t.Errorf("Observe = outputs %v, identity %v; want %v and %v", obs.Outputs, obs.Identity, wantOutputs, apphostname.Identity(record()))
+			}
+		})
+	}
+}
+
+func TestObserveRecorded_WithNoRecordedIdentityAnswersAsAFreeHostnameWithNoRead(t *testing.T) {
+	free, err := apphostname.Observe(context.Background(), apphostnametest.New(), record(), sub)
+	if err != nil {
+		t.Fatalf("Observe of a free hostname: %v", err)
+	}
+	for name, identity := range map[string]map[string]string{
+		"no identity":                     nil,
+		"an identity naming no addresses": {"zone": zoneID, "hostname": host},
+	} {
+		t.Run(name, func(t *testing.T) {
+			zone := apphostnametest.New()
+			zone.Set(host, []string{address}, apphostname.OwnerText(sub))
+
+			obs, err := apphostname.ObserveRecorded(context.Background(), zone, identity, sub)
+
+			if err != nil || !reflect.DeepEqual(obs, free) || zone.Lookups() != 0 {
+				t.Errorf("ObserveRecorded = %+v, %v after %d reads; want %+v and no read", obs, err, zone.Lookups(), free)
 			}
 		})
 	}

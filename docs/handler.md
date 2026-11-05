@@ -267,6 +267,23 @@ context is done, the call stops before that resource, names it in
 `statusDetail`, and answers `pending:true`, or `absent:false` on an
 unsubscribe.
 
+A request ends when the platform stops waiting for the answer. The platform's
+dry run, for example, gives each block's validate 5 seconds by default. The
+platform then knows only that its deadline passed, so the handler writes one
+line through Go's standard `log` package for a validate whose request ended. The
+line names the request's subscription, how long the validate ran, and the
+resource from your manifest it had reached:
+
+```
+validate: subscription sub-1: the request ended after 5.001s at resource "hostname"
+```
+
+The line reads `before any resource` when the request ended sooner, in
+`PlanReplacements` or in the `Converging` check that
+[work outlasting one call](#work-that-outlasts-one-call) describes. It carries
+no output or identity value, and `logEnded` in `handler/declared.go` scrubs the
+request's secrets from it.
+
 ## Errors, refusals and panics
 
 The handler answers an error your code returns by its type. A

@@ -518,28 +518,53 @@ for the same name is refused rather than moving the first app's visitors.
 1. `apphostname.ZoneID(domain)` reads `MITSTACK_APPS_ZONE` and
    `MITSTACK_APPS_ZONE_ID`. It refuses with `apps-zone-unset` when either is
    empty, and with `apps-zone-mismatch` when the zone is not `domain`, the zone
-   your block's hostnames live in.
+   your block's hostnames live in, such as `apps.mitstack.dev`.
 2. `apphostname.NewRecord(zoneID, name, addresses...)` is the record you want.
-3. `apphostname.ReadClaim(ctx, w, rec, subscriptionID)` reads the hostname
-   before your block writes anything else. It refuses with `hostname-taken`
-   when another subscription holds the name, or when an A record that names
+   `zoneID` is what step 1 returns, `name` is the full hostname, such as
+   `shop.apps.mitstack.dev`, and each address is a string.
+3. `apphostname.ReadClaim(ctx, w, rec, subscriptionID)` returns a claim and an
+   error, and reads the hostname before your block writes anything else. It
+   refuses with `hostname-taken` when another subscription holds the name, or when an A record that names
    no subscription points somewhere else, and with `no-address` when the
    record has no address.
 4. `claim.Apply(ctx)` writes the changes in one batch once your block's own
    writes have landed. A batch Route 53 rejects because a racing call changed
    the records is read again, and passes when the records are now this
    subscription's.
-5. `apphostname.Release(ctx, w, rec, subscriptionID)` deletes only what the
-   subscription holds, and counts records already gone as deleted.
-6. `apphostname.Observe(ctx, w, rec, subscriptionID)` reads the hostname present,
-   with the `appHostname`, `address` and `appUrl` outputs of
-   `mitstack.app-hostname`, while it points at the record's addresses.
+5. `apphostname.Release(ctx, w, rec, subscriptionID)`, called from your block's
+   `Delete`, deletes only what the subscription holds, and counts records
+   already gone as deleted.
+6. `apphostname.Observe(ctx, w, rec, subscriptionID)`, called from the
+   `ObserveResource` of the hostname's `Observer`, answers present while the
+   A record holds the record's addresses and the TXT names this subscription or
+   none, with the `appHostname`, `address` and `appUrl` outputs of the resource
+   type `mitstack.app-hostname`. It answers absent when the hostname has no
+   record, points elsewhere or is held by another subscription.
 
-`w` is `apphostname.Route53{}` in the operator. Record the resource's identity
-with `apphostname.Identity(rec)`, and read it back on a later call with
-`apphostname.FromIdentity`. Your tests pass an `apphostnametest.Zone` instead
-of Route 53, which applies a batch whole or not at all, as Route 53 does, and
-whose `HeldBy(subscriptionID)` names what a subscription left in the zone.
+In these steps `w` is `apphostname.Route53{}` in the operator, `rec` is the
+record from step 2, and `claim` is what step 3 returns.
+
+Record the resource's identity from your `EnsureResources`, the method and the
+`Observer` interface that
+[Serving lifecycle calls](handler.md#what-the-handler-calls-for-each-call)
+shows. Return a `contract.CreatedResource` for the hostname with its `Identity`
+set to `apphostname.Identity(rec)`. The platform stores it and sends it back as
+the `Identity` of the `contract.ResourceRef` your observer receives, and
+`apphostname.FromIdentity` reads the record from it.
+
+Your observer can call `apphostname.ObserveRecorded(ctx, w, ref.Identity,
+subscriptionID)` in place of `Observe`. It reads as `Observe` does when the
+identity names a record, and answers absent with no read when it names none. A
+new app has no identity yet, so its dry run, the check the platform makes before
+it creates anything, spends no time on Route 53. That dry run also says nothing
+about a taken hostname, which `ReadClaim` refuses at subscribe. If your block
+must refuse a taken hostname on validate, call `Observe`, because only a read
+can see another subscription's record.
+
+Your tests pass an `apphostnametest.Zone` as `w` in place of Route 53. It
+applies a batch whole or not at all, as Route 53 does. Its
+`HeldBy(subscriptionID)` names what a subscription left in the zone, and its
+`Lookups()` counts the reads it answered.
 
 ## Calling the GitHub API
 
