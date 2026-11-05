@@ -395,8 +395,8 @@ An app with no release command, or one the report names no release of, reads
 as not failed. While `Failed` holds, your block still answers
 `contract.Present`, since its files are in place, and sets `Unhealthy` on the
 observation, so the platform shows that cause and detail until a release
-passes. The cause must be one the platform's type
-for your resource, its catalogue entry, lists under failures, word for word:
+passes. The cause must appear, word for word, under failures in the
+platform's catalogue entry for your resource:
 
 ```go
 const releaseFailed = "the app's release command failed, so the host serves the previous image or none"
