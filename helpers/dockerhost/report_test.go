@@ -113,10 +113,11 @@ func TestNewestReport_FailsAReadItCannotMake(t *testing.T) {
 	}
 }
 
-// twoApps is a report of a host running shop, with its database, and blog, each container labelled with its subscription.
+// twoApps is a report of a host running shop, with its database and a container no block labelled, and blog, each block's container labelled with its subscription.
 const twoApps = `{"host":{"apps":{` +
 	`"shop":[{"container":"shop-web","subscription":"sub_shop","logs":"PHP Fatal error: Uncaught PDOException\nGET / 500\n"},` +
-	`{"container":"shop-mariadb","subscription":"sub_shopdb","logs":"mariadbd: ready for connections.\n"}],` +
+	`{"container":"shop-mariadb","subscription":"sub_shopdb","logs":"mariadbd: ready for connections.\n"},` +
+	`{"container":"shop-worker","subscription":null,"logs":"worker: polling the queue\n"}],` +
 	`"blog":[{"container":"blog-web","subscription":"sub_blog","logs":"blog: listening on :8080\n"}]},` +
 	`"releases":{"shop":{"subscription":"sub_shop","container":"app-shop-release","image":"ghcr.io/acme/shop@sha256:ab12","exitCode":1,` +
 	`"output":"Migrating: 2026_11_05_create_orders\nSQLSTATE[42S01]: Table 'orders' already exists\n"},` +
