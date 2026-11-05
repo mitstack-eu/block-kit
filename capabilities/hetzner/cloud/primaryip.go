@@ -142,7 +142,7 @@ func (c *Client) createPrimaryIP(ctx context.Context, spec PrimaryIPSpec) (Prima
 	var answer struct {
 		PrimaryIP wirePrimaryIP `json:"primary_ip"`
 	}
-	body := map[string]any{"name": spec.Name, "type": "ipv4", "location": spec.Location, "assignee_type": "server", "auto_delete": false, "labels": spec.Labels}
+	body := map[string]any{"name": spec.Name, "type": "ipv4", "location": spec.Location, "auto_delete": false, "labels": spec.Labels}
 	if err := c.do(ctx, http.MethodPost, "/primary_ips", nil, body, &answer); err != nil {
 		return PrimaryIP{}, fmt.Errorf("creating primary IP %s: %w", spec.Name, err)
 	}

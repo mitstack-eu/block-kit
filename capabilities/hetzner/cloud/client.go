@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/mitstack-eu/block-kit/helpers/bounded"
 )
 
 // Endpoint is the Cloud API, which a block never takes from a request.
@@ -78,12 +80,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("calling Hetzner %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes+1))
+	raw, err := bounded.Read(resp, "Hetzner "+method+" "+path, maxAnswerBytes)
 	if err != nil {
-		return fmt.Errorf("reading Hetzner's answer to %s %s: %w", method, path, err)
-	}
-	if len(raw) > maxAnswerBytes {
-		return fmt.Errorf("reading Hetzner's answer to %s %s: the answer is longer than %d bytes", method, path, maxAnswerBytes)
+		return err
 	}
 	if resp.StatusCode >= 300 {
 		var answer struct {
