@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
@@ -325,6 +326,19 @@ func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.Resource
 		}
 	}
 	return contract.Observation{State: contract.Absent}, nil
+}
+
+// waitingOnceObserver answers its first observe unknown, waiting on a person, and every later one as its inner observer does.
+type waitingOnceObserver struct {
+	inner    handler.Observer
+	answered atomic.Bool
+}
+
+func (o *waitingOnceObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	if o.answered.CompareAndSwap(false, true) {
+		return contract.Observation{State: contract.Unknown, WaitingOnPerson: &contract.WaitingOnPerson{Action: "approve the pull request"}}, nil
+	}
+	return o.inner.ObserveResource(ctx, r)
 }
 
 // amendedObserver amends each answer in which its inner observer finds a resource present, and with anyState set every answer.
@@ -1051,6 +1065,12 @@ func TestCheckBlock(t *testing.T) {
 	removing := func(waitsOn string, anyState bool) mutation {
 		return amended(func(o *contract.Observation) { o.Removing = &contract.Removing{WaitsOn: waitsOn} }, anyState)
 	}
+	waitingOnPerson := func(action string) mutation {
+		return amended(func(o *contract.Observation) { o.WaitingOnPerson = &contract.WaitingOnPerson{Action: action} }, false)
+	}
+	waitingOnce := func(b *fakeBlock, in *kittest.Block) {
+		in.Config.Observers["aws.ebs-volume"] = &waitingOnceObserver{inner: providerObserver{p: b.p}}
+	}
 	withParts := func(parts ...observe.Tagged) mutation {
 		return func(b *fakeBlock, _ *kittest.Block) { b.parts = parts }
 	}
@@ -1115,6 +1135,11 @@ func TestCheckBlock(t *testing.T) {
 			[][]string{{`resource "aws.ebs-volume"`, `"the resource stopped answering"`, "aws.ebs-volume"}}, true},
 		{"a resource answered unhealthy while absent fails, since only a present resource is unhealthy", host(unhealthy("the volume is still creating, attaching or detaching", true)),
 			[][]string{{`resource "aws.ebs-volume"`, "observed absent", "only a present resource"}}, true},
+		{"an unknown resource answered waiting on a person, naming the action, passes", host(waitingOnce), nil, true},
+		{"a present resource answered waiting on a person fails, since only an unknown resource waits on one", host(waitingOnPerson("approve the pull request")),
+			[][]string{{`resource "aws.ebs-volume"`, "observed present", "only an unknown resource"}}, true},
+		{"a resource answered waiting on a person with no action fails, naming the resource", host(waitingOnPerson(" ")),
+			[][]string{{`resource "aws.ebs-volume"`, "action"}}, true},
 		{"a present resource answered removing, naming what the removal waits on, passes", host(removing("the volume to detach from its instance", false)), nil, true},
 		{"a resource answered removing while absent fails, since only a present resource is being removed", host(removing("the volume to detach from its instance", true)),
 			[][]string{{`resource "aws.ebs-volume"`, "observed absent", "only a present resource"}}, true},

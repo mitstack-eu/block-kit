@@ -642,6 +642,25 @@ func TestBlockLevel_AnUnsubscribeLeavingAResourceStandingAnswersAbsentFalseNamin
 	}
 }
 
+func TestBlockLevel_AValidateCarriesTheActionOfAResourceWaitingOnAPersonWithRequestSecretsScrubbed(t *testing.T) {
+	const token = "ghp_waiting-leak-7a2f3c91"
+	cloud := standingCloud()
+	obs := blockObservers(cloud)
+	obs["b"] = fixed(contract.Observation{State: contract.Unknown, WaitingOnPerson: &contract.WaitingOnPerson{Action: "approve pull request " + token}})
+	fields := recordedAll()
+	fields["secrets"] = githubToken(token)["secrets"]
+
+	status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: asObservers(obs), op: "validate", fields: fields})
+
+	wantOK(t, status, resp)
+	if !resp.Pending {
+		t.Errorf("a validate with a resource waiting on a person answered %+v, want pending", resp)
+	}
+	if o := resp.Resources["b"].Observe; o == nil || o.WaitingOnPerson == nil || o.WaitingOnPerson.Action != "approve pull request [REDACTED]" {
+		t.Errorf("b observe = %+v, want what the person must do with the request secret scrubbed", o)
+	}
+}
+
 func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBlockPlans(t *testing.T) {
 	cloud := standingCloud()
 	block, obs := planningBlock{blockResource: &blockResource{cloud: cloud}, replaces: []string{"b"}}, blockObservers(cloud)

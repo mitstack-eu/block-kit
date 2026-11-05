@@ -190,6 +190,10 @@ func TestDecodeResponse_ReadsEachResourceOutcomeByName(t *testing.T) {
 			contract.Response{Resources: map[string]contract.ResourceOutcome{
 				"app": {Observe: &contract.CallOutcome{State: contract.Present, Removing: &contract.Removing{WaitsOn: "pull request 4 to pass its managed-ci check"}}},
 			}}},
+		{"the action of a person an observe found the resource waiting on", `{"resources":{"app":{"observe":{"state":"unknown","waitingOnPerson":{"action":"approve pull request 4 at https://github.com/acme/shop/pull/4"}}}}}`,
+			contract.Response{Resources: map[string]contract.ResourceOutcome{
+				"app": {Observe: &contract.CallOutcome{State: contract.Unknown, WaitingOnPerson: &contract.WaitingOnPerson{Action: "approve pull request 4 at https://github.com/acme/shop/pull/4"}}},
+			}}},
 		{"the files a delete kept", `{"resources":{"starter":{"delete":{"kept":[{"repository":"acme/weather","path":"CLAUDE.md","reason":"changed"}]}}}}`,
 			contract.Response{Resources: map[string]contract.ResourceOutcome{
 				"starter": {Delete: &contract.CallOutcome{Kept: []contract.Kept{{Repository: "acme/weather", Path: "CLAUDE.md", Reason: "changed"}}}},
@@ -252,6 +256,9 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 		{"an observe of a removal under way encodes what it waits on beside present", contract.Response{Resources: map[string]contract.ResourceOutcome{
 			"app": {Observe: &contract.CallOutcome{State: contract.Present, Removing: &contract.Removing{WaitsOn: "pull request 4 to pass its managed-ci check"}}}}},
 			`{"outputs":null,"resources":{"app":{"observe":{"state":"present","removing":{"waitsOn":"pull request 4 to pass its managed-ci check"}}}}}`, true},
+		{"an observe waiting on a person encodes the action beside unknown", contract.Response{Resources: map[string]contract.ResourceOutcome{
+			"app": {Observe: &contract.CallOutcome{State: contract.Unknown, WaitingOnPerson: &contract.WaitingOnPerson{Action: "approve pull request 4"}}}}},
+			`{"outputs":null,"resources":{"app":{"observe":{"state":"unknown","waitingOnPerson":{"action":"approve pull request 4"}}}}}`, true},
 		{"an observe carrying a plan and a blocker encodes each with its kind, text and fix", contract.CallOutcome{State: contract.Absent, Findings: []contract.Finding{
 			{Kind: contract.FindingPlan, Text: "adds the build workflow"}, {Kind: contract.FindingBlocker, Text: "the Dockerfile names no port", Fix: "add an EXPOSE line"}}},
 			`{"state":"absent","findings":[{"kind":"plan","text":"adds the build workflow"},{"kind":"blocker","text":"the Dockerfile names no port","fix":"add an EXPOSE line"}]}`, false},
