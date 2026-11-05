@@ -10,6 +10,7 @@ package has [a page of its own](gitops.md).
 | Package | Import it when your block |
 |---|---|
 | `helpers/safe` | Logs a value from a request, or calls an API whose host a request names |
+| `helpers/bounded` | Calls an API with its own HTTP client and reads the answer |
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
@@ -47,6 +48,19 @@ a `safe.Allowlist` you build from constants or operator configuration, and
 returns a `safe.Base` built from the allowlist entry. It refuses an endpoint
 that is not `https` or not on the list. `base.URL(path)` then joins a path onto
 the trusted host.
+
+## Reading a service's answer
+
+`helpers/bounded` reads an answer in bounded memory and never hands your code a
+cut copy, so a person debugging your block never hunts for a malformed answer
+the service did not send. `bounded.Read(resp, call, limit)` returns the body.
+It refuses a 2xx answer longer than `limit`, naming the call and the limit, and
+cuts a refusal's text to `limit`, since the status already says what happened.
+
+```go
+raw, err := bounded.Read(resp, "GET /server/42", 1<<20)
+// err: GET /server/42: the answer is longer than 1048576 bytes
+```
 
 ## Reporting progress and reading the platform
 

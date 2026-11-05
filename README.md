@@ -190,6 +190,7 @@ provider and in `capabilities` per provider:
 | `webhook` | Every block | The signature checks the handler runs, and `webhook.LogBuffer`, which holds the recent log lines mitstack reads from your operator |
 | `verify/kittest` | Every block's tests | The checks blockverify requires your tests to run |
 | `helpers/safe` | A block that logs values from a call, or calls an API at an address a call supplies | Secret scrubbing for logs, and an allowlist of the hosts the operator trusts, so a call cannot redirect it |
+| `helpers/bounded` | A block that calls an API with its own HTTP client | One read of an answer in bounded memory, which fails naming the call and the bound when the answer runs past it |
 | `helpers/events` | A block that reports its own progress during long work | Progress reports to mitstack while a long call runs |
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |

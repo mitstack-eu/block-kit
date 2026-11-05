@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
@@ -83,7 +83,11 @@ func (c NodeReportsClient) ClusterReports(ctx context.Context, _ contract.Desire
 		Reports    []NodeReport    `json:"reports"`
 		EnrolledAt json.RawMessage `json:"enrolledAt"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxNodeReportsBody)).Decode(&listed); err != nil {
+	raw, err := bounded.Read(resp, "the node reports of "+subscriptionID, maxNodeReportsBody)
+	if err != nil {
+		return ClusterReports{}, fmt.Errorf("observe: %w", err)
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
 		return ClusterReports{}, fmt.Errorf("observe: decoding the node reports of %s: %w", subscriptionID, err)
 	}
 	out := ClusterReports{Reports: listed.Reports}
