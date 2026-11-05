@@ -234,6 +234,27 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	return r.absentAnswer(ctx, outputs)
 }
 
+// removalAnswer answers a Delete that waits on its removal absent:false with detail, carrying the observe of each resource not recorded absent whose type does not end with its subscription; a failed observe is recorded on its resource, since the wait, not the read, decides the answer.
+func (r *declaredRun) removalAnswer(ctx context.Context, detail string) (int, contract.Response) {
+	for i := len(r.resources) - 1; i >= 0 && ctx.Err() == nil; i-- {
+		nr := r.resources[i]
+		if r.d.RecordedResources[nr.name].State == contract.Absent {
+			continue
+		}
+		if _, ends := r.endedWithSubscription(nr); ends {
+			continue
+		}
+		entry := r.outcomes[nr.name]
+		if _, err := r.observeOnce(ctx, nr, &entry); err != nil {
+			_, failed := r.h.errorResponse(err, r.secrets)
+			entry.Observe = &contract.CallOutcome{Error: failed.Error, StatusDetail: failed.StatusDetail}
+		}
+		r.outcomes[nr.name] = entry
+	}
+	absent := false
+	return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(detail, r.secrets...), Resources: r.outcomes}
+}
+
 // absentAnswer answers absent:true once every resource is proven absent, carrying a TeardownReporter's detail.
 func (r *declaredRun) absentAnswer(ctx context.Context, outputs map[string]string) (int, contract.Response) {
 	var detail string

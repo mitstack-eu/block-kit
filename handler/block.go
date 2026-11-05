@@ -48,11 +48,12 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		return r.withOwnSecrets(r.ensureEach(ctx))
 	case "unsubscribe":
 		outputs, err := r.deleteBlock(ctx)
-		if w, ok := waiting(err); ok {
+		w, waits := waiting(err)
+		if waits && !w.Removal {
 			absent := false
 			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
 		}
-		if err != nil {
+		if err != nil && !waits {
 			return r.h.errorResponse(err, r.secrets)
 		}
 		r.deleteOutputs = outputs
@@ -62,6 +63,9 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		for name, ref := range r.refs {
 			ref.Unsubscribing = true
 			r.refs[name] = ref
+		}
+		if waits {
+			return r.removalAnswer(ctx, w.Detail)
 		}
 		return r.deleteEach(ctx)
 	case "validate":
@@ -84,12 +88,19 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 // Waiting holds a call back until something outside the block passes, answered pending, or absent:false on an unsubscribe.
 type Waiting struct {
 	Detail string
+	// Removal, on an unsubscribe, has the absent:false answer carry each standing resource's observe, so the engine reads a removal an observer reports under way.
+	Removal bool
 }
 
 func (e *Waiting) Error() string { return e.Detail }
 
 func Wait(format string, args ...any) error {
 	return &Waiting{Detail: fmt.Sprintf(format, args...)}
+}
+
+// WaitOnRemoval is Wait for a Delete whose removal has started and moves outside the block, such as a pull request waiting on its checks.
+func WaitOnRemoval(format string, args ...any) error {
+	return &Waiting{Detail: fmt.Sprintf(format, args...), Removal: true}
 }
 
 // OwnSecretsReporter, when a block-level Resource implements it, replaces EnsureResources with EnsureResourcesOwning, whose own secrets reach every subscribe and upgrade answer that does not fail, a pending one and one beside a Wait error included, and an observer returning the same name later overrides the value the ensure returned.

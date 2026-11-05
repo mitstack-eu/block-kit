@@ -286,6 +286,17 @@ describes. The handler observes nothing on that call. The engine asks again,
 as it does for any pending answer, and the wait counts against the block's
 settle budget.
 
+`handler.WaitOnRemoval(format, args...)` builds the same wait for a `Delete`
+whose removal has started and now moves outside the block, such as a pull
+request waiting on its checks. The `unsubscribe` still answers `absent:false`
+with the detail. The answer also carries the observe of each resource the
+engine has not recorded absent, made with `Unsubscribing` set, so an observer
+can report the removal under way, as
+[A resource being removed](observe.md#a-resource-being-removed) describes. An
+observe that fails is recorded as that resource's error, and the answer still
+waits. `landing.Remove` returns this wait while its pull request waits on a
+required check.
+
 When `Delete` returns any other error, the handler answers that error at once and
 observes nothing. Whatever `Delete` already removed stays removed, and the
 engine's retry calls `Delete` again. `Delete` must therefore be idempotent: a

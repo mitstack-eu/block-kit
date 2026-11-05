@@ -31,9 +31,25 @@ func (o Observer) ObserveResource(ctx context.Context, r contract.ResourceRef) (
 	case st.deleted:
 		return contract.Observation{State: contract.Absent, StatusDetail: rec.Repository + " is proven deleted, so it holds nothing this resource landed"}, nil
 	case len(st.unchanged) > 0:
-		return contract.Observation{State: contract.Present, StatusDetail: fmt.Sprintf("main of %s carries %s unchanged", rec.Repository, strings.Join(st.unchanged, ", "))}, nil
+		return present(ctx, api{c: c, repo: rec.Repository}, r, st.unchanged), nil
 	}
 	return contract.Observation{State: contract.Absent, StatusDetail: fmt.Sprintf("main of %s carries none of the files this resource landed unchanged", rec.Repository)}, nil
+}
+
+// present answers a resource main still carries, and during an unsubscribe names what its removal waits on while that removal is under way.
+func present(ctx context.Context, a api, r contract.ResourceRef, unchanged []string) contract.Observation {
+	obs := contract.Observation{State: contract.Present, StatusDetail: fmt.Sprintf("main of %s carries %s unchanged", a.repo, strings.Join(unchanged, ", "))}
+	if !r.Unsubscribing || !subscriptionID.MatchString(r.Desired.SubscriptionID) {
+		return obs
+	}
+	waitsOn, err := a.removalUnderWay(ctx, r.Desired.SubscriptionID)
+	switch {
+	case err != nil:
+		return unknown("%s, and its removal pull request cannot be read: %v", obs.StatusDetail, err)
+	case waitsOn != "":
+		obs.Removing = &contract.Removing{WaitsOn: waitsOn}
+	}
+	return obs
 }
 
 // OfferObserver is the handler.Observer of a contribution whose files another block commits: outside an unsubscribe it is present while the repository can be read, since the files may not have landed yet, and during one it answers as Observer does.
