@@ -1039,7 +1039,7 @@ func TestBlockLevel_TheOwnSecretsAnEnsureReturnsNeverReachTheRequestsDesired(t *
 	}
 }
 
-// cancellingObserver cancels the request context once it reports settledOn, so the verb sees a done context only after this resource settled.
+// cancellingObserver cancels the request context once it fails or reports settledOn, so the verb sees a done context only after this resource answered.
 type cancellingObserver struct {
 	handler.Observer
 	settledOn contract.State
@@ -1048,7 +1048,7 @@ type cancellingObserver struct {
 
 func (o cancellingObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	obs, err := o.Observer.ObserveResource(ctx, r)
-	if err == nil && obs.State == o.settledOn {
+	if err != nil || obs.State == o.settledOn {
 		o.cancel()
 	}
 	return obs, err

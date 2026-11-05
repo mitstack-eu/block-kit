@@ -38,27 +38,6 @@ func githubToken(token string) map[string]any {
 	return map[string]any{"secrets": map[string]any{"github": map[string]any{"token": token}}}
 }
 
-// endingBlock has the request end while the validate asks what still converges, before it reaches a resource.
-type endingBlock struct {
-	*blockResource
-	end func()
-}
-
-func (b endingBlock) Converging(ctx context.Context, _ contract.Desired) (string, bool, error) {
-	b.end()
-	return "", false, ctx.Err()
-}
-
-type endingObserver struct {
-	end func()
-	err error
-}
-
-func (o endingObserver) ObserveResource(context.Context, contract.ResourceRef) (contract.Observation, error) {
-	o.end()
-	return contract.Observation{State: contract.Present}, o.err
-}
-
 func TestDeclared_AValidateWhoseRequestEndsLogsItsElapsedTimeAndTheResourceItReachedAndNoSecret(t *testing.T) {
 	const token = "ghp_ended-validate-leak-7c1f"
 	for _, tc := range []struct {
@@ -77,9 +56,9 @@ func TestDeclared_AValidateWhoseRequestEndsLogsItsElapsedTimeAndTheResourceItRea
 			clock := &tickingClock{now: time.Now()}
 			end := func() { clock.set(clock.Now().Add(5 * time.Second)); cancel() }
 			obs := asObservers(blockObservers(standingCloud()))
-			var block handler.Resource = endingBlock{blockResource: &blockResource{}, end: end}
+			var block handler.Resource = convergingBlock{reportingBlock: reportingBlock{blockResource: &blockResource{}}, before: end, err: context.Canceled}
 			if tc.ending != "" {
-				block, obs[tc.ending] = &blockResource{}, endingObserver{end: end, err: tc.err}
+				block, obs[tc.ending] = &blockResource{}, cancellingObserver{Observer: &observer{obs: contract.Observation{State: contract.Present}, err: tc.err}, settledOn: contract.Present, cancel: end}
 			}
 			fields := githubToken(token)
 			fields["subscriptionId"] = "sub-" + token
@@ -399,9 +378,13 @@ type convergingBlock struct {
 	detail   string
 	finished bool
 	err      error
+	before   func()
 }
 
 func (c convergingBlock) Converging(context.Context, contract.Desired) (string, bool, error) {
+	if c.before != nil {
+		c.before()
+	}
 	return c.detail, c.finished, c.err
 }
 

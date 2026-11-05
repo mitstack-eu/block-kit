@@ -328,11 +328,8 @@ func TestObserve_ReadsTheHostnamePresentOnlyWhileItPointsAtItsAddressesForItsSub
 			if err != nil || !reflect.DeepEqual(read, obs) || zone.Lookups() != 2 {
 				t.Errorf("ObserveRecorded of its identity = %+v, %v, the zone read %d times with Observe's one; want %+v and one read of its own", read, err, zone.Lookups(), obs)
 			}
-			if tc.want != contract.Present {
-				return
-			}
 			wantOutputs := map[string]string{"appHostname": host, "address": address, "appUrl": "https://" + host}
-			if !reflect.DeepEqual(obs.Outputs, wantOutputs) || !reflect.DeepEqual(obs.Identity, apphostname.Identity(record())) {
+			if tc.want == contract.Present && (!reflect.DeepEqual(obs.Outputs, wantOutputs) || !reflect.DeepEqual(obs.Identity, apphostname.Identity(record()))) {
 				t.Errorf("Observe = outputs %v, identity %v; want %v and %v", obs.Outputs, obs.Identity, wantOutputs, apphostname.Identity(record()))
 			}
 		})
