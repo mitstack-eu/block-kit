@@ -94,8 +94,8 @@ func TestPrimaryIPForNewServer_CreatesOneThatOutlivesItsServerWhenTheLabelsHoldN
 		t.Fatalf("PrimaryIPForNewServer = %v, created %v; want one address", err, created)
 	}
 	body := created[0]
-	if body["auto_delete"] != false || body["type"] != "ipv4" || body["location"] != "nbg1" || body["name"] != "host-a" || body["assignee_id"] != nil {
-		t.Errorf("created %v, want an unassigned ipv4 named host-a in nbg1 with auto_delete false", body)
+	if body["auto_delete"] != false || body["type"] != "ipv4" || body["location"] != "nbg1" || body["name"] != "host-a" || body["assignee_id"] != nil || body["assignee_type"] != nil {
+		t.Errorf("created %v, want an ipv4 named host-a in nbg1 with auto_delete false and no assignee, as Hetzner documents an unassigned address", body)
 	}
 	if got := body["labels"].(map[string]any); got["subscription"] != "sub_a" {
 		t.Errorf("created with labels %v, want the subscription's", got)
