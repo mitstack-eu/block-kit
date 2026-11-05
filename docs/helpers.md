@@ -743,15 +743,17 @@ hostname still naming it, through a certificate authority's HTTP challenge, so
 a replaced server has to come back on the same address.
 
 `capabilities/hetzner/cloud` holds this rule. `cloud.New(token)` takes the
-Cloud API token the block reads from its own connection. Each call finds the
-subscription's addresses by the Hetzner labels you pass, so those labels must
-name the subscription, as `map[string]string{observe.HetznerSubscriptionLabel:
-d.SubscriptionID}` does. No labels fail before any call, because an empty
-selector reaches every address in the project.
+Cloud API token of the block's connection, which is the Hetzner Cloud project
+the subscriber connected, and the request carries it in `d.Secrets`. Each call
+finds the subscription's addresses by the Hetzner labels you pass, so those
+labels must name the subscription. The constant
+`observe.HetznerSubscriptionLabel` holds the key `mitstack.dev/subscription`
+for that. No labels fail before any call, because an empty selector reaches
+every address in the project.
 
 The table names where each call belongs. The first two run inside your
-`EnsureResources`, the verb that makes a subscription's resources stand, and
-the third in your `Delete`.
+`EnsureResources`, the method the handler calls on `subscribe` and `upgrade` to
+make a subscription's resources stand, and the third in your `Delete`.
 
 | Call | When to call it | What it does |
 |---|---|---|
@@ -777,28 +779,35 @@ ip, err := ips.PrimaryIPForNewServer(ctx, cloud.PrimaryIPSpec{Name: name, Locati
 err = ips.DeletePrimaryIPs(ctx, labels)
 ```
 
-Pass `ip.ID` as the server's `public_net.ipv4` when you create it.
+`PrimaryIPSpec` names the address to make: its `Name`, its `Location` and the
+`Labels` every later call finds it by. The answer is a `PrimaryIP`, whose `IP`
+is the address as text for your server's configuration. The package creates no
+server, so your block creates it with its own Hetzner client and passes `ip.ID`
+as the server's `public_net.ipv4`.
 
 `PrimaryIPForNewServer` deletes nothing. An address still assigned to a server
-answers an error naming both, and mitstack's engine calls your block again,
-since Hetzner frees an address as its server is deleted. An address in another
-location answers the refusal `primary-ip-elsewhere`, because Hetzner assigns an
-address only in its own location and moving it would mean releasing it. Hetzner
-also refuses to delete an assigned address with `must_be_unassigned`, so a
-`DeletePrimaryIPs` that runs before its server is gone fails naming the address.
+answers an error naming both. The engine
+[retries that error](handler.md#retries-and-the-idempotency-cache), and Hetzner
+frees the address once its server is deleted. An address in another location
+answers `handler.Refuse` with the class `primary-ip-elsewhere`, which the engine
+reads as permanent, because Hetzner assigns an address only in its own location
+and moving it would mean releasing it. Hetzner also refuses to delete an
+assigned address with `must_be_unassigned`, so a `DeletePrimaryIPs` that runs
+before its server is gone fails naming the address.
 
-Hetzner prices a primary IPv4 by the hour and names no exception for one
-without a server, so `Delete` must call `DeletePrimaryIPs`. A block that serves
-through a load balancer, whose address no server holds, has no need for this
-rule.
+An address with `auto_delete` off stays in the subscriber's project until
+something deletes it, so `Delete` must call `DeletePrimaryIPs`. A block that
+serves through a load balancer, whose address no server holds, has no need for
+this rule.
 
 `capabilities/hetzner/cloud/cloudtest` holds a fake of the API's servers,
 firewalls and primary IPs for your block's tests. `cloudtest.New(t, token)`
 returns a `Fake` that keeps state and refuses what Hetzner refuses. `Fake.Drop`
 deletes a server behind your block's back, so a test can watch the next
-`EnsureResources` bring it back on the same address. Point your client at
-`Fake.URL()`, and set `Fake.Hook` to answer a request yourself, as a fault
-does.
+`EnsureResources` bring it back on the same address. `cloud.NewAt(fake.URL(),
+token)` points the client at the fake. Set `Fake.Hook`, a
+`func(http.ResponseWriter, *http.Request) bool`, to answer a request yourself,
+as a fault does, and return true when it has answered.
 
 Hetzner's API reference at
 [docs.hetzner.cloud](https://docs.hetzner.cloud/reference/cloud#primary-ips)
