@@ -2,8 +2,10 @@ package landing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/mitstack-eu/block-kit/handler"
 )
@@ -112,7 +114,7 @@ func (a api) requiredChecks(ctx context.Context) ([]string, error) {
 	return required, nil
 }
 
-// checkStates reads the check runs on commit, and its commit statuses only when a required check has not passed.
+// checkStates reads the check runs on commit, and its commit statuses only when a required check has not passed, tolerating a refused status read while a required check is queued or running.
 func (a api) checkStates(ctx context.Context, commit string, required []string) (map[string]checkState, error) {
 	var runs struct {
 		CheckRuns []struct {
@@ -138,7 +140,13 @@ func (a api) checkStates(ctx context.Context, commit string, required []string) 
 		} `json:"statuses"`
 	}
 	if err := a.repos(ctx, http.MethodGet, "/commits/"+commit+"/status", nil, &combined); err != nil {
-		return nil, err
+		if statusOf(err) != http.StatusForbidden {
+			return nil, err
+		}
+		if inFlight(states, required) {
+			return states, nil
+		}
+		return nil, a.statusRefused(err, states, required)
 	}
 	for _, s := range combined.Statuses {
 		states[s.Context] = max(states[s.Context], statusState(s.State))
@@ -175,4 +183,30 @@ func allPassed(states map[string]checkState, required []string) bool {
 		}
 	}
 	return true
+}
+
+func inFlight(states map[string]checkState, required []string) bool {
+	for _, check := range required {
+		if states[check] == checkQueued || states[check] == checkRunning {
+			return true
+		}
+	}
+	return false
+}
+
+// statusRefused names the permission a refused status read needs, the owner whose installation lacks it and the required checks left undecided.
+func (a api) statusRefused(err error, states map[string]checkState, required []string) error {
+	permission := "statuses=read"
+	var s *statusError
+	if errors.As(err, &s) && s.accepted != "" {
+		permission = s.accepted
+	}
+	owner, _, _ := strings.Cut(a.repo, "/")
+	var open []string
+	for _, check := range required {
+		if states[check] != checkPassed {
+			open = append(open, fmt.Sprintf("%q (%s)", check, states[check]))
+		}
+	}
+	return fmt.Errorf("the installation of %s lacks the permission %s to read commit statuses, so required checks %s cannot be decided: %w", owner, permission, strings.Join(open, ", "), err)
 }

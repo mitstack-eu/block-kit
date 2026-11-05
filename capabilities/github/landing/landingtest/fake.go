@@ -53,6 +53,7 @@ type Fake struct {
 	selection string
 	deleted   bool
 	answers   map[string]int
+	noStatus  bool
 	requests  []Request
 	before    func(method, path string) error
 }
@@ -218,6 +219,13 @@ func (f *Fake) CoverSelectedRepositories() {
 	f.selection = "selected"
 }
 
+// RefuseCommitStatus makes every commit-status read answer 403 naming the statuses=read permission, as an installation without that permission is answered.
+func (f *Fake) RefuseCommitStatus() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noStatus = true
+}
+
 // Answer makes every method request to path, its query left out, answer status with no body.
 func (f *Fake) Answer(method, path string, status int) {
 	f.mu.Lock()
@@ -257,6 +265,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.requests = append(f.requests, Request{Method: r.Method, Path: r.URL.RequestURI(), Authorization: r.Header.Get("Authorization")})
 	if status, ok := f.answers[r.Method+" "+r.URL.Path]; ok {
 		w.WriteHeader(status)
+		return
+	}
+	if f.noStatus && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/status") {
+		w.Header().Set("X-Accepted-GitHub-Permissions", "statuses=read")
+		reply(w, http.StatusForbidden, map[string]any{"message": "Resource not accessible by integration"})
 		return
 	}
 	if r.URL.Path == "/installation/repositories" {
