@@ -779,10 +779,15 @@ delete an assigned address with `must_be_unassigned`, so a `DeletePrimaryIPs`
 that runs before its server is gone fails naming the address.
 
 Hetzner prices a primary IPv4 by the hour and names no exception for one
-without a server, so `Delete` must call `DeletePrimaryIPs`. A block that serves through a load balancer, whose
-address no server holds, has no need for this rule.
+without a server, so `Delete` must call `DeletePrimaryIPs`. A block that serves
+through a load balancer, whose address no server holds, has no need for this
+rule.
 
-Hetzner's API reference at
+`cloudtest.New(t, token)` is a fake of the API's servers, firewalls and primary
+IPs for your block's tests. It keeps state and refuses what Hetzner refuses, so
+you can delete a server with `Drop` and watch your next ensure bring it back on
+the same address. Point your client at `URL()`, and set `Hook` to inject a
+fault. Hetzner's API reference at
 [docs.hetzner.cloud](https://docs.hetzner.cloud/reference/cloud#primary-ips)
 describes each call.
 
