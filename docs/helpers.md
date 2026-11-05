@@ -612,10 +612,10 @@ describes. A path main held before the landing is never removed.
 
 The pull request merges on the checks main requires, by branch protection or
 by a ruleset, and never past them. Until each required check reports success
-on it, and while GitHub refuses the merge, `Remove` returns a
-`*handler.Waiting`, the error `handler.Wait` builds. Returned from `Delete`, it
-makes the unsubscribe answer `absent:false`, and the platform sends the
-unsubscribe again, as
+on it, `Remove` returns the `*handler.Waiting` that `handler.WaitOnRemoval`
+builds, and while GitHub refuses the merge, the one `handler.Wait` builds.
+Returned from `Delete`, either makes the unsubscribe answer `absent:false`,
+and the platform sends the unsubscribe again, as
 [Serving lifecycle calls](handler.md#what-the-handler-calls-for-each-call)
 describes. A later call reuses the branch and pull request while main has not
 moved, and rebuilds the removal onto main's new head when it has. Once the
@@ -640,6 +640,20 @@ its repositories as `repository_selection: "all"`, which means every
 repository of the owner, with one of the same owner. Any read that fails,
 such as a 403, a 5xx, a rate limit or a missing token, reads unknown, and
 `Remove` then waits with no write sent.
+
+During an unsubscribe, a present answer also reads the subscription's open
+removal pull request. While a check main requires is queued or running on it
+and none has failed, the answer carries `Removing`, whose `WaitsOn` names the
+pull request and that check, such as
+`removal pull request #4 of acme/weather, whose required check "managed-ci" is
+running`. The platform then waits on the removal without spending one of the
+unsubscribe's attempts. A pending commit status, and a check run that GitHub
+has queued but not started, count as queued. Once a required check fails, the
+pull request closes unmerged, or no required check is queued or running, the
+answer carries no `Removing`, and the attempts count again. A check that stays
+queued or running keeps the removal reading under way for as long as it does.
+A read of the pull request or its checks that fails reads unknown. Outside an
+unsubscribe the observer reads no pull request.
 
 A scaffold contribution is a resource of type `github.scaffold-contribution`.
 Its block offers files for the app's repository through the resource's

@@ -45,11 +45,13 @@ func Remove(ctx context.Context, c *ghapi.Client, r Removal) (Result, error) {
 	}
 	var result Result
 	var waits []string
+	removal := false
 	for _, rec := range byRepository(r.Records) {
 		kept, err := removeFrom(ctx, c, rec, r.Subscription)
 		var w *handler.Waiting
 		if errors.As(err, &w) {
 			waits = append(waits, w.Detail)
+			removal = removal || w.Removal
 			continue
 		}
 		if err != nil {
@@ -57,7 +59,10 @@ func Remove(ctx context.Context, c *ghapi.Client, r Removal) (Result, error) {
 		}
 		result.Kept = append(result.Kept, kept...)
 	}
-	if len(waits) > 0 {
+	switch {
+	case removal:
+		return Result{}, handler.WaitOnRemoval("%s", strings.Join(waits, "; "))
+	case len(waits) > 0:
 		return Result{}, handler.Wait("%s", strings.Join(waits, "; "))
 	}
 	return result, nil
@@ -198,23 +203,36 @@ func (a api) branchCommit(ctx context.Context, branch string) (string, error) {
 	return ref.Object.SHA, err
 }
 
-// pullRequest returns the open pull request from branch, opening one when none is.
-func (a api) pullRequest(ctx context.Context, branch, title, body string) (int, error) {
+type openPull struct {
+	number int
+	head   string
+}
+
+func (a api) openPullRequest(ctx context.Context, branch string) (openPull, bool, error) {
 	owner, _, _ := strings.Cut(a.repo, "/")
 	query := url.Values{"head": {owner + ":" + branch}, "state": {"open"}}.Encode()
 	var open []struct {
 		Number int `json:"number"`
+		Head   struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
 	}
-	if err := a.repos(ctx, http.MethodGet, "/pulls?"+query, nil, &open); err != nil {
-		return 0, err
+	if err := a.repos(ctx, http.MethodGet, "/pulls?"+query, nil, &open); err != nil || len(open) == 0 {
+		return openPull{}, false, err
 	}
-	if len(open) > 0 {
-		return open[0].Number, nil
+	return openPull{number: open[0].Number, head: open[0].Head.SHA}, true, nil
+}
+
+// pullRequest returns the open pull request from branch, opening one when none is.
+func (a api) pullRequest(ctx context.Context, branch, title, body string) (int, error) {
+	pr, found, err := a.openPullRequest(ctx, branch)
+	if err != nil || found {
+		return pr.number, err
 	}
 	var opened struct {
 		Number int `json:"number"`
 	}
-	err := a.repos(ctx, http.MethodPost, "/pulls", map[string]any{"title": title, "head": branch, "base": "main", "body": body}, &opened)
+	err = a.repos(ctx, http.MethodPost, "/pulls", map[string]any{"title": title, "head": branch, "base": "main", "body": body}, &opened)
 	return opened.Number, err
 }
 

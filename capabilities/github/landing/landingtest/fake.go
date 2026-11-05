@@ -49,6 +49,7 @@ type Fake struct {
 	required  []string
 	ruled     []string
 	checks    map[string]string
+	running   map[string]string
 	selection string
 	deleted   bool
 	answers   map[string]int
@@ -64,6 +65,7 @@ func New(t testing.TB, repo string) *Fake {
 		trees:     map[string]map[string]string{},
 		refs:      map[string]string{},
 		checks:    map[string]string{},
+		running:   map[string]string{},
 		selection: "all",
 		answers:   map[string]int{},
 	}
@@ -184,6 +186,15 @@ func (f *Fake) ReportCheck(name, conclusion string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.checks[name] = conclusion
+	delete(f.running, name)
+}
+
+// RunCheck reports the check on every commit as status, queued or in_progress, with no conclusion yet.
+func (f *Fake) RunCheck(name, status string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.running[name] = status
+	delete(f.checks, name)
 }
 
 // DeleteRepository makes every route under the repository answer 404, as GitHub does for a deleted repository.
@@ -534,6 +545,9 @@ func (f *Fake) checkRuns() (int, any) {
 	runs := []any{}
 	for _, name := range slices.Sorted(maps.Keys(f.checks)) {
 		runs = append(runs, map[string]any{"name": name, "status": "completed", "conclusion": f.checks[name]})
+	}
+	for _, name := range slices.Sorted(maps.Keys(f.running)) {
+		runs = append(runs, map[string]any{"name": name, "status": f.running[name], "conclusion": nil})
 	}
 	return http.StatusOK, map[string]any{"total_count": len(runs), "check_runs": runs}
 }

@@ -2,12 +2,28 @@ package landing
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/mitstack-eu/block-kit/handler"
 )
 
-// requiredChecksPassed answers waiting until every check main requires, by branch protection or by a ruleset, has passed on commit.
+// checkState is what one required check last reported on a commit, ordered so the furthest along of two reports wins; the zero value has not reported.
+type checkState int
+
+const (
+	checkMissing checkState = iota
+	checkFailed
+	checkQueued
+	checkRunning
+	checkPassed
+)
+
+func (s checkState) String() string {
+	return [...]string{"not reported", "failed", "queued", "running", "passed"}[s]
+}
+
+// requiredChecksPassed answers waiting on the removal until every check main requires, by branch protection or by a ruleset, has passed on commit.
 func (a api) requiredChecksPassed(ctx context.Context, number int, commit string) error {
 	required, err := a.requiredChecks(ctx)
 	if err != nil {
@@ -16,16 +32,44 @@ func (a api) requiredChecksPassed(ctx context.Context, number int, commit string
 	if len(required) == 0 {
 		return nil
 	}
-	passed, err := a.passedChecks(ctx, commit, required)
+	states, err := a.checkStates(ctx, commit, required)
 	if err != nil {
 		return handler.Wait("removal pull request #%d of %s waits, since its checks cannot be read: %v", number, a.repo, err)
 	}
 	for _, check := range required {
-		if !passed[check] {
-			return handler.Wait("removal pull request #%d of %s waits on required check %q, which has not reported success", number, a.repo, check)
+		if states[check] != checkPassed {
+			return handler.WaitOnRemoval("removal pull request #%d of %s waits on required check %q, which has not reported success", number, a.repo, check)
 		}
 	}
 	return nil
+}
+
+// removalUnderWay is what the subscription's open removal pull request waits on while a check main requires is queued or running on it and none has failed, and empty otherwise.
+func (a api) removalUnderWay(ctx context.Context, subscription string) (string, error) {
+	pr, found, err := a.openPullRequest(ctx, BranchPrefix(subscription)+"remove")
+	if err != nil || !found {
+		return "", err
+	}
+	required, err := a.requiredChecks(ctx)
+	if err != nil || len(required) == 0 {
+		return "", err
+	}
+	states, err := a.checkStates(ctx, pr.head, required)
+	if err != nil {
+		return "", err
+	}
+	waitsOn := ""
+	for _, check := range required {
+		switch states[check] {
+		case checkFailed:
+			return "", nil
+		case checkQueued, checkRunning:
+			if waitsOn == "" {
+				waitsOn = fmt.Sprintf("removal pull request #%d of %s, whose required check %q is %s", pr.number, a.repo, check, states[check])
+			}
+		}
+	}
+	return waitsOn, nil
 }
 
 func (a api) requiredChecks(ctx context.Context) ([]string, error) {
@@ -68,23 +112,24 @@ func (a api) requiredChecks(ctx context.Context) ([]string, error) {
 	return required, nil
 }
 
-// passedChecks reads the check runs on commit, and its commit statuses only when a required check is still missing.
-func (a api) passedChecks(ctx context.Context, commit string, required []string) (map[string]bool, error) {
+// checkStates reads the check runs on commit, and its commit statuses only when a required check has not passed.
+func (a api) checkStates(ctx context.Context, commit string, required []string) (map[string]checkState, error) {
 	var runs struct {
 		CheckRuns []struct {
 			Name       string `json:"name"`
+			Status     string `json:"status"`
 			Conclusion string `json:"conclusion"`
 		} `json:"check_runs"`
 	}
 	if err := a.repos(ctx, http.MethodGet, "/commits/"+commit+"/check-runs?per_page=100", nil, &runs); err != nil {
 		return nil, err
 	}
-	passed := map[string]bool{}
+	states := map[string]checkState{}
 	for _, r := range runs.CheckRuns {
-		passed[r.Name] = passed[r.Name] || r.Conclusion == "success" || r.Conclusion == "neutral" || r.Conclusion == "skipped"
+		states[r.Name] = max(states[r.Name], runState(r.Status, r.Conclusion))
 	}
-	if allPassed(passed, required) {
-		return passed, nil
+	if allPassed(states, required) {
+		return states, nil
 	}
 	var combined struct {
 		Statuses []struct {
@@ -96,14 +141,36 @@ func (a api) passedChecks(ctx context.Context, commit string, required []string)
 		return nil, err
 	}
 	for _, s := range combined.Statuses {
-		passed[s.Context] = passed[s.Context] || s.State == "success"
+		states[s.Context] = max(states[s.Context], statusState(s.State))
 	}
-	return passed, nil
+	return states, nil
 }
 
-func allPassed(passed map[string]bool, required []string) bool {
+func runState(status, conclusion string) checkState {
+	switch {
+	case status == "in_progress":
+		return checkRunning
+	case status != "completed":
+		return checkQueued
+	case conclusion == "success" || conclusion == "neutral" || conclusion == "skipped":
+		return checkPassed
+	}
+	return checkFailed
+}
+
+func statusState(state string) checkState {
+	switch state {
+	case "success":
+		return checkPassed
+	case "pending":
+		return checkQueued
+	}
+	return checkFailed
+}
+
+func allPassed(states map[string]checkState, required []string) bool {
 	for _, check := range required {
-		if !passed[check] {
+		if states[check] != checkPassed {
 			return false
 		}
 	}
