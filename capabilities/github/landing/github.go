@@ -28,6 +28,8 @@ type statusError struct {
 	call   string
 	status int
 	body   string
+	// accepted is the permission GitHub's X-Accepted-GitHub-Permissions header says the call needs, empty when it sent none.
+	accepted string
 }
 
 func (e *statusError) Error() string {
@@ -79,7 +81,7 @@ func (a api) call(ctx context.Context, method, path string, payload, out any) er
 		return fmt.Errorf("landing: %w", err)
 	}
 	if resp.StatusCode >= http.StatusMultipleChoices {
-		return &statusError{call: method + " " + path, status: resp.StatusCode, body: safe.LogSafe(string(raw), a.c.Token)}
+		return &statusError{call: method + " " + path, status: resp.StatusCode, body: safe.LogSafe(string(raw), a.c.Token), accepted: resp.Header.Get("X-Accepted-GitHub-Permissions")}
 	}
 	if out == nil || len(raw) == 0 {
 		return nil
