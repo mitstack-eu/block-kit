@@ -26,7 +26,7 @@ type PrimaryIP struct {
 	AutoDelete bool
 }
 
-// PrimaryIPSpec names the address a block makes. Its Labels are what the other calls find the address by, so they name the subscription.
+// PrimaryIPSpec names the address a block makes, and its Labels name the subscription, since every other call finds the address by them.
 type PrimaryIPSpec struct {
 	Name, Location string
 	Labels         map[string]string
@@ -115,9 +115,7 @@ func (c *Client) KeepPrimaryIPs(ctx context.Context, labels map[string]string) e
 	return err
 }
 
-// PrimaryIPForNewServer returns the address a server about to be created takes: the one of these labels left unassigned in the location, or a new one when the labels hold none.
-//
-// It never deletes an address, since one released while DNS records name it can be drawn by another Hetzner customer. An address still assigned fails, which the engine retries, and one in another location is refused, since Hetzner assigns an address only in its own location.
+// PrimaryIPForNewServer returns the unassigned address of these labels in the location, or a new one when the labels hold none, and deletes nothing, since another Hetzner customer can draw an address DNS records still name.
 func (c *Client) PrimaryIPForNewServer(ctx context.Context, spec PrimaryIPSpec) (PrimaryIP, error) {
 	ips, err := c.keep(ctx, spec.Labels)
 	if err != nil {
