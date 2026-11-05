@@ -229,7 +229,6 @@ func TestPlatformNotifications_Latest(t *testing.T) {
 	}
 }
 
-// events.PlatformFrom derives the platform from the callback, and its own test covers every callback a request may carry.
 func TestNotificationsFromContext(t *testing.T) {
 	ctx := events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{URL: "https://api.mitstack.dev/v1/webhooks/operator-events", Token: platformToken}})
 
