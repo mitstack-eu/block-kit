@@ -114,8 +114,7 @@ func (a api) requiredChecks(ctx context.Context) ([]string, error) {
 	return required, nil
 }
 
-// checkStates reads the check runs on commit, and its commit statuses only when a required check has not passed. A refused status read answers
-// with the check runs alone while one required check is queued or running, since the wait then holds whatever the statuses say.
+// checkStates reads the check runs on commit, and its commit statuses only when a required check has not passed, tolerating a refused status read while a required check is queued or running.
 func (a api) checkStates(ctx context.Context, commit string, required []string) (map[string]checkState, error) {
 	var runs struct {
 		CheckRuns []struct {
@@ -195,7 +194,7 @@ func inFlight(states map[string]checkState, required []string) bool {
 	return false
 }
 
-// statusRefused names the permission the refused read needs, the owner whose installation lacks it and the required checks it leaves undecided.
+// statusRefused names the permission a refused status read needs, the owner whose installation lacks it and the required checks left undecided.
 func (a api) statusRefused(err error, states map[string]checkState, required []string) error {
 	permission := "statuses=read"
 	var s *statusError
