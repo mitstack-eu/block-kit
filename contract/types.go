@@ -72,11 +72,11 @@ type Request struct {
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 }
 
-// OperationIssue asks a capability for one app's credential, beside the four lifecycle verbs.
-const OperationIssue = "issue"
-
-// OperationLogs asks a block for one subscription's recent lines, sent to /logs and never to /hook.
-const OperationLogs = "logs"
+// OperationIssue asks a capability for one app's credential, and OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook.
+const (
+	OperationIssue = "issue"
+	OperationLogs  = "logs"
+)
 
 // Credential is what a capability issues one app: values that are secret, and when they stop working.
 type Credential struct {

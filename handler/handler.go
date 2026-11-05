@@ -65,7 +65,7 @@ type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)
 }
 
-// Config wires a Handler; Resource, Manifest and JWKSURL are required, a nil Logs answers GET /logs with 404, and SubscriptionLogs is required exactly when the manifest lists the operation logs.
+// Config wires a Handler; Resource, Manifest and JWKSURL are required, a nil Logs answers GET /logs with 404, and SubscriptionLogs, required exactly when the manifest lists the operation logs, answers a signed POST /logs with the lines of the subscription its request names.
 type Config struct {
 	Resource Resource
 
@@ -91,7 +91,6 @@ type Config struct {
 
 	Logs *webhook.LogBuffer
 
-	// SubscriptionLogs answers a signed POST /logs with the recent lines of the subscription its request names, and reaches the platform through the request's events callback, as a hook does.
 	SubscriptionLogs func(ctx context.Context, d contract.Desired) ([]string, error)
 
 	Now func() time.Time
