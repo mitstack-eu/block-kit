@@ -98,13 +98,19 @@ return contract.Observation{State: contract.Unknown,
 	}}, nil
 ```
 
-While any resource answers this, the subscription stays provisioning and its
+While any resource answers this, the subscription keeps the status
+`provisioning`, the platform's word for a subscription still being set up. Its
 [`settleBudget`](manifest.md#the-lifecycle-keys), how long the platform keeps
 waiting after a call, does not run out. The platform shows `Action` as the
-status of the resource and of the subscription. The budget starts again once
-the observer stops setting it, so a block that then hangs still fails on its
-budget. Stop setting it when the person has acted or can no longer act, and
-refuse as usual when the wait has failed.
+status of the resource and of the subscription, in place of `StatusDetail`, so
+`Action` alone is enough.
+
+Stop setting the field when the person has acted, or can no longer act because
+they closed the pull request, for example. Then answer the state the resource is
+in, which is `Unknown` with a `StatusDetail` while the work goes on. The budget
+starts again at that answer, so a block that then hangs still fails on its
+budget. When the wait can never end well, return a `handler.Refuse` error from
+the observer, which fails the subscription with your words.
 
 The handler scrubs request secrets from `Action`, and `kittest.AssertBlock`
 fails a `WaitingOnPerson` beside any state but `Unknown`, or one whose `Action`
