@@ -22,6 +22,7 @@ package has [a page of its own](gitops.md).
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
+| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
@@ -537,8 +538,8 @@ for the same name is refused rather than moving the first app's visitors.
 6. `apphostname.Observe(ctx, w, rec, subscriptionID)`, called from the
    `ObserveResource` of the hostname's `Observer`, answers present while the
    A record holds the record's addresses and the TXT names this subscription or
-   none, with the `appHostname`, `address` and `appUrl` outputs of the resource
-   type `mitstack.app-hostname`. It answers absent when the hostname has no
+   none, with the `appHostname`, `address` and `appUrl` outputs that a
+   `mitstack.app-hostname` resource declares. It answers absent when the hostname has no
    record, points elsewhere or is held by another subscription.
 
 In these steps `w` is `apphostname.Route53{}` in the operator, `rec` is the
@@ -730,6 +731,87 @@ tested. A refused write is not listed by `Writes`. The hook runs once per
 request, in parallel when the client sends requests in parallel, so a hook
 that keeps state guards it.
 
+
+## Keeping a Hetzner Cloud server's public address
+
+A server block whose hostnames resolve to its server's own public address keeps
+that address for the life of the subscription. Hetzner calls such an address a
+primary IP, and a primary IP with Hetzner's `auto_delete` setting on is deleted
+with its server. A deleted address returns to Hetzner's pool, and another
+customer can then draw it. That customer could obtain certificates for every
+hostname still naming it, through a certificate authority's HTTP challenge, so
+a replaced server has to come back on the same address.
+
+`capabilities/hetzner/cloud` holds this rule. `cloud.New(token)` takes the
+Cloud API token of the block's connection, which is the Hetzner Cloud project
+the subscriber connected, and the request carries it in `d.Secrets`. Each call
+finds the subscription's addresses by the Hetzner labels you pass, so those
+labels must name the subscription. The constant
+`observe.HetznerSubscriptionLabel` holds the key `mitstack.dev/subscription`
+for that. No labels fail before any call, because an empty selector reaches
+every address in the project.
+
+The table names where each call belongs. The first two run inside your
+`EnsureResources`, the method the handler calls on `subscribe` and `upgrade` to
+make a subscription's resources stand, and the third in your `Delete`.
+
+| Call | When to call it | What it does |
+|---|---|---|
+| `KeepPrimaryIPs(ctx, labels)` | First in `EnsureResources`, also while a server stands | Turns `auto_delete` off on each address that has it on, so an address made by an older release survives its server's next deletion |
+| `PrimaryIPForNewServer(ctx, spec)` | Only when `EnsureResources` finds no server and creates one | Returns the address the last server left, or creates one with `auto_delete` off when the labels hold none |
+| `DeletePrimaryIPs(ctx, labels)` | In `Delete`, after the servers are deleted | Deletes every address of the labels, and takes one Hetzner already removed as deleted |
+
+Here is how a block calls them, as
+[hcloud-docker-host](https://github.com/mitstack-eu/hcloud-docker-host) does.
+`d` is the request's `contract.Desired`, and `name` and `location` are your
+block's own:
+
+```go
+labels := map[string]string{observe.HetznerSubscriptionLabel: d.SubscriptionID}
+ips := cloud.New(d.Secrets["hetzner"]["api_token"])
+if err := ips.KeepPrimaryIPs(ctx, labels); err != nil {
+	return nil, err
+}
+// With no server standing:
+ip, err := ips.PrimaryIPForNewServer(ctx, cloud.PrimaryIPSpec{Name: name, Location: location, Labels: labels})
+
+// In Delete, once the servers are gone:
+err = ips.DeletePrimaryIPs(ctx, labels)
+```
+
+`PrimaryIPSpec` names the address to make: its `Name`, its `Location` and the
+`Labels` every later call finds it by. The answer is a `PrimaryIP`, whose `IP`
+is the address as text for your server's configuration. The package creates no
+server, so your block creates it with its own Hetzner client and passes `ip.ID`
+as the server's `public_net.ipv4`.
+
+`PrimaryIPForNewServer` deletes nothing. An address still assigned to a server
+answers an error naming both. The engine
+[retries that error](handler.md#retries-and-the-idempotency-cache), and Hetzner
+frees the address once its server is deleted. An address in another location
+answers `handler.Refuse` with the class `primary-ip-elsewhere`, which the engine
+reads as permanent, because Hetzner assigns an address only in its own location
+and moving it would mean releasing it. Hetzner also refuses to delete an
+assigned address with `must_be_unassigned`, so a `DeletePrimaryIPs` that runs
+before its server is gone fails naming the address.
+
+An address with `auto_delete` off stays in the subscriber's project until
+something deletes it, so `Delete` must call `DeletePrimaryIPs`. A block that
+serves through a load balancer, whose address no server holds, has no need for
+this rule.
+
+`capabilities/hetzner/cloud/cloudtest` holds a fake of the API's servers,
+firewalls and primary IPs for your block's tests. `cloudtest.New(t, token)`
+returns a `Fake` that keeps state and refuses what Hetzner refuses. `Fake.Drop`
+deletes a server behind your block's back, so a test can watch the next
+`EnsureResources` bring it back on the same address. `cloud.NewAt(fake.URL(),
+token)` points the client at the fake. Set `Fake.Hook`, a
+`func(http.ResponseWriter, *http.Request) bool`, to answer a request yourself,
+as a fault does, and return true when it has answered.
+
+Hetzner's API reference at
+[docs.hetzner.cloud](https://docs.hetzner.cloud/reference/cloud#primary-ips)
+describes each call.
 
 ## Adopting a Hetzner dedicated server
 
