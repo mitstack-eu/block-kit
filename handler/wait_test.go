@@ -59,3 +59,41 @@ func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetail(t *testing.T) {
 		}
 	}
 }
+
+type removalWaitingBlock struct{ waitingBlock }
+
+func (removalWaitingBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
+	return nil, handler.WaitOnRemoval("%s", waitDetail)
+}
+
+func TestServe_AnUnsubscribeWaitingOnARemovalAnswersEachResourcesObserveMadeUnsubscribing(t *testing.T) {
+	const waitsOn = "removal pull request #1 of acme/weather, whose required check \"managed-ci\" is running"
+	obs := fixed(contract.Observation{State: contract.Present, Removing: &contract.Removing{WaitsOn: waitsOn}})
+	x := newHarness(t, removalWaitingBlock{}, func(c *handler.Config) { c.Observers = map[string]handler.Observer{"r": obs} })
+
+	status, resp := x.answer(map[string]any{"operation": "unsubscribe"})
+
+	if status != http.StatusOK || resp.Absent == nil || *resp.Absent || resp.StatusDetail != waitDetail {
+		t.Errorf("unsubscribe answered %d, absent %v, statusDetail %q; want 200, absent:false, %q", status, resp.Absent, resp.StatusDetail, waitDetail)
+	}
+	if o := resp.Resources["r"].Observe; o == nil || o.State != contract.Present || o.Removing == nil || o.Removing.WaitsOn != waitsOn {
+		t.Errorf("resource r's observe = %+v, want present with removing waitsOn %q, which the engine reads to wait without spending an attempt", o, waitsOn)
+	}
+	if refs := obs.calls(); len(refs) != 1 || !refs[0].Unsubscribing {
+		t.Errorf("observer calls = %+v, want one, made unsubscribing", refs)
+	}
+}
+
+func TestServe_AnUnsubscribeWaitingOnARemovalKeepsWaitingWhenAnObserveFails(t *testing.T) {
+	obs := &observer{err: fmt.Errorf("github answered 502")}
+	x := newHarness(t, removalWaitingBlock{}, func(c *handler.Config) { c.Observers = map[string]handler.Observer{"r": obs} })
+
+	status, resp := x.answer(map[string]any{"operation": "unsubscribe"})
+
+	if status != http.StatusOK || resp.Absent == nil || *resp.Absent || resp.StatusDetail != waitDetail {
+		t.Errorf("unsubscribe answered %d, absent %v, statusDetail %q; want 200, absent:false, %q", status, resp.Absent, resp.StatusDetail, waitDetail)
+	}
+	if o := resp.Resources["r"].Observe; o == nil || o.Error == "" || o.Removing != nil {
+		t.Errorf("resource r's observe = %+v, want the failed read's error and no removing", o)
+	}
+}

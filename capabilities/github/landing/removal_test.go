@@ -1,6 +1,7 @@
 package landing_test
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"reflect"
@@ -245,5 +246,125 @@ func TestUnsubscribe_OpensTheRemovalAgainWhenSomeoneClosedIt(t *testing.T) {
 	}
 	if len(f.Main()) != 0 {
 		t.Errorf("main = %v, want every landed file removed", f.Main())
+	}
+}
+
+func TestUnsubscribe_WaitsOnARequiredCheckAsARemovalWait(t *testing.T) {
+	f := landingtest.New(t, repo)
+	rec := land(t, f, threeFiles, landing.Record{})
+	f.RequireCheck("managed-ci")
+	f.RunCheck("managed-ci", "in_progress")
+
+	_, err := remove(client(f), rec)
+
+	var w *handler.Waiting
+	if !errors.As(err, &w) || !w.Removal {
+		t.Errorf("Remove while its required check runs = %#v, want a handler.Waiting with Removal set, so the unsubscribe answer carries each resource's observe", err)
+	}
+}
+
+// waitingRemoval lands the starter under a required managed-ci check and leaves its removal pull request #1 open on it.
+func waitingRemoval(t *testing.T) (*landingtest.Fake, landing.Record) {
+	t.Helper()
+	f := landingtest.New(t, repo)
+	rec := land(t, f, threeFiles, landing.Record{})
+	f.RequireCheck("managed-ci")
+	_, err := remove(client(f), rec)
+	waiting(t, err, "managed-ci")
+	return f, rec
+}
+
+func observeRemoval(t *testing.T, f *landingtest.Fake, rec landing.Record, unsubscribing bool) contract.Observation {
+	t.Helper()
+	identity, err := rec.Identity()
+	if err != nil {
+		t.Fatalf("Identity: %v", err)
+	}
+	o := landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return client(f), nil }}
+	ref := contract.ResourceRef{Name: "starter", Type: "github.scaffold-commit", Identity: identity, Unsubscribing: unsubscribing,
+		Desired: contract.Desired{Identity: contract.Identity{SubscriptionID: subscription}}}
+	obs, err := o.ObserveResource(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("ObserveResource: %v", err)
+	}
+	return obs
+}
+
+func TestObserver_ReadsTheRemovalUnderWayWhileItsPullRequestsRequiredCheckIsQueuedOrRunning(t *testing.T) {
+	for _, status := range []string{"queued", "in_progress"} {
+		t.Run(status, func(t *testing.T) {
+			f, rec := waitingRemoval(t)
+			f.RunCheck("managed-ci", status)
+
+			obs := observeRemoval(t, f, rec, true)
+
+			if obs.State != contract.Present || obs.Removing == nil {
+				t.Fatalf("observe while the check is %s = %s with removing %+v (%s), want present with removing", status, obs.State, obs.Removing, obs.StatusDetail)
+			}
+			for _, naming := range []string{"#1", repo, "managed-ci"} {
+				if !strings.Contains(obs.Removing.WaitsOn, naming) {
+					t.Errorf("waitsOn = %q, want it to name %q", obs.Removing.WaitsOn, naming)
+				}
+			}
+		})
+	}
+}
+
+func TestObserver_ReadsNoRemovalUnderWayOnceNothingMovesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(f *landingtest.Fake)
+	}{
+		{"its required check failed", func(f *landingtest.Fake) { f.ReportCheck("managed-ci", "failure") }},
+		{"one required check failed while another runs", func(f *landingtest.Fake) {
+			f.RunCheck("managed-ci", "in_progress")
+			f.RequireCheck("lint")
+			f.ReportCheck("lint", "failure")
+		}},
+		{"it closed unmerged while its check runs", func(f *landingtest.Fake) {
+			f.RunCheck("managed-ci", "in_progress")
+			f.ClosePull(1)
+		}},
+		{"its required check has not started", func(*landingtest.Fake) {}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := waitingRemoval(t)
+			tc.arrange(f)
+
+			obs := observeRemoval(t, f, rec, true)
+
+			if obs.State != contract.Present || obs.Removing != nil {
+				t.Errorf("observe once %s = %s with removing %+v (%s), want present with no removing, so the attempt budget applies", tc.name, obs.State, obs.Removing, obs.StatusDetail)
+			}
+		})
+	}
+}
+
+func TestObserver_OutsideAnUnsubscribeReadsNoRemovalAndNoPullRequest(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.RunCheck("managed-ci", "in_progress")
+	mark := len(f.Requests())
+
+	obs := observeRemoval(t, f, rec, false)
+
+	if obs.State != contract.Present || obs.Removing != nil {
+		t.Errorf("observe outside an unsubscribe = %s with removing %+v, want present with no removing", obs.State, obs.Removing)
+	}
+	for _, r := range f.Requests()[mark:] {
+		if strings.Contains(r.Path, "/pulls") {
+			t.Errorf("observe outside an unsubscribe called %s %s, want no pull request read", r.Method, r.Path)
+		}
+	}
+}
+
+func TestObserver_ReadsAnUnreadableRemovalPullRequestUnknown(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.RunCheck("managed-ci", "in_progress")
+	f.Answer(http.MethodGet, "/repos/"+repo+"/pulls", http.StatusInternalServerError)
+
+	obs := observeRemoval(t, f, rec, true)
+
+	if obs.State != contract.Unknown {
+		t.Errorf("observe while the removal pull request cannot be read = %s (%s), want unknown, since a failed read proves nothing", obs.State, obs.StatusDetail)
 	}
 }
