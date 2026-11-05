@@ -113,21 +113,21 @@ func TestServe_NeverLeaksAnySecretTheRequestCarries(t *testing.T) {
 	x := newHarness(t, &kittest.FakeResource{EnsureErr: fmt.Errorf("upstream rejected credential %s signed with %s", secret, own)})
 	obo := mintOBO(t, x.s, webhook.OBOClaims{Audience: x.audience, OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-1"})
 
-	status, raw := x.post(map[string]any{
-		"operation":      "upgrade",
-		"appId":          "app-1",
-		"obo":            obo,
-		"secrets":        map[string]any{"db": map[string]any{"password": secret}},
-		"secretInputs":   map[string]any{"apiKey": input},
-		"appSecrets":     map[string]any{"masterKey": appSecret},
-		"ownSecrets":     map[string]any{"gatewayCaKey": own},
-		"eventsCallback": map[string]any{"url": "http://127.0.0.1:1/events", "token": eventsToken},
-	})
+	for _, op := range []string{"subscribe", "upgrade"} {
+		status, raw := x.post(map[string]any{
+			"operation": op, "appId": "app-1", "obo": obo,
+			"secrets":        map[string]any{"db": map[string]any{"password": secret}},
+			"secretInputs":   map[string]any{"apiKey": input},
+			"appSecrets":     map[string]any{"masterKey": appSecret},
+			"ownSecrets":     map[string]any{"gatewayCaKey": own},
+			"eventsCallback": map[string]any{"url": "http://127.0.0.1:1/events", "token": eventsToken},
+		})
 
-	if status != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500 for the Ensure error, body: %s", status, raw)
-	}
-	for what, haystack := range map[string]string{"response body": string(raw), "log output": logged.String()} {
-		kittest.AssertNoSecret(t, what, haystack, secret, input, appSecret, own, obo, eventsToken)
+		if status != http.StatusInternalServerError {
+			t.Fatalf("%s: status = %d, want 500 for the Ensure error, body: %s", op, status, raw)
+		}
+		for what, haystack := range map[string]string{"response body": string(raw), "log output": logged.String()} {
+			kittest.AssertNoSecret(t, op+" "+what, haystack, secret, input, appSecret, own, obo, eventsToken)
+		}
 	}
 }

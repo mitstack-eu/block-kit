@@ -51,8 +51,7 @@ func TestDeclared_AValidateWhoseRequestEndsLogsItsElapsedTimeAndTheResourceItRea
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureLog(t)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx, cancel := context.WithCancel(t.Context())
 			clock := &tickingClock{now: time.Now()}
 			end := func() { clock.set(clock.Now().Add(5 * time.Second)); cancel() }
 			obs := asObservers(blockObservers(standingCloud()))
