@@ -12,6 +12,7 @@ import (
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/observe"
 )
 
 // Removal is what one subscription's unsubscribe removes: every file its records created that main still carries unchanged.
@@ -31,12 +32,12 @@ const keptChanged = "changed"
 
 var subscriptionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// BranchPrefix is the prefix of every branch a subscription's landings and its removal use, each deleted once the removal is done.
+// BranchPrefix is the prefix of every branch a subscription's landings and its removal use, each deleted once the removal is done, and the one the platform reads to know a teardown's pull request.
 func BranchPrefix(subscription string) string {
 	return "mitstack/" + subscription + "/"
 }
 
-// Remove opens one pull request per repository deleting every file r's records created that main still carries at its recorded blob, merges it once main's required checks pass on it, and deletes every branch under the subscription's prefix.
+// Remove opens one pull request per repository deleting every file r's records created that main still carries at its recorded blob, merges it under the subscription's trailer once main's required checks pass on it, and deletes every branch under the subscription's prefix.
 // While a pull request waits on a check, or a repository cannot be read, it returns a handler.Waiting and writes nothing it has not written before, so the unsubscribe stays unsettled and is re-driven.
 func Remove(ctx context.Context, c *ghapi.Client, r Removal) (Result, error) {
 	if !subscriptionID.MatchString(r.Subscription) {
@@ -114,7 +115,8 @@ func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription s
 func (a api) removeThroughPullRequest(ctx context.Context, st mainState, subscription string, kept []Kept) error {
 	branch := BranchPrefix(subscription) + "remove"
 	title := fmt.Sprintf("mitstack: remove the files subscription %s landed", subscription)
-	commit, err := a.removalCommit(ctx, st, branch, title)
+	trailer := observe.GitHubSubscriptionTrailer(subscription)
+	commit, err := a.removalCommit(ctx, st, branch, title+"\n\n"+trailer)
 	if err != nil {
 		return err
 	}
@@ -125,7 +127,7 @@ func (a api) removeThroughPullRequest(ctx context.Context, st mainState, subscri
 	if err := a.requiredChecksPassed(ctx, number, commit); err != nil {
 		return err
 	}
-	return a.merge(ctx, number, commit)
+	return a.merge(ctx, number, commit, title, trailer)
 }
 
 // removalCommit returns the branch's commit when it already deletes from main's head, and otherwise builds one onto the head and points the branch at it.
@@ -231,9 +233,9 @@ func removalBody(removed []string, kept []Kept) string {
 	return b.String()
 }
 
-// merge squashes the pull request at commit, and answers a merge GitHub refuses for now, 405 or 409, as waiting.
-func (a api) merge(ctx context.Context, number int, commit string) error {
-	err := a.repos(ctx, http.MethodPut, fmt.Sprintf("/pulls/%d/merge", number), map[string]any{"merge_method": "squash", "sha": commit}, nil)
+// merge squashes the pull request at commit under title and message, which a repository's squash default would otherwise replace, and answers a merge GitHub refuses for now, 405 or 409, as waiting.
+func (a api) merge(ctx context.Context, number int, commit, title, message string) error {
+	err := a.repos(ctx, http.MethodPut, fmt.Sprintf("/pulls/%d/merge", number), map[string]any{"merge_method": "squash", "sha": commit, "commit_title": title, "commit_message": message}, nil)
 	if s := statusOf(err); s == http.StatusMethodNotAllowed || s == http.StatusConflict {
 		return handler.Wait("GitHub has not merged removal pull request #%d of %s yet: %v", number, a.repo, err)
 	}

@@ -204,6 +204,37 @@ provider and in `capabilities` per provider:
 | `capabilities/github/landing` | A block that lands files in an app's repository | Records each file it lands, and at unsubscribe removes every one main still carries unchanged through one pull request per repository, with a fake of GitHub in `capabilities/github/landing/landingtest` that any block's tests can hold a repository in |
 | `capabilities/hetzner/robot` | A block that adopts a Hetzner dedicated server | Hetzner's Robot webservice: adopt, name and release a server, boot it into the rescue system and back, couple a vSwitch and write the Robot firewall, and hand a secret to the server from a short-lived Cloud server behind a pinned TLS key, with a fake of the webservice in `capabilities/hetzner/robot/robottest`. The rescue SSH session is the module `capabilities/hetzner/robot/rescuessh`, with a fake rescue system in `rescuessh/rescuesshtest` |
 
+## How mitstack reads a teardown's commits
+
+A block that lands files removes them at unsubscribe through
+`landing.Remove`, which opens a pull request and merges it. Those removal
+commits are the block's teardown: the commits its unsubscribe lands to take
+away what it added.
+
+Every teardown commit ends with a trailer, a `Key: value` line closing the
+commit message, that names the subscription being removed. Both the pull
+request's own commit and the squash commit the merge puts on main carry it:
+
+```text
+mitstack: remove the files subscription sub_641d1fee2774 landed
+
+Mitstack-Subscription: sub_641d1fee2774
+```
+
+The platform's CI webhook reads that trailer, so a removal never builds or
+deploys the app it is taking down. A push to main whose head commit names a
+subscription being removed starts no build. While a whole app is being
+deleted, mitstack starts no build and commits no deploy for it.
+
+The one build it still starts is the pull request build of a teardown's own
+branch, `mitstack/<subscription>/remove`. The repository's ruleset for main
+requires that build's check to pass before the removal can merge. mitstack
+knows the branch by its prefix, which `landing.BranchPrefix` returns as
+`mitstack/<subscription>/`.
+
+Your block gets all of this by calling `landing.Remove`, with no code of its
+own. `Remove` is in `capabilities/github/landing/remove.go`.
+
 ## A minimal block to copy
 
 [`examples/hetzner-firewall`](examples/hetzner-firewall) is a complete block

@@ -71,6 +71,29 @@ func TestUnsubscribe_UnderARequiredCheckReachesMainOnlyThroughItsPullRequest(t *
 	}
 }
 
+// The platform reads the trailer to start no build for the merge and to still check the teardown's own pull request.
+func TestUnsubscribe_TheRemovalCommitAndItsSquashCarryTheSubscriptionTrailer(t *testing.T) {
+	f := landingtest.New(t, repo)
+	rec := land(t, f, threeFiles, landing.Record{})
+	f.RequireCheck("managed-ci")
+	_, err := remove(client(f), rec)
+	waiting(t, err, "managed-ci")
+	head := f.Message("mitstack/" + subscription + "/remove")
+	f.ReportCheck("managed-ci", "success")
+
+	if _, err := remove(client(f), rec); err != nil {
+		t.Fatalf("Remove once the check passed: %v", err)
+	}
+
+	trailer := "Mitstack-Subscription: " + subscription
+	for name, message := range map[string]string{"the pull request's head commit": head, "the squash merged onto main": f.Message("main")} {
+		paragraphs := strings.Split(message, "\n\n")
+		if len(paragraphs) < 2 || paragraphs[len(paragraphs)-1] != trailer {
+			t.Errorf("%s has message %q, want its last paragraph to be the trailer %q", name, message, trailer)
+		}
+	}
+}
+
 func TestUnsubscribe_WaitsOnARequiredCheckThatFailed(t *testing.T) {
 	f := landingtest.New(t, repo)
 	rec := land(t, f, threeFiles, landing.Record{})

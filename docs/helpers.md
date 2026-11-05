@@ -624,6 +624,14 @@ merge lands, `Remove` deletes every branch whose name starts with
 also opens pull requests of its own names their branches under that prefix,
 so the removal clears them too.
 
+The removal's own commit and the squash the merge puts on main both end with
+the trailer `Mitstack-Subscription: <subscription>`. The merge passes its own
+`commit_title` and `commit_message`, so the repository's squash setting cannot
+drop the trailer. mitstack reads it to start no build from the merge, as the
+README's section
+[How mitstack reads a teardown's commits](../README.md#how-mitstack-reads-a-teardowns-commits)
+describes.
+
 `landing.Observer` reads such a resource from main. It is present while main
 carries at least one file recorded `created` at its recorded blob, and absent
 once main carries none. It also reads a repository proven deleted absent:

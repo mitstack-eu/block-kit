@@ -24,10 +24,10 @@ type Request struct {
 
 // Pull is a pull request as the fake holds it.
 type Pull struct {
-	Number         int
-	Branch, Body   string
-	Open, Merged   bool
-	MergedRevision string
+	Number              int
+	Branch, Title, Body string
+	Open, Merged        bool
+	MergedRevision      string
 }
 
 type commit struct {
@@ -42,6 +42,7 @@ type Fake struct {
 
 	mu        sync.Mutex
 	commits   map[string]commit
+	messages  map[string]string
 	trees     map[string]map[string]string
 	refs      map[string]string
 	pulls     []*Pull
@@ -59,6 +60,7 @@ func New(t testing.TB, repo string) *Fake {
 	f := &Fake{
 		Repo:      repo,
 		commits:   map[string]commit{},
+		messages:  map[string]string{},
 		trees:     map[string]map[string]string{},
 		refs:      map[string]string{},
 		checks:    map[string]string{},
@@ -123,6 +125,13 @@ func (f *Fake) Main() map[string]string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return maps.Clone(f.commits[f.refs["heads/main"]].tree)
+}
+
+// Message returns the message of the commit branch points at.
+func (f *Fake) Message(branch string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.messages[f.refs["heads/"+branch]]
 }
 
 // Branches lists every branch but main.
@@ -372,7 +381,9 @@ func (f *Fake) createCommit(body map[string]any) (int, any) {
 	if len(parents) > 0 {
 		parent = str(parents[0])
 	}
-	return http.StatusCreated, map[string]any{"sha": f.commit(str(body["tree"]), parent)}
+	sha := f.commit(str(body["tree"]), parent)
+	f.messages[sha] = str(body["message"])
+	return http.StatusCreated, map[string]any{"sha": sha}
 }
 
 func (f *Fake) createRef(body map[string]any) (int, any) {
@@ -432,9 +443,24 @@ func (f *Fake) openPull(body map[string]any) (int, any) {
 	if _, ok := f.refs["heads/"+branch]; !ok || str(body["base"]) != "main" {
 		return http.StatusUnprocessableEntity, map[string]any{"message": "Validation Failed"}
 	}
-	p := &Pull{Number: len(f.pulls) + 1, Branch: branch, Body: str(body["body"]), Open: true}
+	p := &Pull{Number: len(f.pulls) + 1, Branch: branch, Title: str(body["title"]), Body: str(body["body"]), Open: true}
 	f.pulls = append(f.pulls, p)
 	return http.StatusCreated, f.pullBody(p)
+}
+
+// squashMessage is the commit_title and commit_message a merge sends, each defaulting to the pull request's title and body, as GitHub does for a repository that squashes with the pull request's title and description.
+func squashMessage(p *Pull, body map[string]any) string {
+	title, message := str(body["commit_title"]), p.Body
+	if title == "" {
+		title = fmt.Sprintf("%s (#%d)", p.Title, p.Number)
+	}
+	if m, ok := body["commit_message"]; ok {
+		message = str(m)
+	}
+	if message == "" {
+		return title
+	}
+	return title + "\n\n" + message
 }
 
 func (f *Fake) mergePull(number string, body map[string]any) (int, any) {
@@ -457,6 +483,7 @@ func (f *Fake) mergePull(number string, body map[string]any) (int, any) {
 		return http.StatusMethodNotAllowed, map[string]any{"message": "Pull Request is not mergeable"}
 	}
 	merged := f.commit(f.storeTree(tree), f.refs["heads/main"])
+	f.messages[merged] = squashMessage(p, body)
 	f.refs["heads/main"] = merged
 	p.Open, p.Merged, p.MergedRevision = false, true, merged
 	return http.StatusOK, map[string]any{"sha": merged, "merged": true, "message": "Pull Request successfully merged"}
