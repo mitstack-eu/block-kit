@@ -46,7 +46,7 @@ type finalBackupParts struct {
 	} `json:"host"`
 }
 
-// Done reports true once the host's newest report names the final backup uploaded, asking for one first, and at once when the host never made a volume of this block, since that holds nothing. A Waiting error holds the removal back, and any other error names why nothing may be removed.
+// Done reports true once the host's newest report names the final backup uploaded, asking for one first, and at once when the host never made a volume of this block, since that holds nothing.
 func (f FinalBackup) Done(ctx context.Context, api observe.NodeReportsAPI, d contract.Desired, hostSubscription string) (bool, error) {
 	report, found, err := NewestReport(ctx, api, d, hostSubscription)
 	if err != nil {
