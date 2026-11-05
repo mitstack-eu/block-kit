@@ -24,6 +24,7 @@ behind the block's back. It returns a `contract.Observation`:
 | `Redrive` | Read only beside `Unknown`, as [Serving lifecycle calls](handler.md#work-that-outlasts-one-call) explains |
 | `Unhealthy` | Read only beside `Present`: the failure a resource that stands still meets, as [the next section](#a-resource-that-stands-but-fails) explains |
 | `Removing` | Read only beside `Present`: what a removal under way waits on, as [A resource being removed](#a-resource-being-removed) explains |
+| `WaitingOnPerson` | Read only beside `Unknown`: what a person must do before the resource can move on, as [A resource waiting on a person](#a-resource-waiting-on-a-person) explains |
 | `Findings` | Read only on a `validate`: what the block will do for the app and what stops it, as [the README](../README.md#what-a-validate-tells-a-builder) explains |
 
 The `contract.ResourceRef` an observer receives carries the resource's name,
@@ -81,6 +82,39 @@ is gone and carries no `Removing`, and an answer without it reads as before.
 The handler scrubs request secrets from `WaitsOn`, and `kittest.AssertBlock`
 fails a `Removing` beside any state but `Present`, or one whose `WaitsOn` is
 blank.
+
+## A resource waiting on a person
+
+A resource can wait on someone for as long as they take. A pull request the
+repository's own rule keeps open until a reviewer approves it is one example.
+Its observer answers `Unknown` and sets `WaitingOnPerson` to a
+`contract.WaitingOnPerson`, whose `Action` says in plain words what the person
+does and where:
+
+```go
+return contract.Observation{State: contract.Unknown,
+	WaitingOnPerson: &contract.WaitingOnPerson{
+		Action: "approve pull request #4 at https://github.com/acme/weather/pull/4",
+	}}, nil
+```
+
+While any resource answers this, the subscription keeps the status
+`provisioning`, the platform's word for a subscription still being set up. Its
+[`settleBudget`](manifest.md#the-lifecycle-keys), how long the platform keeps
+waiting after a call, does not run out. The platform shows `Action` as the
+status of the resource and of the subscription, in place of `StatusDetail`, so
+`Action` alone is enough.
+
+Stop setting the field when the person has acted, or can no longer act because
+they closed the pull request, for example. Then answer the state the resource is
+in, which is `Unknown` with a `StatusDetail` while the work goes on. The budget
+starts again at that answer, so a block that then hangs still fails on its
+budget. When the wait can never end well, return a `handler.Refuse` error from
+the observer, which fails the subscription with your words.
+
+The handler scrubs request secrets from `Action`, and `kittest.AssertBlock`
+fails a `WaitingOnPerson` beside any state but `Unknown`, or one whose `Action`
+is blank.
 
 ## The observers the kit ships
 

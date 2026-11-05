@@ -188,7 +188,6 @@ func TestServe_AWaiterOnAPanickingCallIsReleasedWithTheSameAnswer(t *testing.T) 
 	}
 }
 
-// secretHolder renders the secret as decimal bytes when formatted, which a literal substring scrub cannot find.
 type secretHolder struct {
 	Pw []byte
 }

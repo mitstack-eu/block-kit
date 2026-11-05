@@ -274,6 +274,8 @@ type blockCheck struct {
 	failedCauses map[[2]string]bool
 	// failedRemovals holds each resource whose removing answer already failed, so an answer every observe repeats fails once.
 	failedRemovals map[string]bool
+	// failedWaits holds each resource whose waitingOnPerson answer already failed, for the same reason.
+	failedWaits map[string]bool
 }
 
 // unitNames lists the names a guard reads, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
@@ -608,6 +610,7 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 	if status == http.StatusOK {
 		c.unhealthyCauses(resp)
 		c.removingWaits(resp)
+		c.waitsOnPersonNameAction(resp)
 		return status, resp, true
 	}
 	named := false
@@ -670,6 +673,28 @@ func (c *blockCheck) removingWaits(resp contract.Response) {
 			c.failedRemovals = map[string]bool{}
 		}
 		c.failedRemovals[name] = true
+	}
+}
+
+// waitsOnPersonNameAction fails an observe answering a wait on a person beside a state other than unknown, which the engine never reads, or naming no action, since the platform shows it as the resource's status.
+func (c *blockCheck) waitsOnPersonNameAction(resp contract.Response) {
+	for _, name := range sortedKeys(resp.Resources) {
+		o := resp.Resources[name].Observe
+		if o == nil || o.WaitingOnPerson == nil || c.failedWaits[name] {
+			continue
+		}
+		switch {
+		case strings.TrimSpace(o.WaitingOnPerson.Action) == "":
+			c.resourceProblem(name, "observed waitingOnPerson with a blank action, which must say what the person does and where")
+		case o.State != contract.Unknown:
+			c.resourceProblem(name, "observed %s with waitingOnPerson, but only an unknown resource waits on a person", o.State)
+		default:
+			continue
+		}
+		if c.failedWaits == nil {
+			c.failedWaits = map[string]bool{}
+		}
+		c.failedWaits[name] = true
 	}
 }
 

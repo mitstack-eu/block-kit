@@ -16,7 +16,6 @@ import (
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
-// logsReader records each request its logs function is handed, with the platform route the request's events callback opens.
 type logsReader struct {
 	calls           []contract.Desired
 	platform, token string
@@ -30,7 +29,6 @@ func (l *logsReader) read(ctx context.Context, d contract.Desired) ([]string, er
 	return l.lines, l.err
 }
 
-// servesLogs gives the harness the plain golden manifest listing logs, as a block a user builds on the kit declares it, and names l's logs function.
 func servesLogs(t *testing.T, l *logsReader) func(*handler.Config) {
 	return then(servesBlock(listsLogs(t)), func(c *handler.Config) { c.SubscriptionLogs = l.read })
 }
@@ -39,7 +37,6 @@ func listsLogs(t *testing.T) []byte {
 	return withManifestEdit(t, plainV1Beta(t), "validate]", "validate, logs]")
 }
 
-// logsBody is a logs request for sub-1 with extra laid over its fields.
 func (x *harness) logsBody(extra map[string]any) []byte {
 	x.t.Helper()
 	fields := plainRequest(x.t, x.s, webhook.OBOClaims{Audience: "plain", OrgID: "org-1", AppID: "app-1", SubscriptionID: "sub-1"})

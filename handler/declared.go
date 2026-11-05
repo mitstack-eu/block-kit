@@ -504,6 +504,10 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 	if m := obs.Removing; m != nil {
 		removing = &contract.Removing{WaitsOn: safe.Scrub(m.WaitsOn, r.secrets...)}
 	}
+	var waiting *contract.WaitingOnPerson
+	if w := obs.WaitingOnPerson; w != nil {
+		waiting = &contract.WaitingOnPerson{Action: safe.Scrub(w.Action, r.secrets...)}
+	}
 	var findings []contract.Finding
 	if r.healthCheck {
 		for _, f := range obs.Findings {
@@ -514,14 +518,15 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 		}
 	}
 	return &contract.CallOutcome{
-		State:        obs.State,
-		Outputs:      obs.Outputs,
-		StatusDetail: safe.Scrub(obs.StatusDetail, r.secrets...),
-		Identity:     identity,
-		Type:         ref.Type,
-		Unhealthy:    unhealthy,
-		Removing:     removing,
-		Findings:     findings,
+		State:           obs.State,
+		Outputs:         obs.Outputs,
+		StatusDetail:    safe.Scrub(obs.StatusDetail, r.secrets...),
+		Identity:        identity,
+		Type:            ref.Type,
+		Unhealthy:       unhealthy,
+		Removing:        removing,
+		WaitingOnPerson: waiting,
+		Findings:        findings,
 	}, nil
 }
 

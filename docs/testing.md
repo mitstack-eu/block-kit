@@ -81,7 +81,11 @@ A cause beside a state other than present fails too, because the engine
 reads one only beside present. In the same way, the check fails an observe
 that sends `Removing` beside any state but present, or with a blank
 `WaitsOn`, and names the resource, as
-[A resource being removed](observe.md#a-resource-being-removed) explains.
+[A resource being removed](observe.md#a-resource-being-removed) explains. It
+also fails an observe that sends `WaitingOnPerson` beside any state but
+unknown, or with a blank `Action`, as
+[A resource waiting on a person](observe.md#a-resource-waiting-on-a-person)
+explains.
 
 The tagging guard checks both directions. Everything the provider lists must
 match, by type and count, a recorded resource or one of its parts, the objects
