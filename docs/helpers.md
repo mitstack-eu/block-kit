@@ -370,13 +370,19 @@ if err != nil {
 }
 ```
 
-The host runs an app's release command once on each new image, before that
-image replaces the app's container. A command that fails leaves the app on the
-image it ran, and the host keeps the failed run in its report until the next
-release command runs. `report.AppRelease(app, subscription)` reads that run
-from the report's `releases` entry for `app`, and the image the app's running
-container serves from its `apps` entry, matching the container's
-`mitstack.dev/subscription` label to `subscription`.
+An app's release command is a command, such as `php artisan migrate --force`,
+that its block writes for the host to run once on each new image of the app,
+before that image replaces the app's container. A command that fails leaves the
+app on the image it ran, and the host keeps the failed run in its report until
+the next release command runs. The report's `releases` entry holds each app's
+newest run, and its `apps` entry each app's containers. The host labels each
+container `mitstack.dev/subscription` with the subscription of the block whose
+compose service made it.
+
+`report.AppRelease(app, subscription)` reads `app`'s newest run, and the image
+of the app's running container whose label is `subscription`. Pass your own
+block's subscription, `d.SubscriptionID`, not the host's. It returns a
+`dockerhost.AppRelease`:
 
 | Field or method | What it gives |
 |---|---|
@@ -386,15 +392,20 @@ container serves from its `apps` entry, matching the container's
 | `Serves()` | Whether any image of the app serves, `false` after a failed first deploy |
 
 An app with no release command, or one the report names no release of, reads
-as not failed. Your block answers `contract.Present` with a
-`contract.Unhealthy` while `Failed` holds, so the platform shows the failure
-until a release passes:
+as not failed. While `Failed` holds, your block still answers
+`contract.Present`, since its files are in place, and sets `Unhealthy` on the
+observation, so the platform shows that cause and detail until a release
+passes. The cause must be one the platform's type
+for your resource, its catalogue entry, lists under failures, word for word:
 
 ```go
+const releaseFailed = "the app's release command failed, so the host serves the previous image or none"
+
 release, err := report.AppRelease(app, d.SubscriptionID)
 if err != nil {
 	return contract.Observation{}, err
 }
+obs := contract.Observation{State: contract.Present}
 if release.Failed {
 	serving := "no digest serves the app"
 	if release.Serves() {
