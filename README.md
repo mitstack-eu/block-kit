@@ -222,9 +222,10 @@ mitstack reads that trailer so a removal never builds or deploys the app it is
 taking down. A push to main whose head commit names a subscription being
 removed starts no build. While a whole app is being deleted, mitstack starts no
 build and commits no deploy for it. The one build it still starts is the pull
-request build of a teardown's own commit, because main requires that check
-before the removal can merge. Your block gets this by calling `landing.Remove`,
-with no code of its own. `Remove` is in
+request build of a teardown's own branch, `mitstack/<subscription>/remove`,
+because main requires that check before the removal can merge. mitstack knows
+that branch by `landing.BranchPrefix`. Your block gets all of this by calling
+`landing.Remove`, with no code of its own. `Remove` is in
 `capabilities/github/landing/remove.go`.
 
 ## A minimal block to copy

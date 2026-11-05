@@ -33,6 +33,7 @@ const keptChanged = "changed"
 var subscriptionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // BranchPrefix is the prefix of every branch a subscription's landings and its removal use, each deleted once the removal is done.
+// The platform reads it to know a teardown's own pull request, which still gets the check main requires.
 func BranchPrefix(subscription string) string {
 	return "mitstack/" + subscription + "/"
 }
