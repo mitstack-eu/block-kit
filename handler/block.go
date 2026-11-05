@@ -49,11 +49,11 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 	case "unsubscribe":
 		outputs, err := r.deleteBlock(ctx)
 		w, waits := waiting(err)
-		if waits && !w.Removal {
+		switch {
+		case waits && !w.Removal:
 			absent := false
 			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
-		}
-		if err != nil && !waits {
+		case err != nil && !waits:
 			return r.h.errorResponse(err, r.secrets)
 		}
 		r.deleteOutputs = outputs

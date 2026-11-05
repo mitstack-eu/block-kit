@@ -31,13 +31,13 @@ func (o Observer) ObserveResource(ctx context.Context, r contract.ResourceRef) (
 	case st.deleted:
 		return contract.Observation{State: contract.Absent, StatusDetail: rec.Repository + " is proven deleted, so it holds nothing this resource landed"}, nil
 	case len(st.unchanged) > 0:
-		return present(ctx, api{c: c, repo: rec.Repository}, r, st.unchanged), nil
+		return presentWithRemoval(ctx, api{c: c, repo: rec.Repository}, r, st.unchanged), nil
 	}
 	return contract.Observation{State: contract.Absent, StatusDetail: fmt.Sprintf("main of %s carries none of the files this resource landed unchanged", rec.Repository)}, nil
 }
 
-// present answers a resource main still carries, and during an unsubscribe names what its removal waits on while that removal is under way.
-func present(ctx context.Context, a api, r contract.ResourceRef, unchanged []string) contract.Observation {
+// presentWithRemoval answers a resource main still carries, and during an unsubscribe names what its removal waits on while that removal is under way.
+func presentWithRemoval(ctx context.Context, a api, r contract.ResourceRef, unchanged []string) contract.Observation {
 	obs := contract.Observation{State: contract.Present, StatusDetail: fmt.Sprintf("main of %s carries %s unchanged", a.repo, strings.Join(unchanged, ", "))}
 	if !r.Unsubscribing || !subscriptionID.MatchString(r.Desired.SubscriptionID) {
 		return obs
