@@ -25,7 +25,6 @@ func newGitHubRepo(t *testing.T, f *fakeGitHub) *gitops.GitHubRepository {
 	return &gitops.GitHubRepository{Client: ghapi.NewClient(srv.URL, githubToken, srv.Client()), Repo: fakeRepo}
 }
 
-// landOn commits changes on parent and fails the test if GitHub refuses.
 func landOn(t *testing.T, repo *gitops.GitHubRepository, parent string, changes map[string][]byte) string {
 	t.Helper()
 	rev, err := repo.Commit(context.Background(), parent, changes, "seed")

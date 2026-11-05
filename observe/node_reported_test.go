@@ -279,6 +279,20 @@ func TestNodeReportsClient_IsAnErrorCarryingNoTokenWhenThePlatformCannotAnswer(t
 	}
 }
 
+func TestNodeReportsClient_AnAnswerPastItsBoundFailsNamingTheSubscriptionAndTheBound(t *testing.T) {
+	platform := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"reports":[],"pad":"` + strings.Repeat("a", 32<<20+1-len(`{"reports":[],"pad":""}`)) + `"}`))
+	}))
+	t.Cleanup(platform.Close)
+	client := observe.NodeReportsClient{HTTPClient: platform.Client()}
+
+	_, err := client.NodeReports(withCallback(platform.URL+"/v1/webhooks/operator-events", callbackToken), contract.Desired{}, "sub-cluster")
+
+	if want := "the node reports of sub-cluster: the answer is longer than 33554432 bytes"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("NodeReports = %v; want an error naming %q", err, want)
+	}
+}
+
 func TestNodeReported_NamesWhetherAClusterThatSentNoReportEnrolledANode(t *testing.T) {
 	silent := `resource "kubernetes.namespace": no node report made since the verb has arrived`
 	cases := []struct{ label, listing, want string }{

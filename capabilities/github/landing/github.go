@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
@@ -73,9 +74,9 @@ func (a api) call(ctx context.Context, method, path string, payload, out any) er
 		return fmt.Errorf("landing: github %s %s unreachable: %w", method, path, err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	raw, err := bounded.Read(resp, method+" "+path, maxBody)
 	if err != nil {
-		return fmt.Errorf("landing: read the answer to %s %s: %w", method, path, err)
+		return fmt.Errorf("landing: %w", err)
 	}
 	if resp.StatusCode >= http.StatusMultipleChoices {
 		return &statusError{call: method + " " + path, status: resp.StatusCode, body: safe.LogSafe(string(raw), a.c.Token)}

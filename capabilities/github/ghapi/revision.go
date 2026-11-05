@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
@@ -401,15 +402,9 @@ func (c *Client) get(ctx context.Context, path string, limit int64) (int, []byte
 		return 0, nil, nil, fmt.Errorf("ghapi: github unreachable: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	raw, err := bounded.Read(resp, "GET "+path, limit)
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("ghapi: read the answer to GET %s: %w", path, err)
-	}
-	if int64(len(raw)) > limit {
-		if resp.StatusCode < 300 {
-			return 0, nil, nil, fmt.Errorf("ghapi: read the answer to GET %s: the answer is longer than %d bytes", path, limit)
-		}
-		raw = raw[:limit]
+		return 0, nil, nil, fmt.Errorf("ghapi: %w", err)
 	}
 	return resp.StatusCode, raw, resp.Header, nil
 }

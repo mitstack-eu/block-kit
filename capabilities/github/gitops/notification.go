@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
@@ -132,9 +132,9 @@ func (p PlatformNotifications) Latest(ctx context.Context, app, revision string)
 		return Notification{}, false, fmt.Errorf("gitops: reading the notification for %s: %w", app, err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxNotificationBody))
+	body, err := bounded.Read(resp, "the notification for "+app, maxNotificationBody)
 	if err != nil {
-		return Notification{}, false, fmt.Errorf("gitops: reading the notification for %s: %w", app, err)
+		return Notification{}, false, fmt.Errorf("gitops: %w", err)
 	}
 	switch resp.StatusCode {
 	case http.StatusOK:

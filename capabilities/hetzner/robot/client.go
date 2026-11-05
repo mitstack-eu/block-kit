@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mitstack-eu/block-kit/helpers/bounded"
 )
 
 // Endpoint is Robot's webservice, which a block never takes from a request.
@@ -160,9 +162,9 @@ func (c *Client) send(ctx context.Context, method, path string, form url.Values)
 		return nil, fmt.Errorf("calling Robot %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes))
+	raw, err := bounded.Read(resp, "Robot "+method+" "+path, maxAnswerBytes)
 	if err != nil {
-		return nil, fmt.Errorf("reading Robot's answer to %s %s: %w", method, path, err)
+		return nil, err
 	}
 	if resp.StatusCode >= 300 {
 		var answer struct {

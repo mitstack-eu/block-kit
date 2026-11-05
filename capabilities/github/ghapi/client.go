@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
@@ -89,8 +90,8 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name, appID string) (strin
 	var out struct {
 		FullName string `json:"full_name"`
 	}
-	if err := decodeAnswer(cresp.Body, maxRepoBody, &out); err != nil {
-		return "", fmt.Errorf("ghapi: decode the answer to %s: %w", route, err)
+	if err := decodeAnswer(cresp, route, maxRepoBody, &out); err != nil {
+		return "", err
 	}
 	if out.FullName == "" {
 		return "", fmt.Errorf("ghapi: github %s answered no full_name", route)
@@ -236,8 +237,8 @@ func (c *Client) postForSHA(ctx context.Context, path string, payload any) (stri
 	var out struct {
 		SHA string `json:"sha"`
 	}
-	if err := decodeAnswer(resp.Body, maxTreeBody, &out); err != nil {
-		return "", fmt.Errorf("ghapi: decode the answer to %s: %w", route, err)
+	if err := decodeAnswer(resp, route, maxTreeBody, &out); err != nil {
+		return "", err
 	}
 	return c.answeredSHA(route, out.SHA)
 }
@@ -258,15 +259,15 @@ func (c *Client) answeredSHA(route, sha string) (string, error) {
 const maxQuotedSHA = 80
 
 // decodeAnswer decodes a whole answer into v and refuses one longer than limit rather than decode a cut-off copy.
-func decodeAnswer(body io.Reader, limit int64, v any) error {
-	raw, err := io.ReadAll(io.LimitReader(body, limit+1))
+func decodeAnswer(resp *http.Response, route string, limit int64, v any) error {
+	raw, err := bounded.Read(resp, route, limit)
 	if err != nil {
-		return fmt.Errorf("read answer: %w", err)
+		return fmt.Errorf("ghapi: %w", err)
 	}
-	if int64(len(raw)) > limit {
-		return fmt.Errorf("the answer is longer than %d bytes", limit)
+	if err := json.Unmarshal(raw, v); err != nil {
+		return fmt.Errorf("ghapi: decode the answer to %s: %w", route, err)
 	}
-	return json.Unmarshal(raw, v)
+	return nil
 }
 
 func (c *Client) patch(ctx context.Context, path string, payload any) error {

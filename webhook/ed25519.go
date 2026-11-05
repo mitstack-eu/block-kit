@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mitstack-eu/block-kit/helpers/bounded"
 )
 
 // ReplaySkew bounds how far a signed request's createdAt may differ from this verifier's clock, closing the replay hole in a detached signature.
@@ -156,6 +157,8 @@ func keyFor(keys map[string]ed25519.PublicKey, kid string) (ed25519.PublicKey, e
 	return pub, nil
 }
 
+const maxJWKSBody = 64 << 10
+
 func fetchJWKS(jwksURL string, client *http.Client) (map[string]ed25519.PublicKey, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
@@ -168,7 +171,7 @@ func fetchJWKS(jwksURL string, client *http.Client) (map[string]ed25519.PublicKe
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New("jwks answered HTTP " + strconv.Itoa(resp.StatusCode))
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	raw, err := bounded.Read(resp, "GET "+jwksURL, maxJWKSBody)
 	if err != nil {
 		return nil, err
 	}
