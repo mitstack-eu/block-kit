@@ -538,8 +538,8 @@ for the same name is refused rather than moving the first app's visitors.
 6. `apphostname.Observe(ctx, w, rec, subscriptionID)`, called from the
    `ObserveResource` of the hostname's `Observer`, answers present while the
    A record holds the record's addresses and the TXT names this subscription or
-   none, with the `appHostname`, `address` and `appUrl` outputs of the resource
-   type `mitstack.app-hostname`. It answers absent when the hostname has no
+   none, with the `appHostname`, `address` and `appUrl` outputs that a
+   `mitstack.app-hostname` resource declares. It answers absent when the hostname has no
    record, points elsewhere or is held by another subscription.
 
 In these steps `w` is `apphostname.Route53{}` in the operator, `rec` is the
