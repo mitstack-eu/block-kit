@@ -234,7 +234,7 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	return r.absentAnswer(ctx, outputs)
 }
 
-// removalAnswer answers a Delete that waits on its removal absent:false with detail, carrying the observe of each resource not recorded absent whose type does not end with its subscription; a failed observe is recorded on its resource, since the wait, not the read, decides the answer.
+// removalAnswer answers absent:false with detail and each resource deleteEach would observe, recording a failed observe on its resource, since the wait decides the answer.
 func (r *declaredRun) removalAnswer(ctx context.Context, detail string) (int, contract.Response) {
 	for i := len(r.resources) - 1; i >= 0 && ctx.Err() == nil; i-- {
 		nr := r.resources[i]

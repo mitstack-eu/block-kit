@@ -290,7 +290,8 @@ settle budget.
 whose removal has started and now moves outside the block, such as a pull
 request waiting on its checks. The `unsubscribe` still answers `absent:false`
 with the detail. The answer also carries the observe of each resource the
-engine has not recorded absent, made with `Unsubscribing` set, so an observer
+engine has not recorded absent and whose type does not end with its
+subscription, made with `Unsubscribing` set, so an observer
 can report the removal under way, as
 [A resource being removed](observe.md#a-resource-being-removed) describes. An
 observe that fails is recorded as that resource's error, and the answer still

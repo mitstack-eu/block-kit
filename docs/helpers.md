@@ -647,10 +647,13 @@ and none has failed, the answer carries `Removing`, whose `WaitsOn` names the
 pull request and that check, such as
 `removal pull request #4 of acme/weather, whose required check "managed-ci" is
 running`. The platform then waits on the removal without spending one of the
-unsubscribe's attempts. Once a required check fails, or the pull request
-closes unmerged, the answer carries no `Removing`, and the attempts count
-again. A read of the pull request or its checks that fails reads unknown.
-Outside an unsubscribe the observer reads no pull request.
+unsubscribe's attempts. A pending commit status, and a check run that GitHub
+has queued but not started, count as queued. Once a required check fails, the
+pull request closes unmerged, or no required check is queued or running, the
+answer carries no `Removing`, and the attempts count again. A check that stays
+queued or running keeps the removal reading under way for as long as it does.
+A read of the pull request or its checks that fails reads unknown. Outside an
+unsubscribe the observer reads no pull request.
 
 A scaffold contribution is a resource of type `github.scaffold-contribution`.
 Its block offers files for the app's repository through the resource's
