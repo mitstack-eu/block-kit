@@ -315,7 +315,6 @@ func TestBlockLevel_SubscribeAndUpgradeRunOneEnsureThenObserveEachResourceByName
 	}
 }
 
-// Each observe is handed the reported identity and type, else the recorded ones, else no identity and the entry's one type.
 func TestBlockLevel_EachObserveIsHandedTheIdentityAndTypeOfItsResource(t *testing.T) {
 	reported := []contract.CreatedResource{
 		{Name: "aws.vpc", Type: "aws.vpc", Identity: map[string]string{"vpcId": "vpc-new"}},
@@ -433,7 +432,6 @@ func TestBlockLevel_RefusesWhatTheManifestDoesNotDeclare(t *testing.T) {
 	}
 }
 
-// servePool serves poolManifest to a block whose ensure reports report, every entry's observer reading present.
 func servePool(t *testing.T, op string, fields map[string]any, report ...contract.CreatedResource) (int, contract.Response, map[string]*observer) {
 	t.Helper()
 	obs := map[string]*observer{"gateway": fixed(contract.Observation{State: contract.Present}), "cloud-worker": fixed(contract.Observation{State: contract.Present})}
@@ -753,7 +751,6 @@ func (c *tickingClock) advance() time.Time {
 	return c.now
 }
 
-// Each observe is handed the clock's reading once the block-level call returned, since it settles that verb, and a validate the settlesAt it is sent.
 func TestBlockLevel_ObservesAreHandedTheTimeOfTheVerbTheySettleAndWhetherItIsAnUnsubscribe(t *testing.T) {
 	settles := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	for _, op := range []string{"subscribe", "upgrade", "unsubscribe", "validate"} {
