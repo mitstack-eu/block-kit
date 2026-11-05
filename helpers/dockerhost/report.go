@@ -94,10 +94,11 @@ type reportedOutput struct {
 	} `json:"host"`
 }
 
+// containerOutput's Logs is absent from the report of a host release that sends no container output, and Subscription is empty for a container no block labelled.
 type containerOutput struct {
 	Container    string  `json:"container"`
-	Subscription *string `json:"subscription"`
-	Logs         string  `json:"logs"`
+	Subscription string  `json:"subscription"`
+	Logs         *string `json:"logs"`
 }
 
 type releaseOutput struct {
@@ -121,9 +122,10 @@ func SubscriptionLogs(ctx context.Context, api observe.NodeReportsAPI, d contrac
 	if err := report.Decode(&out); err != nil {
 		return nil, fmt.Errorf("decoding the host's newest node report: %w", err)
 	}
+	owns := func(label string) bool { return label != "" && label == d.SubscriptionID }
 	var lines []string
 	for _, app := range slices.Sorted(maps.Keys(out.Host.Releases)) {
-		if r := out.Host.Releases[app]; r.Subscription == d.SubscriptionID {
+		if r := out.Host.Releases[app]; owns(r.Subscription) {
 			lines = append(lines, fmt.Sprintf("%s | the release command exited %d on %s", r.Container, r.ExitCode, r.Image))
 			lines = append(lines, led(r.Container, r.Output)...)
 		}
@@ -131,14 +133,14 @@ func SubscriptionLogs(ctx context.Context, api observe.NodeReportsAPI, d contrac
 	held := len(lines) > 0
 	for _, app := range slices.Sorted(maps.Keys(out.Host.Apps)) {
 		for _, c := range out.Host.Apps[app] {
-			if c.Subscription == nil {
+			if c.Logs == nil {
 				return []string{noOutputYet}, nil
 			}
-			if *c.Subscription != d.SubscriptionID {
+			if !owns(c.Subscription) {
 				continue
 			}
 			held = true
-			if logs := led(c.Container, c.Logs); len(logs) > 0 {
+			if logs := led(c.Container, *c.Logs); len(logs) > 0 {
 				lines = append(lines, logs...)
 			} else {
 				lines = append(lines, c.Container+" | wrote no output yet")
