@@ -32,14 +32,12 @@ const keptChanged = "changed"
 
 var subscriptionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// BranchPrefix is the prefix of every branch a subscription's landings and its removal use, each deleted once the removal is done.
-// The platform reads it to know a teardown's own pull request, which still gets the check main requires.
+// BranchPrefix is the prefix of every branch a subscription's landings and its removal use, each deleted once the removal is done, and the one the platform reads to know a teardown's pull request.
 func BranchPrefix(subscription string) string {
 	return "mitstack/" + subscription + "/"
 }
 
-// Remove opens one pull request per repository deleting every file r's records created that main still carries at its recorded blob, merges it once main's required checks pass on it, and deletes every branch under the subscription's prefix.
-// The pull request's commit and its squash end with the subscription's trailer, so the platform starts no build from the merge.
+// Remove opens one pull request per repository deleting every file r's records created that main still carries at its recorded blob, merges it under the subscription's trailer once main's required checks pass on it, and deletes every branch under the subscription's prefix.
 // While a pull request waits on a check, or a repository cannot be read, it returns a handler.Waiting and writes nothing it has not written before, so the unsubscribe stays unsettled and is re-driven.
 func Remove(ctx context.Context, c *ghapi.Client, r Removal) (Result, error) {
 	if !subscriptionID.MatchString(r.Subscription) {
