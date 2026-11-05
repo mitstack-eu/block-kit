@@ -1,6 +1,6 @@
 package dockerhost_test
 
-// A Docker host's newest node report answers its allocatable capacity, the commit its agent last synced from host.agent.syncedCommit, never from the agent's log, and one subscription's own containers' output, with an explicit reason when it cannot.
+// A Docker host's newest node report answers its allocatable capacity, the commit its agent last synced from host.agent.syncedCommit, never from the agent's log, whether an app's newest release command failed and what serves it, and one subscription's own containers' output, with an explicit reason when it cannot.
 
 import (
 	"context"
@@ -198,5 +198,47 @@ func TestSubscriptionLogs_FailsAReadItCannotMake(t *testing.T) {
 
 	if lines != nil || err == nil || !strings.Contains(err.Error(), "the platform answered 503") {
 		t.Errorf("SubscriptionLogs = %q, %v; want no lines and the platform's error", lines, err)
+	}
+}
+
+// releases is a report of a host where shop rolled back from a failed release, fresh's first release failed, and blog's passed.
+const releases = `{"host":{"apps":{` +
+	`"shop":[{"container":"shop-web","subscription":"sub_shop","image":"ghcr.io/acme/shop@sha256:9f00","state":"running"},` +
+	`{"container":"shop-mariadb","subscription":"sub_shopdb","image":"mariadb@sha256:db00","state":"running"}],` +
+	`"fresh":[{"container":"fresh-mariadb","subscription":"sub_freshdb","image":"mariadb@sha256:db00","state":"running"},` +
+	`{"container":"fresh-web","subscription":"sub_fresh","image":"ghcr.io/acme/fresh@sha256:ee00","state":"exited"}],` +
+	`"blog":[{"container":"blog-web","subscription":"sub_blog","image":"ghcr.io/acme/blog@sha256:cd34","state":"running"}]},` +
+	`"releases":{"shop":{"subscription":"sub_shop","image":"ghcr.io/acme/shop@sha256:ab12","exitCode":1},` +
+	`"fresh":{"subscription":"sub_fresh","image":"ghcr.io/acme/fresh@sha256:ee00","exitCode":137},` +
+	`"blog":{"subscription":"sub_blog","image":"ghcr.io/acme/blog@sha256:cd34","exitCode":0}}}}`
+
+func TestReport_AppReleaseReadsWhetherTheNewestReleaseCommandFailedAndWhatServes(t *testing.T) {
+	for _, tc := range []struct {
+		name, app, sub string
+		want           dockerhost.AppRelease
+		serves         bool
+	}{
+		{"an app rolled back from a failed release reads the failed digest and the previous one serving", "shop", "sub_shop",
+			dockerhost.AppRelease{Failed: true, FailedDigest: "sha256:ab12", ServingDigest: "sha256:9f00"}, true},
+		{"a failed first deploy reads no digest serving, its database's and a stopped container's aside", "fresh", "sub_fresh",
+			dockerhost.AppRelease{Failed: true, FailedDigest: "sha256:ee00"}, false},
+		{"an app whose newest release passed reads not failed", "blog", "sub_blog", dockerhost.AppRelease{ServingDigest: "sha256:cd34"}, true},
+		{"an app with no release command, so no release in the report, reads not failed", "new", "sub_new", dockerhost.AppRelease{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := newest(t, received(39, releases)).AppRelease(tc.app, tc.sub)
+
+			if err != nil || got != tc.want || got.Serves() != tc.serves {
+				t.Errorf("AppRelease(%s, %s) = %+v serving %v, %v; want %+v serving %v", tc.app, tc.sub, got, got.Serves(), err, tc.want, tc.serves)
+			}
+		})
+	}
+}
+
+func TestReport_AppReleaseFailsAReleaseItCannotRead(t *testing.T) {
+	_, err := newest(t, received(39, `{"host":{"releases":{"shop":{"exitCode":"one"}}}}`)).AppRelease("shop", "sub_shop")
+
+	if err == nil || !strings.Contains(err.Error(), "release") {
+		t.Errorf("AppRelease = %v; want an error saying the release could not be read", err)
 	}
 }
