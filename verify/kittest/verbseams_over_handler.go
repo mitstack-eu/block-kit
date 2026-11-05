@@ -100,7 +100,7 @@ func fakeBlockServer(manifest []byte, f *FakeResource) (*blockServer, error) {
 	for _, r := range m.Block.Spec.Resources {
 		observers[r.Name] = f
 	}
-	return newBlockServer(handler.Config{Resource: f, Manifest: manifest, Observers: observers})
+	return newBlockServer(sendsNoLogs(handler.Config{Resource: f, Manifest: manifest, Observers: observers}))
 }
 
 func errFromStatus(status int, resp contract.Response) error {

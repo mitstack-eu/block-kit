@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
@@ -75,4 +78,88 @@ func (r Report) SyncedCommit() (string, error) {
 		return "", errors.New("the host's agent has not synced since it took its current release, so the commit it runs cannot be read until its next sync")
 	}
 	return *commit, nil
+}
+
+const (
+	noReportYet  = "The host has sent no node report yet, so this part's output shows once its first report arrives."
+	noOutputYet  = "The host's newest node report carries no container's output, so its hcloud-docker-host release predates it; upgrade the host to the release whose node report carries each app container's output and its last release command's output."
+	notOnHostYet = "The host's newest node report names no container of this part, so it has not started on the host yet."
+)
+
+// reportedOutput is each app's output as the host reports it, every container and release labelled with the subscription whose block wrote it.
+type reportedOutput struct {
+	Host struct {
+		Apps     map[string][]containerOutput `json:"apps"`
+		Releases map[string]releaseOutput     `json:"releases"`
+	} `json:"host"`
+}
+
+// containerOutput's Logs is absent from the report of a host release that sends no container output, and Subscription is empty for a container no block labelled.
+type containerOutput struct {
+	Container    string  `json:"container"`
+	Subscription string  `json:"subscription"`
+	Logs         *string `json:"logs"`
+}
+
+type releaseOutput struct {
+	Subscription string `json:"subscription"`
+	Container    string `json:"container"`
+	Image        string `json:"image"`
+	ExitCode     int    `json:"exitCode"`
+	Output       string `json:"output"`
+}
+
+// SubscriptionLogs reads, from the newest node report of the host hostSubscription names, the last release command's output and the lines of each container labelled with d's subscription, each led by its container's name, and answers a line saying why when there are none, so an empty answer never reads as a part that wrote nothing.
+func SubscriptionLogs(ctx context.Context, api observe.NodeReportsAPI, d contract.Desired, hostSubscription string) ([]string, error) {
+	report, found, err := NewestReport(ctx, api, d, hostSubscription)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return []string{noReportYet}, nil
+	}
+	var out reportedOutput
+	if err := report.Decode(&out); err != nil {
+		return nil, fmt.Errorf("decoding the host's newest node report: %w", err)
+	}
+	owns := func(label string) bool { return label != "" && label == d.SubscriptionID }
+	var lines []string
+	for _, app := range slices.Sorted(maps.Keys(out.Host.Releases)) {
+		if r := out.Host.Releases[app]; owns(r.Subscription) {
+			lines = append(lines, fmt.Sprintf("%s | the release command exited %d on %s", r.Container, r.ExitCode, r.Image))
+			lines = append(lines, led(r.Container, r.Output)...)
+		}
+	}
+	held := len(lines) > 0
+	for _, app := range slices.Sorted(maps.Keys(out.Host.Apps)) {
+		for _, c := range out.Host.Apps[app] {
+			if c.Logs == nil {
+				return []string{noOutputYet}, nil
+			}
+			if !owns(c.Subscription) {
+				continue
+			}
+			held = true
+			if logs := led(c.Container, *c.Logs); len(logs) > 0 {
+				lines = append(lines, logs...)
+			} else {
+				lines = append(lines, c.Container+" | wrote no output yet")
+			}
+		}
+	}
+	if !held {
+		return []string{notOnHostYet}, nil
+	}
+	return lines, nil
+}
+
+// led gives each non-empty line of text led by its container's name.
+func led(container, text string) []string {
+	var lines []string
+	for line := range strings.Lines(text) {
+		if line = strings.TrimRight(line, "\r\n"); line != "" {
+			lines = append(lines, container+" | "+line)
+		}
+	}
+	return lines
 }
