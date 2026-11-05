@@ -335,13 +335,14 @@ three values: the `dockerhost.Report`, a `found` flag that is `false` while
 the host has sent no report, and an error. An empty `hostSubscription` is
 refused through `handler.Refuse` with the class `host-binding`, so the
 platform shows the subscriber why. A platform that does not answer or a
-report that is not JSON returns a plain error. The report gives you three
+report that is not JSON returns a plain error. The report gives you four
 things:
 
 | Field or method | What it gives |
 |---|---|
 | `report.Allocatable` | The host's allocatable capacity, or `nil` when the report gives none |
 | `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
+| `report.AppRelease(app, subscription)` | The app's newest release command as a `dockerhost.AppRelease`, described below |
 | `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as each app's containers |
 
 `SyncedCommit` never reads the agent's log. The report carries only the log's
@@ -366,6 +367,41 @@ if !found {
 commit, err := report.SyncedCommit()
 if err != nil {
 	return contract.Observation{State: contract.Unknown, StatusDetail: err.Error()}, nil
+}
+```
+
+The host runs an app's release command once on each new image, before that
+image replaces the app's container. A command that fails leaves the app on the
+image it ran, and the host keeps the failed run in its report until the next
+release command runs. `report.AppRelease(app, subscription)` reads that run
+from the report's `releases` entry for `app`, and the image the app's running
+container serves from its `apps` entry, matching the container's
+`mitstack.dev/subscription` label to `subscription`.
+
+| Field or method | What it gives |
+|---|---|
+| `Failed` | `true` while the app's newest release command exited non-zero |
+| `FailedDigest` | The digest of the image that command failed on, empty while it passed |
+| `ServingDigest` | The digest of the image the app's running container serves, empty when none runs |
+| `Serves()` | Whether any image of the app serves, `false` after a failed first deploy |
+
+An app with no release command, or one the report names no release of, reads
+as not failed. Your block answers `contract.Present` with a
+`contract.Unhealthy` while `Failed` holds, so the platform shows the failure
+until a release passes:
+
+```go
+release, err := report.AppRelease(app, d.SubscriptionID)
+if err != nil {
+	return contract.Observation{}, err
+}
+if release.Failed {
+	serving := "no digest serves the app"
+	if release.Serves() {
+		serving = "the host serves " + release.ServingDigest
+	}
+	obs.Unhealthy = &contract.Unhealthy{Cause: releaseFailed,
+		Detail: "the release command failed on " + release.FailedDigest + ", and " + serving}
 }
 ```
 

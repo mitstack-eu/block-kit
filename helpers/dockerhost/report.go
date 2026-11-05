@@ -98,6 +98,8 @@ type reportedOutput struct {
 type containerOutput struct {
 	Container    string  `json:"container"`
 	Subscription string  `json:"subscription"`
+	Image        string  `json:"image"`
+	State        string  `json:"state"`
 	Logs         *string `json:"logs"`
 }
 
@@ -151,6 +153,43 @@ func SubscriptionLogs(ctx context.Context, api observe.NodeReportsAPI, d contrac
 		return []string{notOnHostYet}, nil
 	}
 	return lines, nil
+}
+
+// AppRelease is an app's newest release command as its host's newest node report gives it, which the host keeps until the next release command runs.
+type AppRelease struct {
+	Failed        bool
+	FailedDigest  string
+	ServingDigest string
+}
+
+// Serves reports whether any image of the app serves, which a failed first deploy leaves none of.
+func (a AppRelease) Serves() bool { return a.ServingDigest != "" }
+
+// AppRelease reads app's newest release command and the digest its running container labelled with subscription serves, reading an app the report names no release of as not failed.
+func (r Report) AppRelease(app, subscription string) (AppRelease, error) {
+	var out reportedOutput
+	if err := r.Decode(&out); err != nil {
+		return AppRelease{}, fmt.Errorf("decoding app %s's release from the host's newest node report: %w", app, err)
+	}
+	var read AppRelease
+	if ran, ok := out.Host.Releases[app]; ok && ran.ExitCode != 0 {
+		read.Failed, read.FailedDigest = true, digestOf(ran.Image)
+	}
+	for _, c := range out.Host.Apps[app] {
+		if c.Subscription == subscription && c.State == "running" {
+			read.ServingDigest = digestOf(c.Image)
+			break
+		}
+	}
+	return read, nil
+}
+
+// digestOf is the digest an image reference pins, or the whole reference when it pins none.
+func digestOf(image string) string {
+	if _, digest, ok := strings.Cut(image, "@"); ok {
+		return digest
+	}
+	return image
 }
 
 // led gives each non-empty line of text led by its container's name.
