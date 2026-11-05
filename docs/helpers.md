@@ -534,12 +534,19 @@ for the same name is refused rather than moving the first app's visitors.
 6. `apphostname.Observe(ctx, w, rec, subscriptionID)` reads the hostname present,
    with the `appHostname`, `address` and `appUrl` outputs of
    `mitstack.app-hostname`, while it points at the record's addresses.
+   `apphostname.ObserveRecorded(ctx, w, identity, subscriptionID)` does the same
+   for a recorded identity and answers absent with no read when none is
+   recorded. Use it when a hostname your block has not recorded changes nothing
+   its validate reports, so a new app's dry run spends no time on Route 53. A
+   block that refuses a taken hostname on validate keeps its read and calls
+   `Observe`.
 
 `w` is `apphostname.Route53{}` in the operator. Record the resource's identity
 with `apphostname.Identity(rec)`, and read it back on a later call with
 `apphostname.FromIdentity`. Your tests pass an `apphostnametest.Zone` instead
-of Route 53, which applies a batch whole or not at all, as Route 53 does, and
-whose `HeldBy(subscriptionID)` names what a subscription left in the zone.
+of Route 53, which applies a batch whole or not at all, as Route 53 does. Its
+`HeldBy(subscriptionID)` names what a subscription left in the zone, and its
+`Lookups()` counts the reads it answered.
 
 ## Calling the GitHub API
 

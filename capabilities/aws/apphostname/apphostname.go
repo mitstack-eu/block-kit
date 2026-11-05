@@ -183,6 +183,15 @@ func Observe(ctx context.Context, w Writer, rec Record, subscription string) (co
 	}}, nil
 }
 
+// ObserveRecorded observes the record identity names and answers Absent with no read when it names none, for a block whose hostname nothing has recorded has nothing to report.
+func ObserveRecorded(ctx context.Context, w Writer, identity map[string]string, subscription string) (contract.Observation, error) {
+	rec, ok := FromIdentity(identity)
+	if !ok {
+		return contract.Observation{State: contract.Absent}, nil
+	}
+	return Observe(ctx, w, rec, subscription)
+}
+
 func sameAddresses(a, b []string) bool {
 	return slices.Equal(slices.Sorted(slices.Values(a)), slices.Sorted(slices.Values(b)))
 }

@@ -267,6 +267,18 @@ context is done, the call stops before that resource, names it in
 `statusDetail`, and answers `pending:true`, or `absent:false` on an
 unsubscribe.
 
+A validate whose request ends writes one line to the operator's log, because
+its caller reads only that its deadline passed. The line says how long the
+validate ran and the resource it had reached:
+
+```
+validate: subscription sub-1: the request ended after 5.001s at resource "hostname"
+```
+
+The line reads `before any resource` when the request ended sooner. It carries
+no output or identity value, and `logEnded` in `handler/declared.go` scrubs the
+request's secrets from it.
+
 ## Errors, refusals and panics
 
 The handler answers an error your code returns by its type. A
