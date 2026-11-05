@@ -518,7 +518,8 @@ block's manifest decides which.
 
 A block that keeps one operator-wide buffer sets `Config.Logs`. The platform
 reads it with a bodyless signed `GET /logs`, which names no subscription, so
-every subscription sees the same lines.
+every subscription sees the same lines. One operator serves the subscriptions
+of every org, so those lines can name another org's subscriptions.
 
 A block that serves each subscription's own lines lists `logs` under
 `spec.lifecycle.operations` and names a function in `Config.SubscriptionLogs`:
@@ -533,16 +534,26 @@ lifecycle:
 ```go
 cfg.SubscriptionLogs = func(ctx context.Context, d contract.Desired) ([]string, error) {
 	host := d.Bindings["docker-host"]
-	report, found, err := dockerhost.NewestReport(ctx, observe.NodeReportsClient{}, d, host["subscriptionId"])
-	if err != nil || !found {
-		return nil, err
-	}
-	return appLines(report, d.AppID)
+	return dockerhost.SubscriptionLogs(ctx, observe.NodeReportsClient{}, d, host["subscriptionId"])
 }
 ```
 
-Here `appLines` stands for your block's own code that picks the app's lines
-out of the host's report.
+A block that runs an app's containers on a Docker host, a server an
+hcloud-docker-host subscription runs, uses `dockerhost.SubscriptionLogs`, as
+above. It reads the host's newest node report, the signed status the host
+sends mitstack on a timer and on each container change, and keeps the last release command's output and the lines of each container
+whose `mitstack.dev/subscription` label is the request's subscription, each
+led by its container's name:
+
+```text
+app-shop-release | the release command exited 1 on ghcr.io/acme/shop@sha256:ab12
+shop-web | GET / 500
+```
+
+When it has no lines, it answers one line saying why: the host has sent no
+report yet, the host's release sends no container output, or no container of
+the subscription runs on the host yet. A block on another kind of platform
+writes its own function that reads its subscription's lines.
 
 The platform then sends a signed `POST /logs` whose body is a request with the
 operation `logs`. It carries what a hook carries for that subscription: its
