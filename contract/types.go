@@ -134,16 +134,17 @@ type ResourceOutcome struct {
 
 // CallOutcome is the result of one ensure, observe or delete call; the zero value is a call that ran and succeeded with nothing to report.
 type CallOutcome struct {
-	Error        string            `json:"error,omitempty"`
-	State        State             `json:"state,omitempty"`
-	Outputs      map[string]string `json:"outputs,omitempty"`
-	StatusDetail string            `json:"statusDetail,omitempty"`
-	Identity     map[string]string `json:"identity,omitempty"`
-	Type         string            `json:"type,omitempty"`
-	Kept         []Kept            `json:"kept,omitempty"`
-	Unhealthy    *Unhealthy        `json:"unhealthy,omitempty"`
-	Removing     *Removing         `json:"removing,omitempty"`
-	Findings     []Finding         `json:"findings,omitempty"`
+	Error           string            `json:"error,omitempty"`
+	State           State             `json:"state,omitempty"`
+	Outputs         map[string]string `json:"outputs,omitempty"`
+	StatusDetail    string            `json:"statusDetail,omitempty"`
+	Identity        map[string]string `json:"identity,omitempty"`
+	Type            string            `json:"type,omitempty"`
+	Kept            []Kept            `json:"kept,omitempty"`
+	Unhealthy       *Unhealthy        `json:"unhealthy,omitempty"`
+	Removing        *Removing         `json:"removing,omitempty"`
+	WaitingOnPerson *WaitingOnPerson  `json:"waitingOnPerson,omitempty"`
+	Findings        []Finding         `json:"findings,omitempty"`
 }
 
 type FindingKind string
@@ -209,10 +210,11 @@ type Observation struct {
 	StatusDetail  string
 	Identity      map[string]string
 	// Redrive, read beside State Unknown alone, reports from what the provider holds, never a clock, that the work the last Ensure left in flight has finished, so a validate asks the engine to re-drive subscribe.
-	Redrive   bool
-	Unhealthy *Unhealthy
-	Removing  *Removing
-	Findings  []Finding
+	Redrive         bool
+	Unhealthy       *Unhealthy
+	Removing        *Removing
+	WaitingOnPerson *WaitingOnPerson
+	Findings        []Finding
 	// OwnSecrets are the block's own secrets, which the handler returns beside the answer's outputs whatever State reads.
 	OwnSecrets map[string]string
 }
@@ -226,6 +228,11 @@ type Unhealthy struct {
 // Removing, read beside State Present alone, says the resource's removal is under way and moving: WaitsOn says in plain words what it waits on, and is never blank.
 type Removing struct {
 	WaitsOn string `json:"waitsOn"`
+}
+
+// WaitingOnPerson, read beside State Unknown alone, says only a person can move the resource on, so the engine runs no settle budget: Action says in plain words what they do and where, and is never blank.
+type WaitingOnPerson struct {
+	Action string `json:"action"`
 }
 
 type requiredField struct {
