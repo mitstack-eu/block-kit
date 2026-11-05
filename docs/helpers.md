@@ -22,6 +22,7 @@ package has [a page of its own](gitops.md).
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
+| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
@@ -730,6 +731,60 @@ tested. A refused write is not listed by `Writes`. The hook runs once per
 request, in parallel when the client sends requests in parallel, so a hook
 that keeps state guards it.
 
+
+## Keeping a Hetzner Cloud server's public address
+
+A server block whose hostnames resolve to its server's own address keeps that
+address for the life of the subscription. Hetzner frees an address that is
+released, and another customer can then draw it. That customer could obtain
+certificates over HTTP for every hostname still naming it, so a replaced
+server has to come back on the same address.
+
+`capabilities/hetzner/cloud` holds this rule. `cloud.New(token)` takes the
+Cloud API token the block reads from its own connection, and each call finds
+the subscription's addresses by the labels you pass, so those labels must name
+the subscription. No labels fail before any call, because an empty selector
+reaches every address in the project.
+
+| Call | When to call it | What it does |
+|---|---|---|
+| `KeepPrimaryIPs(ctx, labels)` | First on every ensure, also while a server stands | Switches each address created with `auto_delete` on to `auto_delete` off, so an address made by an older release survives its server's next deletion |
+| `PrimaryIPForNewServer(ctx, spec)` | Only when the ensure finds no server and creates one | Returns the address the last server left, switched off first, or creates one with `auto_delete` off when the labels hold none |
+| `DeletePrimaryIPs(ctx, labels)` | In `Delete`, after the servers are deleted | Deletes every address of the labels, and takes one Hetzner already removed as deleted |
+
+Here is what an ensure and a delete look like, as
+[hcloud-docker-host](https://github.com/mitstack-eu/hcloud-docker-host) calls
+them:
+
+```go
+ips := cloud.New(d.Secrets["hetzner"]["api_token"])
+if err := ips.KeepPrimaryIPs(ctx, labels); err != nil {
+	return nil, err
+}
+// With no server standing:
+ip, err := ips.PrimaryIPForNewServer(ctx, cloud.PrimaryIPSpec{Name: name, Location: location, Labels: labels})
+
+// In Delete, once the servers are gone:
+err = ips.DeletePrimaryIPs(ctx, labels)
+```
+
+Pass `ip.ID` as the server's `public_net.ipv4` when you create it.
+
+`PrimaryIPForNewServer` deletes nothing. An address still assigned to a server
+answers an error naming both, which the engine retries, since Hetzner frees an
+address as its server is deleted. An address in another location answers the
+refusal `primary-ip-elsewhere`, because Hetzner assigns an address only in its
+own location and moving it would mean releasing it. Hetzner also refuses to
+delete an assigned address with `must_be_unassigned`, so a `DeletePrimaryIPs`
+that runs before its server is gone fails naming the address.
+
+Hetzner prices a primary IPv4 by the hour and names no exception for one
+without a server, so `Delete` must call `DeletePrimaryIPs`. A block that serves through a load balancer, whose
+address no server holds, has no need for this rule.
+
+Hetzner's API reference at
+[docs.hetzner.cloud](https://docs.hetzner.cloud/reference/cloud#primary-ips)
+describes each call.
 
 ## Adopting a Hetzner dedicated server
 
