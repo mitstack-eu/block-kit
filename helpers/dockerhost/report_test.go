@@ -1,6 +1,6 @@
 package dockerhost_test
 
-// A Docker host's newest node report answers its allocatable capacity and the commit its agent last synced from host.agent.syncedCommit, never from the agent's log, and an explicit reason naming the host's release when it cannot.
+// A Docker host's newest node report answers its allocatable capacity, the commit its agent last synced from host.agent.syncedCommit, never from the agent's log, and one subscription's own containers' output, with an explicit reason when it cannot.
 
 import (
 	"context"
@@ -110,5 +110,92 @@ func TestNewestReport_FailsAReadItCannotMake(t *testing.T) {
 				t.Errorf("NewestReport error = %v, want an error refused as %q", err, tc.class)
 			}
 		})
+	}
+}
+
+// twoApps is a report of a host running shop, with its database, and blog, each container labelled with its subscription.
+const twoApps = `{"host":{"apps":{` +
+	`"shop":[{"container":"shop-web","subscription":"sub_shop","logs":"PHP Fatal error: Uncaught PDOException\nGET / 500\n"},` +
+	`{"container":"shop-mariadb","subscription":"sub_shopdb","logs":"mariadbd: ready for connections.\n"}],` +
+	`"blog":[{"container":"blog-web","subscription":"sub_blog","logs":"blog: listening on :8080\n"}]},` +
+	`"releases":{"shop":{"subscription":"sub_shop","container":"app-shop-release","image":"ghcr.io/acme/shop@sha256:ab12","exitCode":1,` +
+	`"output":"Migrating: 2026_11_05_create_orders\nSQLSTATE[42S01]: Table 'orders' already exists\n"},` +
+	`"blog":{"subscription":"sub_blog","container":"app-blog-release","image":"ghcr.io/acme/blog@sha256:cd34","exitCode":0,"output":"blog migrated\n"}}}}`
+
+func subscriptionLogs(t *testing.T, sub string, reports ...observe.NodeReport) []string {
+	t.Helper()
+	d := contract.Desired{Identity: contract.Identity{SubscriptionID: sub}}
+	lines, err := dockerhost.SubscriptionLogs(context.Background(), &hostReports{reports: reports}, d, hostSub)
+	if err != nil {
+		t.Fatalf("SubscriptionLogs(%s) = %v, want its lines", sub, err)
+	}
+	return lines
+}
+
+func TestSubscriptionLogs_AnswersOnlyTheSubscriptionsOwnContainersFromTheNewestReport(t *testing.T) {
+	for _, tc := range []struct {
+		name, sub string
+		want      []string
+	}{
+		{"an app whose release command failed reads that command's output first, then its container's lines", "sub_shop", []string{
+			"app-shop-release | the release command exited 1 on ghcr.io/acme/shop@sha256:ab12",
+			"app-shop-release | Migrating: 2026_11_05_create_orders",
+			"app-shop-release | SQLSTATE[42S01]: Table 'orders' already exists",
+			"shop-web | PHP Fatal error: Uncaught PDOException",
+			"shop-web | GET / 500",
+		}},
+		{"the app's database on the same host reads its own container alone", "sub_shopdb", []string{
+			"shop-mariadb | mariadbd: ready for connections.",
+		}},
+		{"another app on the same host reads none of shop's lines", "sub_blog", []string{
+			"app-blog-release | the release command exited 0 on ghcr.io/acme/blog@sha256:cd34",
+			"app-blog-release | blog migrated",
+			"blog-web | blog: listening on :8080",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lines := subscriptionLogs(t, tc.sub, received(39, twoApps), received(38, `{"host":{"apps":{"shop":[{"container":"shop-web","subscription":"sub_shop","logs":"an older report's line\n"}]}}}`))
+
+			if strings.Join(lines, "\n") != strings.Join(tc.want, "\n") {
+				t.Errorf("SubscriptionLogs(%s) = %q; want %q", tc.sub, lines, tc.want)
+			}
+		})
+	}
+}
+
+func TestSubscriptionLogs_SaysWhyItHasNoLinesRatherThanAnsweringNone(t *testing.T) {
+	for _, tc := range []struct {
+		name, sub string
+		reports   []observe.NodeReport
+		want      []string
+	}{
+		{"a host whose server was replaced and has sent no report yet", "sub_shop", nil,
+			[]string{"The host has sent no node report yet, so this part's output shows once its first report arrives."}},
+		{"a host on a release whose report carries no container output", "sub_shop",
+			[]observe.NodeReport{received(39, `{"host":{"apps":{"shop":[{"container":"shop-web","state":"running"}]}}}`)},
+			[]string{"The host's newest node report carries no container's output, so its hcloud-docker-host release predates it; upgrade the host to the release whose node report carries each app container's output and its last release command's output."}},
+		{"a subscription none of whose containers the host runs yet", "sub_new", []observe.NodeReport{received(39, twoApps)},
+			[]string{"The host's newest node report names no container of this part, so it has not started on the host yet."}},
+		{"a container that has written nothing", "sub_shop",
+			[]observe.NodeReport{received(39, `{"host":{"apps":{"shop":[{"container":"shop-web","subscription":"sub_shop","logs":""}]}}}`)},
+			[]string{"shop-web | wrote no output yet"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lines := subscriptionLogs(t, tc.sub, tc.reports...)
+
+			if strings.Join(lines, "\n") != strings.Join(tc.want, "\n") {
+				t.Errorf("SubscriptionLogs(%s) = %q; want %q", tc.sub, lines, tc.want)
+			}
+		})
+	}
+}
+
+func TestSubscriptionLogs_FailsAReadItCannotMake(t *testing.T) {
+	d := contract.Desired{Identity: contract.Identity{SubscriptionID: "sub_shop"}}
+
+	lines, err := dockerhost.SubscriptionLogs(context.Background(), &hostReports{err: errors.New("the platform answered 503")}, d, hostSub)
+
+	if lines != nil || err == nil || !strings.Contains(err.Error(), "the platform answered 503") {
+		t.Errorf("SubscriptionLogs = %q, %v; want no lines and the platform's error", lines, err)
 	}
 }
