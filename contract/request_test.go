@@ -318,7 +318,6 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 	}
 }
 
-// requestGoldenBehaviours each hold for every valid request golden, a golden naming no resource.
 var requestGoldenBehaviours = []struct {
 	behaviour string
 	check     func(t *testing.T, req contract.Request)

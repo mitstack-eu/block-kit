@@ -209,7 +209,6 @@ func (r *resource) Delete(ctx context.Context, d contract.Desired) (map[string]s
 	return r.FakeResource.Delete(ctx, d)
 }
 
-// blockingResource holds Ensure and Observe open until release closes; entered is buffered so a wrongly duplicated call never blocks on the signal.
 type blockingResource struct {
 	mu                sync.Mutex
 	ensures, observes int

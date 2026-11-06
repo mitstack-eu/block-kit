@@ -125,7 +125,6 @@ func TestCheckManifestTypes_RefusesExactlyTheTypesTheSnapshotLacksNamingTheEntry
 	}
 }
 
-// bindingSpec requires a repository by its type, a host listing both host types and a role by name, and declares a container listing both container types beside aws-app-infra's own resources.
 func bindingSpec(t *testing.T) contract.ManifestSpec {
 	t.Helper()
 	return parseBeta(t, editGolden(t, awsAppInfraGolden,
@@ -191,7 +190,6 @@ func TestCheckBinding_AcceptsOnlyAnOutputEveryListedTypeDeclares(t *testing.T) {
 	}
 }
 
-// plainRequires is the plain golden's requires line, with a host at spec.requires[0] and a database at spec.requires[1].
 const plainRequires = "  requires: [aws.ec2-instance, aws.ec2-postgres-database]\n"
 
 func TestParseManifest_V1BetaTellsRequirementsOfOneTypeApartByReference(t *testing.T) {

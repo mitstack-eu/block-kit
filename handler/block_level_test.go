@@ -4,7 +4,6 @@ package handler_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
@@ -789,18 +788,16 @@ func TestBlockLevel_ObservesAreHandedTheTimeOfTheVerbTheySettleAndWhetherItIsAnU
 
 func TestBlockLevel_AValidateNamingAResourceHandsItsObserverTheUnsubscribingMarkerTheRequestCarries(t *testing.T) {
 	for _, marked := range []bool{true, false} {
-		t.Run(fmt.Sprint("resourceUnsubscribing ", marked), func(t *testing.T) {
-			cloud := standingCloud()
-			obs := blockObservers(cloud)
-			fields := map[string]any{"resource": "b", "resourceType": "aws.iam-role", "resourceIdentity": map[string]any{"roleName": "b-role"}, "resourceUnsubscribing": marked}
+		cloud := standingCloud()
+		obs := blockObservers(cloud)
+		fields := map[string]any{"resource": "b", "resourceType": "aws.iam-role", "resourceIdentity": map[string]any{"roleName": "b-role"}, "resourceUnsubscribing": marked}
 
-			status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: asObservers(obs), op: "validate", fields: fields})
+		status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: asObservers(obs), op: "validate", fields: fields})
 
-			wantOK(t, status, resp)
-			if refs := obs["b"].calls(); len(refs) != 1 || refs[0].Unsubscribing != marked {
-				t.Errorf("b observer handed %+v, want one ref with Unsubscribing %v", refs, marked)
-			}
-		})
+		wantOK(t, status, resp)
+		if refs := obs["b"].calls(); len(refs) != 1 || refs[0].Unsubscribing != marked {
+			t.Errorf("a validate with resourceUnsubscribing %v handed b's observer %+v, want one ref with Unsubscribing %v", marked, refs, marked)
+		}
 	}
 }
 
@@ -1073,7 +1070,6 @@ func TestBlockLevel_TheOwnSecretsAnEnsureReturnsNeverReachTheRequestsDesired(t *
 	}
 }
 
-// cancellingObserver cancels the request context once it fails or reports settledOn, so the verb sees a done context only after this resource answered.
 type cancellingObserver struct {
 	handler.Observer
 	settledOn contract.State

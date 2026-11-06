@@ -69,7 +69,6 @@ type servedResult struct {
 	escaped any
 }
 
-// serveRecovering touches no *testing.T, so it is safe to call from a goroutine.
 func serveRecovering(h http.Handler, req *http.Request) (res servedResult) {
 	w := httptest.NewRecorder()
 	defer func() {
