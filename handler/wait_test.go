@@ -23,7 +23,6 @@ func (waitingBlock) Delete(context.Context, contract.Desired) (map[string]string
 	return nil, handler.Wait("%s", waitDetail)
 }
 
-// waitingReporter waits from EnsureResources, which the handler calls in place of Ensure.
 type waitingReporter struct{ waitingBlock }
 
 func (waitingReporter) Ensure(context.Context, contract.Desired) error { return nil }

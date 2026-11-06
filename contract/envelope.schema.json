@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
   "title": "mitstack lifecycle webhook envelope",
   "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -33,6 +33,10 @@
       "type": "object",
       "description": "The identity the ensure of the resource named under resource stored, the values that address it where it lives, keyed by name. Present only with a non-empty resource.",
       "additionalProperties": {"type": "string"}
+    },
+    "resourceUnsubscribing": {
+      "type": "boolean",
+      "description": "True when the validate naming one resource under resource probes it during a teardown, so the resource's observer answers as it does during an unsubscribe. Omitted, the probe is not a teardown's."
     },
     "resourceType": {
       "type": "string",

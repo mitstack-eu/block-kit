@@ -60,6 +60,8 @@ type Request struct {
 	PriorOutputs     map[string]string              `json:"priorOutputs,omitempty"`
 	Resource         string                         `json:"resource,omitempty"`
 	ResourceIdentity map[string]string              `json:"resourceIdentity,omitempty"`
+	// ResourceUnsubscribing marks a request naming one resource as a teardown's probe, so the resource's observer answers as it does during an unsubscribe.
+	ResourceUnsubscribing bool `json:"resourceUnsubscribing,omitempty"`
 
 	ResourceType      string                      `json:"resourceType,omitempty"`
 	RecordedResources map[string]RecordedResource `json:"recordedResources,omitempty"`
@@ -191,9 +193,10 @@ type Desired struct {
 	Bindings     map[string]map[string]string
 	BindingsAll  map[string][]map[string]string
 
-	Resource         string
-	ResourceIdentity map[string]string
-	ResourceType     string
+	Resource              string
+	ResourceIdentity      map[string]string
+	ResourceType          string
+	ResourceUnsubscribing bool
 
 	RecordedResources map[string]RecordedResource
 	RequirementTypes  map[string]string
@@ -350,7 +353,6 @@ func wrapDecodeError(kind string, err error) error {
 	return fmt.Errorf("contract: invalid %s JSON: %w", kind, err)
 }
 
-// Identity returns the subset of r that names its subscription and where its resource lives.
 func (r Request) Identity() Identity {
 	return Identity{
 		SubscriptionID: r.SubscriptionID,
@@ -364,24 +366,24 @@ func (r Request) Identity() Identity {
 	}
 }
 
-// Desired returns the subset of r describing what an operator should converge its resource to.
 func (r Request) Desired() Desired {
 	return Desired{
-		Identity:          r.Identity(),
-		Params:            r.Params,
-		SecretInputs:      r.SecretInputs,
-		AppSecrets:        r.AppSecrets,
-		Secrets:           r.Secrets,
-		Bindings:          r.Bindings,
-		BindingsAll:       r.BindingsAll,
-		Resource:          r.Resource,
-		ResourceIdentity:  r.ResourceIdentity,
-		ResourceType:      r.ResourceType,
-		RecordedResources: r.RecordedResources,
-		RequirementTypes:  r.RequirementTypes,
-		VerbAt:            r.verbAt(),
-		NeverActive:       r.NeverActive,
-		OwnSecrets:        r.OwnSecrets,
+		Identity:              r.Identity(),
+		Params:                r.Params,
+		SecretInputs:          r.SecretInputs,
+		AppSecrets:            r.AppSecrets,
+		Secrets:               r.Secrets,
+		Bindings:              r.Bindings,
+		BindingsAll:           r.BindingsAll,
+		Resource:              r.Resource,
+		ResourceIdentity:      r.ResourceIdentity,
+		ResourceType:          r.ResourceType,
+		ResourceUnsubscribing: r.ResourceUnsubscribing,
+		RecordedResources:     r.RecordedResources,
+		RequirementTypes:      r.RequirementTypes,
+		VerbAt:                r.verbAt(),
+		NeverActive:           r.NeverActive,
+		OwnSecrets:            r.OwnSecrets,
 	}
 }
 

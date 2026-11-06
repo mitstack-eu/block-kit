@@ -16,7 +16,6 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
-// recordedEvent is decoded independently of the events package so the test proves the wire shape rather than importing its type.
 type recordedEvent struct {
 	SubscriptionID string `json:"subscriptionId"`
 	Token          string `json:"token"`

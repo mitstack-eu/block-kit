@@ -30,6 +30,8 @@ type Pull struct {
 	MergedRevision      string
 }
 
+type review struct{ user, state string }
+
 type commit struct {
 	tree   map[string]string
 	parent string
@@ -48,14 +50,18 @@ type Fake struct {
 	pulls     []*Pull
 	required  []string
 	ruled     []string
-	checks    map[string]string
-	running   map[string]string
-	selection string
-	deleted   bool
-	answers   map[string]int
-	noStatus  bool
-	requests  []Request
-	before    func(method, path string) error
+	approvals int
+	// ruledApprovals is the approving reviews a ruleset requires, which the branch's protection does not list.
+	ruledApprovals int
+	reviews        map[int][]review
+	checks         map[string]string
+	running        map[string]string
+	selection      string
+	deleted        bool
+	answers        map[string]int
+	noStatus       bool
+	requests       []Request
+	before         func(method, path string) error
 }
 
 func New(t testing.TB, repo string) *Fake {
@@ -173,6 +179,30 @@ func (f *Fake) RequireCheck(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.required = append(f.required, name)
+}
+
+// RequireReviews makes main's protection require n approving reviews, which holds back the merge of a pull request until they stand.
+func (f *Fake) RequireReviews(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.approvals = n
+}
+
+// RequireReviewsByRuleset makes a ruleset require n approving reviews on main, which the branch's protection does not list.
+func (f *Fake) RequireReviewsByRuleset(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ruledApprovals = n
+}
+
+// Review records user's review of pull request number in state, such as APPROVED, CHANGES_REQUESTED or COMMENTED.
+func (f *Fake) Review(number int, user, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reviews == nil {
+		f.reviews = map[int][]review{}
+	}
+	f.reviews[number] = append(f.reviews[number], review{user, state})
 }
 
 // RequireCheckByRuleset makes a ruleset require the check on main, which the branch's protection does not list.
@@ -320,6 +350,10 @@ func (f *Fake) route(method, rest string, r *http.Request, body map[string]any) 
 		return f.mergePull(strings.TrimSuffix(strings.TrimPrefix(rest, "/pulls/"), "/merge"), body)
 	case method == http.MethodGet && rest == "/branches/main":
 		return f.readBranch()
+	case method == http.MethodGet && rest == "/branches/main/protection":
+		return f.readProtection()
+	case method == http.MethodGet && strings.HasPrefix(rest, "/pulls/") && strings.HasSuffix(rest, "/reviews"):
+		return f.readReviews(strings.TrimSuffix(strings.TrimPrefix(rest, "/pulls/"), "/reviews"))
 	case method == http.MethodGet && rest == "/rules/branches/main":
 		return f.readRules()
 	case method == http.MethodGet && strings.HasPrefix(rest, "/commits/") && strings.HasSuffix(rest, "/check-runs"):
@@ -502,6 +536,9 @@ func (f *Fake) mergePull(number string, body map[string]any) (int, any) {
 			return http.StatusMethodNotAllowed, map[string]any{"message": fmt.Sprintf("Required status check %q is expected.", check)}
 		}
 	}
+	if !f.reviewed(n) {
+		return http.StatusMethodNotAllowed, map[string]any{"message": fmt.Sprintf("At least %d approving review is required by reviewers with write access.", f.approvals)}
+	}
 	tree, ok := f.squash(head)
 	if !ok {
 		return http.StatusMethodNotAllowed, map[string]any{"message": "Pull Request is not mergeable"}
@@ -544,10 +581,49 @@ func (f *Fake) readBranch() (int, any) {
 	return http.StatusOK, map[string]any{"name": "main", "protected": len(f.required) > 0, "protection": protection}
 }
 
+func (f *Fake) readProtection() (int, any) {
+	if f.approvals == 0 {
+		return http.StatusNotFound, map[string]any{"message": "Branch not protected"}
+	}
+	return http.StatusOK, map[string]any{"required_pull_request_reviews": map[string]any{"required_approving_review_count": f.approvals}}
+}
+
+func (f *Fake) readReviews(number string) (int, any) {
+	n, _ := strconv.Atoi(number)
+	out := []any{}
+	for _, r := range f.reviews[n] {
+		out = append(out, map[string]any{"state": r.state, "user": map[string]any{"login": r.user}})
+	}
+	return http.StatusOK, out
+}
+
+// reviewed reports whether pull request n holds the approvals main requires and no reviewer's latest review asks for changes.
+func (f *Fake) reviewed(n int) bool {
+	latest := map[string]string{}
+	for _, r := range f.reviews[n] {
+		if r.state != "COMMENTED" {
+			latest[r.user] = r.state
+		}
+	}
+	approved := 0
+	for _, state := range latest {
+		if state == "CHANGES_REQUESTED" {
+			return false
+		}
+		if state == "APPROVED" {
+			approved++
+		}
+	}
+	return approved >= max(f.approvals, f.ruledApprovals)
+}
+
 func (f *Fake) readRules() (int, any) {
 	rules := []any{}
 	for _, c := range f.ruled {
 		rules = append(rules, map[string]any{"type": "required_status_checks", "ruleset_id": 1, "parameters": map[string]any{"required_status_checks": []any{map[string]any{"context": c}}}})
+	}
+	if f.ruledApprovals > 0 {
+		rules = append(rules, map[string]any{"type": "pull_request", "ruleset_id": 2, "parameters": map[string]any{"required_approving_review_count": f.ruledApprovals}})
 	}
 	return http.StatusOK, rules
 }

@@ -10,7 +10,6 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
-// provisioned replays the bookkeeping a region-scoped block keeps: each Ensure adds the region its request names and each Delete removes it.
 func provisioned(r *resource) []string {
 	regions := map[string]bool{}
 	for _, d := range r.ensured {

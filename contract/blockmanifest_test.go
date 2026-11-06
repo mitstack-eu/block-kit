@@ -20,7 +20,6 @@ type wantRequirement struct {
 	reference string
 }
 
-// wantResource's typ is the one listed type id, empty for an entry listing several.
 type wantResource struct {
 	name  string
 	typ   string
@@ -143,7 +142,6 @@ func TestParseManifest_ReadsTheWorkedV1BetaManifests(t *testing.T) {
 	}
 }
 
-// typedManifest lists a requirement and a resource in every form an entry takes: a type id alone, a list of types with a name, one type with a name, and a block list of types.
 const typedManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
@@ -203,7 +201,6 @@ func TestParseManifest_V1BetaReadsTheShortRequiresListOfTypeIDs(t *testing.T) {
 	requireRequirements(t, b.Spec.Requires, []wantRequirement{{types: oneType("github.repository"), reference: "github.repository"}})
 }
 
-// retiredKeyManifest requires a named host at spec.requires[1] and declares a named container at spec.resources[1], so a key added to either is refused naming its path under that index.
 const retiredKeyManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
@@ -479,7 +476,6 @@ func TestManifestTypes_EncodeEachOptionalFlagUnderItsKeyOnlyWhenSet(t *testing.T
 	}
 }
 
-// v1alphaManifest carries a padded quoted id and version, a folded release note, and outputs and reads in both list forms.
 const v1alphaManifest = `apiVersion: mitstack/v1alpha
 kind: Block
 metadata:

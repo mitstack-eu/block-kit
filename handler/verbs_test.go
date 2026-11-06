@@ -13,7 +13,6 @@ import (
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
-// guardSecret is a request secret every row sends, so the scrub and the output refusal are part of what the bytes pin.
 const guardSecret = "guard-secret-token-value"
 
 func guardSecrets() map[string]any {
@@ -53,7 +52,6 @@ func TestServe_AnswersAWrappedRefusalAndTheOutputGateWithExactBytes(t *testing.T
 	}
 }
 
-// A Handler that stashed one verb's secrets in its own state would hand them to a later, unrelated request here.
 func TestServe_OneVerbsSecretsNeverReachALaterRequest(t *testing.T) {
 	r := fake(&kittest.FakeResource{Count: 1})
 	x := newHarness(t, r)

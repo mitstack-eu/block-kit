@@ -262,6 +262,11 @@ the request to the observer `Config.TypeObservers` holds for its type. A name
 neither the manifest nor a type observer covers answers 400, and so does a
 `subscribe`, `upgrade` or `unsubscribe` naming one resource.
 
+The engine sets `resourceUnsubscribing` when it probes a dropped resource
+during a teardown. The handler then hands the resource's observer a
+`ResourceRef` with `Unsubscribing` set, so the observer answers as it does
+during an unsubscribe.
+
 The handler checks the request's context before each resource. Once the
 context is done, the call stops before that resource, names it in
 `statusDetail`, and answers `pending:true`, or `absent:false` on an

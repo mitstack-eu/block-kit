@@ -9,7 +9,6 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-// slug40 and slug41 sit one inside and one past the 40-character limit.
 var (
 	slug40 = "a" + strings.Repeat("b", 38) + "c"
 	slug41 = "a" + strings.Repeat("b", 39) + "c"

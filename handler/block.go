@@ -27,7 +27,9 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 				"resource %q: a request naming one resource is served for validate alone, since the block creates and deletes its resources through its block-level handler", r.d.Resource), r.secrets)
 		}
 		nr := r.resources[0]
-		r.refs[nr.name] = r.refFor(nr, r.d.ResourceType, r.d.ResourceIdentity)
+		ref := r.refFor(nr, r.d.ResourceType, r.d.ResourceIdentity)
+		ref.Unsubscribing = r.d.ResourceUnsubscribing
+		r.refs[nr.name] = ref
 		return r.withOwnSecrets(r.validateEach(ctx))
 	}
 
