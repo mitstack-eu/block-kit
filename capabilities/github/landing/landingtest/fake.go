@@ -51,15 +51,17 @@ type Fake struct {
 	required  []string
 	ruled     []string
 	approvals int
-	reviews   map[int][]review
-	checks    map[string]string
-	running   map[string]string
-	selection string
-	deleted   bool
-	answers   map[string]int
-	noStatus  bool
-	requests  []Request
-	before    func(method, path string) error
+	// ruledApprovals is the approving reviews a ruleset requires, which the branch's protection does not list.
+	ruledApprovals int
+	reviews        map[int][]review
+	checks         map[string]string
+	running        map[string]string
+	selection      string
+	deleted        bool
+	answers        map[string]int
+	noStatus       bool
+	requests       []Request
+	before         func(method, path string) error
 }
 
 func New(t testing.TB, repo string) *Fake {
@@ -184,6 +186,13 @@ func (f *Fake) RequireReviews(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.approvals = n
+}
+
+// RequireReviewsByRuleset makes a ruleset require n approving reviews on main, which the branch's protection does not list.
+func (f *Fake) RequireReviewsByRuleset(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ruledApprovals = n
 }
 
 // Review records user's review of pull request number in state, such as APPROVED, CHANGES_REQUESTED or COMMENTED.
@@ -605,13 +614,16 @@ func (f *Fake) reviewed(n int) bool {
 			approved++
 		}
 	}
-	return approved >= f.approvals
+	return approved >= max(f.approvals, f.ruledApprovals)
 }
 
 func (f *Fake) readRules() (int, any) {
 	rules := []any{}
 	for _, c := range f.ruled {
 		rules = append(rules, map[string]any{"type": "required_status_checks", "ruleset_id": 1, "parameters": map[string]any{"required_status_checks": []any{map[string]any{"context": c}}}})
+	}
+	if f.ruledApprovals > 0 {
+		rules = append(rules, map[string]any{"type": "pull_request", "ruleset_id": 2, "parameters": map[string]any{"required_approving_review_count": f.ruledApprovals}})
 	}
 	return http.StatusOK, rules
 }
