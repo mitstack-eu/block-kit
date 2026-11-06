@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/handler"
 )
 
 const (
@@ -54,6 +55,7 @@ type call struct {
 type fakeGitHub struct {
 	mu       sync.Mutex
 	routes   map[string][]reply
+	headers  map[string]http.Header
 	fallback *reply
 	calls    []call
 }
@@ -77,6 +79,9 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if f.fallback != nil {
 		rep = *f.fallback
+	}
+	for k, vs := range f.headers[key] {
+		w.Header()[k] = vs
 	}
 	if rep.status != 0 {
 		w.WriteHeader(rep.status)
@@ -135,22 +140,25 @@ var errAny = errors.New("any error")
 
 // apiCase drives one Client call against scripted routes and pins its result, its error and every request it made, in order.
 type apiCase struct {
-	name     string
-	routes   map[string][]reply
-	call     func(c *ghapi.Client) (any, error)
-	want     any
-	err      error
-	notErr   error
-	errHas   string
-	requests []string
-	check    func(t *testing.T, f *fakeGitHub)
+	name    string
+	routes  map[string][]reply
+	headers map[string]http.Header
+	call    func(c *ghapi.Client) (any, error)
+	want    any
+	err     error
+	notErr  error
+	errHas  string
+	// refused wants a refusal of ghapi.ClassGitHubRefused, and retryable wants an error that is no refusal.
+	refused, retryable bool
+	requests           []string
+	check              func(t *testing.T, f *fakeGitHub)
 }
 
 func runAPICases(t *testing.T, cases []apiCase) {
 	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &fakeGitHub{routes: tc.routes}
+			f := &fakeGitHub{routes: tc.routes, headers: tc.headers}
 			c := serve(t, f)
 
 			got, err := tc.call(c)
@@ -167,6 +175,13 @@ func runAPICases(t *testing.T, cases []apiCase) {
 			}
 			if err != nil && (strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), tc.errHas)) {
 				t.Errorf("error = %q, want it to say %q and never carry the token", err, tc.errHas)
+			}
+			var refusal *handler.Refused
+			switch isRefusal := errors.As(err, &refusal); {
+			case tc.refused && (!isRefusal || refusal.Class != ghapi.ClassGitHubRefused):
+				t.Errorf("error = %v, want a refusal of class %q", err, ghapi.ClassGitHubRefused)
+			case tc.retryable && isRefusal:
+				t.Errorf("error = %v, want a retryable error rather than a refusal", err)
 			}
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("got %#v, want %#v", got, tc.want)
