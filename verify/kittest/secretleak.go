@@ -131,7 +131,9 @@ func driveLeak(f SecretLeak) (run leakRun, ok bool) {
 			continue
 		}
 		run.sent = append(run.sent, string(body))
-		run.obos = append(run.obos, guarded{label: fmt.Sprintf("the OBO token minted for request %q", lr.Name), value: obo})
+		if obo != "" {
+			run.obos = append(run.obos, guarded{label: fmt.Sprintf("the OBO token minted for request %q", lr.Name), value: obo})
+		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, signer.hookRequest("/hook", body))
 		run.answers = append(run.answers, hookAnswer{name: lr.Name, fails: lr.Fails, status: rec.Code, body: rec.Body.String()})
@@ -151,17 +153,22 @@ func envelope(fields map[string]any, signer *Signer, now time.Time) ([]byte, str
 		value, _ := fields[field].(string)
 		return value
 	}
-	obo, err := webhook.MintOBO(signer.Private, signer.Kid, webhook.OBOClaims{Audience: claim("blockId"),
-		OrgID: claim("orgId"), AppID: claim("appId"), SubscriptionID: claim("subscriptionId")}, 5*time.Minute, now)
-	if err != nil {
-		return nil, "", err
+	// A verify-connection carries no subscription, so it carries no OBO token either.
+	var obo string
+	if fields["operation"] != contract.OperationVerifyConnection {
+		var err error
+		obo, err = webhook.MintOBO(signer.Private, signer.Kid, webhook.OBOClaims{Audience: claim("blockId"),
+			OrgID: claim("orgId"), AppID: claim("appId"), SubscriptionID: claim("subscriptionId")}, 5*time.Minute, now)
+		if err != nil {
+			return nil, "", err
+		}
+		body["obo"] = obo
 	}
 	body["nonce"] = freshToken()
 	body["createdAt"] = now.UTC().Format(time.RFC3339Nano)
 	if _, set := body["idempotencyKey"]; !set {
 		body["idempotencyKey"] = freshToken()
 	}
-	body["obo"] = obo
 	raw, err := json.Marshal(body)
 	return raw, obo, err
 }

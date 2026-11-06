@@ -31,6 +31,12 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 		return nil, fmt.Errorf("type is %q, but the type of a %s manifest must be %q or %q",
 			b.Type, ManifestAPIVersion, ManifestTypeBlock, ManifestTypeCapability)
 	}
+	if b.Type == ManifestTypeBlock && len(b.Spec.Resources) == 0 {
+		return nil, fmt.Errorf("spec.resources is required and must not be empty")
+	}
+	if err := checkMarkShapes(b.Spec.Presentation); err != nil {
+		return nil, err
+	}
 	markedMany := make(map[string]bool, len(b.Spec.Resources))
 	for i, r := range b.Spec.Resources {
 		if strings.Contains(r.Name, "/") {
@@ -178,4 +184,23 @@ func typeID(n *yamlNode, path string) (string, error) {
 		return "", fmt.Errorf("%s: %q is not a type id, which is <capability>.<name> in lowercase kebab case", path, n.value)
 	}
 	return n.value, nil
+}
+
+func checkMarkShapes(p *ManifestPresentation) error {
+	if p == nil {
+		return nil
+	}
+	for i, shape := range p.Mark {
+		held := 0
+		for _, set := range []bool{shape.Path != nil, shape.Circle != nil, shape.Rect != nil, shape.Line != nil,
+			shape.Polyline != nil, shape.Polygon != nil, shape.Ellipse != nil} {
+			if set {
+				held++
+			}
+		}
+		if held != 1 {
+			return fmt.Errorf("spec.presentation.mark[%d] must hold exactly one shape, a path, circle, rect, line, polyline, polygon or ellipse, and holds %d", i, held)
+		}
+	}
+	return nil
 }

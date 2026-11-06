@@ -14,7 +14,7 @@ passed every check, which the catalog shows as a verified badge.
 
 ## What blockverify judges
 
-blockverify runs seven suites over one block's directory, in this order. A
+blockverify runs eight suites over one block's directory, in this order. A
 suite that fails turns the verdict to `fail`, and a partial pass is never
 signed. A suite that does not apply to your block reports `skipped` with the
 reason.
@@ -23,7 +23,8 @@ reason.
 |---|---|
 | `trust-plumbing` | `manifest.yaml` exists and declares `contract: kit/v1`, your `go.mod` requires block-kit at or above the floor and no release of operator-kit, and a non-test file imports the kit's `handler`. No non-test file declares a function the kit owns, and a block that calls the GitHub API meets the rule in the next section |
 | `contract` | A non-test file imports `handler`, which serves the wire contract. The kit's own tests check the handler against its goldens, the sample request and answer bodies in `contract/goldens` and `contract/response-goldens`, so the suite proves your block answers through that tested code and reports it as the contract verdict |
-| `secret-safety` | A test whose name starts `TestNoSecretLeak` exists and passes. When a non-test file names the route `"/logs"`, a test named `TestNoSecretLeak_LogsEndpoint` must also exist and pass |
+| `secret-safety` | A test whose name starts `TestNoSecretLeak` exists and passes. When a non-test file names the route `"/logs"`, a test named `TestNoSecretLeak_LogsEndpoint` must also exist and pass. When the manifest lists `verify-connection`, a test named `TestNoSecretLeak_VerifyConnection` must exist, send a `verify-connection` request and pass, so the entered credential reaches no answer, log line or `/logs` |
+| `guarded-client` | Runs only for a manifest that lists `verify-connection`, and reports `skipped` for every other block. No non-test file builds an HTTP client, transport or dialer of its own or uses `http.DefaultClient`, `http.Get`, `net.Dial` and the like, one imports `helpers/guardedhttp`, and `TestGuardedClient`, which calls `kittest.AssertGuardedClient` on the client the operator builds, exists and passes |
 | `teardown` | A test whose name starts `TestUnsubscribeDeletes` exists and passes. It proves that an unsubscribe deletes what a subscribe made, by checking that your fake provider holds nothing for the subscription afterwards. For a block declaring a file-landing type it also runs `TestDeclaredResources`, whose `kittest.AssertBlock` reads the fake repository's main after unsubscribe, and names the path or branch it reports, as [Testing a block](testing.md#proving-a-block-that-lands-files) describes |
 | `resources` | `TestDeclaredResources` exists, calls `kittest.AssertBlock` and passes, and the pass names the guards that ran |
 | `deliverable` | The block has its own `Dockerfile`, and it copies nothing from `examples/operator-kit`, the folder of the platform's repository where the kit once lived, which a block's own build cannot reach |
@@ -149,7 +150,7 @@ running your tests. A passing block ends with a line like this, where
 `kit v0.4.0` is the floor the suites held your `go.mod` to:
 
 ```text
-VERDICT: PASS — 7 suite(s), kit v0.4.0, standalone mode
+VERDICT: PASS — 8 suite(s), kit v0.4.0, standalone mode
 ```
 
 A failing suite prints its reason on its own line, such as the missing test or

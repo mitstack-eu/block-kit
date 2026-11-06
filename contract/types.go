@@ -74,12 +74,23 @@ type Request struct {
 	IssueAppID string `json:"issueAppId,omitempty"`
 
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
+
+	CapabilitySlug    string            `json:"capabilitySlug,omitempty"`
+	EnteredCredential map[string]string `json:"enteredCredential,omitempty"`
 }
 
-// OperationIssue asks a capability for one app's credential, and OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook.
+// OperationIssue asks a capability for one app's credential, OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook, and OperationVerifyConnection asks a capability's operator whether the credential an org entered works, before any subscription exists.
 const (
-	OperationIssue = "issue"
-	OperationLogs  = "logs"
+	OperationIssue            = "issue"
+	OperationLogs             = "logs"
+	OperationVerifyConnection = "verify-connection"
+)
+
+// The three answers to a verify-connection: the vendor accepted the credential, refused it, or said nothing about it.
+const (
+	VerdictVerified    = "verified"
+	VerdictRejected    = "rejected"
+	VerdictUnreachable = "unreachable"
 )
 
 // Credential is what a capability issues one app: values that are secret, and when they stop working.
@@ -149,6 +160,7 @@ type Response struct {
 	// Credential answers an issue alone.
 	Credential *Credential       `json:"credential,omitempty"`
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
+	Verdict    string            `json:"verdict,omitempty"`
 }
 
 // ResourceOutcome is what a verb's calls did to one declared resource; a nil call did not run.
@@ -274,9 +286,19 @@ func requiredRequestFields(r Request) []requiredField {
 		{"operation", r.Operation != ""},
 		{"nonce", r.Nonce != ""},
 		{"createdAt", !r.CreatedAt.IsZero()},
-		{"subscriptionId", r.SubscriptionID != ""},
-		{"blockId", r.BlockID != ""},
-		{"orgId", r.OrgID != ""},
+	}
+	if r.Operation == OperationVerifyConnection {
+		fields = append(fields,
+			requiredField{"orgId", r.OrgID != ""},
+			requiredField{"capabilitySlug", r.CapabilitySlug != ""},
+			requiredField{"enteredCredential", len(r.EnteredCredential) > 0},
+		)
+	} else {
+		fields = append(fields,
+			requiredField{"subscriptionId", r.SubscriptionID != ""},
+			requiredField{"blockId", r.BlockID != ""},
+			requiredField{"orgId", r.OrgID != ""},
+		)
 	}
 
 	if ci := r.CloudIdentity; ci != nil {
@@ -307,6 +329,8 @@ var validOperations = map[string]bool{
 	"validate":     true,
 	OperationIssue: true,
 	OperationLogs:  true,
+
+	OperationVerifyConnection: true,
 }
 
 // DecodeRequest decodes raw into a Request validated against envelope.schema.json, naming the JSON field in every error.
@@ -338,7 +362,7 @@ func DecodeRequest(raw []byte) (Request, error) {
 
 	if !validOperations[req.Operation] {
 		return Request{}, fmt.Errorf(
-			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, got %q",
+			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, got %q",
 			"operation", req.Operation)
 	}
 

@@ -1,0 +1,22 @@
+# sendcloud checks an org's Sendcloud key pair when the org connects.
+apiVersion: mitstack/v1beta
+type: capability
+metadata:
+  id: sendcloud
+  name: Sendcloud
+  owner: mitstack
+spec:
+  version: 1.0.0
+  description: Parcels an app ships through Sendcloud.
+  presentation:
+    vendor: Sendcloud
+    category: Delivery
+  connection:
+    mechanism: stored-token
+    tokenSchema:
+      - { name: public_key, secret: true, description: "Sendcloud public key" }
+      - { name: private_key, secret: true, description: "Sendcloud secret key" }
+  lifecycle:
+    endpoint: https://api.mitstack.dev/operators/capabilities/sendcloud/hook
+    operations: [verify-connection]
+    contract: kit/v1

@@ -18,7 +18,7 @@ type CheckOptions struct {
 }
 
 // LifecycleOperations are the verbs a manifest's lifecycle may declare.
-var LifecycleOperations = []string{"subscribe", "unsubscribe", "upgrade", "validate", "rotate", OperationLogs}
+var LifecycleOperations = []string{"subscribe", "unsubscribe", "upgrade", "validate", "rotate", OperationLogs, OperationVerifyConnection}
 
 // ReleaseClasses are the kinds of change a release may declare.
 var ReleaseClasses = []string{"breaking", "correctness-fix", "feature"}
@@ -43,6 +43,9 @@ func CheckManifest(b *BlockManifest, serves func(typeID string) bool, opts Check
 		return err
 	}
 	if err := checkLifecycle(b.Spec.Lifecycle, opts); err != nil {
+		return err
+	}
+	if err := checkCapabilitySections(b); err != nil {
 		return err
 	}
 	if b.Spec.Observability != nil {
@@ -169,4 +172,75 @@ func ManifestVerdicts() ([]ManifestVerdict, error) {
 		verdicts = append(verdicts, ManifestVerdict{Name: row.Manifest, Manifest: manifest, Refusal: row.Refusal})
 	}
 	return verdicts, nil
+}
+
+// checkCapabilitySections keeps the four sections and verify-connection to a capability and holds its connection to its mechanism.
+func checkCapabilitySections(b *BlockManifest) error {
+	s := b.Spec
+	verifies := slices.Contains(s.Lifecycle.Operations, OperationVerifyConnection)
+	if b.Type != ManifestTypeCapability {
+		for _, section := range []struct {
+			name string
+			held bool
+		}{
+			{"presentation", s.Presentation != nil}, {"connection", s.Connection != nil},
+			{"kinds", len(s.Kinds) > 0}, {"reach", s.Reach != nil},
+		} {
+			if section.held {
+				return fmt.Errorf("spec.%s: only a capability manifest declares it", section.name)
+			}
+		}
+		if verifies {
+			return fmt.Errorf("spec.lifecycle.operations: %q is declared by a capability manifest alone", OperationVerifyConnection)
+		}
+		return nil
+	}
+	if verifies && len(s.Lifecycle.Operations) > 1 {
+		return fmt.Errorf("spec.lifecycle.operations: %q must be the only operation, since a connect-time check has no subscription", OperationVerifyConnection)
+	}
+	if verifies && (s.Connection == nil || s.Connection.Mechanism != MechanismStoredToken) {
+		return fmt.Errorf("spec.connection: a manifest declaring %q needs a %s connection, since only a stored credential is checked", OperationVerifyConnection, MechanismStoredToken)
+	}
+	if s.Connection != nil {
+		if err := checkConnection(*s.Connection); err != nil {
+			return err
+		}
+	}
+	for i, kind := range s.Kinds {
+		if !isKebab(kind) {
+			return fmt.Errorf("spec.kinds[%d]: %q is not a resource kind in lowercase kebab case", i, kind)
+		}
+		if slices.Contains(s.Kinds[:i], kind) {
+			return fmt.Errorf("spec.kinds: %q is listed twice", kind)
+		}
+	}
+	if s.Reach != nil && !isSlug(s.Reach.Capability) {
+		return fmt.Errorf("spec.reach.capability: %q is not a capability slug", s.Reach.Capability)
+	}
+	return nil
+}
+
+func checkConnection(c ManifestConnection) error {
+	if !slices.Contains(ConnectionMechanisms, c.Mechanism) {
+		return fmt.Errorf("spec.connection.mechanism: %q is not one of %s", c.Mechanism, strings.Join(ConnectionMechanisms, ", "))
+	}
+	stored := c.Mechanism == MechanismStoredToken
+	switch {
+	case stored && len(c.TokenSchema) == 0:
+		return fmt.Errorf("spec.connection.tokenSchema: a %s connection lists at least one field", MechanismStoredToken)
+	case !stored && len(c.TokenSchema) > 0:
+		return fmt.Errorf("spec.connection.tokenSchema: only a %s connection lists token fields", MechanismStoredToken)
+	case c.Audience != "" && c.Mechanism != MechanismOIDC:
+		return fmt.Errorf("spec.connection.audience: only an %s connection sets it", MechanismOIDC)
+	case (c.InstallHint != "" || c.HeldOnlyByGrant) && c.Mechanism != MechanismOAuthApp:
+		return fmt.Errorf("spec.connection: installHint and heldOnlyByGrant belong to an %s connection", MechanismOAuthApp)
+	}
+	for i, f := range c.TokenSchema {
+		for _, earlier := range c.TokenSchema[:i] {
+			if earlier.Name == f.Name {
+				return fmt.Errorf("spec.connection.tokenSchema[%d]: the field %q is listed twice", i, f.Name)
+			}
+		}
+	}
+	return nil
 }

@@ -11,6 +11,7 @@ package has [a page of its own](gitops.md).
 |---|---|
 | `helpers/safe` | Logs a value from a request, or calls an API whose host a request names |
 | `helpers/bounded` | Calls an API with its own HTTP client and reads the answer |
+| `helpers/guardedhttp` | Is a capability operator that calls its vendor with an org's credential |
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
@@ -49,6 +50,27 @@ a `safe.Allowlist` you build from constants or operator configuration, and
 returns a `safe.Base` built from the allowlist entry. It refuses an endpoint
 that is not `https` or not on the list. `base.URL(path)` then joins a path onto
 the trusted host.
+
+## Calling a vendor with an org's credential
+
+A capability operator that answers `verify-connection` holds a credential a
+person has just typed, so a vendor host that resolves to the operator's own
+network would be an attack. `guardedhttp.New` returns an `*http.Client` that
+sends a request only when it is `https`, names a host in `Config.Hosts`, and
+resolves to no loopback, private, link-local or unspecified address. The
+client follows no redirect, since the checks cover only the first URL, and it
+uses no proxy from the environment. It dials the address it checked rather
+than the host name, so a second lookup cannot answer differently. Every
+refusal wraps `guardedhttp.ErrRefused`.
+
+```go
+client, err := guardedhttp.New(guardedhttp.Config{Hosts: []string{"panel.sendcloud.sc"}})
+```
+
+`Config.Resolve`, `Config.Dial` and `Config.RootCAs` let a test stand a local
+TLS server in place of the vendor. The address checks apply whatever they
+return. blockverify's `guarded-client` suite requires an operator that answers
+`verify-connection` to use this client alone.
 
 ## Reading a service's answer
 

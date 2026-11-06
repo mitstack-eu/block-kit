@@ -124,12 +124,19 @@ type ManifestSpec struct {
 	ReleaseNote  string                `json:"releaseNote,omitempty"`
 	Description  string                `json:"description,omitempty"`
 	Requires     []ManifestRequirement `json:"requires,omitempty"`
-	Resources    []ManifestResource    `json:"resources"`
+	Resources    []ManifestResource    `json:"resources,omitempty"`
 	// Provides names entries of Resources.
 	Provides           []string               `json:"provides,omitempty"`
 	Lifecycle          ManifestLifecycle      `json:"lifecycle"`
 	Observability      *ManifestObservability `json:"observability,omitempty"`
 	ReceivesAppSecrets bool                   `json:"receivesAppSecrets,omitempty"`
+
+	// Presentation, Connection, Kinds and Reach are sections of a capability manifest alone.
+	Presentation *ManifestPresentation `json:"presentation,omitempty"`
+	Connection   *ManifestConnection   `json:"connection,omitempty"`
+	Kinds        []string              `json:"kinds,omitempty"`
+	Reach        *ManifestReach        `json:"reach,omitempty"`
+	Docs         *ManifestDocs         `json:"docs,omitempty"`
 }
 
 type ManifestRequirement struct {

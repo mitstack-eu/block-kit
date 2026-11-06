@@ -80,6 +80,8 @@ func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 		return s, nil
 	case reflect.Bool:
 		return map[string]any{"type": "boolean"}, nil
+	case reflect.Float64:
+		return map[string]any{"type": "number"}, nil
 	case reflect.Pointer:
 		return typeSchema(t.Elem(), required)
 	case reflect.Slice:

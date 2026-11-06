@@ -56,8 +56,175 @@
     "spec": {
       "additionalProperties": false,
       "properties": {
+        "connection": {
+          "additionalProperties": false,
+          "properties": {
+            "audience": {
+              "type": "string"
+            },
+            "driver": {
+              "type": "string"
+            },
+            "heldOnlyByGrant": {
+              "type": "boolean"
+            },
+            "installHint": {
+              "type": "string"
+            },
+            "mechanism": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "objectStorage": {
+              "additionalProperties": false,
+              "properties": {
+                "accessKeyField": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "endpointTemplate": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "secretKeyField": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "accessKeyField",
+                "secretKeyField",
+                "endpointTemplate"
+              ],
+              "type": "object"
+            },
+            "tokenSchema": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "allowedValues": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "optionalGroup": {
+                    "type": "string"
+                  },
+                  "secret": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "secret"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "mechanism"
+          ],
+          "type": "object"
+        },
         "description": {
           "type": "string"
+        },
+        "docs": {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "type": "string"
+            },
+            "links": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "rel": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "rel",
+                  "url"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "pages": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "anchors": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "path": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "title": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "source": {
+              "additionalProperties": false,
+              "properties": {
+                "git": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "ref": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "git",
+                "ref"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "kinds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "lifecycle": {
           "additionalProperties": false,
@@ -189,11 +356,194 @@
           },
           "type": "object"
         },
+        "presentation": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "mark": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "circle": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "cx": {
+                        "type": "number"
+                      },
+                      "cy": {
+                        "type": "number"
+                      },
+                      "r": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "cx",
+                      "cy",
+                      "r"
+                    ],
+                    "type": "object"
+                  },
+                  "ellipse": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "cx": {
+                        "type": "number"
+                      },
+                      "cy": {
+                        "type": "number"
+                      },
+                      "rx": {
+                        "type": "number"
+                      },
+                      "ry": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "cx",
+                      "cy",
+                      "rx",
+                      "ry"
+                    ],
+                    "type": "object"
+                  },
+                  "line": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "x1": {
+                        "type": "number"
+                      },
+                      "x2": {
+                        "type": "number"
+                      },
+                      "y1": {
+                        "type": "number"
+                      },
+                      "y2": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x1",
+                      "y1",
+                      "x2",
+                      "y2"
+                    ],
+                    "type": "object"
+                  },
+                  "path": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "d": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "d"
+                    ],
+                    "type": "object"
+                  },
+                  "polygon": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "points": {
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 1,
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "points"
+                    ],
+                    "type": "object"
+                  },
+                  "polyline": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "points": {
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 1,
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "points"
+                    ],
+                    "type": "object"
+                  },
+                  "rect": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "height": {
+                        "type": "number"
+                      },
+                      "rx": {
+                        "type": "number"
+                      },
+                      "ry": {
+                        "type": "number"
+                      },
+                      "width": {
+                        "type": "number"
+                      },
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "width",
+                      "height"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "vendor": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "vendor",
+            "category"
+          ],
+          "type": "object"
+        },
         "provides": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "reach": {
+          "additionalProperties": false,
+          "properties": {
+            "capability": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "capability"
+          ],
+          "type": "object"
         },
         "receivesAppSecrets": {
           "type": "boolean"
@@ -262,7 +612,6 @@
               }
             ]
           },
-          "minItems": 1,
           "type": "array"
         },
         "version": {
@@ -272,7 +621,6 @@
       },
       "required": [
         "version",
-        "resources",
         "lifecycle"
       ],
       "type": "object"

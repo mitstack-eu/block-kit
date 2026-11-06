@@ -1,0 +1,31 @@
+apiVersion: mitstack/v1beta
+type: capability
+metadata:
+  id: sendcloud
+  name: Sendcloud
+  owner: mitstack
+spec:
+  version: 1.0.0
+  description: Parcels an app ships through Sendcloud.
+  presentation:
+    vendor: Sendcloud
+    category: Delivery
+    mark:
+      - rect: { x: 3.5, y: 9, width: 17, height: 11, rx: 1 }
+      - path: { d: "M3.5 9L6 5h12l2.5 4" }
+      - path: { d: "M10.5 9v4.5h3V9" }
+  connection:
+    mechanism: password
+    tokenSchema:
+      - { name: public_key, secret: true, description: "Sendcloud public key (Integrations -> Sendcloud API)" }
+      - { name: private_key, secret: true, description: "Sendcloud secret key of the same integration" }
+  lifecycle:
+    endpoint: https://api.mitstack.dev/operators/capabilities/sendcloud/hook
+    operations: [validate]
+    contract: kit/v1
+  docs:
+    source:
+      git: https://github.com/mitstack-eu/sendcloud-capability
+      ref: v1.0.0
+      path: docs
+    index: connect.md

@@ -182,6 +182,56 @@ parser refuses a
 verb other than `validate` or `unsubscribe`, and a value that is not a list of
 names.
 
+## The sections of a capability manifest
+
+A manifest whose `type` is `capability` and that connects an org to a vendor
+holds four more sections under `spec`, which the platform reads to draw the
+capability and to connect an org to it. A `block` manifest that holds one is
+refused by `contract.CheckManifest`. This manifest is `sendcloud`, whose only
+operation is `verify-connection`, so it declares no resource:
+
+```yaml
+apiVersion: mitstack/v1beta
+type: capability
+metadata:
+  id: sendcloud
+  name: Sendcloud
+  owner: mitstack
+spec:
+  version: 1.0.0
+  description: Parcels an app ships through Sendcloud.
+  presentation:
+    vendor: Sendcloud
+    category: Delivery
+    mark:
+      - rect: { x: 3.5, y: 9, width: 17, height: 11, rx: 1 }
+      - path: { d: "M3.5 9L6 5h12l2.5 4" }
+  connection:
+    mechanism: stored-token
+    tokenSchema:
+      - { name: public_key, secret: true, description: "Sendcloud public key" }
+      - { name: private_key, secret: true, description: "Sendcloud secret key" }
+  lifecycle:
+    endpoint: https://api.mitstack.dev/operators/capabilities/sendcloud/hook
+    operations: [verify-connection]
+    contract: kit/v1
+```
+
+| Section | What it says |
+|---|---|
+| `presentation` | The `vendor`, the `category` the Capabilities page groups it under, and an optional `mark`: a list of shapes, each a `path`, `circle`, `rect`, `line`, `polyline`, `polygon` or `ellipse` whose attributes are numbers, or for a `path` its `d` string. Each list item holds exactly one shape |
+| `connection` | The `mechanism`, one of `oidc`, `oauth-app` and `stored-token`. A `stored-token` connection lists its `tokenSchema` fields, each with a `name`, `secret`, optional `description`, optional `allowedValues` and an optional `optionalGroup` that makes the field optional but given with its group. An `oidc` connection may set `audience`, an `oauth-app` connection `installHint` and `heldOnlyByGrant`, and any connection a `driver` and an `objectStorage` key pair |
+| `kinds` | The resource kinds, in lowercase kebab case, that decide the capability's scope |
+| `reach` | The `capability` whose connection reaches this one |
+| `docs` | Where the connect guide lives in git: `source` with `git`, `ref` and `path`, an `index`, and optional `pages` and `links`. A block may declare it too |
+
+A manifest that lists `verify-connection` lists nothing else, and holds a
+`stored-token` connection, since only a stored credential is checked.
+[Serving a capability](handler.md#checking-an-orgs-credential-with-verify-connection)
+shows how the operator answers it. A capability creates no resources of its
+own, so `spec.resources` may be absent, while a `block` that lists none is
+refused.
+
 ## Keys the parser refuses
 
 `contract.ParseManifest` reads strictly. It refuses any key the

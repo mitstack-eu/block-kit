@@ -554,6 +554,43 @@ each connection secret, each secret input, each app secret, each own secret
 and the call's tokens. It compares whole values only, so a value derived from a secret
 passes, and the capability's own code keeps such a credential from an app.
 
+## Checking an org's credential with verify-connection
+
+When a person connects their org to a capability, the platform asks the
+capability's operator whether the credential they typed works, before any
+subscription exists. The `verify-connection` operation carries the capability's
+slug under `capabilitySlug`, the connecting org under `orgId` and the entered
+fields under `enteredCredential`, keyed by the manifest's token field names.
+It carries no subscription, no block id and no OBO token, and the request is
+signed like every other call.
+
+An operator whose manifest lists `verify-connection` as its only operation
+sets `Config.Verifier` and no `Config.Resource`. The verifier answers with the
+vendor's verdict:
+
+```go
+type ConnectionVerifier interface {
+	VerifyConnection(ctx context.Context, c handler.ConnectionCheck) (handler.Verification, error)
+}
+```
+
+The handler answers 200 with `verdict` set to `verified`, `rejected` or
+`unreachable`, and `statusDetail` set to the verifier's `Detail` with every
+entered value scrubbed out. A verifier reports `unreachable` when the vendor
+said nothing about the credential, as on a transport error or an unexpected
+status, and returns an error only for a fault in the operator itself.
+
+| Case | Answer |
+|---|---|
+| The request names another capability than the manifest's id | 400, refusal class `wrong-capability` |
+| The manifest does not list `verify-connection` | 400, refusal class `no-connection-check` |
+| A verify-only operator receives any other verb | 400, refusal class `undeclared-operation` |
+| The verifier answers a verdict other than the three | 500 |
+
+The handler never replays a `verify-connection` from the idempotency cache,
+because the credential may have been revoked since. The vendor call goes
+through [`guardedhttp`](helpers.md#calling-a-vendor-with-an-orgs-credential).
+
 ## Serving a subscription's logs
 
 The console's Troubleshoot panel and MCP's `get_app_logs` show a part's recent

@@ -12,7 +12,7 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-var errNilResource = errors.New("handler: Config.Resource is required")
+var errNilResource = errors.New("handler: Config.Resource is required unless the manifest's only operation is verify-connection")
 
 var errNoManifest = fmt.Errorf("handler: Config.Manifest is required: pass the bytes of the block's %s manifest", contract.ManifestAPIVersion)
 
@@ -25,6 +25,9 @@ type manifestDeclarations struct {
 	provided   map[string]bool
 	capability bool
 	logs       bool
+	verifies   bool
+	// verifyOnly is a manifest whose one operation is verify-connection, which needs no Resource.
+	verifyOnly bool
 }
 
 func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
@@ -42,7 +45,22 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 		provided:   provided,
 		capability: m.Block.Type == contract.ManifestTypeCapability,
 		logs:       slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs),
+		verifies:   slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationVerifyConnection),
+		verifyOnly: slices.Equal(m.Block.Spec.Lifecycle.Operations, []string{contract.OperationVerifyConnection}),
 	}, nil
+}
+
+// checkVerifier refuses a Verifier the manifest does not list the operation for, and the operation listed with no Verifier to answer it.
+func checkVerifier(cfg Config, declared manifestDeclarations) error {
+	switch {
+	case declared.verifies && cfg.Verifier == nil:
+		return fmt.Errorf("handler: the manifest lists %s, but Config.Verifier is nil, so nothing could answer it", contract.OperationVerifyConnection)
+	case !declared.verifies && cfg.Verifier != nil:
+		return fmt.Errorf("handler: Config.Verifier is set, but the manifest does not list %s, so it would never be asked", contract.OperationVerifyConnection)
+	case declared.verifies && !declared.capability:
+		return fmt.Errorf("handler: the manifest lists %s, which only a capability manifest may", contract.OperationVerifyConnection)
+	}
+	return nil
 }
 
 type namedResource struct {

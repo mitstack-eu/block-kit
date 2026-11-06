@@ -15,6 +15,8 @@ checks below against a fake Hetzner API.
 | `TestDeclaredResources` | `kittest.AssertBlock` | Each declared resource is created, tagged, observed from the provider and gone after unsubscribe |
 | A name starting `TestUnsubscribeDeletes` | `kittest.AssertTeardownAfterBrokenSetup`, or your own test code | An unsubscribe deletes what a subscribe made |
 | A name starting `TestNoSecretLeak` | `kittest.AssertNoSecretLeak` | No secret reaches an answer, a log line or `/logs` |
+| `TestNoSecretLeak_VerifyConnection`, for a capability operator that answers `verify-connection` | `kittest.AssertNoSecretLeak` with a `verify-connection` request | The entered credential reaches no answer, log line or `/logs` |
+| `TestGuardedClient`, for the same operator | `kittest.AssertGuardedClient` | The client the operator calls its vendor with refuses plain http, a redirect, an undeclared host and a loopback, private, link-local or unspecified address, each before a connection opens |
 
 blockverify finds each test by name, runs it, and fails the block when the
 test is missing or fails, as [Running the block checks](block-checks.md)
