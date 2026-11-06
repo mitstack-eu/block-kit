@@ -1,6 +1,5 @@
 package contract
 
-// ManifestPresentation is how the console draws a capability: its vendor, the category the Capabilities page groups it under, and its mark.
 type ManifestPresentation struct {
 	Vendor   string              `json:"vendor"`
 	Category string              `json:"category"`
@@ -63,18 +62,13 @@ const (
 	MechanismStoredToken = "stored-token"
 )
 
-// ConnectionMechanisms lists the mechanisms a connection section may name.
 var ConnectionMechanisms = []string{MechanismOIDC, MechanismOAuthApp, MechanismStoredToken}
 
-// ManifestConnection says how an org connects to a capability.
 type ManifestConnection struct {
-	Mechanism string `json:"mechanism"`
-	// TokenSchema lists the fields of a stored-token credential.
+	Mechanism   string               `json:"mechanism"`
 	TokenSchema []ManifestTokenField `json:"tokenSchema,omitempty"`
-	// Audience is what an oidc connection's token is minted for.
-	Audience string `json:"audience,omitempty"`
-	// InstallHint tells a person connecting an oauth-app where to install the app.
-	InstallHint string `json:"installHint,omitempty"`
+	Audience    string               `json:"audience,omitempty"`
+	InstallHint string               `json:"installHint,omitempty"`
 	// HeldOnlyByGrant means only the org's OAuth grant holds the capability, so a stored token for it holds nothing.
 	HeldOnlyByGrant bool `json:"heldOnlyByGrant,omitempty"`
 	// Driver names the platform code that serves the connection when a capability's operator does not.
@@ -82,12 +76,10 @@ type ManifestConnection struct {
 	ObjectStorage *ManifestObjectStorageKey `json:"objectStorage,omitempty"`
 }
 
-// ManifestTokenField is one field of a stored-token credential.
 type ManifestTokenField struct {
-	Name        string `json:"name"`
-	Secret      bool   `json:"secret"`
-	Description string `json:"description,omitempty"`
-	// AllowedValues, when set, is the fixed set of values the field may take.
+	Name          string   `json:"name"`
+	Secret        bool     `json:"secret"`
+	Description   string   `json:"description,omitempty"`
 	AllowedValues []string `json:"allowedValues,omitempty"`
 	// OptionalGroup makes the field optional, given together with its group's other fields or not at all.
 	OptionalGroup string `json:"optionalGroup,omitempty"`
@@ -100,7 +92,6 @@ type ManifestObjectStorageKey struct {
 	EndpointTemplate string `json:"endpointTemplate"`
 }
 
-// ManifestReach names the capability whose connection reaches this one.
 type ManifestReach struct {
 	Capability string `json:"capability"`
 }
@@ -108,10 +99,9 @@ type ManifestReach struct {
 // ManifestDocs says where a manifest's documentation lives in git.
 type ManifestDocs struct {
 	Source *ManifestDocsSource `json:"source,omitempty"`
-	// Index is the entry page, relative to Source.Path.
-	Index string             `json:"index,omitempty"`
-	Pages []ManifestDocsPage `json:"pages,omitempty"`
-	Links []ManifestDocsLink `json:"links,omitempty"`
+	Index  string              `json:"index,omitempty"`
+	Pages  []ManifestDocsPage  `json:"pages,omitempty"`
+	Links  []ManifestDocsLink  `json:"links,omitempty"`
 }
 
 type ManifestDocsSource struct {
@@ -121,9 +111,8 @@ type ManifestDocsSource struct {
 }
 
 type ManifestDocsPage struct {
-	Title string `json:"title"`
-	Path  string `json:"path"`
-	// Anchors maps a param name to a heading fragment on this page.
+	Title   string            `json:"title"`
+	Path    string            `json:"path"`
 	Anchors map[string]string `json:"anchors,omitempty"`
 }
 

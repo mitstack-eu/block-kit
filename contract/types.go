@@ -75,7 +75,6 @@ type Request struct {
 
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 
-	// CapabilitySlug and EnteredCredential are the whole of a verify-connection besides the connecting org's id.
 	CapabilitySlug    string            `json:"capabilitySlug,omitempty"`
 	EnteredCredential map[string]string `json:"enteredCredential,omitempty"`
 }
@@ -161,8 +160,7 @@ type Response struct {
 	// Credential answers an issue alone.
 	Credential *Credential       `json:"credential,omitempty"`
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
-	// Verdict answers a verify-connection alone, as a Verdict constant, with statusDetail saying why in words that carry no part of the credential.
-	Verdict string `json:"verdict,omitempty"`
+	Verdict    string            `json:"verdict,omitempty"`
 }
 
 // ResourceOutcome is what a verb's calls did to one declared resource; a nil call did not run.

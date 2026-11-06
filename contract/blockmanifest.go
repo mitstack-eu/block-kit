@@ -124,8 +124,7 @@ type ManifestSpec struct {
 	ReleaseNote  string                `json:"releaseNote,omitempty"`
 	Description  string                `json:"description,omitempty"`
 	Requires     []ManifestRequirement `json:"requires,omitempty"`
-	// Resources may be empty for a capability, and a block lists at least one.
-	Resources []ManifestResource `json:"resources,omitempty"`
+	Resources    []ManifestResource    `json:"resources,omitempty"`
 	// Provides names entries of Resources.
 	Provides           []string               `json:"provides,omitempty"`
 	Lifecycle          ManifestLifecycle      `json:"lifecycle"`

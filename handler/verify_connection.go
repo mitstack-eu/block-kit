@@ -22,7 +22,6 @@ type ConnectionCheck struct {
 	Credential     map[string]string
 }
 
-// Verification is the vendor's answer to a credential: a contract.Verdict constant, and in Detail why, in words that carry no part of the credential.
 type Verification struct {
 	Verdict string
 	Detail  string
