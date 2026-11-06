@@ -150,7 +150,7 @@ running your tests. A passing block ends with a line like this, where
 `kit v0.4.0` is the floor the suites held your `go.mod` to:
 
 ```text
-VERDICT: PASS — 7 suite(s), kit v0.4.0, standalone mode
+VERDICT: PASS — 8 suite(s), kit v0.4.0, standalone mode
 ```
 
 A failing suite prints its reason on its own line, such as the missing test or
