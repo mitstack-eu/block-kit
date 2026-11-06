@@ -191,6 +191,7 @@ provider and in `capabilities` per provider:
 | `verify/kittest` | Every block's tests | The checks blockverify requires your tests to run |
 | `helpers/safe` | A block that logs values from a call, or calls an API at an address a call supplies | Secret scrubbing for logs, and an allowlist of the hosts the operator trusts, so a call cannot redirect it |
 | `helpers/bounded` | A block that calls an API with its own HTTP client | One read of an answer in bounded memory, which fails naming the call and the bound when the answer runs past it |
+| `helpers/guardedhttp` | A capability operator that calls its vendor with an org's credential | An HTTP client that sends only https requests to declared hosts, follows no redirect, and refuses a loopback, private, link-local or unspecified address before it connects |
 | `helpers/events` | A block that reports its own progress during long work | Progress reports to mitstack while a long call runs |
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
@@ -344,8 +345,8 @@ go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
 blockverify runs only with `--standalone`, which checks the block in the
-directory you name, here `.`, on its own. It runs seven suites, groups of
-checks, and a passing block ends with `VERDICT: PASS — 7 suite(s)`.
+directory you name, here `.`, on its own. It runs eight suites, groups of
+checks, and a passing block ends with `VERDICT: PASS — 8 suite(s)`.
 
 ## The rest of the repository
 

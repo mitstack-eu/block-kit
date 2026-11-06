@@ -35,7 +35,7 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 
 	var status int
 	var raw []byte
-	if req.IdempotencyKey != "" && req.Operation != "validate" && req.Operation != contract.OperationIssue {
+	if req.IdempotencyKey != "" && req.Operation != "validate" && req.Operation != contract.OperationIssue && req.Operation != contract.OperationVerifyConnection {
 		key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey, resource: req.Resource}
 		status, raw = h.idempotency.do(h.now(), key, run)
 	} else {
@@ -101,7 +101,7 @@ func panicValueForLog(p any, secrets []string) string {
 //
 // It emits no start event because the event log's partial unique index on (subscriptionId, idempotencyKey) would drop the terminal event under a start event that took its slot.
 func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status int, resp contract.Response, settled bool) {
-	if operation == "validate" || operation == contract.OperationIssue {
+	if operation == "validate" || operation == contract.OperationIssue || operation == contract.OperationVerifyConnection {
 		return
 	}
 	if status >= 200 && status < 300 {
@@ -120,7 +120,12 @@ func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status in
 }
 
 func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secrets []string) (int, contract.Response) {
-	if req.Operation == contract.OperationIssue {
+	switch {
+	case req.Operation == contract.OperationVerifyConnection:
+		return h.verifyConnection(ctx, req, secrets)
+	case h.resource == nil:
+		return h.errorResponse(Refuse(classUndeclaredVerb, "this operator answers %s alone, not %s", contract.OperationVerifyConnection, req.Operation), secrets)
+	case req.Operation == contract.OperationIssue:
 		return h.issue(ctx, req, secrets)
 	}
 	return h.dispatchDeclared(ctx, req.Operation, req.Desired(), secrets)
@@ -190,6 +195,9 @@ func (h *Handler) secretsFor(req contract.Request) []string {
 		out = append(out, v)
 	}
 	for _, v := range req.OwnSecrets {
+		out = append(out, v)
+	}
+	for _, v := range req.EnteredCredential {
 		out = append(out, v)
 	}
 	if req.OBO != "" {

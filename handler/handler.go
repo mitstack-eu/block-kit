@@ -93,6 +93,9 @@ type Config struct {
 
 	SubscriptionLogs func(ctx context.Context, d contract.Desired) ([]string, error)
 
+	// Verifier answers a verify-connection, and is required exactly when the manifest lists that operation, which a capability whose only operation it is serves with no Resource.
+	Verifier ConnectionVerifier
+
 	Now func() time.Time
 }
 
@@ -118,6 +121,8 @@ type Handler struct {
 
 	subscriptionLogs func(ctx context.Context, d contract.Desired) ([]string, error)
 
+	verifier ConnectionVerifier
+
 	now func() time.Time
 
 	idempotency *idempotencyCache
@@ -125,9 +130,6 @@ type Handler struct {
 
 // New refuses a configuration that would let a block override an invariant.
 func New(cfg Config) (*Handler, error) {
-	if cfg.Resource == nil {
-		return nil, errNilResource
-	}
 	if len(cfg.Manifest) == 0 {
 		return nil, errNoManifest
 	}
@@ -136,6 +138,12 @@ func New(cfg Config) (*Handler, error) {
 	}
 	declared, err := readManifestDeclarations(cfg.Manifest)
 	if err != nil {
+		return nil, err
+	}
+	if cfg.Resource == nil && !declared.verifyOnly {
+		return nil, errNilResource
+	}
+	if err := checkVerifier(cfg, declared); err != nil {
 		return nil, err
 	}
 	resources, err := observedResources(cfg, declared)
@@ -162,6 +170,7 @@ func New(cfg Config) (*Handler, error) {
 		replay:           cfg.Replay,
 		logs:             cfg.Logs,
 		subscriptionLogs: cfg.SubscriptionLogs,
+		verifier:         cfg.Verifier,
 		now:              cfg.Now,
 		idempotency:      newIdempotencyCache(),
 		kit:              cfg.KitObserver,
@@ -262,6 +271,9 @@ func (h *Handler) authenticatedRequest(w http.ResponseWriter, r *http.Request) (
 		return contract.Request{}, false
 	}
 
+	if req.Operation == contract.OperationVerifyConnection {
+		return req, true
+	}
 	if req.OBO == "" {
 		h.writeError(w, http.StatusUnauthorized, "missing OBO token")
 		return contract.Request{}, false

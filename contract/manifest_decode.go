@@ -126,6 +126,12 @@ func (d manifestDecoder) decode(n *yamlNode, v reflect.Value, path string) error
 			return fmt.Errorf("%s takes an integer only", path)
 		}
 		v.SetInt(i)
+	case reflect.Float64:
+		f, ok := plainFloat(n)
+		if !ok {
+			return fmt.Errorf("%s takes a number only", path)
+		}
+		v.SetFloat(f)
 	case reflect.Pointer:
 		p := reflect.New(v.Type().Elem())
 		if err := d.decode(n, p.Elem(), path); err != nil {
@@ -178,6 +184,15 @@ func plainInteger(n *yamlNode) (int64, bool) {
 		return 0, false
 	}
 	return int64(f), true
+}
+
+// plainFloat reads a plain scalar written as a decimal number, never inf or nan.
+func plainFloat(n *yamlNode) (float64, bool) {
+	if n.kind != yamlScalar || n.str || !yamlStyleFloat.MatchString(n.value) {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(n.value, 64)
+	return f, err == nil && !math.IsInf(f, 0)
 }
 
 func (d manifestDecoder) list(n *yamlNode, v reflect.Value, path string) error {
