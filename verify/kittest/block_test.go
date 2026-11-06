@@ -278,8 +278,10 @@ type providerObserver struct {
 }
 
 func (o providerObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
-	o.counts.observed(r.Name)
 	id := r.Identity["id"]
+	if id != "" || !r.Unsubscribing {
+		o.counts.observed(r.Name)
+	}
 	switch {
 	case id == "" && r.Unsubscribing:
 		return o.byType(ctx, r), nil
@@ -644,9 +646,11 @@ type seenObserver struct {
 }
 
 func (o seenObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
-	o.mu.Lock()
-	o.seen[r.Name+"="+r.Identity["id"]] = true
-	o.mu.Unlock()
+	if r.Identity["id"] != "" || !r.Unsubscribing {
+		o.mu.Lock()
+		o.seen[r.Name+"="+r.Identity["id"]] = true
+		o.mu.Unlock()
+	}
 	return o.providerObserver.ObserveResource(ctx, r)
 }
 
