@@ -166,6 +166,7 @@ type misbehave struct {
 	staleObserve    string
 	failOnHostType  string
 	dropOutput      string
+	unknownOnEmpty  bool
 }
 
 type provider struct {
@@ -298,12 +299,21 @@ func (b *block) Delete(ctx context.Context, d contract.Desired) (map[string]stri
 }
 
 type providerObserver struct {
-	p    *provider
-	drop string
+	p              *provider
+	drop           string
+	unknownOnEmpty bool
 }
 
-func (o providerObserver) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
+func (o providerObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	switch id := r.Identity["id"]; {
+	case id == "" && r.Unsubscribing && !o.unknownOnEmpty:
+		held, _ := o.p.ListTagged(ctx, r.Desired.SubscriptionID)
+		for _, item := range held {
+			if item.Type == r.Type {
+				return contract.Observation{State: contract.Present}, nil
+			}
+		}
+		return contract.Observation{State: contract.Absent}, nil
 	case id == "":
 		return contract.Observation{State: contract.Unknown}, nil
 	case o.p.holds(id):
@@ -361,7 +371,7 @@ func assertBlock(t *testing.T, m misbehave, container bool) {
 			"hetzner.server":   {"hostId": "4711", "execKind": "ssh", "execTarget": "198.51.100.9"},
 		}}
 	} else {
-		in.Config.Observers = map[string]handler.Observer{"aws.ec2-instance": providerObserver{p: p, drop: m.dropOutput}, "aws.ebs-volume": providerObserver{p: p}}
+		in.Config.Observers = map[string]handler.Observer{"aws.ec2-instance": providerObserver{p: p, drop: m.dropOutput, unknownOnEmpty: m.unknownOnEmpty}, "aws.ebs-volume": providerObserver{p: p, unknownOnEmpty: m.unknownOnEmpty}}
 		if m.staleObserve != "" {
 			in.Config.Observers[m.staleObserve] = rememberingObserver{b: b, name: m.staleObserve}
 		}

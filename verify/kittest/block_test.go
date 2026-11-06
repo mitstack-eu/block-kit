@@ -277,16 +277,29 @@ type providerObserver struct {
 	counts *observeCounts
 }
 
-func (o providerObserver) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
+func (o providerObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	o.counts.observed(r.Name)
 	id := r.Identity["id"]
 	switch {
+	case id == "" && r.Unsubscribing:
+		return o.byType(ctx, r), nil
 	case id == "":
 		return contract.Observation{State: contract.Unknown, StatusDetail: "no id"}, nil
 	case o.p.holds(id):
 		return contract.Observation{State: contract.Present, Outputs: o.outputs(r.Type, id)}, nil
 	}
 	return contract.Observation{State: contract.Absent}, nil
+}
+
+// byType answers an unsubscribing observe that names no identity from what the provider holds for the subscription.
+func (o providerObserver) byType(ctx context.Context, r contract.ResourceRef) contract.Observation {
+	held, _ := o.p.ListTagged(ctx, r.Desired.SubscriptionID)
+	for _, item := range held {
+		if item.Type == r.Type {
+			return contract.Observation{State: contract.Present, Outputs: o.outputs(r.Type, item.ID)}
+		}
+	}
+	return contract.Observation{State: contract.Absent}
 }
 
 func (o providerObserver) outputs(typ, id string) map[string]string {
