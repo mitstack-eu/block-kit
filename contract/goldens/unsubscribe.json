@@ -24,6 +24,14 @@
   "obo": "eyJvcmdfaWQiOiJvcmdfYWNtZSJ9.c2lnbmF0dXJlLXBsYWNlaG9sZGVy",
   "bindings": {},
   "bindingsAll": {},
+  "absences": {
+    "host": {
+      "observer": "hetzner.docker-host",
+      "resource": "hetzner.server",
+      "readAbsentAt": "2026-07-15T21:10:00Z",
+      "provesAbsence": true
+    }
+  },
   "cloudIdentity": {
     "provider": "aws",
     "roleArn": "arn:aws:iam::123456789012:role/MitstackFederatedRole",

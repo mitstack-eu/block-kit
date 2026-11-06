@@ -93,6 +93,13 @@ func TestNewestReport_FindsNoneWhileTheHostHasSentNoReport(t *testing.T) {
 	}
 }
 
+func TestNewestReport_AnswersAnAttestedAbsentHostWithoutReadingItsReports(t *testing.T) {
+	report, found, err := dockerhost.NewestReport(context.Background(), &hostReports{err: errors.New("the platform answered 503")}, attestedAbsent(hostSub), hostSub)
+	if _, notSynced := report.SyncedCommit(); !found || err != nil || notSynced == nil {
+		t.Errorf("NewestReport = %+v, found %v, %v; want the host's attested absence, which syncs no commit", report, found, err)
+	}
+}
+
 func TestNewestReport_FailsAReadItCannotMake(t *testing.T) {
 	for _, tc := range []struct {
 		name, sub, class string
