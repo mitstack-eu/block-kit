@@ -60,6 +60,8 @@ type Request struct {
 	PriorOutputs     map[string]string              `json:"priorOutputs,omitempty"`
 	Resource         string                         `json:"resource,omitempty"`
 	ResourceIdentity map[string]string              `json:"resourceIdentity,omitempty"`
+	// ResourceUnsubscribing marks a request naming one resource as a teardown's probe, so the resource's observer answers as it does during an unsubscribe.
+	ResourceUnsubscribing bool `json:"resourceUnsubscribing,omitempty"`
 
 	ResourceType      string                      `json:"resourceType,omitempty"`
 	RecordedResources map[string]RecordedResource `json:"recordedResources,omitempty"`
@@ -194,6 +196,8 @@ type Desired struct {
 	Resource         string
 	ResourceIdentity map[string]string
 	ResourceType     string
+	// ResourceUnsubscribing is true when a request naming Resource probes it during a teardown.
+	ResourceUnsubscribing bool
 
 	RecordedResources map[string]RecordedResource
 	RequirementTypes  map[string]string
@@ -367,21 +371,22 @@ func (r Request) Identity() Identity {
 // Desired returns the subset of r describing what an operator should converge its resource to.
 func (r Request) Desired() Desired {
 	return Desired{
-		Identity:          r.Identity(),
-		Params:            r.Params,
-		SecretInputs:      r.SecretInputs,
-		AppSecrets:        r.AppSecrets,
-		Secrets:           r.Secrets,
-		Bindings:          r.Bindings,
-		BindingsAll:       r.BindingsAll,
-		Resource:          r.Resource,
-		ResourceIdentity:  r.ResourceIdentity,
-		ResourceType:      r.ResourceType,
-		RecordedResources: r.RecordedResources,
-		RequirementTypes:  r.RequirementTypes,
-		VerbAt:            r.verbAt(),
-		NeverActive:       r.NeverActive,
-		OwnSecrets:        r.OwnSecrets,
+		Identity:              r.Identity(),
+		Params:                r.Params,
+		SecretInputs:          r.SecretInputs,
+		AppSecrets:            r.AppSecrets,
+		Secrets:               r.Secrets,
+		Bindings:              r.Bindings,
+		BindingsAll:           r.BindingsAll,
+		Resource:              r.Resource,
+		ResourceIdentity:      r.ResourceIdentity,
+		ResourceType:          r.ResourceType,
+		ResourceUnsubscribing: r.ResourceUnsubscribing,
+		RecordedResources:     r.RecordedResources,
+		RequirementTypes:      r.RequirementTypes,
+		VerbAt:                r.verbAt(),
+		NeverActive:           r.NeverActive,
+		OwnSecrets:            r.OwnSecrets,
 	}
 }
 

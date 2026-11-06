@@ -46,32 +46,40 @@ func (a api) requiredChecksPassed(ctx context.Context, number int, commit string
 	return nil
 }
 
-// removalUnderWay is what the subscription's open removal pull request waits on while a check main requires is queued or running on it and none has failed, and empty otherwise.
+// removalUnderWay is what the subscription's open removal pull request waits on while a check main requires is queued or running on it and none has failed, or while a review main requires is missing, and empty otherwise.
 func (a api) removalUnderWay(ctx context.Context, subscription string) (string, error) {
 	pr, found, err := a.openPullRequest(ctx, BranchPrefix(subscription)+"remove")
 	if err != nil || !found {
 		return "", err
 	}
+	waitsOn, failed, err := a.checksUnderWay(ctx, pr)
+	if err != nil || failed || waitsOn != "" {
+		return waitsOn, err
+	}
+	return a.reviewWait(ctx, pr)
+}
+
+// checksUnderWay names the first required check queued or running on pr, and reports failed when any required check failed.
+func (a api) checksUnderWay(ctx context.Context, pr openPull) (waitsOn string, failed bool, err error) {
 	required, err := a.requiredChecks(ctx)
 	if err != nil || len(required) == 0 {
-		return "", err
+		return "", false, err
 	}
 	states, err := a.checkStates(ctx, pr.head, required)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	waitsOn := ""
 	for _, check := range required {
 		switch states[check] {
 		case checkFailed:
-			return "", nil
+			return "", true, nil
 		case checkQueued, checkRunning:
 			if waitsOn == "" {
 				waitsOn = fmt.Sprintf("removal pull request #%d of %s, whose required check %q is %s", pr.number, a.repo, check, states[check])
 			}
 		}
 	}
-	return waitsOn, nil
+	return waitsOn, false, nil
 }
 
 func (a api) requiredChecks(ctx context.Context) ([]string, error) {
