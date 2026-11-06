@@ -21,7 +21,7 @@ type EC2API interface {
 }
 
 // EC2Instance observes an aws.ec2-instance by its instanceId: running is
-// present, terminated or missing absent, any other state unknown, or with no instanceId while unsubscribing, by what carries the subscription's tag.
+// present, terminated or missing absent, any other state unknown, or with no instanceId while unsubscribing, by what carries the subscription's tag apart from the egress proxy.
 type EC2Instance struct {
 	API EC2API
 }
@@ -40,19 +40,19 @@ func (o EC2Instance) ObserveResource(ctx context.Context, r contract.ResourceRef
 }
 
 // EgressProxy observes an aws.egress-proxy instance as EC2Instance does,
-// with no outputs.
+// with no outputs, and with no instanceId finds it by its AWSRoleEgressProxy tag.
 type EgressProxy struct {
 	API EC2API
 }
 
 func (o EgressProxy) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
-	return observeInstance(ctx, o.API, r, "", func(EC2InstanceDescription) map[string]string { return nil })
+	return observeInstance(ctx, o.API, r, "aws.egress-proxy", func(EC2InstanceDescription) map[string]string { return nil })
 }
 
 func observeInstance(ctx context.Context, api EC2API, r contract.ResourceRef, typ string, outputs func(EC2InstanceDescription) map[string]string) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "instanceId")
 	if !ok {
-		return heldByOwner(ctx, r, awsOwned(api), typ, "instanceId", obs)
+		return heldByOwner(ctx, r, awsOwned[AWSRoleTaggingAPI](api), typ, "instanceId", obs)
 	}
 	desc, found, err := api.DescribeInstance(ctx, r.Desired, ids[0])
 	switch {
@@ -78,7 +78,7 @@ type S3Bucket struct {
 func (o S3Bucket) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "bucket")
 	if !ok {
-		return heldByOwner(ctx, r, awsOwned(o.API), "aws.s3-bucket", "bucket", obs)
+		return heldByOwner(ctx, r, awsOwned[AWSTaggingAPI](o.API), "aws.s3-bucket", "bucket", obs)
 	}
 	exists, err := o.API.BucketExists(ctx, r.Desired, ids[0])
 	return existence(r, exists, err, nil)
@@ -96,7 +96,7 @@ type VPC struct {
 func (o VPC) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "vpcId")
 	if !ok {
-		return heldByOwner(ctx, r, awsOwned(o.API), "aws.vpc", "vpcId", obs)
+		return heldByOwner(ctx, r, awsOwned[AWSTaggingAPI](o.API), "aws.vpc", "vpcId", obs)
 	}
 	exists, err := o.API.VPCExists(ctx, r.Desired, ids[0])
 	return existence(r, exists, err, nil)
@@ -114,7 +114,7 @@ type SecurityGroup struct {
 func (o SecurityGroup) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "groupId")
 	if !ok {
-		return heldByOwner(ctx, r, awsOwned(o.API), "aws.security-group", "groupId", obs)
+		return heldByOwner(ctx, r, awsOwned[AWSTaggingAPI](o.API), "aws.security-group", "groupId", obs)
 	}
 	exists, err := o.API.SecurityGroupExists(ctx, r.Desired, ids[0])
 	return existence(r, exists, err, nil)
@@ -124,7 +124,7 @@ type SSMAssociationAPI interface {
 	AssociationExists(ctx context.Context, d contract.Desired, associationID string) (bool, error)
 }
 
-// SSMAssociation observes an aws.ssm-association by its associationId.
+// SSMAssociation observes an aws.ssm-association by its associationId, or with none by the associations running the subscription's tagged documents, so a row reads present while a sibling's association remains.
 type SSMAssociation struct {
 	API SSMAssociationAPI
 }
@@ -132,7 +132,7 @@ type SSMAssociation struct {
 func (o SSMAssociation) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "associationId")
 	if !ok {
-		return obs, nil
+		return heldByOwner(ctx, r, awsOwned[SSMAssociationsAPI](o.API), "aws.ssm-association", "associationId", obs)
 	}
 	exists, err := o.API.AssociationExists(ctx, r.Desired, ids[0])
 	return existence(r, exists, err, nil)
@@ -156,7 +156,7 @@ type EBSVolume struct {
 func (o EBSVolume) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "volumeId")
 	if !ok {
-		return heldByOwner(ctx, r, awsOwned(o.API), "aws.ebs-volume", "volumeId", obs)
+		return heldByOwner(ctx, r, awsOwned[AWSTaggingAPI](o.API), "aws.ebs-volume", "volumeId", obs)
 	}
 	desc, found, err := o.API.DescribeVolume(ctx, r.Desired, ids[0])
 	switch {
@@ -188,7 +188,7 @@ type IAMRole struct {
 func (o IAMRole) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "roleName")
 	if !ok {
-		return heldByOwner(ctx, r, awsOwned(o.API), "aws.iam-role", "roleName", obs)
+		return heldByOwner(ctx, r, awsOwned[AWSTaggingAPI](o.API), "aws.iam-role", "roleName", obs)
 	}
 	desc, found, err := o.API.DescribeRole(ctx, r.Desired, ids[0])
 	if err != nil || !found {
@@ -226,10 +226,11 @@ func (o Route53Record) ObserveResource(ctx context.Context, r contract.ResourceR
 	return present(r, map[string]string{"appHostname": host, "appUrl": "https://" + host}), nil
 }
 
-// awsOwned lists by the subscription's tag when the observer's API can, and is otherwise nil.
-func awsOwned(api any) TaggedLister {
-	if a, ok := api.(AWSTaggingAPI); ok {
-		return AWSTagged{API: a}
+// awsOwned lists by the subscription's tag when the observer's API also implements N, the read its type needs, and is otherwise nil.
+func awsOwned[N any](api any) TaggedLister {
+	a, tags := api.(AWSTaggingAPI)
+	if _, ok := api.(N); !tags || !ok {
+		return nil
 	}
-	return nil
+	return AWSTagged{API: a}
 }
