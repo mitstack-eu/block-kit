@@ -85,6 +85,7 @@ const (
 	guardOutputs     = "required-outputs"
 	guardKitObserver = "kit-observer"
 	guardProbeReads  = "probe-reads"
+	guardEmptyID     = "empty-identity-unsubscribe"
 )
 
 // CheckBlock serves the block through handler.New from its Config, as the engine reaches it, and returns one problem per violation.
@@ -123,7 +124,7 @@ func checkBlock(in Block) ([]string, []string) {
 		problems = append(problems, c.problems...)
 	}
 	var names []string
-	for _, g := range []string{guardTagging, guardProvider, guardReplacement, guardAbsence, guardOutputs, guardKitObserver, guardProbeReads} {
+	for _, g := range []string{guardTagging, guardProvider, guardReplacement, guardAbsence, guardOutputs, guardKitObserver, guardProbeReads, guardEmptyID} {
 		if ran[g] {
 			names = append(names, g)
 		}
@@ -198,7 +199,7 @@ func (s *blockServer) send(operation string, d contract.Desired) (int, contract.
 		SecretInputs: d.SecretInputs, AppSecrets: d.AppSecrets, Bindings: d.Bindings, BindingsAll: d.BindingsAll, Absences: d.Absences,
 		CloudIdentity: d.CloudIdentity, CreatedAt: now, Nonce: freshToken(), PriorOutputs: d.PriorOutputs,
 		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
-		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity,
+		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity, ResourceUnsubscribing: d.ResourceUnsubscribing,
 	})
 	if err != nil {
 		return 0, contract.Response{}, err
@@ -723,14 +724,16 @@ func (c *blockCheck) requiredOutputs(resp contract.Response, operation string) {
 	}
 }
 
-func (c *blockCheck) taggedMatchDeclared() {
-	var tagged []observe.Tagged
-	var err error
+// listTagged lists what the provider holds that carries the subscription's id.
+func (c *blockCheck) listTagged() ([]observe.Tagged, error) {
 	if l, ok := c.in.Provider.(desiredLister); ok {
-		tagged, err = l.listTaggedWith(context.Background(), c.desired)
-	} else {
-		tagged, err = c.in.Provider.ListTagged(context.Background(), c.desired.SubscriptionID)
+		return l.listTaggedWith(context.Background(), c.desired)
 	}
+	return c.in.Provider.ListTagged(context.Background(), c.desired.SubscriptionID)
+}
+
+func (c *blockCheck) taggedMatchDeclared() {
+	tagged, err := c.listTagged()
 	if err != nil {
 		c.problem("listing what carries the subscription's id failed: %v", err)
 		return
@@ -838,6 +841,7 @@ func (c *blockCheck) upgrade() bool {
 // observesTheProvider upgrades again afterwards so the teardown has the block whole.
 func (c *blockCheck) observesTheProvider() bool {
 	var lost []string
+	c.emptyIdentityUnsubscribe()
 	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
 		r := c.desired.RecordedResources[name]
 		if len(r.Identity) == 0 {
@@ -857,6 +861,7 @@ func (c *blockCheck) observesTheProvider() bool {
 		return false
 	}
 	c.ran[guardProvider] = true
+	c.emptyIdentityUnsubscribe()
 	for _, name := range lost {
 		if o := resp.Resources[name].Observe; o != nil && o.State == contract.Present {
 			c.resourceProblem(name, "still observed present after the provider lost it; observe must ask the provider, not remember what the ensure created")

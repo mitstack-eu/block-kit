@@ -64,7 +64,6 @@ func TestRun(t *testing.T) {
 	unknownField := full + "  frobnicate: true\n"
 	unknownFieldErr := refusal(t, unknownField, "spec.frobnicate")
 	everyReader := suiteWant{"fail", []string{"spec.frobnicate", unknownFieldErr}}
-	// fullBlock fails only resources, so these cases read the suite they judge rather than the verdict.
 	manifestCase := func(name, manifest string, want suiteWant) runCase {
 		return runCase{name: name, dir: fullBlock(with(manifestFile, manifest)), args: jsonStandalone, exit: exitNotJudged, verdict: "fail",
 			suites: map[string]suiteWant{"manifest": want}}
@@ -85,6 +84,7 @@ func TestRun(t *testing.T) {
 			stdout: []string{"VERDICT: PASS"}, human: map[string]suiteWant{"resources": {"pass", []string{"kit-observer", "probe-reads"}}}},
 		{name: "the same block registering its own observer for aws.s3-bucket prints a failing finding naming the type", dir: kitObservedBlock("true"), args: []string{"--standalone", "$DIR"},
 			exit: 1, stdout: []string{"VERDICT: FAIL"}, human: map[string]suiteWant{"resources": {"fail", []string{`resource "aws.s3-bucket"`, "aws.s3-bucket carries an observe spec", "own observer"}}}},
+		{name: "a block whose observer answers unknown on an empty identity prints a failing finding naming the resource and exits 1", dir: resourcesBlock("resources-block-manifest.yaml", `unknownOnEmpty: true`, "false"), args: []string{"--standalone", "$DIR"}, exit: 1, stdout: []string{"VERDICT: FAIL"}, human: map[string]suiteWant{"resources": {"fail", []string{`resource "aws.ec2-instance"`, "empty identity"}}}},
 		{name: "a kit/v1 block that imports the handler names the kit/v1 rule in both suites", dir: kitV1Block(), args: jsonStandalone, exit: exitNotJudged, verdict: "fail",
 			suites: both(suiteWant{"pass", []string{"kit/v1"}})},
 		{name: "a kit/v1 block that does not import the handler names the kit/v1 rule in both suites", dir: kitV1Block(withSource("main.go", "main-without-handler.go")),

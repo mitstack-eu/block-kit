@@ -75,6 +75,13 @@ holds the block to the guards below and logs the name of every guard that ran:
 | `absence-after-unsubscribe` | After unsubscribe every declared resource reports absent, except one whose type `Config.Types` marks `endsWithSubscription` |
 | `kit-observer` | A resource whose type carries an observe spec has no observer of the block's own in `Config.Observers` or `Config.TypeObservers`, since `Config.KitObserver` reads it. The kit observer must also be able to run that spec, which needs at least one usable read, the read that proves the resource ready for use. A failure here names the resource and type, and [Observing resources](observe.md#proving-a-resource-usable) shows how to fix it |
 | `probe-reads` | A probe of such a resource makes no more provider reads than its type's `maxReads`, counted by a `Provider` that implements `kittest.ReadCounter` |
+| `empty-identity-unsubscribe` | A resource whose identity is empty, as a failed create leaves it, still gets a true answer when the engine tears it down. The check sends each recorded resource a `validate` that names it, carries no identity and sets `ResourceUnsubscribing`, so its observer sees an empty `r.Identity` and `r.Unsubscribing` true. It sends it twice: while `Provider` still holds the resource, and after the check has lost every resource through `Provider.Lose`. With nothing held the observer must answer absent. While `Provider` holds one it must answer present, and absent fails. An unknown answer passes only if it sets `WaitingOnPerson`, the response asks for a redrive, or its status detail names an object `Provider` holds. A resource whose type [lands files](#proving-a-block-that-lands-files) is left out, because its landing record, the identity that names the files and repository it landed, is the only way to find what it landed |
+
+An observer that answers unknown only because `r.Identity` is empty leaves the
+engine's unsubscribe check repeating without an answer. When `r.Unsubscribing` is true and
+the identity is empty, look the resource up by what the provider holds under
+the subscription, such as a tag or a label, and answer absent when nothing is
+found. `examples/hetzner-firewall/config.go` does this with a label selector.
 
 On every answer, the check also reads each observe that names a resource
 unhealthy. Its cause must be one the resource's type lists under `failures`

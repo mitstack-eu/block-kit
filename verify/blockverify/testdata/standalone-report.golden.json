@@ -34,7 +34,7 @@
     {
       "name": "resources",
       "status": "pass",
-      "detail": "TestDeclaredResources proves the block's 8 declared resources hold the guards that ran: tagging, observe-asks-the-provider, replacement, absence-after-unsubscribe, required-outputs"
+      "detail": "TestDeclaredResources proves the block's 8 declared resources hold the guards that ran: tagging, observe-asks-the-provider, replacement, absence-after-unsubscribe, required-outputs, empty-identity-unsubscribe"
     },
     {
       "name": "deliverable",

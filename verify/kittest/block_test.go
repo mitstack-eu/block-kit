@@ -277,16 +277,41 @@ type providerObserver struct {
 	counts *observeCounts
 }
 
-func (o providerObserver) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
-	o.counts.observed(r.Name)
+func (o providerObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	id := r.Identity["id"]
+	if id != "" || !r.Unsubscribing {
+		o.counts.observed(r.Name)
+	}
 	switch {
+	case id == "" && r.Unsubscribing:
+		return o.byType(ctx, r)
 	case id == "":
 		return contract.Observation{State: contract.Unknown, StatusDetail: "no id"}, nil
 	case o.p.holds(id):
 		return contract.Observation{State: contract.Present, Outputs: o.outputs(r.Type, id)}, nil
 	}
 	return contract.Observation{State: contract.Absent}, nil
+}
+
+// byType answers an unsubscribing observe that names no identity from what the provider holds for the subscription.
+func (o providerObserver) byType(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	held, err := o.p.heldOfType(ctx, r)
+	if err != nil || len(held) == 0 {
+		return contract.Observation{State: contract.Absent}, err
+	}
+	return contract.Observation{State: contract.Present, Outputs: o.outputs(r.Type, held[0])}, nil
+}
+
+// heldOfType lists the ids the provider holds of r's type under r's subscription.
+func (p *fakeProvider) heldOfType(ctx context.Context, r contract.ResourceRef) ([]string, error) {
+	tagged, err := p.ListTagged(ctx, r.Desired.SubscriptionID)
+	var held []string
+	for _, item := range tagged {
+		if item.Type == r.Type {
+			held = append(held, item.ID)
+		}
+	}
+	return held, err
 }
 
 func (o providerObserver) outputs(typ, id string) map[string]string {
@@ -631,9 +656,11 @@ type seenObserver struct {
 }
 
 func (o seenObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
-	o.mu.Lock()
-	o.seen[r.Name+"="+r.Identity["id"]] = true
-	o.mu.Unlock()
+	if r.Identity["id"] != "" || !r.Unsubscribing {
+		o.mu.Lock()
+		o.seen[r.Name+"="+r.Identity["id"]] = true
+		o.mu.Unlock()
+	}
 	return o.providerObserver.ObserveResource(ctx, r)
 }
 

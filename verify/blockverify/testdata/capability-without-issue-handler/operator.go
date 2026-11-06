@@ -57,7 +57,7 @@ func (c *cloud) Lose(_ context.Context, r contract.CreatedResource) error {
 func (c *cloud) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.objects[r.Identity["id"]]; ok {
+	if _, ok := c.objects[r.Identity["id"]]; ok || (r.Identity["id"] == "" && len(c.objects) > 0) {
 		return contract.Observation{State: contract.Present}, nil
 	}
 	return contract.Observation{State: contract.Absent}, nil
