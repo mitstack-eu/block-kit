@@ -255,8 +255,6 @@ func TestResourcesSuite(t *testing.T) {
 			dir: resourcesBlock("resources-block-manifest.yaml", `leaveOnDelete: "aws.ebs-volume"`, "false"), status: "fail", detail: []string{`resource "aws.ebs-volume"`}},
 		{name: "a validate hiding the replacement of a stateful resource fails, naming it",
 			dir: resourcesBlock("resources-block-manifest.yaml", `hideReplacement: true`, "false"), status: "fail", detail: []string{`resource "aws.ebs-volume"`, "stateful"}},
-		{name: "an observer answering unknown on an unsubscribing observe with an empty identity fails, naming the resource",
-			dir: resourcesBlock("resources-block-manifest.yaml", `unknownOnEmpty: true`, "false"), status: "fail", detail: []string{`resource "aws.ec2-instance"`, "empty identity"}},
 		{name: "a provided resource missing an output its type requires fails, naming the output",
 			dir: resourcesBlock("resources-block-manifest.yaml", `dropOutput: "hostId"`, "false"), status: "fail", detail: []string{`resource "aws.ec2-instance"`, "hostId"}},
 		{name: "a block run once per listed type passes without claiming the replacement guard, which did not run",

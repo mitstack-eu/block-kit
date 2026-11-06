@@ -225,7 +225,6 @@ func baseManifest(content string) func(t *testing.T) string {
 	}
 }
 
-// changedFiles writes paths as `git diff -z --name-only` lists them, each ended by a NUL byte.
 func changedFiles(paths ...string) func(t *testing.T) string {
 	return func(t *testing.T) string {
 		var list strings.Builder
