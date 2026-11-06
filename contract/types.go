@@ -193,10 +193,9 @@ type Desired struct {
 	Bindings     map[string]map[string]string
 	BindingsAll  map[string][]map[string]string
 
-	Resource         string
-	ResourceIdentity map[string]string
-	ResourceType     string
-	// ResourceUnsubscribing is true when a request naming Resource probes it during a teardown.
+	Resource              string
+	ResourceIdentity      map[string]string
+	ResourceType          string
 	ResourceUnsubscribing bool
 
 	RecordedResources map[string]RecordedResource
@@ -354,7 +353,6 @@ func wrapDecodeError(kind string, err error) error {
 	return fmt.Errorf("contract: invalid %s JSON: %w", kind, err)
 }
 
-// Identity returns the subset of r that names its subscription and where its resource lives.
 func (r Request) Identity() Identity {
 	return Identity{
 		SubscriptionID: r.SubscriptionID,
@@ -368,7 +366,6 @@ func (r Request) Identity() Identity {
 	}
 }
 
-// Desired returns the subset of r describing what an operator should converge its resource to.
 func (r Request) Desired() Desired {
 	return Desired{
 		Identity:              r.Identity(),
