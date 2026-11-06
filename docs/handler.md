@@ -173,6 +173,11 @@ was created as, the identity that addresses it, such as
 true only in the observe that follows an unsubscribe's `Delete`, so an observer
 whose answer depends on the verb can tell that pass apart.
 
+When `EnsureResources` fails after it made some resources, return those
+resources beside the error. The failed answer carries each one's type and
+identity, so the platform records them and a later unsubscribe observes each by
+its real identity.
+
 | Call | What the handler does |
 |---|---|
 | `subscribe`, `upgrade` | Runs one `EnsureResources`, or `EnsureResourcesOwning` for a block that implements `handler.OwnSecretsReporter`, then observes each declared resource once, in manifest order, and stops at the first not yet `present` |

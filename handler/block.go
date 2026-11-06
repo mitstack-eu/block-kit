@@ -41,7 +41,12 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 			return r.withOwnSecrets(http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, r.secrets...)})
 		}
 		if err != nil {
-			return r.h.errorResponse(err, r.secrets)
+			status, resp := r.h.errorResponse(err, r.secrets)
+			r.ensured(reported)
+			if len(r.outcomes) > 0 {
+				resp.Resources = r.outcomes
+			}
+			return status, resp
 		}
 		r.d.VerbAt = r.h.now()
 		r.resources = units(r.h.declared, reported)
@@ -115,14 +120,20 @@ func waiting(err error) (*Waiting, bool) {
 	return w, errors.As(err, &w)
 }
 
-// ensureBlock returns what the ensure reported by resource name, refusing a
-// resource undeclared, reported twice, of an unlisted type, or with a secret
-// in its identity.
+// ensureBlock returns what the ensure reported by resource name, beside the ensure's error when it made resources before failing, and none of them when one is refused.
 func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.CreatedResource, error) {
 	created, err := r.ensureReporting(ctx)
-	if err != nil {
+	reported, refused := r.checkReported(created)
+	switch {
+	case err != nil && refused != nil:
 		return nil, err
+	case err != nil:
+		return reported, err
 	}
+	return reported, refused
+}
+
+func (r *declaredRun) checkReported(created []contract.CreatedResource) (map[string]contract.CreatedResource, error) {
 	reported := make(map[string]contract.CreatedResource, len(created))
 	for _, c := range created {
 		nr, err := r.h.reportedResource(c.Name)

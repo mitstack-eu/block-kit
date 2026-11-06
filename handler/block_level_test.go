@@ -1051,6 +1051,26 @@ func TestBlockLevel_TheOwnSecretsAnEnsureReturnsReachEachSubscribeAndUpgradeAnsw
 	}
 }
 
+func TestBlockLevel_AFailedEnsureAnswersWithTheIdentitiesOfTheResourcesItMade(t *testing.T) {
+	made := []contract.CreatedResource{{Name: "deploy-role", Type: "aws.iam-role", Identity: map[string]string{"roleName": "deploy-1"}}}
+	carried := map[string]contract.ResourceOutcome{"deploy-role": {Ensure: &contract.CallOutcome{Type: "aws.iam-role", Identity: map[string]string{"roleName": "deploy-1"}}}}
+	for label, tc := range map[string]struct {
+		report []contract.CreatedResource
+		err    error
+		status int
+		want   map[string]contract.ResourceOutcome
+	}{
+		"a failure beside one made resource": {made, errors.New("the provider refused the next role"), http.StatusInternalServerError, carried},
+		"a refusal beside one made resource": {made, handler.Refuse("bad-input", "the role name is taken"), http.StatusBadRequest, carried},
+		"a failure beside an undeclared one": {[]contract.CreatedResource{{Name: "undeclared-role", Type: "aws.iam-role"}}, errors.New("refused"), http.StatusInternalServerError, nil},
+	} {
+		status, resp := serveBlock(t, blockCall{r: owningBlock{blockResource: &blockResource{cloud: newFakeCloud()}, report: tc.report, err: tc.err}, obs: roleObservers(roleArns()), op: "subscribe", config: []func(*handler.Config){withManifest(roleBlockManifest)}})
+		if status != tc.status || !reflect.DeepEqual(resp.Resources, tc.want) {
+			t.Errorf("%s: status, Resources = %d, %+v; want %d, %+v", label, status, resp.Resources, tc.status, tc.want)
+		}
+	}
+}
+
 func TestBlockLevel_TheOwnSecretsAnEnsureReturnsNeverReachTheRequestsDesired(t *testing.T) {
 	carried := map[string]string{"gatewayCaKey": "own-ca-key-carried"}
 	block := owningBlock{blockResource: &blockResource{cloud: newFakeCloud()}, own: map[string]string{"gatewayCaKey": "own-ca-key-minted"}}
