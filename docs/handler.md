@@ -333,6 +333,15 @@ the README's "A check that needs a created app" describes.
 `handler.NeedsAppName` gives that answer for a request naming neither an app
 nor `handler.ParamAppName`, and nil for any other.
 
+A validate that cannot run because a requirement the block declares is not bound
+in the request answers `handler.UnboundRequirement`, of class
+`handler.ClassUnboundRequirement`. The platform counts it as checked at create
+when only a sibling member not yet provisioned meets that requirement, and as a
+refusal otherwise. `handler.RequireBound` gives that answer when the request's
+`Bindings` and `BindingsAll` hold nothing for a requirement's reference. A
+requirement bound to a resource that publishes no outputs also leaves them
+empty, so call it only for a requirement the validate reads outputs of.
+
 A panic in your code answers 500 with a fixed error naming the call, such as
 `handler: the block panicked during subscribe`, and the answer never carries
 the panic value. The handler logs the panic with the block, subscription and

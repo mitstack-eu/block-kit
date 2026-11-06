@@ -131,6 +131,18 @@ func TestDeclared_AValidateWhoseCheckNeedsACreatedAppAnswersTheNeedsAppRefusalNa
 	}
 }
 
+func TestDeclared_AValidateWhoseRequirementIsUnboundAnswersTheUnboundRequirementRefusalNamingWhy(t *testing.T) {
+	const why = "the request binds no hetzner.kubernetes-cluster to place the slice on"
+	obs := asObservers(blockObservers(standingCloud()))
+	obs["a"] = &observer{err: handler.UnboundRequirement("%s", why)}
+
+	status, resp := serveBlock(t, blockCall{r: &blockResource{}, obs: obs, op: "validate"})
+
+	if want := "refused:unbound-requirement: " + why; status != http.StatusBadRequest || resp.StatusDetail != want || handler.RefusedClass(resp.StatusDetail) != handler.ClassUnboundRequirement {
+		t.Fatalf("validate = %d %q; want 400 %q, the class the platform reads as waiting on a sibling", status, resp.StatusDetail, want)
+	}
+}
+
 func TestDeclared_AValidateWithFindingsAnswersTheBytesTheReadmeShows(t *testing.T) {
 	manifest := v1betaManifest("app-build", []string{"{ name: ci-workflows, type: github.workflow-file }"})
 	serve := func(findings []contract.Finding) []byte {
