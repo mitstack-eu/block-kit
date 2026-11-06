@@ -14,8 +14,10 @@ type owned struct {
 	observe.EC2API
 	observe.HetznerServerAPI
 	observe.GitHubRepositoryAPI
-	held map[string][]string
-	err  error
+	observe.GitHubCommitAPI
+	held    map[string][]string
+	commits []observe.GitHubCommitPaths
+	err     error
 }
 
 func (f *owned) holds(sub, item string) *owned {
@@ -56,7 +58,7 @@ func (f *owned) ActionsVariableNames(context.Context, contract.Desired, string) 
 	return nil, nil
 }
 func (f *owned) Commits(context.Context, contract.Desired, string) ([]observe.GitHubCommitPaths, error) {
-	return nil, nil
+	return f.commits, f.err
 }
 
 var ownedObservers = []struct {
