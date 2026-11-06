@@ -26,6 +26,22 @@ func NeedsApp(format string, args ...any) error {
 	return Refuse(ClassNeedsApp, format, args...)
 }
 
+// ClassUnboundRequirement refuses a validate that cannot run because a requirement the block declares is not bound in the request, which the platform counts as checked at create when a sibling not yet provisioned is to meet it and as a refusal otherwise.
+const ClassUnboundRequirement = "unbound-requirement"
+
+// UnboundRequirement builds the ClassUnboundRequirement refusal a validate gives when a requirement it declares is not bound, naming why.
+func UnboundRequirement(format string, args ...any) error {
+	return Refuse(ClassUnboundRequirement, format, args...)
+}
+
+// RequireBound answers UnboundRequirement for a request whose bindings hold nothing for the requirement named by reference, and nil otherwise.
+func RequireBound(d contract.Desired, reference string) error {
+	if len(d.Bindings[reference]) == 0 && len(d.BindingsAll[reference]) == 0 {
+		return UnboundRequirement("the request binds no %q requirement the block declares", reference)
+	}
+	return nil
+}
+
 // ParamAppName is the param the platform fills with the app's name for every block, left out only by a dry run naming neither an app nor its name.
 const ParamAppName = "appName"
 
