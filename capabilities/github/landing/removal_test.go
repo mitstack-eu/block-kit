@@ -369,6 +369,100 @@ func TestObserver_ReadsAnUnreadableRemovalPullRequestUnknown(t *testing.T) {
 	}
 }
 
+// reviewHeldRemoval lands the starter under a required review and leaves its removal pull request #1 open, which GitHub holds back for approvals.
+func reviewHeldRemoval(t *testing.T, approvals int) (*landingtest.Fake, landing.Record) {
+	t.Helper()
+	f := landingtest.New(t, repo)
+	rec := land(t, f, threeFiles, landing.Record{})
+	f.RequireReviews(approvals)
+	_, err := remove(client(f), rec)
+	waiting(t, err, "#1")
+	return f, rec
+}
+
+func TestObserver_ReadsARemovalHeldBackForAReviewAsRemovingNamingTheReview(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(f *landingtest.Fake)
+		naming  []string
+	}{
+		{"no review given", func(*landingtest.Fake) {}, []string{"an approving review"}},
+		{"a review given and a reviewer who then requested changes", func(f *landingtest.Fake) {
+			f.Review(1, "ana", "APPROVED")
+			f.Review(1, "bo", "CHANGES_REQUESTED")
+		}, []string{"an approving review", "requested changes"}},
+		{"its required check passed", func(f *landingtest.Fake) {
+			f.RequireCheck("managed-ci")
+			f.ReportCheck("managed-ci", "success")
+		}, []string{"an approving review"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := reviewHeldRemoval(t, 1)
+			tc.arrange(f)
+
+			obs := observeRemoval(t, f, rec, true)
+
+			if obs.State != contract.Present || obs.Removing == nil {
+				t.Fatalf("observe with %s = %s with removing %+v (%s), want present with removing", tc.name, obs.State, obs.Removing, obs.StatusDetail)
+			}
+			for _, naming := range append([]string{"#1", repo}, tc.naming...) {
+				if !strings.Contains(obs.Removing.WaitsOn, naming) {
+					t.Errorf("waitsOn = %q, want it to name %q", obs.Removing.WaitsOn, naming)
+				}
+			}
+		})
+	}
+}
+
+func TestObserver_ReadsNoRemovingWhenNoReviewHoldsTheRemovalBack(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(f *landingtest.Fake)
+	}{
+		{"the required review was given", func(f *landingtest.Fake) { f.Review(1, "ana", "APPROVED") }},
+		{"a reviewer approved, then another only commented", func(f *landingtest.Fake) {
+			f.Review(1, "ana", "APPROVED")
+			f.Review(1, "bo", "COMMENTED")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := reviewHeldRemoval(t, 1)
+			tc.arrange(f)
+
+			obs := observeRemoval(t, f, rec, true)
+
+			if obs.State != contract.Present || obs.Removing != nil {
+				t.Errorf("observe once %s = %s with removing %+v (%s), want present with no removing", tc.name, obs.State, obs.Removing, obs.StatusDetail)
+			}
+		})
+	}
+	t.Run("main requires no review", func(t *testing.T) {
+		f, rec := waitingRemoval(t)
+		f.ReportCheck("managed-ci", "success")
+
+		obs := observeRemoval(t, f, rec, true)
+
+		if obs.State != contract.Present || obs.Removing != nil {
+			t.Errorf("observe with no review required = %s with removing %+v (%s), want present with no removing", obs.State, obs.Removing, obs.StatusDetail)
+		}
+	})
+}
+
+func TestObserver_ReadsUnknownNamingTheReviewReadThatFailed(t *testing.T) {
+	for _, path := range []string{"/branches/main/protection", "/rules/branches/main", "/pulls/1/reviews"} {
+		t.Run(path, func(t *testing.T) {
+			f, rec := reviewHeldRemoval(t, 1)
+			f.Answer(http.MethodGet, "/repos/"+repo+path, http.StatusInternalServerError)
+
+			obs := observeRemoval(t, f, rec, true)
+
+			if obs.State != contract.Unknown || !strings.Contains(obs.StatusDetail, path) {
+				t.Errorf("observe while GET %s fails = %s (%s), want unknown naming the read, since a failed read proves nothing", path, obs.State, obs.StatusDetail)
+			}
+		})
+	}
+}
+
 func TestUnsubscribe_WaitsAsARemovalWaitWhileItsCheckRunsAndGitHubRefusesTheStatusRead(t *testing.T) {
 	for _, status := range []string{"queued", "in_progress"} {
 		t.Run(status, func(t *testing.T) {

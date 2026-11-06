@@ -4,6 +4,7 @@ package handler_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
@@ -781,6 +782,23 @@ func TestBlockLevel_ObservesAreHandedTheTimeOfTheVerbTheySettleAndWhetherItIsAnU
 						t.Errorf("resource %q observed on %s with Unsubscribing %v, want it true on unsubscribe alone", name, op, r.Unsubscribing)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestBlockLevel_AValidateNamingAResourceHandsItsObserverTheUnsubscribingMarkerTheRequestCarries(t *testing.T) {
+	for _, marked := range []bool{true, false} {
+		t.Run(fmt.Sprint("resourceUnsubscribing ", marked), func(t *testing.T) {
+			cloud := standingCloud()
+			obs := blockObservers(cloud)
+			fields := map[string]any{"resource": "b", "resourceType": "aws.iam-role", "resourceIdentity": map[string]any{"roleName": "b-role"}, "resourceUnsubscribing": marked}
+
+			status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: asObservers(obs), op: "validate", fields: fields})
+
+			wantOK(t, status, resp)
+			if refs := obs["b"].calls(); len(refs) != 1 || refs[0].Unsubscribing != marked {
+				t.Errorf("b observer handed %+v, want one ref with Unsubscribing %v", refs, marked)
 			}
 		})
 	}

@@ -261,6 +261,11 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 			wantField(t, "ResourceType", req.ResourceType, "hetzner.server-container")
 			wantField(t, "Desired() resource, type", []string{d.Resource, d.ResourceType}, []string{"app-container", "hetzner.server-container"})
 		}},
+		{"a named resource's unsubscribing marker reaches Desired", func(m map[string]any) {
+			m["operation"], m["resource"], m["resourceUnsubscribing"] = "validate", "firewall", true
+		}, func(t *testing.T, req contract.Request, d contract.Desired) {
+			wantField(t, "ResourceUnsubscribing, Desired().ResourceUnsubscribing", []bool{req.ResourceUnsubscribing, d.ResourceUnsubscribing}, []bool{true, true})
+		}},
 		{"recorded resources and requirement types reach Desired, at the request's time", func(m map[string]any) {
 			m["operation"], m["recordedResources"], m["requirementTypes"] = "unsubscribe", recorded, requirementTypes
 		}, func(t *testing.T, req contract.Request, d contract.Desired) {
@@ -449,6 +454,8 @@ func TestRequestMarshal_EncodesEachResourceFieldUnderItsWireNameOnlyWhenSet(t *t
 		{"own secrets", contract.Request{OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}},
 			"ownSecrets", map[string]any{"gatewayCaKey": "own-secret-not-a-real-key"}},
 		{"no own secrets key when the subscription keeps none", contract.Request{}, "ownSecrets", nil},
+		{"a resource's unsubscribing marker", contract.Request{Resource: "firewall", ResourceUnsubscribing: true}, "resourceUnsubscribing", true},
+		{"no unsubscribing marker when unset", contract.Request{}, "resourceUnsubscribing", nil},
 		{"no resource type when unset", contract.Request{}, "resourceType", nil},
 		{"no never-active key when it may have been active", contract.Request{}, "neverActive", nil},
 		{"no recorded resources when unset", contract.Request{}, "recordedResources", nil},
@@ -539,6 +546,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 				t.Errorf("properties.neverActive type = %v, want boolean", schemaTypes(prop))
 			}
 		}},
+		{"resourceUnsubscribing", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "boolean") {
+				t.Errorf("properties.resourceUnsubscribing type = %v, want boolean", schemaTypes(prop))
+			}
+		}},
 		{"ownSecrets", func(t *testing.T, prop map[string]any) {
 			objectOfStrings(t, doc, prop, "properties.ownSecrets")
 		}},
@@ -555,11 +567,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_10_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_11_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.10.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.10.0: it adds the operation logs, a minor change from 1.9.0", doc["version"])
+	if doc["version"] != "1.11.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.11.0: it adds resourceUnsubscribing, a minor change from 1.10.0", doc["version"])
 	}
 }
 
