@@ -27,6 +27,10 @@ func (f *owned) ResourceARNs(_ context.Context, _ contract.Desired, _, sub strin
 	return f.held[sub], f.err
 }
 
+func (f *owned) RoleARNs(context.Context, contract.Desired, string, string) ([]string, error) {
+	return nil, nil
+}
+
 func (f *owned) ListByLabel(_ context.Context, _ contract.Desired, sel string) (out []observe.HetznerObject, _ error) {
 	for _, item := range f.held[sel] {
 		kind, id, _ := strings.Cut(item, "/")

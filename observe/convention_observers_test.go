@@ -73,7 +73,11 @@ func TestAWSConventionObservers_ResolveAnEmptyIdentityWhileUnsubscribing(t *test
 	t.Run("an API that cannot tell the proxy from the host stays unknown", func(t *testing.T) {
 		ref := refFor("aws.ec2-instance", nil)
 		ref.Unsubscribing = true
-		got, err := observe.EC2Instance{API: &owned{held: map[string][]string{"sub-1": {host}}}}.ObserveResource(context.Background(), ref)
+		tags := &owned{held: map[string][]string{"sub-1": {host}}}
+		got, err := observe.EC2Instance{API: struct {
+			observe.EC2API
+			observe.AWSTaggingAPI
+		}{AWSTaggingAPI: tags}}.ObserveResource(context.Background(), ref)
 		if err != nil || got.State != contract.Unknown {
 			t.Errorf("got %+v, %v; want unknown", got, err)
 		}
