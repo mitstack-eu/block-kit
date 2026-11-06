@@ -32,7 +32,7 @@ type ConnectionVerifier interface {
 	VerifyConnection(ctx context.Context, c ConnectionCheck) (Verification, error)
 }
 
-// verifyConnection serves the one operation that has no subscription, so it is signed like every call but carries no OBO token, and it is never replayed from the idempotency cache since a credential may have been revoked since.
+// verifyConnection carries no OBO token and skips the idempotency cache, since a connect-time check has no subscription and a credential may be revoked.
 func (h *Handler) verifyConnection(ctx context.Context, req contract.Request, secrets []string) (int, contract.Response) {
 	if h.verifier == nil {
 		return h.errorResponse(Refuse(classNoConnectionTest, "this operator's manifest does not list %s", contract.OperationVerifyConnection), secrets)

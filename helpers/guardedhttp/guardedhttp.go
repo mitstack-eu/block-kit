@@ -19,7 +19,7 @@ var ErrRefused = errors.New("guardedhttp: refused")
 
 const defaultTimeout = 30 * time.Second
 
-// Config says which hosts the client may reach. Resolve, Dial and RootCAs exist for tests that stand a server in place of the vendor, and the address checks apply whatever they hold.
+// Config names the hosts the client may reach, and its Resolve, Dial and RootCAs let a test stand a server in place of the vendor without lifting the address checks.
 type Config struct {
 	// Hosts are the exact host names, or address literals, the operator declares; a request to any other host is refused before the host is resolved.
 	Hosts []string

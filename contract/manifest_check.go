@@ -174,7 +174,7 @@ func ManifestVerdicts() ([]ManifestVerdict, error) {
 	return verdicts, nil
 }
 
-// checkCapabilitySections holds the presentation, connection, kinds and reach sections and the verify-connection operation to a capability manifest, and the connection to the rules of its mechanism.
+// checkCapabilitySections keeps the four sections and verify-connection to a capability and holds its connection to its mechanism.
 func checkCapabilitySections(b *BlockManifest) error {
 	s := b.Spec
 	verifies := slices.Contains(s.Lifecycle.Operations, OperationVerifyConnection)

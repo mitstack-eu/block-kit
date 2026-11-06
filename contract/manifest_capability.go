@@ -71,7 +71,7 @@ type ManifestConnection struct {
 	InstallHint string               `json:"installHint,omitempty"`
 	// HeldOnlyByGrant means only the org's OAuth grant holds the capability, so a stored token for it holds nothing.
 	HeldOnlyByGrant bool `json:"heldOnlyByGrant,omitempty"`
-	// Driver names the platform code that serves the connection when a capability's operator does not.
+	// Driver names the platform code that serves the connection in place of an operator.
 	Driver        string                    `json:"driver,omitempty"`
 	ObjectStorage *ManifestObjectStorageKey `json:"objectStorage,omitempty"`
 }
