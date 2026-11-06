@@ -10,7 +10,6 @@ type GitHubRepositoryAPI interface {
 	RepositoryExists(ctx context.Context, d contract.Desired, fullName string) (bool, error)
 }
 
-// GitHubRepository observes a github.repository by its repo, or with no repo while unsubscribing, by the subscription's topic.
 type GitHubRepository struct {
 	API GitHubRepositoryAPI
 }
