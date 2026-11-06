@@ -99,8 +99,8 @@ func TestManifestSchema_RequirementAndResourceCarryExactlyTheirKeys(t *testing.T
 			}
 		})
 	}
+	// A manifest that answers no operation is not a block, and ParseManifest refuses a block that creates nothing, since a capability creates none.
 	for _, path := range [][]string{
-		{"properties", "spec", "properties", "resources"},
 		{"properties", "spec", "properties", "lifecycle", "properties", "operations"},
 	} {
 		t.Run(strings.Join(path, ".")+" minItems", func(t *testing.T) {

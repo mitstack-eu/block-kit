@@ -127,7 +127,7 @@ func TestDecodeRequest_CarriesEveryGoldenFieldOntoTheRequest(t *testing.T) {
 func TestDecodeRequest_EveryRequestGoldenDecodesOrIsRefusedExactlyAsPinned(t *testing.T) {
 	refusals := map[string]string{
 		"invalid-missing-nonce": `contract: envelope field "nonce" is required`,
-		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, got "reticulate"`,
+		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, got "reticulate"`,
 	}
 	pinned, err := os.ReadFile("testdata/request-golden-encodings.json")
 	if err != nil {
@@ -576,11 +576,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_12_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_13_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.12.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.12.0: it adds absences, a minor change from 1.11.0, which added resourceUnsubscribing", doc["version"])
+	if doc["version"] != "1.13.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.13.0: it adds the operation verify-connection, a minor change from 1.12.0, which added absences", doc["version"])
 	}
 }
 

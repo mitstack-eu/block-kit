@@ -1,10 +1,10 @@
 {
-  "suiteVersion": "2.0.0",
+  "suiteVersion": "2.1.0",
   "kitVersion": "v0.4.0",
   "mode": "standalone",
   "manifestDigest": "sha256:436f01667f7c9869674b2caa4af4253dbb27d732378601d4c67144aeb41b0f5d",
   "verdict": "pass",
-  "resultsDigest": "sha256:efe2824240337a3aa1a7c76c118918ce89d09c9e137cc218ed5b969eb5af97d4",
+  "resultsDigest": "sha256:85c3c391e5553e8a0de368545adfbfa0d0f5375f2c2d7fe26fcc5911c24820b4",
   "suites": [
     {
       "name": "trust-plumbing",
@@ -20,6 +20,11 @@
       "name": "secret-safety",
       "status": "pass",
       "detail": "TestNoSecretLeak (+ the /logs variant where /logs is served) passes"
+    },
+    {
+      "name": "guarded-client",
+      "status": "skipped",
+      "detail": "the manifest does not list verify-connection, so the operator calls no vendor with an org's credential"
     },
     {
       "name": "teardown",

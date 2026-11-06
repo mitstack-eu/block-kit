@@ -11,7 +11,7 @@
   {"manifest": "release-class-unknown.yaml", "refusal": "spec.releaseClass \"hotfix\" is not one of breaking, correctness-fix, feature"},
   {"manifest": "correctness-fix-without-note.yaml", "refusal": "spec.releaseNote is required when spec.releaseClass is correctness-fix"},
   {"manifest": "endpoint-not-https.yaml", "refusal": "spec.lifecycle.endpoint must be an https:// URL"},
-  {"manifest": "operation-unknown.yaml", "refusal": "spec.lifecycle.operations: \"deploy\" is not one of subscribe, unsubscribe, upgrade, validate, rotate, logs"},
+  {"manifest": "operation-unknown.yaml", "refusal": "spec.lifecycle.operations: \"deploy\" is not one of subscribe, unsubscribe, upgrade, validate, rotate, logs, verify-connection"},
   {"manifest": "operation-logs.yaml", "refusal": ""},
   {"manifest": "operation-twice.yaml", "refusal": "spec.lifecycle.operations: \"subscribe\" is listed twice"},
   {"manifest": "subscribe-without-unsubscribe.yaml", "refusal": "spec.lifecycle.operations: declaring \"subscribe\" requires declaring \"unsubscribe\", so that what the block provisions can be torn down"},
@@ -19,5 +19,14 @@
   {"manifest": "resource-type-not-served.yaml", "refusal": "spec.resources[0]: type example.no-such-type is not in the types the platform serves"},
   {"manifest": "requirement-type-not-served.yaml", "refusal": "spec.requires[0]: type example.no-such-type is not in the types the platform serves"},
   {"manifest": "resource-alternative-not-served.yaml", "refusal": "spec.resources[0]: type example.no-such-type is not in the types the platform serves"},
-  {"manifest": "requirement-alternative-not-served.yaml", "refusal": "spec.requires[0]: type example.no-such-type is not in the types the platform serves"}
+  {"manifest": "requirement-alternative-not-served.yaml", "refusal": "spec.requires[0]: type example.no-such-type is not in the types the platform serves"},
+  {"manifest": "capability-sendcloud.yaml", "refusal": ""},
+  {"manifest": "capability-presentation-on-a-block.yaml", "refusal": "spec.presentation: only a capability manifest declares it"},
+  {"manifest": "verify-connection-on-a-block.yaml", "refusal": "spec.lifecycle.operations: \"verify-connection\" is declared by a capability manifest alone"},
+  {"manifest": "verify-connection-with-another-operation.yaml", "refusal": "spec.lifecycle.operations: \"verify-connection\" must be the only operation, since a connect-time check has no subscription"},
+  {"manifest": "verify-connection-without-a-stored-token.yaml", "refusal": "spec.connection: a manifest declaring \"verify-connection\" needs a stored-token connection, since only a stored credential is checked"},
+  {"manifest": "connection-mechanism-unknown.yaml", "refusal": "spec.connection.mechanism: \"password\" is not one of oidc, oauth-app, stored-token"},
+  {"manifest": "connection-token-field-twice.yaml", "refusal": "spec.connection.tokenSchema[1]: the field \"public_key\" is listed twice"},
+  {"manifest": "kinds-not-kebab.yaml", "refusal": "spec.kinds[0]: \"Parcel\" is not a resource kind in lowercase kebab case"},
+  {"manifest": "reach-not-a-slug.yaml", "refusal": "spec.reach.capability: \"GitHub\" is not a capability slug"}
 ]
