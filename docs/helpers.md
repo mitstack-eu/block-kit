@@ -716,6 +716,21 @@ SHA. An answer over 8 KiB is ordinary: a create-tree answer lists each root
 entry, and a commit answer carries the whole message. The bounds sit in
 `revision.go`.
 
+A GitHub answer that a retry cannot change fails the subscription at once.
+`ghapi.AnswerError(route, status, header, body, token)` turns a 422, or a 403
+that is no rate limit, into a refusal of class `ghapi.ClassGitHubRefused`. The
+refusal carries GitHub's own message, so the operator answers 400 and the
+builder reads why. A 403 counts as a rate limit when it carries `Retry-After`,
+an `X-RateLimit-Remaining` of `0`, or "rate limit" in its message. That kind of
+403 stays a plain error, as do a 429 and a 5xx, and the platform retries them.
+The client's own writes and its ruleset reads use it, and an operator passes
+its own GitHub answers through it. A ruleset create refused with a 403 reads
+like this, GitHub's message last:
+
+```text
+refused:github-refused: github POST /repos/acme/widget/rulesets returned 403: Upgrade to GitHub Pro or make this repository public to enable this feature.
+```
+
 blockverify holds a block that calls the GitHub API to this rule: it must
 resolve the host through `ghapi.Base`, `ghapi.BaseFromEnv` or an allowlist of
 its own, as [Running the block checks](block-checks.md) describes.
