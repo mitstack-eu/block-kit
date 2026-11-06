@@ -316,6 +316,10 @@ func TestObserver_ReadsNoRemovalUnderWayOnceNothingMovesIt(t *testing.T) {
 		arrange func(f *landingtest.Fake)
 	}{
 		{"its required check failed", func(f *landingtest.Fake) { f.ReportCheck("managed-ci", "failure") }},
+		{"its required check failed while a review is also required", func(f *landingtest.Fake) {
+			f.RequireReviews(1)
+			f.ReportCheck("managed-ci", "failure")
+		}},
 		{"one required check failed while another runs", func(f *landingtest.Fake) {
 			f.RunCheck("managed-ci", "in_progress")
 			f.RequireCheck("lint")
@@ -387,6 +391,10 @@ func TestObserver_ReadsARemovalHeldBackForAReviewAsRemovingNamingTheReview(t *te
 		naming  []string
 	}{
 		{"no review given", func(*landingtest.Fake) {}, []string{"an approving review"}},
+		{"only a ruleset requires the review", func(f *landingtest.Fake) {
+			f.RequireReviews(0)
+			f.RequireReviewsByRuleset(1)
+		}, []string{"an approving review"}},
 		{"a review given and a reviewer who then requested changes", func(f *landingtest.Fake) {
 			f.Review(1, "ana", "APPROVED")
 			f.Review(1, "bo", "CHANGES_REQUESTED")
