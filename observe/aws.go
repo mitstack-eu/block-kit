@@ -21,8 +21,7 @@ type EC2API interface {
 }
 
 // EC2Instance observes an aws.ec2-instance by its instanceId: running is
-// present, terminated or missing absent, any other state unknown.
-// While unsubscribing with no instanceId, it lists what carries the subscription's tag and answers from that.
+// present, terminated or missing absent, any other state unknown, or with no instanceId while unsubscribing, by what carries the subscription's tag.
 type EC2Instance struct {
 	API EC2API
 }
@@ -71,8 +70,7 @@ type S3BucketAPI interface {
 	BucketExists(ctx context.Context, d contract.Desired, bucket string) (bool, error)
 }
 
-// S3Bucket observes an aws.s3-bucket by its bucket.
-// While unsubscribing with no bucket, it lists what carries the subscription's tag and answers from that.
+// S3Bucket observes an aws.s3-bucket by its bucket, or with no bucket while unsubscribing, by what carries the subscription's tag.
 type S3Bucket struct {
 	API S3BucketAPI
 }
@@ -90,8 +88,7 @@ type VPCAPI interface {
 	VPCExists(ctx context.Context, d contract.Desired, vpcID string) (bool, error)
 }
 
-// VPC observes an aws.vpc by its vpcId.
-// While unsubscribing with no vpcId, it lists what carries the subscription's tag and answers from that.
+// VPC observes an aws.vpc by its vpcId, or with no vpcId while unsubscribing, by what carries the subscription's tag.
 type VPC struct {
 	API VPCAPI
 }
@@ -109,8 +106,7 @@ type SecurityGroupAPI interface {
 	SecurityGroupExists(ctx context.Context, d contract.Desired, groupID string) (bool, error)
 }
 
-// SecurityGroup observes an aws.security-group by its groupId.
-// While unsubscribing with no groupId, it lists what carries the subscription's tag and answers from that.
+// SecurityGroup observes an aws.security-group by its groupId, or with no groupId while unsubscribing, by what carries the subscription's tag.
 type SecurityGroup struct {
 	API SecurityGroupAPI
 }
@@ -152,8 +148,7 @@ type EBSVolumeAPI interface {
 }
 
 // EBSVolume observes an aws.ebs-volume by its volumeId: available or in-use
-// is present, deleted or missing absent, any other state unknown.
-// While unsubscribing with no volumeId, it lists what carries the subscription's tag and answers from that.
+// is present, deleted or missing absent, any other state unknown, or with no volumeId while unsubscribing, by what carries the subscription's tag.
 type EBSVolume struct {
 	API EBSVolumeAPI
 }
@@ -185,8 +180,7 @@ type IAMRoleAPI interface {
 }
 
 // IAMRole observes an aws.iam-role by its roleName. The type marks roleArn
-// secret, so it is a secret output.
-// While unsubscribing with no roleName, it lists what carries the subscription's tag and answers from that.
+// secret, so it is a secret output. With no roleName while unsubscribing it is found by what carries the subscription's tag.
 type IAMRole struct {
 	API IAMRoleAPI
 }
@@ -232,8 +226,7 @@ func (o Route53Record) ObserveResource(ctx context.Context, r contract.ResourceR
 	return present(r, map[string]string{"appHostname": host, "appUrl": "https://" + host}), nil
 }
 
-// awsOwned lists by the subscription's tag when the observer's API can.
-// Otherwise it is nil, and the observer answers unknown as it did before.
+// awsOwned lists by the subscription's tag when the observer's API can, and is otherwise nil.
 func awsOwned(api any) TaggedLister {
 	if a, ok := api.(AWSTaggingAPI); ok {
 		return AWSTagged{API: a}

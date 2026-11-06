@@ -34,10 +34,7 @@ func identityKeys(r contract.ResourceRef, keys ...string) ([]string, contract.Ob
 	return values, contract.Observation{}, true
 }
 
-// heldByOwner answers an unsubscribing observe whose identity lacks its key, as a failed create leaves it, from what lister finds under the subscription's id.
-// It answers present, naming the lowest id of typ, or absent when the list holds none; a failed list returns its error, and noKey stands when there is nothing to list with.
-// Several objects of typ cannot be told apart without a name, so the lowest id stands for them all: an unsubscribe deletes every object the subscription holds.
-// A type the lister cannot type passes an empty typ and keeps noKey, since a list that never names it proves nothing about its absence.
+// heldByOwner answers an unsubscribing observe whose identity lacks its key from the objects of typ that lister finds under the subscription's id: present for the lowest id, absent for none, and the list's error when it fails.
 func heldByOwner(ctx context.Context, r contract.ResourceRef, lister TaggedLister, typ, key string, noKey contract.Observation) (contract.Observation, error) {
 	if !r.Unsubscribing || lister == nil || typ == "" || r.Desired.SubscriptionID == "" {
 		return noKey, nil

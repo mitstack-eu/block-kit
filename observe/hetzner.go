@@ -18,8 +18,7 @@ type HetznerServerAPI interface {
 }
 
 // HetznerServer observes a hetzner.server by its serverId: running is
-// present, missing absent, any other status unknown.
-// While unsubscribing with no serverId, it lists what carries the subscription's label and answers from that.
+// present, missing absent, any other status unknown, or with no serverId while unsubscribing, by what carries the subscription's label.
 type HetznerServer struct {
 	API HetznerServerAPI
 }
@@ -56,8 +55,7 @@ type HetznerPrimaryIPAPI interface {
 }
 
 // HetznerPrimaryIP observes a hetzner.primary-ip by its primaryIpId,
-// reporting its address as publicIp.
-// While unsubscribing with no primaryIpId, it lists what carries the subscription's label and answers from that.
+// reporting its address as publicIp, or with no primaryIpId while unsubscribing, by what carries the subscription's label.
 type HetznerPrimaryIP struct {
 	API HetznerPrimaryIPAPI
 }
@@ -78,8 +76,7 @@ type HetznerNetworkAPI interface {
 	NetworkExists(ctx context.Context, d contract.Desired, networkID string) (bool, error)
 }
 
-// HetznerNetwork observes a hetzner.network by its networkId.
-// While unsubscribing with no networkId, it lists what carries the subscription's label and answers from that.
+// HetznerNetwork observes a hetzner.network by its networkId, or with no networkId while unsubscribing, by what carries the subscription's label.
 type HetznerNetwork struct {
 	API HetznerNetworkAPI
 }
@@ -97,8 +94,7 @@ type HetznerFirewallAPI interface {
 	FirewallExists(ctx context.Context, d contract.Desired, firewallID string) (bool, error)
 }
 
-// HetznerFirewall observes a hetzner.firewall by its firewallId.
-// While unsubscribing with no firewallId, it lists what carries the subscription's label and answers from that.
+// HetznerFirewall observes a hetzner.firewall by its firewallId, or with no firewallId while unsubscribing, by what carries the subscription's label.
 type HetznerFirewall struct {
 	API HetznerFirewallAPI
 }
@@ -112,8 +108,7 @@ func (o HetznerFirewall) ObserveResource(ctx context.Context, r contract.Resourc
 	return existence(r, exists, err, nil)
 }
 
-// hetznerOwned lists by the subscription's label when the observer's API can.
-// Otherwise it is nil, and the observer answers unknown as it did before.
+// hetznerOwned lists by the subscription's label when the observer's API can, and is otherwise nil.
 func hetznerOwned(api any) TaggedLister {
 	if a, ok := api.(HetznerLabelAPI); ok {
 		return HetznerLabelled{API: a}
