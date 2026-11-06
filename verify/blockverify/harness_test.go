@@ -127,7 +127,7 @@ func fixture(base func(t *testing.T) map[string]string, opts ...option) dirFunc 
 	}
 }
 
-// fullBlock passes every suite as it stands but resources, which needs a block that drives its resources through kittest.AssertBlock.
+// fullBlock passes every suite as it stands but resources, which needs a block that drives its resources through kittest.AssertBlock, so a case built on it reads the suite it judges rather than the verdict.
 func fullBlock(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
 		_, files := readTxtar(t, filepath.Join(fixturesDir, "full-block.txtar"))
@@ -225,6 +225,7 @@ func baseManifest(content string) func(t *testing.T) string {
 	}
 }
 
+// changedFiles writes paths as `git diff -z --name-only` lists them, each ended by a NUL byte.
 func changedFiles(paths ...string) func(t *testing.T) string {
 	return func(t *testing.T) string {
 		var list strings.Builder

@@ -22,14 +22,8 @@ func (o emptyIdentityObserver) ObserveResource(ctx context.Context, r contract.R
 	if r.Identity["id"] != "" || !r.Unsubscribing {
 		return providerObserver{p: o.p}.ObserveResource(ctx, r)
 	}
-	var held []string
-	tagged, _ := o.p.ListTagged(ctx, r.Desired.SubscriptionID)
-	for _, item := range tagged {
-		if item.Type == r.Type {
-			held = append(held, item.ID)
-		}
-	}
-	return o.answer(held), nil
+	held, err := o.p.heldOfType(ctx, r)
+	return o.answer(held), err
 }
 
 func emptyIdentityBlock(t *testing.T, answer func(held []string) contract.Observation) kittest.Block {

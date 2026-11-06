@@ -307,13 +307,13 @@ type providerObserver struct {
 func (o providerObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	switch id := r.Identity["id"]; {
 	case id == "" && r.Unsubscribing && !o.unknownOnEmpty:
-		held, _ := o.p.ListTagged(ctx, r.Desired.SubscriptionID)
+		held, err := o.p.ListTagged(ctx, r.Desired.SubscriptionID)
 		for _, item := range held {
 			if item.Type == r.Type {
-				return contract.Observation{State: contract.Present}, nil
+				return contract.Observation{State: contract.Present}, err
 			}
 		}
-		return contract.Observation{State: contract.Absent}, nil
+		return contract.Observation{State: contract.Absent}, err
 	case id == "":
 		return contract.Observation{State: contract.Unknown}, nil
 	case o.p.holds(id):
