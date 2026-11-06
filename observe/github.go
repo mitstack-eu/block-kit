@@ -10,6 +10,7 @@ type GitHubRepositoryAPI interface {
 	RepositoryExists(ctx context.Context, d contract.Desired, fullName string) (bool, error)
 }
 
+// GitHubRepository observes a github.repository by its repo. While unsubscribing with no repo, it lists the repositories carrying the subscription's topic and answers from that.
 type GitHubRepository struct {
 	API GitHubRepositoryAPI
 }
@@ -17,10 +18,19 @@ type GitHubRepository struct {
 func (o GitHubRepository) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "repo")
 	if !ok {
-		return obs, nil
+		return heldByOwner(ctx, r, githubOwned(o.API), "github.repository", "repo", obs)
 	}
 	exists, err := o.API.RepositoryExists(ctx, r.Desired, ids[0])
 	return existence(r, exists, err, map[string]string{"repo": ids[0]})
+}
+
+// githubOwned lists by the subscription's topic when the observer's API can.
+// Otherwise it is nil, and the observer answers unknown as it did before.
+func githubOwned(api any) TaggedLister {
+	if a, ok := api.(GitHubTagAPI); ok {
+		return GitHubTagged{API: a}
+	}
+	return nil
 }
 
 type GitHubCommitAPI interface {

@@ -19,6 +19,7 @@ type HetznerServerAPI interface {
 
 // HetznerServer observes a hetzner.server by its serverId: running is
 // present, missing absent, any other status unknown.
+// While unsubscribing with no serverId, it lists what carries the subscription's label and answers from that.
 type HetznerServer struct {
 	API HetznerServerAPI
 }
@@ -26,7 +27,7 @@ type HetznerServer struct {
 func (o HetznerServer) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "serverId")
 	if !ok {
-		return obs, nil
+		return heldByOwner(ctx, r, hetznerOwned(o.API), "hetzner.server", "serverId", obs)
 	}
 	desc, found, err := o.API.GetServer(ctx, r.Desired, ids[0])
 	switch {
@@ -56,6 +57,7 @@ type HetznerPrimaryIPAPI interface {
 
 // HetznerPrimaryIP observes a hetzner.primary-ip by its primaryIpId,
 // reporting its address as publicIp.
+// While unsubscribing with no primaryIpId, it lists what carries the subscription's label and answers from that.
 type HetznerPrimaryIP struct {
 	API HetznerPrimaryIPAPI
 }
@@ -63,7 +65,7 @@ type HetznerPrimaryIP struct {
 func (o HetznerPrimaryIP) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "primaryIpId")
 	if !ok {
-		return obs, nil
+		return heldByOwner(ctx, r, hetznerOwned(o.API), "hetzner.primary-ip", "primaryIpId", obs)
 	}
 	desc, found, err := o.API.GetPrimaryIP(ctx, r.Desired, ids[0])
 	if err != nil || !found {
@@ -77,6 +79,7 @@ type HetznerNetworkAPI interface {
 }
 
 // HetznerNetwork observes a hetzner.network by its networkId.
+// While unsubscribing with no networkId, it lists what carries the subscription's label and answers from that.
 type HetznerNetwork struct {
 	API HetznerNetworkAPI
 }
@@ -84,7 +87,7 @@ type HetznerNetwork struct {
 func (o HetznerNetwork) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "networkId")
 	if !ok {
-		return obs, nil
+		return heldByOwner(ctx, r, hetznerOwned(o.API), "hetzner.network", "networkId", obs)
 	}
 	exists, err := o.API.NetworkExists(ctx, r.Desired, ids[0])
 	return existence(r, exists, err, nil)
@@ -95,6 +98,7 @@ type HetznerFirewallAPI interface {
 }
 
 // HetznerFirewall observes a hetzner.firewall by its firewallId.
+// While unsubscribing with no firewallId, it lists what carries the subscription's label and answers from that.
 type HetznerFirewall struct {
 	API HetznerFirewallAPI
 }
@@ -102,8 +106,17 @@ type HetznerFirewall struct {
 func (o HetznerFirewall) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	ids, obs, ok := identityKeys(r, "firewallId")
 	if !ok {
-		return obs, nil
+		return heldByOwner(ctx, r, hetznerOwned(o.API), "hetzner.firewall", "firewallId", obs)
 	}
 	exists, err := o.API.FirewallExists(ctx, r.Desired, ids[0])
 	return existence(r, exists, err, nil)
+}
+
+// hetznerOwned lists by the subscription's label when the observer's API can.
+// Otherwise it is nil, and the observer answers unknown as it did before.
+func hetznerOwned(api any) TaggedLister {
+	if a, ok := api.(HetznerLabelAPI); ok {
+		return HetznerLabelled{API: a}
+	}
+	return nil
 }

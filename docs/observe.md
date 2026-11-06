@@ -37,6 +37,18 @@ the resource. Every shared observer answers `Unknown` without calling the
 provider when the identity lacks the key it needs, and reports that identity
 on a present answer.
 
+An identity lacks its key after a create that failed before it reported one.
+While `Unsubscribing` is true, the observers for `aws.s3-bucket`, `aws.vpc`,
+`aws.security-group`, `aws.ec2-instance`, `aws.ebs-volume`, `aws.iam-role`,
+`hetzner.server`, `hetzner.primary-ip`, `hetzner.network`, `hetzner.firewall`
+and `github.repository` then list what carries the subscription's id, when the
+observer's API also implements `AWSTaggingAPI`, `HetznerLabelAPI` or
+`GitHubTagAPI`. A list that finds an object of the type answers `Present` with
+that object's identity, a list that finds none answers `Absent`, and a failed
+list returns its error. The other shared observers answer `Unknown` for an
+identity without its key, since the provider has no list that names their
+objects by subscription.
+
 ## A resource that stands but fails
 
 A resource can stand and still fail, such as a volume stuck attaching. Its
