@@ -1,14 +1,11 @@
 package handler_test
 
-// A capability operator answers verify-connection with a verdict, through a Verifier, and with no Resource when it is the manifest's only operation.
-
 import (
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,25 +14,18 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
-const verifyOnlyManifest = `apiVersion: mitstack/v1beta
-type: capability
-metadata:
-  id: sendcloud
-  name: Sendcloud
-  owner: mitstack
-spec:
-  version: 1.0.0
-  description: Parcels an app ships through Sendcloud.
-  connection:
-    mechanism: stored-token
-    tokenSchema:
-      - { name: public_key, secret: true }
-      - { name: private_key, secret: true }
-  lifecycle:
-    endpoint: https://api.mitstack.dev/operators/capabilities/sendcloud/hook
-    operations: [verify-connection]
-    contract: kit/v1
-`
+var verifyOnlyManifest = func() string {
+	rows, err := contract.ManifestVerdicts()
+	if err != nil {
+		panic(err)
+	}
+	for _, row := range rows {
+		if row.Name == "capability-sendcloud.yaml" {
+			return string(row.Manifest)
+		}
+	}
+	panic("the verdict table has no capability-sendcloud.yaml row")
+}()
 
 const (
 	entered    = "sk-entered-by-the-person-7c1"
@@ -43,24 +33,17 @@ const (
 )
 
 type fakeVerifier struct {
-	mu     sync.Mutex
 	calls  []handler.ConnectionCheck
 	answer handler.Verification
 	err    error
 }
 
 func (f *fakeVerifier) VerifyConnection(_ context.Context, c handler.ConnectionCheck) (handler.Verification, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.calls = append(f.calls, c)
 	return f.answer, f.err
 }
 
-func (f *fakeVerifier) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
-}
+func (f *fakeVerifier) count() int { return len(f.calls) }
 
 func verifyHarness(t *testing.T, v *fakeVerifier) *harness {
 	t.Helper()
@@ -74,12 +57,8 @@ func verifyHarness(t *testing.T, v *fakeVerifier) *harness {
 
 func (x *harness) verify(fields map[string]any) (int, []byte) {
 	x.t.Helper()
-	all := map[string]any{
-		"operation":         "verify-connection",
-		"orgId":             "org-1",
-		"capabilitySlug":    "sendcloud",
-		"enteredCredential": map[string]any{"public_key": enteredPub, "private_key": entered},
-	}
+	all := map[string]any{"operation": "verify-connection", "orgId": "org-1", "capabilitySlug": "sendcloud",
+		"enteredCredential": map[string]any{"public_key": enteredPub, "private_key": entered}}
 	for k, v := range fields {
 		all[k] = v
 	}
@@ -87,36 +66,23 @@ func (x *harness) verify(fields map[string]any) (int, []byte) {
 	return x.serve(x.s.HookRequest(x.t, "/hook", body))
 }
 
-func TestVerifyConnection_AnswersTheVerifiersVerdictWithoutAResourceOrAnOBOToken(t *testing.T) {
-	v := &fakeVerifier{answer: handler.Verification{Verdict: contract.VerdictRejected, Detail: "the vendor answered 401"}}
-	x := verifyHarness(t, v)
-
-	status, raw := x.verify(nil)
-
-	assertConforms(t, raw)
-	resp := decodeResponse(t, raw)
-	if status != http.StatusOK || resp.Verdict != contract.VerdictRejected || resp.StatusDetail != "the vendor answered 401" {
-		t.Errorf("status, verdict, detail = %d, %q, %q; want 200, rejected, the vendor's 401", status, resp.Verdict, resp.StatusDetail)
-	}
-	if v.count() != 1 {
-		t.Fatalf("the verifier was asked %d times, want once", v.count())
-	}
-	want := handler.ConnectionCheck{CapabilitySlug: "sendcloud", OrgID: "org-1", Credential: map[string]string{"public_key": enteredPub, "private_key": entered}}
-	got := v.calls[0]
-	if got.CapabilitySlug != want.CapabilitySlug || got.OrgID != want.OrgID || got.Credential["private_key"] != entered || got.Credential["public_key"] != enteredPub || len(got.Credential) != 2 {
-		t.Errorf("the verifier was handed %+v, want %+v", got, want)
-	}
-}
-
-func TestVerifyConnection_AnswersEachOfTheThreeVerdicts(t *testing.T) {
+func TestVerifyConnection_AnswersEachVerdictWithoutAResourceOrAnOBOTokenAndHandsOverTheCheck(t *testing.T) {
 	for _, verdict := range []string{contract.VerdictVerified, contract.VerdictRejected, contract.VerdictUnreachable} {
 		t.Run(verdict, func(t *testing.T) {
-			x := verifyHarness(t, &fakeVerifier{answer: handler.Verification{Verdict: verdict, Detail: "HTTP 200"}})
+			v := &fakeVerifier{answer: handler.Verification{Verdict: verdict, Detail: "HTTP 200"}}
+			x := verifyHarness(t, v)
 
 			status, raw := x.verify(nil)
 
-			if got := decodeResponse(t, raw); status != http.StatusOK || got.Verdict != verdict {
-				t.Errorf("status, verdict = %d, %q; want 200, %q", status, got.Verdict, verdict)
+			assertConforms(t, raw)
+			if got := decodeResponse(t, raw); status != http.StatusOK || got.Verdict != verdict || got.StatusDetail != "HTTP 200" {
+				t.Errorf("status, verdict, detail = %d, %q, %q; want 200, %q, HTTP 200", status, got.Verdict, got.StatusDetail, verdict)
+			}
+			if v.count() != 1 {
+				t.Fatalf("the verifier was asked %d times, want once", v.count())
+			}
+			if c := v.calls[0]; c.CapabilitySlug != "sendcloud" || c.OrgID != "org-1" || c.Credential["private_key"] != entered || c.Credential["public_key"] != enteredPub || len(c.Credential) != 2 {
+				t.Errorf("the verifier was handed %+v, want the slug, org and both entered fields", c)
 			}
 		})
 	}
@@ -130,9 +96,7 @@ func TestVerifyConnection_ScrubsTheCredentialFromTheDetailAndFromAnError(t *test
 		"a refusal": {err: handler.Refuse("vendor-refused", "the vendor named %s", enteredPub)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			x := verifyHarness(t, v)
-
-			_, raw := x.verify(nil)
+			_, raw := verifyHarness(t, v).verify(nil)
 
 			kittest.AssertNoSecret(t, "the answer", string(raw), entered, enteredPub)
 			kittest.AssertNoSecret(t, "the log", logs.String(), entered, enteredPub)
@@ -140,44 +104,27 @@ func TestVerifyConnection_ScrubsTheCredentialFromTheDetailAndFromAnError(t *test
 	}
 }
 
-func TestVerifyConnection_AnErrorFromTheVerifierIsNotAVerdict(t *testing.T) {
-	x := verifyHarness(t, &fakeVerifier{err: errors.New("the vendor client broke")})
+func TestVerifyConnection_AnswersNoVerdictWhenTheVerifierFailsOrAnswersNoneOfThree(t *testing.T) {
+	for name, v := range map[string]*fakeVerifier{
+		"an error":        {err: errors.New("the vendor client broke")},
+		"an unknown word": {answer: handler.Verification{Verdict: "maybe"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, raw := verifyHarness(t, v).verify(nil)
 
-	status, raw := x.verify(nil)
-
-	if resp := decodeResponse(t, raw); status < 500 || resp.Verdict != "" || resp.Error == "" {
-		t.Errorf("status, verdict, error = %d, %q, %q; want a 5xx error and no verdict", status, resp.Verdict, resp.Error)
-	}
-}
-
-func TestVerifyConnection_RefusesAVerdictThatIsNoneOfTheThree(t *testing.T) {
-	x := verifyHarness(t, &fakeVerifier{answer: handler.Verification{Verdict: "maybe"}})
-
-	status, raw := x.verify(nil)
-
-	if resp := decodeResponse(t, raw); status < 500 || resp.Verdict != "" {
-		t.Errorf("status, verdict = %d, %q; want a 5xx error and no verdict", status, resp.Verdict)
-	}
-}
-
-func TestVerifyConnection_RefusesAnotherCapabilitysSlugWithoutAskingTheVerifier(t *testing.T) {
-	v := &fakeVerifier{answer: handler.Verification{Verdict: contract.VerdictVerified}}
-	x := verifyHarness(t, v)
-
-	status, raw := x.verify(map[string]any{"capabilitySlug": "mollie"})
-
-	resp := decodeResponse(t, raw)
-	if status != http.StatusBadRequest || handler.RefusedClass(resp.StatusDetail) != "wrong-capability" || v.count() != 0 {
-		t.Errorf("status, detail, asked = %d, %q, %d; want 400, refused:wrong-capability and no ask", status, resp.StatusDetail, v.count())
+			if resp := decodeResponse(t, raw); status < 500 || resp.Verdict != "" {
+				t.Errorf("status, verdict = %d, %q; want a 5xx error and no verdict", status, resp.Verdict)
+			}
+		})
 	}
 }
 
 func TestVerifyConnection_IsNeverReplayedFromTheIdempotencyCache(t *testing.T) {
 	v := &fakeVerifier{answer: handler.Verification{Verdict: contract.VerdictVerified}}
 	x := verifyHarness(t, v)
-
-	x.verify(map[string]any{"idempotencyKey": "same"})
-	x.verify(map[string]any{"idempotencyKey": "same"})
+	for range 2 {
+		x.verify(map[string]any{"idempotencyKey": "same"})
+	}
 
 	if v.count() != 2 {
 		t.Errorf("the verifier was asked %d times for two requests sharing a key, want 2: a credential may have been revoked since", v.count())
@@ -186,52 +133,44 @@ func TestVerifyConnection_IsNeverReplayedFromTheIdempotencyCache(t *testing.T) {
 
 func TestVerifyConnection_RefusesAnUnsignedRequest(t *testing.T) {
 	x := verifyHarness(t, &fakeVerifier{})
-	body := kittest.Envelope("nonce-unsigned", time.Now(), map[string]any{"operation": "verify-connection", "orgId": "org-1",
-		"capabilitySlug": "sendcloud", "enteredCredential": map[string]any{"private_key": entered}})
-	req := x.s.HookRequest(t, "/hook", body)
+	req := x.s.HookRequest(t, "/hook", kittest.Envelope("nonce-unsigned", time.Now(), map[string]any{"operation": "verify-connection", "orgId": "org-1",
+		"capabilitySlug": "sendcloud", "enteredCredential": map[string]any{"private_key": entered}}))
 	req.Header.Set("X-Mitstack-Signature-Ed25519", "ed25519=AAAA")
 
-	status, _ := x.serve(req)
-
-	if status != http.StatusUnauthorized {
+	if status, _ := x.serve(req); status != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401 for a request whose signature does not verify", status)
 	}
 }
 
-func TestVerifyConnection_RefusesARequestMissingTheCredential(t *testing.T) {
+func TestVerifyConnection_RefusesWhatTheOperatorOrTheRequestDoesNotAllow(t *testing.T) {
 	v := &fakeVerifier{answer: handler.Verification{Verdict: contract.VerdictVerified}}
-	x := verifyHarness(t, v)
-
-	status, _ := x.verify(map[string]any{"enteredCredential": map[string]any{}})
-
-	if status != http.StatusBadRequest || v.count() != 0 {
-		t.Errorf("status, asked = %d, %d; want 400 and no ask", status, v.count())
+	only, block := verifyHarness(t, v), newHarness(t, &kittest.FakeResource{})
+	cases := []struct {
+		name  string
+		send  func() (int, []byte)
+		class string
+	}{
+		{"another capability's slug", func() (int, []byte) { return only.verify(map[string]any{"capabilitySlug": "mollie"}) }, "wrong-capability"},
+		{"a missing credential", func() (int, []byte) { return only.verify(map[string]any{"enteredCredential": map[string]any{}}) }, "malformed-request"},
+		{"a subscribe sent to a verify-only operator", func() (int, []byte) { return only.post(map[string]any{"operation": "subscribe"}) }, "undeclared-operation"},
+		{"a verify-connection sent to a block", func() (int, []byte) { return block.verify(map[string]any{"capabilitySlug": "test-block"}) }, "no-connection-check"},
 	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, raw := tc.send()
 
-func TestVerifyConnection_AVerifyOnlyOperatorRefusesEveryOtherVerb(t *testing.T) {
-	x := verifyHarness(t, &fakeVerifier{})
-
-	status, raw := x.post(map[string]any{"operation": "subscribe"})
-
-	if resp := decodeResponse(t, raw); status != http.StatusBadRequest || handler.RefusedClass(resp.StatusDetail) != "undeclared-operation" {
-		t.Errorf("a subscribe answered %d %q, want 400 refused:undeclared-operation", status, resp.StatusDetail)
+			if resp := decodeResponse(t, raw); status != http.StatusBadRequest || handler.RefusedClass(resp.StatusDetail) != tc.class {
+				t.Errorf("answered %d %q, want 400 refused:%s", status, resp.StatusDetail, tc.class)
+			}
+		})
 	}
-}
-
-func TestVerifyConnection_ABlockOperatorRefusesIt(t *testing.T) {
-	x := newHarness(t, &kittest.FakeResource{})
-
-	status, raw := x.verify(map[string]any{"capabilitySlug": "test-block"})
-
-	if resp := decodeResponse(t, raw); status != http.StatusBadRequest || handler.RefusedClass(resp.StatusDetail) != "no-connection-check" {
-		t.Errorf("a verify-connection on a block answered %d %q, want 400 refused:no-connection-check", status, resp.StatusDetail)
+	if v.count() != 0 {
+		t.Errorf("the verifier was asked %d times, want none", v.count())
 	}
 }
 
 func TestNew_HoldsTheVerifierToTheManifestsListOfOperations(t *testing.T) {
-	s := kittest.NewSigner(t, "kid-1", 7)
-	jwks := s.JWKSServer(t)
+	jwks := kittest.NewSigner(t, "kid-1", 7).JWKSServer(t)
 	cases := []struct {
 		name string
 		cfg  handler.Config

@@ -50,11 +50,6 @@ func editOperatorTest(t *testing.T, pairs ...string) option {
 }
 
 func TestGuardedClientSuite(t *testing.T) {
-	const rawClient = `func newClient(hosts []string) *http.Client {
-	return &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return net.Dial(network, "127.0.0.1:8080")
-	}}}
-}`
 	guardedNewClient := `func newClient(hosts []string) *http.Client {
 	c, err := guardedhttp.New(guardedhttp.Config{Hosts: hosts})
 	if err != nil {
@@ -74,8 +69,7 @@ func TestGuardedClientSuite(t *testing.T) {
 		{name: "an operator built on the kit's client passes, naming guardedhttp", dir: capabilityOperator(),
 			status: "pass", detail: []string{"guardedhttp", "TestGuardedClient passes"}},
 		{name: "an operator whose client follows a redirect and dials 127.0.0.1 fails, naming the raw client",
-			dir:    capabilityOperator(editOperator(t, guardedNewClient, rawClient, "\"log\"\n", "\"log\"\n\t\"net\"\n")),
-			status: "fail", detail: []string{"operator.go", "http.Client", "guardedhttp"}},
+			dir: capabilityOperator(withDir("testdata/capability-unguarded-client")), status: "fail", detail: []string{"operator.go", "http.Client", "guardedhttp"}},
 		{name: "an operator that calls the vendor with http.DefaultClient fails, naming it",
 			dir: capabilityOperator(editOperator(t, "v.client.Do(req)", "http.DefaultClient.Do(req)")), status: "fail", detail: []string{"http.DefaultClient"}},
 		{name: "an operator that dials with net.Dial fails, naming it",
