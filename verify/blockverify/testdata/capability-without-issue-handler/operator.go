@@ -60,6 +60,11 @@ func (c *cloud) ObserveResource(_ context.Context, r contract.ResourceRef) (cont
 	if _, ok := c.objects[r.Identity["id"]]; ok {
 		return contract.Observation{State: contract.Present}, nil
 	}
+	for id, obj := range c.objects {
+		if r.Identity["id"] == "" && obj.Type == r.Type && c.subs[id] == r.Desired.SubscriptionID {
+			return contract.Observation{State: contract.Present}, nil
+		}
+	}
 	return contract.Observation{State: contract.Absent}, nil
 }
 
