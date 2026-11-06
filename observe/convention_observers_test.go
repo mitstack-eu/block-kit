@@ -99,10 +99,11 @@ func TestEC2Container_FindsTheSubscriptionsContainerByItsLabel(t *testing.T) {
 		{"a container carries the label", &commander{out: "plain-tracker\n"}, bound, contract.Present},
 		{"no container carries it", &commander{}, bound, contract.Absent},
 		{"the probe failed", &commander{err: boom}, bound, contract.Absent},
+		{"it is not unsubscribing", &commander{out: "plain-tracker\n"}, bound, contract.Unknown},
 		{"no instance is bound", &commander{out: "plain-tracker\n"}, refFor("aws.ec2-container", nil), contract.Unknown},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
-			tc.ref.Unsubscribing = true
+			tc.ref.Unsubscribing = tc.label != "it is not unsubscribing"
 			got, err := observe.EC2Container{API: tc.c}.ObserveResource(context.Background(), tc.ref)
 			ran := tc.c.ranOn + " " + tc.c.script
 			switch {

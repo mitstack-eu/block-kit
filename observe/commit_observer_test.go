@@ -23,11 +23,12 @@ func TestGitHubCommit_FindsTheNewestTrailerCommitOfTheSubscription(t *testing.T)
 		"no commit carries it":          {[]observe.GitHubCommitPaths{{SHA: "x", Message: "Add\n\nMitstack-Subscription: sub-2"}}, nil, contract.Absent, false},
 		"a trailer commit has no sha":   {[]observe.GitHubCommitPaths{{Message: "Add" + trailer}}, nil, contract.Absent, true},
 		"the read failed":               {two, boom, contract.Absent, false},
+		"it is not unsubscribing":       {two, nil, contract.Unknown, false},
 	} {
 		t.Run(label, func(t *testing.T) {
 			api := &owned{err: tc.err, commits: tc.commits, held: map[string][]string{observe.GitHubSubscriptionTopic("sub-1"): {"acme/app"}}}
 			ref := refFor("github.commit", nil)
-			ref.Unsubscribing = true
+			ref.Unsubscribing = label != "it is not unsubscribing"
 			got, err := observe.GitHubCommit{API: api}.ObserveResource(context.Background(), ref)
 			switch {
 			case tc.fails && (err == nil || got.State == contract.Absent):
