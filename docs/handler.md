@@ -114,9 +114,22 @@ and `d.Instances` read the same on every call.
 | `Params` | The subscription's values for the inputs the block's types declare, keyed by input name, as in `d.Params["location"]` and as [Writing the manifest](manifest.md) explains |
 | `Bindings`, `BindingsAll`, `RequirementTypes` | The outputs of the resources that met the block's requirements, and which type met each, as [Writing the manifest](manifest.md) explains |
 | `RecordedResources` | What the engine recorded for each resource: its type, its identity and, on an unsubscribe, `absent` when the engine already knows it is gone |
+| `Absences` | The platform's record that a bound resource is gone, as a `contract.Absence` under the same requirement key `Bindings` uses. Read it through `d.AttestedAbsent`, which the paragraph below describes |
 | `PriorOutputs`, `CloudIdentity` | The outputs the last call recorded, and the short-lived AWS web identity of the org's cloud account, nil when it has none |
 | `VerbAt` | The time an observer reads after, which the next section explains |
 | `NeverActive` | `true` only when the engine has proved the subscription holds no user data |
+
+The platform runs an observer of its own, outside your block, which asks a
+provider whether a resource still exists. When it reads a resource absent, the
+platform records that on an unsubscribe as a `contract.Absence`: `Observer` names
+the platform's observer, `Resource` the resource type it read, `ReadAbsentAt`
+when it read it absent, and `ProvesAbsence` is true when the platform stands
+behind the reading. This observer differs from the observers your block
+registers. `d.AttestedAbsent(subscriptionID)` returns `(Absence, bool)` for the
+binding, in `Bindings` or `BindingsAll`, whose `subscriptionId` is
+`subscriptionID`. The boolean is true only when `ProvesAbsence` is true, `Observer`
+and `Resource` are non-empty and `ReadAbsentAt` is set, and a request without
+`absences` always gives false. Never infer absence from anything else.
 
 A connection is an account the org connected at a provider, such as a Hetzner
 Cloud project. The secrets reach your code only for the one call they arrive

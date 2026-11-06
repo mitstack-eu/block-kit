@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -54,6 +55,7 @@ type Request struct {
 	AppSecrets       map[string]string              `json:"appSecrets,omitempty"`
 	Bindings         map[string]map[string]string   `json:"bindings,omitempty"`
 	BindingsAll      map[string][]map[string]string `json:"bindingsAll,omitempty"`
+	Absences         map[string]Absence             `json:"absences,omitempty"`
 	CloudIdentity    *CloudIdentity                 `json:"cloudIdentity,omitempty"`
 	CreatedAt        time.Time                      `json:"createdAt"`
 	Nonce            string                         `json:"nonce"`
@@ -84,6 +86,28 @@ const (
 type Credential struct {
 	Values    map[string]string `json:"values"`
 	ExpiresAt time.Time         `json:"expiresAt"`
+}
+
+// Absence is the platform's attestation, keyed by requirement reference like Bindings, that its own observer read the bound provider's resource absent, whose ProvesAbsence takes the meaning of reportSignature.provesAbsence.
+type Absence struct {
+	Observer      string    `json:"observer"`
+	Resource      string    `json:"resource"`
+	ReadAbsentAt  time.Time `json:"readAbsentAt"`
+	ProvesAbsence bool      `json:"provesAbsence"`
+}
+
+// AttestedAbsent is the attestation that the resource bound with subscriptionID, through Bindings or BindingsAll, is absent, false for any other binding and for an attestation that proves nothing.
+func (d Desired) AttestedAbsent(subscriptionID string) (Absence, bool) {
+	if subscriptionID == "" {
+		return Absence{}, false
+	}
+	for ref, a := range d.Absences {
+		bound := slices.ContainsFunc(append([]map[string]string{d.Bindings[ref]}, d.BindingsAll[ref]...), func(b map[string]string) bool { return b["subscriptionId"] == subscriptionID })
+		if bound && a.ProvesAbsence && a.Observer != "" && a.Resource != "" && !a.ReadAbsentAt.IsZero() {
+			return a, true
+		}
+	}
+	return Absence{}, false
 }
 
 type RecordedResource struct {
@@ -192,6 +216,7 @@ type Desired struct {
 	Secrets      map[string]map[string]string
 	Bindings     map[string]map[string]string
 	BindingsAll  map[string][]map[string]string
+	Absences     map[string]Absence
 
 	Resource              string
 	ResourceIdentity      map[string]string
@@ -375,6 +400,7 @@ func (r Request) Desired() Desired {
 		Secrets:               r.Secrets,
 		Bindings:              r.Bindings,
 		BindingsAll:           r.BindingsAll,
+		Absences:              r.Absences,
 		Resource:              r.Resource,
 		ResourceIdentity:      r.ResourceIdentity,
 		ResourceType:          r.ResourceType,
