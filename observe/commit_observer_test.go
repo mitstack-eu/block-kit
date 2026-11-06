@@ -17,10 +17,12 @@ func TestGitHubCommit_FindsTheNewestTrailerCommitOfTheSubscription(t *testing.T)
 		commits []observe.GitHubCommitPaths
 		err     error
 		state   contract.State
+		fails   bool
 	}{
-		"two commits carry the trailer": {two, nil, contract.Present},
-		"no commit carries it":          {[]observe.GitHubCommitPaths{{SHA: "x", Message: "Add\n\nMitstack-Subscription: sub-2"}}, nil, contract.Absent},
-		"the read failed":               {two, boom, contract.Absent},
+		"two commits carry the trailer": {two, nil, contract.Present, false},
+		"no commit carries it":          {[]observe.GitHubCommitPaths{{SHA: "x", Message: "Add\n\nMitstack-Subscription: sub-2"}}, nil, contract.Absent, false},
+		"a trailer commit has no sha":   {[]observe.GitHubCommitPaths{{Message: "Add" + trailer}}, nil, contract.Absent, true},
+		"the read failed":               {two, boom, contract.Absent, false},
 	} {
 		t.Run(label, func(t *testing.T) {
 			api := &owned{err: tc.err, commits: tc.commits, held: map[string][]string{observe.GitHubSubscriptionTopic("sub-1"): {"acme/app"}}}
@@ -28,9 +30,11 @@ func TestGitHubCommit_FindsTheNewestTrailerCommitOfTheSubscription(t *testing.T)
 			ref.Unsubscribing = true
 			got, err := observe.GitHubCommit{API: api}.ObserveResource(context.Background(), ref)
 			switch {
+			case tc.fails && (err == nil || got.State == contract.Absent):
+				t.Errorf("got %+v, %v; want an error naming the commit with no sha, never absent", got, err)
 			case tc.err != nil && (!errors.Is(err, tc.err) || got.State == contract.Absent):
 				t.Errorf("got %+v, %v; want the read's error, never absent", got, err)
-			case tc.err == nil && (err != nil || got.State != tc.state || (tc.state == contract.Present && (got.Identity["repo"] != "acme/app" || got.Identity["sha"] != "new1"))):
+			case tc.err == nil && !tc.fails && (err != nil || got.State != tc.state || (tc.state == contract.Present && (got.Identity["repo"] != "acme/app" || got.Identity["sha"] != "new1"))):
 				t.Errorf("got %+v, %v; want %s at acme/app, new1", got, err, tc.state)
 			}
 		})
