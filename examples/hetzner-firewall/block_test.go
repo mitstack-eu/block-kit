@@ -150,6 +150,18 @@ func TestDeclaredResources(t *testing.T) {
 	})
 }
 
+func TestDeclaredResources_WithTheSharedObserverAlone(t *testing.T) {
+	fake := newFakeHetzner(t, nil)
+	cfg := testConfig(t, fake.url, nil)
+	cfg.Observers = map[string]handler.Observer{firewallResource: observe.HetznerFirewall{API: newHetzner(fake.url)}}
+
+	kittest.AssertBlock(t, kittest.Block{
+		Config:   cfg,
+		Provider: kittest.ListerProvider{Lister: observe.HetznerLabelled{API: newHetzner(fake.url)}, Loser: fake},
+		Desired:  subscription,
+	})
+}
+
 func TestUnsubscribeDeletes_AfterASetupBrokenAtAnySideEffect(t *testing.T) {
 	cfg := testConfig(t, "", nil)
 
