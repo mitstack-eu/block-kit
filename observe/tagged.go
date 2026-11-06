@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -195,7 +196,7 @@ type GitHubWebhook struct {
 
 // GitHubCommitPaths is one commit on a repository's default branch, with the paths it wrote that the branch still holds.
 type GitHubCommitPaths struct {
-	// SHA is empty when the API leaves it out, and no identity names such a commit.
+	// SHA is the commit's id; a trailer commit with none makes the lookup fail instead of reading absent.
 	SHA     string
 	Message string
 	Paths   []string
@@ -242,8 +243,8 @@ func (l GitHubTagged) topicRepositories(ctx context.Context, d contract.Desired,
 	return slices.Compact(tagged), nil
 }
 
-// newestTrailerCommit names the first repository, topic-tagged before bound, whose commits carry the subscription's trailer, and its newest such commit.
-func (l GitHubTagged) newestTrailerCommit(ctx context.Context, d contract.Desired, subscriptionID string) (repo, sha string, err error) {
+// newestTrailerCommit names the first repository, topic-tagged before bound, whose commits carry the subscription's trailer, and its newest such commit, taking Commits to list newest first.
+func (l GitHubTagged) newestTrailerCommit(ctx context.Context, d contract.Desired, subscriptionID string) (string, string, error) {
 	tagged, err := l.topicRepositories(ctx, d, subscriptionID)
 	if err != nil {
 		return "", "", err
@@ -254,7 +255,11 @@ func (l GitHubTagged) newestTrailerCommit(ctx context.Context, d contract.Desire
 			return "", "", err
 		}
 		for _, c := range commits {
-			if c.SHA != "" && carriesTrailer(c.Message, GitHubSubscriptionTrailer(subscriptionID)) {
+			switch {
+			case !carriesTrailer(c.Message, GitHubSubscriptionTrailer(subscriptionID)):
+			case c.SHA == "":
+				return "", "", fmt.Errorf("observe: a commit of %s carries the subscription's trailer but the API gave no sha", repo)
+			default:
 				return repo, c.SHA, nil
 			}
 		}

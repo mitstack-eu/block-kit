@@ -56,6 +56,7 @@ Four more types are found the same way through a convention the block sets.
 | `EC2Container` | The container carries the label `mitstack:subscription` (`ContainerSubscriptionLabel`). The observer reads the labelled containers, stopped ones included, on the instance the subscription's `aws.ec2-instance` requirement binds. | None, and no binding means `Unknown` |
 | `GitHubCommit` | The commit message ends with the subscription's trailer (`GitHubSubscriptionTrailer`). The observer takes the newest such commit of the first repository carrying it, topic-tagged repositories before bound ones. | `GitHubTagAPI`, whose `Commits` sets `SHA` |
 
+The extra reads run with every tag listing, so a failing association read also fails the lookup of an unrelated type, with an error and never an absent answer.
 Without the extra API, or without a bound instance, these observers answer
 `Unknown` as before. `Route53Record` and `NodeReported` answer `Unknown` for an
 identity without its key, since the provider has no list that names their
