@@ -85,7 +85,7 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name, appID string) (strin
 	route := "POST /orgs/" + org + "/repos"
 	if cresp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(cresp.Body, 4<<10))
-		return "", fmt.Errorf("ghapi: github %s returned %d: %s", route, cresp.StatusCode, safe.LogSafe(string(raw), c.Token))
+		return "", AnswerError(route, cresp.StatusCode, cresp.Header, raw, c.Token)
 	}
 	var out struct {
 		FullName string `json:"full_name"`
@@ -196,7 +196,7 @@ func (c *Client) commitOnto(ctx context.Context, repo, message string, entries [
 		return err
 	}
 	path := "/repos/" + repo + "/git/refs/heads/main"
-	status, raw, err := c.patchStatus(ctx, path, map[string]any{"sha": commitSHA})
+	status, header, raw, err := c.patchStatus(ctx, path, map[string]any{"sha": commitSHA})
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func (c *Client) commitOnto(ctx context.Context, repo, message string, entries [
 	if status == http.StatusUnprocessableEntity && strings.Contains(strings.ToLower(raw), "fast forward") {
 		return fmt.Errorf("%w: github PATCH %s lost the fast forward race: %s", errStaleBase, path, safe.LogSafe(raw, c.Token))
 	}
-	return fmt.Errorf("ghapi: github PATCH %s returned %d: %s", path, status, safe.LogSafe(raw, c.Token))
+	return AnswerError("PATCH "+path, status, header, []byte(raw), c.Token)
 }
 
 // baseCommit reports haveBase false for an empty repo with no heads/main ref yet.
@@ -232,7 +232,7 @@ func (c *Client) postForSHA(ctx context.Context, path string, payload any) (stri
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return "", fmt.Errorf("ghapi: github %s returned %d: %s", route, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
+		return "", AnswerError(route, resp.StatusCode, resp.Header, raw, c.Token)
 	}
 	var out struct {
 		SHA string `json:"sha"`
@@ -271,25 +271,25 @@ func decodeAnswer(resp *http.Response, route string, limit int64, v any) error {
 }
 
 func (c *Client) patch(ctx context.Context, path string, payload any) error {
-	status, raw, err := c.patchStatus(ctx, path, payload)
+	status, header, raw, err := c.patchStatus(ctx, path, payload)
 	if err != nil {
 		return err
 	}
 	if status >= 300 {
-		return fmt.Errorf("ghapi: github PATCH %s returned %d: %s", path, status, safe.LogSafe(raw, c.Token))
+		return AnswerError("PATCH "+path, status, header, []byte(raw), c.Token)
 	}
 	return nil
 }
 
 // patchStatus returns the body unscrubbed, so a caller must pass it through safe.LogSafe.
-func (c *Client) patchStatus(ctx context.Context, path string, payload any) (int, string, error) {
+func (c *Client) patchStatus(ctx context.Context, path string, payload any) (int, http.Header, string, error) {
 	resp, err := c.doJSON(ctx, http.MethodPatch, path, payload)
 	if err != nil {
-		return 0, "", err
+		return 0, nil, "", err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-	return resp.StatusCode, string(raw), nil
+	return resp.StatusCode, resp.Header, string(raw), nil
 }
 
 // SetVariable validates name before any HTTP call, falls back to PATCH on a 409, and on an ambiguous 422 patches only when the message says "already exists".
@@ -314,9 +314,10 @@ func (c *Client) SetVariable(ctx context.Context, repoFullName, name, value stri
 	if resp.StatusCode < 300 {
 		return nil
 	}
+	route := "POST /repos/" + repo + "/actions/variables"
 	if resp.StatusCode != http.StatusConflict && resp.StatusCode != http.StatusUnprocessableEntity {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("ghapi: github POST /repos/%s/actions/variables returned %d: %s", repo, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
+		return AnswerError(route, resp.StatusCode, resp.Header, raw, c.Token)
 	}
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
@@ -324,7 +325,7 @@ func (c *Client) SetVariable(ctx context.Context, repoFullName, name, value stri
 			Message string `json:"message"`
 		}
 		if jsonErr := json.Unmarshal(raw, &body); jsonErr != nil || !strings.Contains(strings.ToLower(body.Message), "already exists") {
-			return fmt.Errorf("ghapi: github POST /repos/%s/actions/variables returned 422: %s", repo, safe.LogSafe(string(raw), c.Token))
+			return AnswerError(route, resp.StatusCode, resp.Header, raw, c.Token)
 		}
 	}
 

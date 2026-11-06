@@ -312,7 +312,7 @@ func changeEntries(changes map[string]*string) []map[string]any {
 
 func (c *Client) fastForwardMain(ctx context.Context, repo, commitSHA string) error {
 	path := "/repos/" + repo + "/git/refs/heads/main"
-	status, raw, err := c.patchStatus(ctx, path, map[string]any{"sha": commitSHA})
+	status, _, raw, err := c.patchStatus(ctx, path, map[string]any{"sha": commitSHA})
 	if err != nil {
 		return err
 	}

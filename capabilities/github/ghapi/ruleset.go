@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-
-	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
 // ErrNoAppID is returned by EnsureRepo given no GitHub App id, before it sends any request.
@@ -140,20 +138,20 @@ func (c *Client) sendRuleset(ctx context.Context, method, path string, r ruleset
 	defer resp.Body.Close()
 	if resp.StatusCode != want {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("ghapi: github %s %s returned %d: %s", method, path, resp.StatusCode, safe.LogSafe(string(raw), c.Token))
+		return AnswerError(method+" "+path, resp.StatusCode, resp.Header, raw, c.Token)
 	}
 	return nil
 }
 
-// getJSON decodes a 200 answer into v, refusing any other status, and get refuses one longer than limit.
+// getJSON decodes a 200 answer into v, failing on any other status, and get refuses one longer than limit.
 func (c *Client) getJSON(ctx context.Context, path string, limit int64, v any) error {
 	route := "GET " + path
-	status, raw, _, err := c.get(ctx, path, limit)
+	status, raw, header, err := c.get(ctx, path, limit)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("ghapi: github %s returned %d: %s", route, status, safe.LogSafe(string(raw[:min(len(raw), 4<<10)]), c.Token))
+		return AnswerError(route, status, header, raw[:min(len(raw), 4<<10)], c.Token)
 	}
 	if err := json.Unmarshal(raw, v); err != nil {
 		return fmt.Errorf("ghapi: decode the answer to %s: %w", route, err)
