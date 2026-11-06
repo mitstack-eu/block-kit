@@ -67,8 +67,7 @@ var ownedObservers = []struct {
 func TestOwnedObservers_ResolveAnEmptyIdentityWhileUnsubscribing(t *testing.T) {
 	for _, o := range ownedObservers {
 		observeWith := func(f *owned, unsubscribing bool) (contract.Observation, error) {
-			ref := refFor(o.typ, nil)
-			ref.Unsubscribing = unsubscribing
+			ref := contract.ResourceRef{Name: o.typ, Type: o.typ, Unsubscribing: unsubscribing, Desired: refFor(o.typ, nil).Desired}
 			return o.build(f).ObserveResource(context.Background(), ref)
 		}
 		t.Run(o.typ, func(t *testing.T) {
