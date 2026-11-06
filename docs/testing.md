@@ -75,6 +75,12 @@ holds the block to the guards below and logs the name of every guard that ran:
 | `absence-after-unsubscribe` | After unsubscribe every declared resource reports absent, except one whose type `Config.Types` marks `endsWithSubscription` |
 | `kit-observer` | A resource whose type carries an observe spec has no observer of the block's own in `Config.Observers` or `Config.TypeObservers`, since `Config.KitObserver` reads it. The kit observer must also be able to run that spec, which needs at least one usable read, the read that proves the resource ready for use. A failure here names the resource and type, and [Observing resources](observe.md#proving-a-resource-usable) shows how to fix it |
 | `probe-reads` | A probe of such a resource makes no more provider reads than its type's `maxReads`, counted by a `Provider` that implements `kittest.ReadCounter` |
+| `empty-identity-unsubscribe` | An unsubscribing observe that names a resource but no identity, as a failed create leaves it, reads absent while `Provider` holds none of the resource's type, and present while it holds one. An unknown answer passes while the provider holds one only when it waits on a person, asks for a redrive, or names the object the provider holds. A resource whose type lands files is left out, since its landing record is the only way to find what it landed |
+
+An observer that answers unknown only because the identity is missing leaves a
+teardown that can neither finish nor say why, so look the resource up by what
+the provider holds, such as the subscription's tag, when `r.Identity` is empty
+and `r.Unsubscribing` is true.
 
 On every answer, the check also reads each observe that names a resource
 unhealthy. Its cause must be one the resource's type lists under `failures`
