@@ -1051,22 +1051,22 @@ func TestBlockLevel_TheOwnSecretsAnEnsureReturnsReachEachSubscribeAndUpgradeAnsw
 	}
 }
 
-func TestBlockLevel_AFailedEnsureAnswersWithTheIdentitiesOfTheResourcesItMade(t *testing.T) {
-	made := []contract.CreatedResource{{Name: "deploy-role", Type: "aws.iam-role", Identity: map[string]string{"roleName": "deploy-1"}}}
+func TestBlockLevel_AFailedEnsureAnswersWithTheIdentitiesOfTheResourcesItMadeAndNoneWhenOneReportedIsRefused(t *testing.T) {
+	good := contract.CreatedResource{Name: "deploy-role", Type: "aws.iam-role", Identity: map[string]string{"roleName": "deploy-1"}}
 	carried := map[string]contract.ResourceOutcome{"deploy-role": {Ensure: &contract.CallOutcome{Type: "aws.iam-role", Identity: map[string]string{"roleName": "deploy-1"}}}}
-	for label, tc := range map[string]struct {
-		report []contract.CreatedResource
-		err    error
-		status int
-		want   map[string]contract.ResourceOutcome
-	}{
-		"a failure beside one made resource": {made, errors.New("the provider refused the next role"), http.StatusInternalServerError, carried},
-		"a refusal beside one made resource": {made, handler.Refuse("bad-input", "the role name is taken"), http.StatusBadRequest, carried},
-		"a failure beside an undeclared one": {[]contract.CreatedResource{{Name: "undeclared-role", Type: "aws.iam-role"}}, errors.New("refused"), http.StatusInternalServerError, nil},
-	} {
-		status, resp := serveBlock(t, blockCall{r: owningBlock{blockResource: &blockResource{cloud: newFakeCloud()}, report: tc.report, err: tc.err}, obs: roleObservers(roleArns()), op: "subscribe", config: []func(*handler.Config){withManifest(roleBlockManifest)}})
-		if status != tc.status || !reflect.DeepEqual(resp.Resources, tc.want) {
-			t.Errorf("%s: status, Resources = %d, %+v; want %d, %+v", label, status, resp.Resources, tc.status, tc.want)
+	failed := errors.New("the provider refused the next role")
+	answer := func(report []contract.CreatedResource, err error) (int, contract.Response) {
+		return serveBlock(t, blockCall{r: owningBlock{blockResource: &blockResource{cloud: newFakeCloud()}, report: report, err: err}, obs: roleObservers(roleArns()), op: "subscribe", fields: map[string]any{"secrets": map[string]any{"hetzner": map[string]any{"token": "hc-token"}}}, config: []func(*handler.Config){withManifest(roleBlockManifest)}})
+	}
+	for want, err := range map[int]error{http.StatusInternalServerError: failed, http.StatusBadRequest: handler.Refuse("bad-input", "the role name is taken")} {
+		if status, resp := answer([]contract.CreatedResource{good}, err); status != want || !reflect.DeepEqual(resp.Resources, carried) {
+			t.Errorf("a %v beside one made resource: status, Resources = %d, %+v; want %d, %+v", err, status, resp.Resources, want, carried)
+		}
+	}
+	for label, bad := range map[string]contract.CreatedResource{"reported twice": good, "undeclared": {Name: "undeclared-role", Type: "aws.iam-role"},
+		"of an unlisted type": {Name: "audit-role", Type: "aws.vpc"}, "with a secret identity": {Name: "audit-role", Type: "aws.iam-role", Identity: map[string]string{"roleName": "hc-token"}}} {
+		if status, resp := answer([]contract.CreatedResource{good, bad}, failed); status != http.StatusInternalServerError || resp.Resources != nil {
+			t.Errorf("a failure beside a resource %s: status, Resources = %d, %+v; want 500 and none", label, status, resp.Resources)
 		}
 	}
 }
