@@ -208,7 +208,6 @@ func TestDecodeResponse_ReadsEachResourceOutcomeByName(t *testing.T) {
 	}
 }
 
-// Unknown leaves Absent nil, so the engine fails open as it does for an operator without the marker.
 func TestObservationResponse_MarksAbsenceByState(t *testing.T) {
 	f, tr := false, true
 	outputs, secrets := map[string]string{"instanceId": "i-0123456789abcdef0"}, map[string]string{"apiKey": "sk-example-not-a-real-secret"}

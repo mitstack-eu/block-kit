@@ -22,6 +22,7 @@ type Report struct {
 	Allocatable *Reservation
 	body        json.RawMessage
 	agent       map[string]json.RawMessage
+	absence     *contract.Absence
 }
 
 type reportParts struct {
@@ -33,10 +34,13 @@ type reportParts struct {
 	} `json:"host"`
 }
 
-// NewestReport reads the newest of the host subscription's node reports, found false while the host has sent none.
+// NewestReport reads the newest of the host subscription's node reports, found false while the host has sent none, except that a host the platform attests absent answers a report holding no volume without reading any.
 func NewestReport(ctx context.Context, api observe.NodeReportsAPI, d contract.Desired, hostSubscription string) (Report, bool, error) {
 	if hostSubscription == "" {
 		return Report{}, false, handler.Refuse("host-binding", "the host binding carries no subscriptionId, so the host's node reports cannot be read")
+	}
+	if absence, ok := d.AttestedAbsent(hostSubscription); ok {
+		return Report{body: json.RawMessage(`{"host":{"volumes":[]}}`), absence: &absence}, true, nil
 	}
 	reports, err := api.NodeReports(ctx, d, hostSubscription)
 	if err != nil {
@@ -65,6 +69,9 @@ func (r Report) Decode(v any) error {
 
 // SyncedCommit reads host.agent.syncedCommit, never the agent's log, and its error says why the report names none.
 func (r Report) SyncedCommit() (string, error) {
+	if r.absence != nil {
+		return "", fmt.Errorf("the platform's %s read the host's %s absent, so it syncs no commit", r.absence.Observer, r.absence.Resource)
+	}
 	raw, ok := r.agent["syncedCommit"]
 	if !ok {
 		return "", fmt.Errorf("the host's newest node report carries no host.agent.syncedCommit, so the host runs a hcloud-docker-host release before %s; upgrade the host to %s or later, whose report names the commit its agent last synced",

@@ -12,7 +12,6 @@ import (
 	"testing"
 )
 
-// retiredWord matches anywhere in a path or line, so it also catches a plural, a past tense or a name built on the word.
 var retiredWord = regexp.MustCompile("(?i)" + "s" + "tep")
 
 var vocabularyRoots = []string{".", "../verify/blockverify", "../cmd", "../README.md"}

@@ -440,6 +440,21 @@ nothing. While the host has not uploaded it, the error is a `handler.Wait`. A
 failed run, or a host that takes no backups, gives an error naming why and
 nothing may be removed.
 
+A lost host can send no node report, so `Done` would wait on one until the
+delete budget ends. The wait ends sooner when the platform has seen the host
+gone itself: its own observer read the host's server absent, and the request
+carries that as `d.Absences`, as [The request your code
+receives](handler.md#the-request-your-code-receives) describes.
+
+`Done` reads the host through `NewestReport(ctx, api, d, hostSubscription)`,
+which first calls `d.AttestedAbsent(hostSubscription)`. For an attested host,
+`NewestReport` returns a report that lists no volume and reads no node report,
+so `Done` finishes at once: a host holding no volume of the block has nothing to
+back up. On that report `SyncedCommit` returns an error naming the observer and
+the resource instead of a commit, since a gone host syncs none. A host with no
+attestation that has uploaded no report yet still makes `Done` return a
+`handler.Wait`.
+
 ## Reporting whether an app answers
 
 `helpers/reach` judges whether an app is serving at its URL and records the

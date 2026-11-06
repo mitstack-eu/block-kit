@@ -138,7 +138,6 @@ func bindingSpec(t *testing.T) contract.ManifestSpec {
 
 func TestCheckBinding_AcceptsOnlyAnOutputEveryListedTypeDeclares(t *testing.T) {
 	spec, snap := bindingSpec(t), platformSnapshot(t)
-	// Two types of the platform's, the instance's without publicIp, so the outputs CheckBinding reads are the snapshot's.
 	small := snapshotOf(t,
 		`{"id": "aws.ec2-instance", "capability": "aws", "kind": "host", "scope": "per-app", "pricing": {"priced": false},`+
 			` "outputs": [{"name": "hostId", "secret": false, "required": true}], "version": 1},`+

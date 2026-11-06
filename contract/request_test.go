@@ -80,6 +80,14 @@ func requestFromGolden(m map[string]any) contract.Request {
 		r.CloudIdentity = &contract.CloudIdentity{Provider: strOf(ci, "provider"), RoleARN: strOf(ci, "roleArn"),
 			WebIdentityToken: strOf(ci, "webIdentityToken"), AccountRef: strOf(ci, "accountRef")}
 	}
+	if abs, ok := m["absences"].(map[string]any); ok {
+		r.Absences = map[string]contract.Absence{}
+		for k, v := range abs {
+			o, _ := v.(map[string]any)
+			at, _ := time.Parse(time.RFC3339, strOf(o, "readAbsentAt"))
+			r.Absences[k] = contract.Absence{Observer: strOf(o, "observer"), Resource: strOf(o, "resource"), ReadAbsentAt: at, ProvesAbsence: o["provesAbsence"] == true}
+		}
+	}
 	if cb, ok := m["eventsCallback"].(map[string]any); ok {
 		r.EventsCallback = &contract.EventsCallback{URL: strOf(cb, "url"), Token: strOf(cb, "token")}
 	}
@@ -413,7 +421,6 @@ func TestRequest_IdentityCarriesWhatEachGoldenHoldsForItsResource(t *testing.T) 
 	}
 }
 
-// A block scoped to a region reads it from Identity, so a request with no instances must read as an empty region rather than panic.
 func TestRequest_NoInstancesLeavesTheMapNil(t *testing.T) {
 	req := contract.Request{Operation: "unsubscribe", SubscriptionID: "sub-1", BlockID: "block-1", OrgID: "org-1"}
 
@@ -535,6 +542,9 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 		{"requirementTypes", func(t *testing.T, prop map[string]any) {
 			objectOfStrings(t, doc, prop, "properties.requirementTypes")
 		}},
+		{"absences", func(t *testing.T, prop map[string]any) {
+			schemaAt(t, doc, prop, "additionalProperties", "properties", "provesAbsence")
+		}},
 		{"settlesAt", func(t *testing.T, prop map[string]any) {
 			if !hasType(prop, "string") || prop["format"] != "date-time" {
 				t.Errorf("properties.settlesAt = %v, want a string of format date-time", prop)
@@ -566,11 +576,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_11_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_12_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.11.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.11.0: it adds resourceUnsubscribing, a minor change from 1.10.0", doc["version"])
+	if doc["version"] != "1.12.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.12.0: it adds absences, a minor change from 1.11.0, which added resourceUnsubscribing", doc["version"])
 	}
 }
 
@@ -580,5 +590,31 @@ func TestEnvelopeSchema_ListsTheLogsOperation(t *testing.T) {
 
 	if enum, _ := operation["enum"].([]any); !slices.Contains(enum, any("logs")) {
 		t.Errorf("envelope.schema.json operation enum = %v, want it to list \"logs\"", operation["enum"])
+	}
+}
+
+func TestDesired_AttestedAbsentCountsOnlyAWholeAttestationOfThatBindingsSubscription(t *testing.T) {
+	whole := contract.Absence{Observer: "o", Resource: "r", ReadAbsentAt: time.Unix(1, 0), ProvesAbsence: true}
+	for name, tc := range map[string]struct {
+		sub string
+		a   contract.Absence
+	}{
+		"a whole attestation":                                {"sub_host", whole},
+		"a whole attestation of a host bound by bindingsAll": {"sub_all", whole},
+		"another subscription":                               {"sub_other", whole},
+		"no proof":                                           {"sub_host", contract.Absence{Observer: "o", Resource: "r", ReadAbsentAt: time.Unix(1, 0)}},
+		"no observer":                                        {"sub_host", contract.Absence{Resource: "r", ReadAbsentAt: time.Unix(1, 0), ProvesAbsence: true}},
+		"no resource":                                        {"sub_host", contract.Absence{Observer: "o", ReadAbsentAt: time.Unix(1, 0), ProvesAbsence: true}},
+		"no time":                                            {"sub_host", contract.Absence{Observer: "o", Resource: "r", ProvesAbsence: true}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := contract.Request{Bindings: map[string]map[string]string{"host": {"subscriptionId": "sub_host"}}, BindingsAll: map[string][]map[string]string{"host": {{"subscriptionId": "sub_all"}}}, Absences: map[string]contract.Absence{"host": tc.a}}
+
+			got, ok := req.Desired().AttestedAbsent(tc.sub)
+
+			if want := tc.a == whole && tc.sub != "sub_other"; ok != want || (ok && got != whole) {
+				t.Errorf("AttestedAbsent(%q) = %v, %v; want found %v", tc.sub, got, ok, want)
+			}
+		})
 	}
 }

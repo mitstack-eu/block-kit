@@ -124,8 +124,6 @@ func TestSetup_InstallsDockerAndStartsTheEdgeRetryingEachTenTimesAtMost(t *testi
 	}
 }
 
-// runSetup runs the setup script with only stubs on PATH: apt-get fails installFailures times before it puts docker
-// on PATH, and docker pull fails pullFailures times.
 func runSetup(t *testing.T, installFailures, pullFailures int) (calls []string, exit int) {
 	t.Helper()
 	setup := dockerhost.Setup()
@@ -175,7 +173,6 @@ func linkTools(t *testing.T, bin string, tools ...string) {
 	}
 }
 
-// writeStub writes an executable that logs its own call to $STATE/calls and then runs body.
 func writeStub(t *testing.T, dir, name, body string) {
 	t.Helper()
 	script := "#!/bin/sh\necho \"" + name + " $*\" >> \"$STATE/calls\"\n" + body

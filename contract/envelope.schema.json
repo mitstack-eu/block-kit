@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
   "title": "mitstack lifecycle webhook envelope",
   "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -71,6 +71,20 @@
     "neverActive": {
       "type": "boolean",
       "description": "True only when the engine has proved the subscription holds no user data yet: it never reached active, and it was not created from a data handover such as a stack switch's restored snapshot. A block may then replace a stateful resource. False or omitted, every stateful resource stays guarded."
+    },
+    "absences": {
+      "type": "object",
+      "description": "The platform's attestation, keyed by the requirement's reference, that its own observer read the bound provider's resource absent. Each entry names the observer, the resource and the time it read absent, and provesAbsence takes the meaning of a node report's reportSignature.provesAbsence. A block honours an entry only when provesAbsence is true and the three are named. Omitted, nothing is attested.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["observer", "resource", "readAbsentAt", "provesAbsence"],
+        "properties": {
+          "observer": {"type": "string"},
+          "resource": {"type": "string"},
+          "readAbsentAt": {"type": "string", "format": "date-time"},
+          "provesAbsence": {"type": "boolean"}
+        }
+      }
     },
     "requirementTypes": {
       "type": "object",

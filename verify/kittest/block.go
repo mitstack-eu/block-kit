@@ -195,7 +195,7 @@ func (s *blockServer) send(operation string, d contract.Desired) (int, contract.
 		Operation: operation, SubscriptionID: d.SubscriptionID, IdempotencyKey: freshToken(),
 		BlockID: d.BlockID, BlockVersion: d.BlockVersion, OrgID: d.OrgID, AppID: d.AppID,
 		Params: d.Params, Instances: d.Instances, Secrets: d.Secrets, OBO: obo,
-		SecretInputs: d.SecretInputs, AppSecrets: d.AppSecrets, Bindings: d.Bindings, BindingsAll: d.BindingsAll,
+		SecretInputs: d.SecretInputs, AppSecrets: d.AppSecrets, Bindings: d.Bindings, BindingsAll: d.BindingsAll, Absences: d.Absences,
 		CloudIdentity: d.CloudIdentity, CreatedAt: now, Nonce: freshToken(), PriorOutputs: d.PriorOutputs,
 		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
 		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity,

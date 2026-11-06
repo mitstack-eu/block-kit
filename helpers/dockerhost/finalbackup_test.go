@@ -27,6 +27,7 @@ func backupRun(block, request, result string) string {
 func TestFinalBackup_AnswersEachStateTheHostReports(t *testing.T) {
 	for _, tc := range []struct {
 		name, held, report string
+		d                  contract.Desired
 		done, waits        bool
 		says               string
 		asks               string
@@ -39,13 +40,15 @@ func TestFinalBackup_AnswersEachStateTheHostReports(t *testing.T) {
 		{name: "a held request that is not a final one asks afresh", held: "manual-1", report: `{"host":{` + heldVolume + `}}`, waits: true, says: "final-1793620800", asks: "final-1793620800"},
 		{name: "the named upload is done", held: "final-7", report: `{"host":{` + heldVolume + `,"backups":{"runs":[` + backupRun("docker-app-slice", "final-7", "uploaded") + `]}}}`, done: true},
 		{name: "a failed run fails naming its result", held: "final-7", report: `{"host":{` + heldVolume + `,"backups":{"runs":[` + backupRun("docker-app-slice", "final-7", "failed: the store answered 403") + `]}}}`, says: "the store answered 403"},
+		{name: "a host the platform attests absent is done at once, whatever its last report held", d: attestedAbsent(hostSub), report: `{"host":{` + heldVolume + `}}`, done: true},
+		{name: "an attestation for another host still asks and waits", d: attestedAbsent("sub_other"), report: `{"host":{` + heldVolume + `}}`, waits: true, says: "final-1793620800", asks: "final-1793620800"},
 		{name: "a host that takes no backups fails naming why", report: `{"host":{` + heldVolume + `,"backups":{"error":"the host holds no backup public key"}}}`, says: "the host holds no backup public key"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asked := ""
 			f := finalBackup(tc.held, &asked)
 
-			done, err := f.Done(context.Background(), &hostReports{reports: []observe.NodeReport{received(1, tc.report)}}, contract.Desired{}, hostSub)
+			done, err := f.Done(context.Background(), &hostReports{reports: []observe.NodeReport{received(1, tc.report)}}, tc.d, hostSub)
 
 			var wait *handler.Waiting
 			if done != tc.done || errors.As(err, &wait) != tc.waits || (err != nil) != (tc.says != "") {
@@ -70,6 +73,10 @@ func TestFinalBackup_WaitsWhileTheHostHasSentNoReport(t *testing.T) {
 	if done || !errors.As(err, &wait) || asked != "" {
 		t.Errorf("Done with no report = %v, %v, asking %q; want a wait and no request", done, err, asked)
 	}
+}
+
+func attestedAbsent(sub string) contract.Desired {
+	return contract.Desired{Bindings: map[string]map[string]string{"host": {"subscriptionId": sub}}, Absences: map[string]contract.Absence{"host": {Observer: "hetzner.docker-host", Resource: "hetzner.server", ReadAbsentAt: time.Unix(1793620000, 0), ProvesAbsence: true}}}
 }
 
 func finalBackup(held string, asked *string) dockerhost.FinalBackup {

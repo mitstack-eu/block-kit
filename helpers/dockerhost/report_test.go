@@ -93,6 +93,13 @@ func TestNewestReport_FindsNoneWhileTheHostHasSentNoReport(t *testing.T) {
 	}
 }
 
+func TestNewestReport_AnswersAnAttestedAbsentHostWithoutReadingItsReports(t *testing.T) {
+	report, found, err := dockerhost.NewestReport(context.Background(), &hostReports{err: errors.New("the platform answered 503")}, attestedAbsent(hostSub), hostSub)
+	if _, notSynced := report.SyncedCommit(); !found || err != nil || notSynced == nil {
+		t.Errorf("NewestReport = %+v, found %v, %v; want the host's attested absence, which syncs no commit", report, found, err)
+	}
+}
+
 func TestNewestReport_FailsAReadItCannotMake(t *testing.T) {
 	for _, tc := range []struct {
 		name, sub, class string
@@ -113,7 +120,6 @@ func TestNewestReport_FailsAReadItCannotMake(t *testing.T) {
 	}
 }
 
-// twoApps is a report of a host running shop, with its database and a container no block labelled, and blog, each block's container labelled with its subscription.
 const twoApps = `{"host":{"apps":{` +
 	`"shop":[{"container":"shop-web","subscription":"sub_shop","logs":"PHP Fatal error: Uncaught PDOException\nGET / 500\n"},` +
 	`{"container":"shop-mariadb","subscription":"sub_shopdb","logs":"mariadbd: ready for connections.\n"},` +
@@ -201,7 +207,6 @@ func TestSubscriptionLogs_FailsAReadItCannotMake(t *testing.T) {
 	}
 }
 
-// releases is a report of a host where shop rolled back from a failed release, fresh's first release failed, and blog's passed.
 const releases = `{"host":{"apps":{` +
 	`"shop":[{"container":"shop-web","subscription":"sub_shop","image":"ghcr.io/acme/shop@sha256:9f00","state":"running"},` +
 	`{"container":"shop-mariadb","subscription":"sub_shopdb","image":"mariadb@sha256:db00","state":"running"}],` +

@@ -58,7 +58,6 @@ func v1betaUnknownFields(t *testing.T) map[string][]byte {
 	}
 }
 
-// retiredListForms are the key a retired entry carried written in a second form, so each refusal is a row of its own.
 func retiredListForms(t *testing.T) map[string][]byte {
 	const hostType, containerType = "      type: aws.ec2-instance\n", "      type: aws.ec2-container\n"
 	return map[string][]byte{
