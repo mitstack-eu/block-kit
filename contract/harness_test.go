@@ -21,7 +21,6 @@ func readManifestGolden(t *testing.T, name string) []byte {
 	return raw
 }
 
-// edit applies each old, new pair to base once and fails on an old text base lacks, so an edit never silently does nothing.
 func edit(t *testing.T, base string, pairs ...string) []byte {
 	t.Helper()
 	for i := 0; i+1 < len(pairs); i += 2 {
@@ -98,7 +97,6 @@ func decodeGolden(t *testing.T, name string) contract.Request {
 	return req
 }
 
-// mutateSubscribeGolden decodes the subscribe golden afresh on each call, so an edit to a nested map never leaks into another test's copy.
 func mutateSubscribeGolden(t *testing.T, mutate func(m map[string]any)) []byte {
 	t.Helper()
 	valid, err := contract.ValidGoldens()
@@ -123,7 +121,6 @@ func jsonObject(t *testing.T, raw []byte) map[string]any {
 	return m
 }
 
-// marshalObject encodes v and decodes it back as a JSON object, so a test compares what goes on the wire by key.
 func marshalObject(t *testing.T, v any) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(v)
@@ -133,7 +130,6 @@ func marshalObject(t *testing.T, v any) map[string]any {
 	return jsonObject(t, raw)
 }
 
-// schemaAt follows path from node, replacing a node that carries a local "$ref" by what it points to in root before reading the next key.
 func schemaAt(t *testing.T, root map[string]any, node map[string]any, path ...string) map[string]any {
 	t.Helper()
 	for i := 0; ; i++ {

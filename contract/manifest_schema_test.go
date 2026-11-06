@@ -99,7 +99,6 @@ func TestManifestSchema_RequirementAndResourceCarryExactlyTheirKeys(t *testing.T
 			}
 		})
 	}
-	// A block that creates nothing, or answers no operation, is not a block.
 	for _, path := range [][]string{
 		{"properties", "spec", "properties", "resources"},
 		{"properties", "spec", "properties", "lifecycle", "properties", "operations"},

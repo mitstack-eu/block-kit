@@ -421,7 +421,6 @@ func TestRequest_IdentityCarriesWhatEachGoldenHoldsForItsResource(t *testing.T) 
 	}
 }
 
-// A block scoped to a region reads it from Identity, so a request with no instances must read as an empty region rather than panic.
 func TestRequest_NoInstancesLeavesTheMapNil(t *testing.T) {
 	req := contract.Request{Operation: "unsubscribe", SubscriptionID: "sub-1", BlockID: "block-1", OrgID: "org-1"}
 

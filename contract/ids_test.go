@@ -54,7 +54,6 @@ func TestParseNamespacedIDs_AcceptOnlyACommunityOrAPrivateID(t *testing.T) {
 				}
 			})
 		}
-		// The error teaches the private form, so a reader who wrote acme/x or @Acme/x learns to write @<org>/<name>.
 		for _, id := range []string{"acme/x", "@Acme/x", "@acme/", "Billing"} {
 			t.Run(fn+"/names both forms refusing "+id, func(t *testing.T) {
 				_, _, err := parse(id)
