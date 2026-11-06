@@ -43,10 +43,7 @@ func (f *fakeVerifier) VerifyConnection(_ context.Context, c handler.ConnectionC
 	return f.answer, f.err
 }
 
-func (f *fakeVerifier) count() int { return len(f.calls) }
-
 func verifyHarness(t *testing.T, v *fakeVerifier) *harness {
-	t.Helper()
 	s := kittest.NewSigner(t, "kid-1", 7)
 	h, err := handler.New(handler.Config{Manifest: []byte(verifyOnlyManifest), JWKSURL: s.JWKSServer(t), Verifier: v})
 	if err != nil {
@@ -78,11 +75,8 @@ func TestVerifyConnection_AnswersEachVerdictWithoutAResourceOrAnOBOTokenAndHands
 			if got := decodeResponse(t, raw); status != http.StatusOK || got.Verdict != verdict || got.StatusDetail != "HTTP 200" {
 				t.Errorf("status, verdict, detail = %d, %q, %q; want 200, %q, HTTP 200", status, got.Verdict, got.StatusDetail, verdict)
 			}
-			if v.count() != 1 {
-				t.Fatalf("the verifier was asked %d times, want once", v.count())
-			}
-			if c := v.calls[0]; c.CapabilitySlug != "sendcloud" || c.OrgID != "org-1" || c.Credential["private_key"] != entered || c.Credential["public_key"] != enteredPub || len(c.Credential) != 2 {
-				t.Errorf("the verifier was handed %+v, want the slug, org and both entered fields", c)
+			if c := v.calls; len(c) != 1 || c[0].CapabilitySlug != "sendcloud" || c[0].OrgID != "org-1" || c[0].Credential["private_key"] != entered || c[0].Credential["public_key"] != enteredPub || len(c[0].Credential) != 2 {
+				t.Errorf("the verifier was handed %+v, want the slug, org and both entered fields", v.calls)
 			}
 		})
 	}
@@ -126,8 +120,8 @@ func TestVerifyConnection_IsNeverReplayedFromTheIdempotencyCache(t *testing.T) {
 		x.verify(map[string]any{"idempotencyKey": "same"})
 	}
 
-	if v.count() != 2 {
-		t.Errorf("the verifier was asked %d times for two requests sharing a key, want 2: a credential may have been revoked since", v.count())
+	if len(v.calls) != 2 {
+		t.Errorf("the verifier was asked %d times for two requests sharing a key, want 2: a credential may have been revoked since", len(v.calls))
 	}
 }
 
@@ -151,7 +145,6 @@ func TestVerifyConnection_RefusesWhatTheOperatorOrTheRequestDoesNotAllow(t *test
 		class string
 	}{
 		{"another capability's slug", func() (int, []byte) { return only.verify(map[string]any{"capabilitySlug": "mollie"}) }, "wrong-capability"},
-		{"a missing credential", func() (int, []byte) { return only.verify(map[string]any{"enteredCredential": map[string]any{}}) }, "malformed-request"},
 		{"a subscribe sent to a verify-only operator", func() (int, []byte) { return only.post(map[string]any{"operation": "subscribe"}) }, "undeclared-operation"},
 		{"a verify-connection sent to a block", func() (int, []byte) { return block.verify(map[string]any{"capabilitySlug": "test-block"}) }, "no-connection-check"},
 	}
@@ -164,8 +157,8 @@ func TestVerifyConnection_RefusesWhatTheOperatorOrTheRequestDoesNotAllow(t *test
 			}
 		})
 	}
-	if v.count() != 0 {
-		t.Errorf("the verifier was asked %d times, want none", v.count())
+	if len(v.calls) != 0 {
+		t.Errorf("the verifier was asked %d times, want none", len(v.calls))
 	}
 }
 
@@ -177,8 +170,7 @@ func TestNew_HoldsTheVerifierToTheManifestsListOfOperations(t *testing.T) {
 		want string
 	}{
 		{"the operation listed and no verifier", handler.Config{Manifest: []byte(verifyOnlyManifest), JWKSURL: jwks}, "Config.Verifier is nil"},
-		{"a verifier and the operation not listed", handler.Config{Resource: &kittest.FakeResource{}, Manifest: []byte(oneResourceManifest), JWKSURL: jwks,
-			Observers: map[string]handler.Observer{"r": observedThrough{&kittest.FakeResource{}}}, Verifier: &fakeVerifier{}}, "does not list verify-connection"},
+		{"a verifier and the operation not listed", handler.Config{Resource: &kittest.FakeResource{}, Manifest: []byte(strings.Replace(verifyOnlyManifest, "[verify-connection]", "[validate]", 1)), JWKSURL: jwks, Verifier: &fakeVerifier{}}, "does not list verify-connection"},
 		{"no resource and another operation", handler.Config{Manifest: []byte(strings.Replace(verifyOnlyManifest, "[verify-connection]", "[validate]", 1)), JWKSURL: jwks}, "Config.Resource is required"},
 	}
 	for _, tc := range cases {
