@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -15,6 +16,15 @@ import (
 const AWSSubscriptionTag = "mitstack:subscription"
 
 const HetznerSubscriptionLabel = "mitstack.dev/subscription"
+
+// ContainerSubscriptionLabel is the label a container carries with its subscription's id.
+const ContainerSubscriptionLabel = AWSSubscriptionTag
+
+// AWSRoleTag with the value AWSRoleEgressProxy marks an EC2 instance as the egress proxy rather than the host.
+const (
+	AWSRoleTag         = "mitstack:role"
+	AWSRoleEgressProxy = "egress-proxy"
+)
 
 // Tagged has an empty Type for an object the lister cannot type, and its ID then names the object in full.
 type Tagged struct {
@@ -29,6 +39,16 @@ type TaggedLister interface {
 
 type AWSTaggingAPI interface {
 	ResourceARNs(ctx context.Context, d contract.Desired, tagKey, tagValue string) ([]string, error)
+}
+
+// AWSRoleTaggingAPI lists the ARNs carrying the subscription's tag and the given AWSRoleTag value.
+type AWSRoleTaggingAPI interface {
+	RoleARNs(ctx context.Context, d contract.Desired, subscriptionID, role string) ([]string, error)
+}
+
+// SSMAssociationsAPI lists the ids of the associations that run the named SSM document.
+type SSMAssociationsAPI interface {
+	AssociationIDs(ctx context.Context, d contract.Desired, document string) ([]string, error)
 }
 
 // AWSTagged lists the AWS resources carrying a subscription's id under AWSSubscriptionTag.
@@ -59,9 +79,35 @@ func (l AWSTagged) ListTagged(ctx context.Context, d contract.Desired, subscript
 	if err != nil {
 		return nil, err
 	}
+	var proxies []string
+	if r, ok := l.API.(AWSRoleTaggingAPI); ok {
+		if proxies, err = r.RoleARNs(ctx, d, subscriptionID, AWSRoleEgressProxy); err != nil {
+			return nil, err
+		}
+	}
 	out := make([]Tagged, 0, len(arns))
 	for _, arn := range arns {
-		out = append(out, taggedARN(arn))
+		t := taggedARN(arn)
+		if t.Type == "aws.ec2-instance" && slices.Contains(proxies, arn) {
+			t.Type = "aws.egress-proxy"
+		}
+		out = append(out, t)
+	}
+	a, ok := l.API.(SSMAssociationsAPI)
+	if !ok {
+		return out, nil
+	}
+	for _, doc := range slices.Clone(out) {
+		if doc.Type != "aws.ssm-document" {
+			continue
+		}
+		ids, err := a.AssociationIDs(ctx, d, doc.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			out = append(out, Tagged{Type: "aws.ssm-association", ID: id})
+		}
 	}
 	return out, nil
 }
@@ -150,6 +196,8 @@ type GitHubWebhook struct {
 
 // GitHubCommitPaths is one commit on a repository's default branch, with the paths it wrote that the branch still holds.
 type GitHubCommitPaths struct {
+	// SHA is the commit's id; a trailer commit with none makes the lookup fail instead of reading absent.
+	SHA     string
 	Message string
 	Paths   []string
 }
@@ -176,7 +224,7 @@ type GitHubTagged struct {
 	CommitType string
 }
 
-func (l GitHubTagged) ListTagged(ctx context.Context, d contract.Desired, subscriptionID string) ([]Tagged, error) {
+func (l GitHubTagged) topicRepositories(ctx context.Context, d contract.Desired, subscriptionID string) ([]string, error) {
 	if subscriptionID == "" {
 		return nil, errors.New("listing GitHub resources needs a subscription id, since an empty one names no topic or trailer of its own")
 	}
@@ -192,7 +240,38 @@ func (l GitHubTagged) ListTagged(ctx context.Context, d contract.Desired, subscr
 		}
 	}
 	slices.Sort(tagged)
-	tagged = slices.Compact(tagged)
+	return slices.Compact(tagged), nil
+}
+
+// newestTrailerCommit names the first repository, topic-tagged before bound, whose commits carry the subscription's trailer, and its newest such commit, taking Commits to list newest first.
+func (l GitHubTagged) newestTrailerCommit(ctx context.Context, d contract.Desired, subscriptionID string) (string, string, error) {
+	tagged, err := l.topicRepositories(ctx, d, subscriptionID)
+	if err != nil {
+		return "", "", err
+	}
+	for _, repo := range append(tagged, boundRepositories(d)...) {
+		commits, err := l.API.Commits(ctx, d, repo)
+		if err != nil {
+			return "", "", err
+		}
+		for _, c := range commits {
+			switch {
+			case !carriesTrailer(c.Message, GitHubSubscriptionTrailer(subscriptionID)):
+			case c.SHA == "":
+				return "", "", fmt.Errorf("observe: a commit of %s carries the subscription's trailer but the API gave no sha", repo)
+			default:
+				return repo, c.SHA, nil
+			}
+		}
+	}
+	return "", "", nil
+}
+
+func (l GitHubTagged) ListTagged(ctx context.Context, d contract.Desired, subscriptionID string) ([]Tagged, error) {
+	tagged, err := l.topicRepositories(ctx, d, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
 	var out []Tagged
 	for _, repo := range tagged {
 		out = append(out, Tagged{Type: cmp.Or(l.RepositoryType, "github.repository"), ID: repo})

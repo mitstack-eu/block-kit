@@ -2,7 +2,9 @@
 package observe
 
 import (
+	"context"
 	"fmt"
+	"slices"
 
 	"github.com/mitstack-eu/block-kit/contract"
 )
@@ -30,6 +32,27 @@ func identityKeys(r contract.ResourceRef, keys ...string) ([]string, contract.Ob
 		}
 	}
 	return values, contract.Observation{}, true
+}
+
+// heldByOwner answers an unsubscribing observe whose identity lacks its key from the objects of typ that lister finds under the subscription's id: present for the lowest id, absent for none, and the list's error when it fails.
+func heldByOwner(ctx context.Context, r contract.ResourceRef, lister TaggedLister, typ, key string, noKey contract.Observation) (contract.Observation, error) {
+	if !r.Unsubscribing || lister == nil || typ == "" || r.Desired.SubscriptionID == "" {
+		return noKey, nil
+	}
+	tagged, err := lister.ListTagged(ctx, r.Desired, r.Desired.SubscriptionID)
+	if err != nil {
+		return contract.Observation{}, err
+	}
+	var ids []string
+	for _, t := range tagged {
+		if t.Type == typ {
+			ids = append(ids, t.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return absent(), nil
+	}
+	return contract.Observation{State: contract.Present, Identity: map[string]string{key: slices.Min(ids)}}, nil
 }
 
 func existence(r contract.ResourceRef, exists bool, err error, outputs map[string]string) (contract.Observation, error) {

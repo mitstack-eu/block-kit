@@ -70,7 +70,6 @@ type observer interface {
 	ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error)
 }
 
-// existenceObservers are the observers that ask only whether the object the identity names exists, each with the identity that names it, the key the fake is asked about, and the outputs a present object reports.
 var existenceObservers = []struct {
 	typ      string
 	build    func(f *existsFake) observer
@@ -206,7 +205,6 @@ func TestRoute53Record_ReportsTheAppsHostnameAndURL(t *testing.T) {
 	wantObservation(t, ref, got, err, contract.Absent, nil, "")
 }
 
-// fakeHost answers a script run on an instance with the stdout the test gives the object the script names, and records where it ran. A HostCommander reports a nonzero exit as an error, so err stands for a probe that failed on the host.
 type fakeHost struct {
 	instance string
 	stdout   map[string]string

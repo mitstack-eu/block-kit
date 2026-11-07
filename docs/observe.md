@@ -37,6 +37,32 @@ the resource. Every shared observer answers `Unknown` without calling the
 provider when the identity lacks the key it needs, and reports that identity
 on a present answer.
 
+An identity lacks its key after a create that failed before it reported one.
+While `Unsubscribing` is true, the observers for `aws.s3-bucket`, `aws.vpc`,
+`aws.security-group`, `aws.ec2-instance`, `aws.ebs-volume`, `aws.iam-role`,
+`hetzner.server`, `hetzner.primary-ip`, `hetzner.network`, `hetzner.firewall`
+and `github.repository` then list what carries the subscription's id, when the
+observer's API also implements `AWSTaggingAPI`, `HetznerLabelAPI` or
+`GitHubTagAPI`. A list that finds an object of the type answers `Present` with
+that object's identity, a list that finds none answers `Absent`, and a failed
+list returns its error.
+
+These observers read a convention the block sets on the objects it creates, and `EC2Instance` shares it so it can leave out the egress proxy.
+
+| Observer | Convention | Extra API it needs |
+|---|---|---|
+| `EC2Instance`, `EgressProxy` | The block tags the egress proxy instance `mitstack:role=egress-proxy` (`AWSRoleTag`, `AWSRoleEgressProxy`). `EC2Instance` never resolves to that instance. | `AWSRoleTaggingAPI` beside `AWSTaggingAPI` |
+| `SSMAssociation` | The observer lists the associations that run each SSM document the subscription tagged. One row reads `Present` while any of them remains, so it can wait on a sibling's association. | `SSMAssociationsAPI` beside `AWSTaggingAPI` |
+| `EC2Container` | The container carries the label `mitstack:subscription` (`ContainerSubscriptionLabel`). The observer reads the labelled containers, stopped ones included, on the instance the subscription's `aws.ec2-instance` requirement is bound to, which `Desired.Bindings` records. | None, and no binding means `Unknown` |
+| `GitHubCommit` | The last paragraph of the commit message is the trailer line `Mitstack-Subscription: <subscription id>` (`GitHubSubscriptionTrailer`). The observer takes the newest such commit of the first repository carrying it, topic-tagged repositories before bound ones. | `GitHubTagAPI`, whose `Commits` sets `SHA` |
+
+The role read and the association read run with every tag listing, so a failing association read also fails the lookup of an unrelated type, with an error and never an absent answer.
+Without the extra API, or without a bound instance, these observers answer
+`Unknown` as before. `Route53Record` and `NodeReported` answer `Unknown` for an
+identity without its key, since the provider has no list that names their
+objects by subscription: a block derives the record name from its own zone, and
+the name and type of the cluster object from its own app.
+
 ## A resource that stands but fails
 
 A resource can stand and still fail, such as a volume stuck attaching. Its

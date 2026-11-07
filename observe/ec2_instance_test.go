@@ -20,7 +20,6 @@ var (
 	_ handler.Observer = observe.EgressProxy{}
 )
 
-// fakeEC2 answers DescribeInstance from the instances it holds and records each instance id and subscription it was asked about.
 type fakeEC2 struct {
 	mu        sync.Mutex
 	instances map[string]observe.EC2InstanceDescription
@@ -56,7 +55,6 @@ func refFor(typ string, identity map[string]string) contract.ResourceRef {
 	}
 }
 
-// wantObservation checks state, each output in outputs, detail when set, and that a present answer reports the identity ref names.
 func wantObservation(t *testing.T, ref contract.ResourceRef, got contract.Observation, err error, state contract.State, outputs map[string]string, detail string) {
 	t.Helper()
 	if err != nil {
