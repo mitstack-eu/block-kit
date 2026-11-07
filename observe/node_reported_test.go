@@ -38,7 +38,6 @@ func (f *fakeReports) NodeReports(_ context.Context, _ contract.Desired, subscri
 
 var verbAt = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 
-// nodeReport describes one report: when the platform received it, when the node made it, whether it marks its list complete, which kinds it read whole, and the list itself; an unset field leaves its key out of the body.
 type nodeReport struct {
 	received time.Duration
 	made     *time.Duration
@@ -211,7 +210,6 @@ var _ observe.NodeReportsAPI = observe.NodeReportsClient{}
 
 const callbackToken = "callback-token-7f3a"
 
-// platformServing answers a cluster subscription's node reports only to the callback's token, as the platform does.
 func platformServing(t *testing.T, cluster string, reports ...observe.NodeReport) *httptest.Server {
 	t.Helper()
 	listed := make([]map[string]any, 0, len(reports))
@@ -315,7 +313,6 @@ func TestNodeReported_NamesWhetherAClusterThatSentNoReportEnrolledANode(t *testi
 	}
 }
 
-// argoReport is a node report body carrying Argo CD's Applications as the talos-cluster-kit report passes them on; a nil made leaves out madeAt.
 func argoReport(made *time.Duration, apps ...map[string]any) map[string]any {
 	body := map[string]any{"argocd": map[string]any{"applications": apps}}
 	if made != nil {
@@ -324,7 +321,6 @@ func argoReport(made *time.Duration, apps ...map[string]any) map[string]any {
 	return body
 }
 
-// application is an Application entry; a nil applied leaves out its resources key.
 func application(name, sync string, applied ...map[string]any) map[string]any {
 	app := map[string]any{"name": name, "health": "Healthy", "sync": sync}
 	if applied != nil {

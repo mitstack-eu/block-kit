@@ -192,7 +192,6 @@ func (f *fakeGitHub) Commits(_ context.Context, _ contract.Desired, repo string)
 	return f.commits[repo], f.err
 }
 
-// ghWorld holds a CI repository the subscription created and tagged, the app repository its github.repository requirement binds, and the repositories and commits of everyone else.
 func ghWorld() *fakeGitHub {
 	return &fakeGitHub{
 		topics: map[string][]string{
@@ -240,7 +239,6 @@ func ghWorld() *fakeGitHub {
 	}
 }
 
-// ghDesired binds the app repository, a runner, and two GitOps repositories another subscription created and marked.
 func ghDesired() contract.Desired {
 	return contract.Desired{
 		Identity: contract.Identity{SubscriptionID: ghSub},

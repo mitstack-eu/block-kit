@@ -12,7 +12,15 @@ import (
 
 type owned struct {
 	observe.EC2API
+	observe.S3BucketAPI
+	observe.VPCAPI
+	observe.SecurityGroupAPI
+	observe.EBSVolumeAPI
+	observe.IAMRoleAPI
 	observe.HetznerServerAPI
+	observe.HetznerPrimaryIPAPI
+	observe.HetznerNetworkAPI
+	observe.HetznerFirewallAPI
 	observe.GitHubRepositoryAPI
 	observe.GitHubCommitAPI
 	held    map[string][]string
@@ -65,8 +73,16 @@ var ownedObservers = []struct {
 	typ, key, id, item string
 	build              func(f *owned) observer
 }{
+	{"aws.s3-bucket", "bucket", "app-state", "arn:aws:s3:::app-state", func(f *owned) observer { return observe.S3Bucket{API: f} }},
+	{"aws.vpc", "vpcId", "vpc-0abc", "arn:aws:ec2:eu-west-1:1:vpc/vpc-0abc", func(f *owned) observer { return observe.VPC{API: f} }},
+	{"aws.security-group", "groupId", "sg-0abc", "arn:aws:ec2:eu-west-1:1:security-group/sg-0abc", func(f *owned) observer { return observe.SecurityGroup{API: f} }},
 	{"aws.ec2-instance", "instanceId", "i-0abc", "arn:aws:ec2:eu-west-1:1:instance/i-0abc", func(f *owned) observer { return observe.EC2Instance{API: f} }},
+	{"aws.ebs-volume", "volumeId", "vol-0abc", "arn:aws:ec2:eu-west-1:1:volume/vol-0abc", func(f *owned) observer { return observe.EBSVolume{API: f} }},
+	{"aws.iam-role", "roleName", "deploy", "arn:aws:iam::1:role/ci/deploy", func(f *owned) observer { return observe.IAMRole{API: f} }},
 	{"hetzner.server", "serverId", "4711", "server/4711", func(f *owned) observer { return observe.HetznerServer{API: f} }},
+	{"hetzner.primary-ip", "primaryIpId", "99", "primary_ip/99", func(f *owned) observer { return observe.HetznerPrimaryIP{API: f} }},
+	{"hetzner.network", "networkId", "77", "network/77", func(f *owned) observer { return observe.HetznerNetwork{API: f} }},
+	{"hetzner.firewall", "firewallId", "4711", "firewall/4711", func(f *owned) observer { return observe.HetznerFirewall{API: f} }},
 	{"github.repository", "repo", "acme/app", "acme/app", func(f *owned) observer { return observe.GitHubRepository{API: f} }},
 }
 

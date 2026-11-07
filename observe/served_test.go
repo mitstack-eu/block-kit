@@ -1,8 +1,5 @@
 package observe_test
 
-// The shared aws.ec2-instance observer, served through handler.New for a block
-// whose ensure reports its instance, answers with what the fake EC2 API holds.
-
 import (
 	"context"
 	"net/http"
