@@ -3,6 +3,7 @@ package handover_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,8 @@ func api(states ...string) *fakeAPI {
 	return &fakeAPI{volumeID: "vol-123", snapshotID: "snap-abc", states: states}
 }
 
+var acme = handover.Marker{Prefix: "acme:", Extra: map[string]string{"acme:subscription": "sub-7"}}
+
 func TestSnapshot(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -74,10 +77,10 @@ func TestSnapshot(t *testing.T) {
 					t.Errorf("snapshotted %q and polled %d times; want vol-123 polled until completed", f.gotVolumeID, f.stateCalls)
 				}
 			}},
-		{"the snapshot is tagged as a retained handover of its app", api("completed"), "app_1", false, "snap-abc", nil, "",
+		{"the snapshot carries the caller's marker and extra tags", api("completed"), "app_1", false, "snap-abc", nil, "",
 			func(t *testing.T, f *fakeAPI) {
-				if !handover.IsHandover(f.gotTags) || f.gotTags[handover.TagAppID] != "app_1" {
-					t.Errorf("tags = %v; want a handover tag carrying app_1, or a sweep reclaims it", f.gotTags)
+				if !maps.Equal(f.gotTags, acme.Tags("app_1")) || !acme.IsHandover(f.gotTags) || f.gotTags["acme:app-id"] != "app_1" || f.gotTags["acme:subscription"] != "sub-7" {
+					t.Errorf("tags = %v; want the marker carrying app_1 and the extra tags, or a sweep reclaims it", f.gotTags)
 				}
 			}},
 		{"the description is non-empty ASCII, since EC2 rejects anything else", api("completed"), "app_1", false, "snap-abc", nil, "",
@@ -92,6 +95,12 @@ func TestSnapshot(t *testing.T) {
 		{"an empty snapshot id is refused", &fakeAPI{volumeID: "vol-123", states: []string{"completed"}}, "app_1", false, "", nil, "returned no id", nil},
 		{"a nil API is loud, never read as nothing to hand over", nil, "app_1", false, "", nil, "no EC2 API configured", nil},
 		{"an empty appID is refused before anything is created", api("completed"), "", false, "", nil, "appID is required",
+			func(t *testing.T, f *fakeAPI) {
+				if f.createCalls != 0 {
+					t.Errorf("CreateSnapshot called %d times; an untagged snapshot cannot be found again", f.createCalls)
+				}
+			}},
+		{"a marker with no prefix is refused before anything is created", api("completed"), "app_1", false, "", nil, "prefix",
 			func(t *testing.T, f *fakeAPI) {
 				if f.createCalls != 0 {
 					t.Errorf("CreateSnapshot called %d times; an untagged snapshot cannot be found again", f.createCalls)
@@ -112,7 +121,12 @@ func TestSnapshot(t *testing.T) {
 				ec2 = tc.api
 			}
 
-			got, err := handover.Snapshot(context.Background(), ec2, tc.appID, opts)
+			marker := acme
+			if strings.HasPrefix(tc.name, "a marker with no prefix") {
+				marker = handover.Marker{}
+			}
+
+			got, err := handover.Snapshot(context.Background(), ec2, marker, tc.appID, opts)
 
 			if tc.wantID != "" && (err != nil || got != tc.wantID) {
 				t.Fatalf("Snapshot = %q, %v; want %q", got, err, tc.wantID)
@@ -135,17 +149,42 @@ func TestSnapshot(t *testing.T) {
 
 func TestIsHandover(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		tags map[string]string
-		want bool
+		name   string
+		marker handover.Marker
+		tags   map[string]string
+		want   bool
 	}{
-		{"nil tags are an orphan", nil, false},
-		{"an unrelated tag set is not a handover", map[string]string{"Name": "something"}, false},
-		{"Tag and IsHandover agree, or a sweep reclaims every handover", handover.Tag("app_1"), true},
+		{"nil tags are an orphan", acme, nil, false},
+		{"an unrelated tag set is not a handover", acme, map[string]string{"Name": "something"}, false},
+		{"Tags and IsHandover agree, or a sweep reclaims every handover", acme, acme.Tags("app_1"), true},
+		{"another prefix's handover is not this caller's", acme, handover.Marker{Prefix: "other:"}.Tags("app_1"), false},
+		{"a marker with no prefix recognises nothing", handover.Marker{}, map[string]string{"handover": "data"}, false},
 	} {
-		if got := handover.IsHandover(tc.tags); got != tc.want {
+		if got := tc.marker.IsHandover(tc.tags); got != tc.want {
 			t.Errorf("%s: IsHandover(%v) = %v, want %v", tc.name, tc.tags, got, tc.want)
 		}
+	}
+}
+
+func TestMarker_AnExtraTagNeverReplacesTheMarker(t *testing.T) {
+	m := handover.Marker{Prefix: "acme:", Extra: map[string]string{"acme:handover": "no", "acme:app-id": "app_9"}}
+
+	got := m.Tags("app_1")
+
+	if !m.IsHandover(got) || got["acme:app-id"] != "app_1" {
+		t.Errorf("Tags = %v; want the marker to win over an extra tag of the same key", got)
+	}
+}
+
+func TestMarker_ACallerKeepsTheTagsItsLiveSnapshotsCarryByPassingTheirPrefix(t *testing.T) {
+	live := map[string]string{"mitstack:handover": "data", "mitstack:app-id": "app_1", "AppId": "app_1"}
+	m := handover.Marker{Prefix: "mitstack:", Extra: map[string]string{"AppId": "app_1"}}
+
+	if got := m.Tags("app_1"); !maps.Equal(got, live) {
+		t.Errorf("Tags = %v, want exactly %v", got, live)
+	}
+	if !m.IsHandover(live) {
+		t.Errorf("IsHandover(%v) = false; a sweep would delete a live handover snapshot", live)
 	}
 }
 

@@ -1,233 +1,172 @@
 package adopt_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/capabilities/aws/adopt"
+	"github.com/mitstack-eu/block-kit/observe"
 )
 
-func TestIdentity_TagsCarryTheAppIdAndOwner(t *testing.T) {
-	tags := adopt.Identity{AppID: "app-42"}.Tags()
+var legacy = adopt.Tag{Key: "Owner", Value: "app-42"}
 
-	if tags[adopt.TagAppID] != "app-42" {
-		t.Errorf("Tags()[%s] = %q, want app-42", adopt.TagAppID, tags[adopt.TagAppID])
-	}
-	if tags[adopt.TagManagedBy] != adopt.ManagedByValue {
-		t.Errorf("Tags()[%s] = %q, want %q", adopt.TagManagedBy, tags[adopt.TagManagedBy], adopt.ManagedByValue)
+func owned(id, subscription string) adopt.Candidate {
+	return adopt.Candidate{ResourceID: id, Tags: map[string]string{observe.AWSSubscriptionTag: subscription}}
+}
+
+func tagged(id string, tags map[string]string) adopt.Candidate {
+	return adopt.Candidate{ResourceID: id, Tags: tags}
+}
+
+func TestIdentity_TagsAreTheKitsSubscriptionTagAlone(t *testing.T) {
+	got := adopt.Identity{Subscription: "sub-7", Legacy: legacy}.Tags()
+
+	if len(got) != 1 || got[observe.AWSSubscriptionTag] != "sub-7" {
+		t.Errorf("Tags() = %v, want only %s=sub-7, the tag observe and kittest read", got, observe.AWSSubscriptionTag)
 	}
 }
 
-func TestIdentity_SubscriptionIDIsIncludedWhenKnown(t *testing.T) {
-	tags := adopt.Identity{AppID: "app-42", SubscriptionID: "sub-7"}.Tags()
-	if tags[adopt.TagSubscriptionID] != "sub-7" {
-		t.Errorf("Tags()[%s] = %q, want sub-7", adopt.TagSubscriptionID, tags[adopt.TagSubscriptionID])
+func TestIdentity_RefusesAnIdentityThatWouldMatchTooMuch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   adopt.Identity
+	}{
+		{"no subscription", adopt.Identity{}},
+		{"a blank subscription", adopt.Identity{Subscription: "  "}},
+		{"a legacy tag with no value", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Key: "Owner"}}},
+		{"a legacy tag with no key", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Value: "app-42"}}},
+		{"a legacy tag that is the subscription tag", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Key: observe.AWSSubscriptionTag, Value: "sub-1"}}},
+	} {
+		if err := tc.id.Validate(); err == nil {
+			t.Errorf("%s: Validate() = nil, want a refusal", tc.name)
+		}
+	}
+	if err := (adopt.Identity{Subscription: "sub-7"}).Validate(); err != nil {
+		t.Errorf("a subscription alone: Validate() = %v, want nil", err)
 	}
 }
 
-func TestIdentity_OmitsSubscriptionTagWhenUnknown(t *testing.T) {
-	// AWS filters match on value, so an empty tag would make every app's resource look alike.
-	tags := (adopt.Identity{AppID: "app-42"}).Tags()
-	if _, ok := tags[adopt.TagSubscriptionID]; ok {
-		t.Error("an unknown subscription id must be omitted, not written as an empty tag")
+func TestIdentity_LooksUpByTheSubscriptionTagThenTheLegacyTag(t *testing.T) {
+	std := adopt.Tag{Key: observe.AWSSubscriptionTag, Value: "sub-7"}
+
+	if got := (adopt.Identity{Subscription: "sub-7"}).Lookups(); !slices.Equal(got, []adopt.Tag{std}) {
+		t.Errorf("Lookups() = %v, want only %v", got, std)
+	}
+	if got := (adopt.Identity{Subscription: "sub-7", Legacy: legacy}).Lookups(); !slices.Equal(got, []adopt.Tag{std, legacy}) {
+		t.Errorf("Lookups() with a legacy tag = %v, want %v then %v", got, std, legacy)
 	}
 }
 
-func TestIdentity_RejectsAnEmptyAppID(t *testing.T) {
-	if err := (adopt.Identity{}).Validate(); err == nil {
-		t.Error("an identity with no app id must not validate — it would match every resource")
-	}
-}
+func TestDecide(t *testing.T) {
+	plain, migrating := adopt.Identity{Subscription: "sub-7"}, adopt.Identity{Subscription: "sub-7", Legacy: legacy}
+	for _, tc := range []struct {
+		name       string
+		id         adopt.Identity
+		candidates []adopt.Candidate
+		want       adopt.Action
+		wantRetag  bool
+		wantInErr  []string
+	}{
+		{"nothing found is created", plain, nil, adopt.Create, false, nil},
+		{"the one resource carrying the subscription is adopted", plain, []adopt.Candidate{owned("i-abc", "sub-7")}, adopt.Adopt, false, nil},
+		{"one resource found by both lookups is adopted once", migrating,
+			[]adopt.Candidate{tagged("i-abc", map[string]string{observe.AWSSubscriptionTag: "sub-7", "Owner": "app-42"}), tagged("i-abc", map[string]string{observe.AWSSubscriptionTag: "sub-7", "Owner": "app-42"})},
+			adopt.Adopt, false, nil},
+		{"a resource only the legacy tag names is adopted and retagged", migrating, []adopt.Candidate{tagged("i-old", map[string]string{"Owner": "app-42"})}, adopt.Adopt, true, nil},
+		{"without a legacy tag, a resource only a legacy tag names is refused", plain, []adopt.Candidate{tagged("i-old", map[string]string{"Owner": "app-42"})}, adopt.Refuse, false, []string{"i-old", "<untagged>"}},
+		{"a resource of another subscription is refused", plain, []adopt.Candidate{owned("i-abc", "sub-9")}, adopt.Refuse, false, []string{"i-abc", "sub-9"}},
+		{"another subscription's resource is refused even when the legacy tag matches", migrating,
+			[]adopt.Candidate{tagged("i-abc", map[string]string{observe.AWSSubscriptionTag: "sub-9", "Owner": "app-42"})}, adopt.Refuse, false, []string{"sub-9"}},
+		{"a legacy tag naming another owner is refused", migrating, []adopt.Candidate{tagged("i-abc", map[string]string{"Owner": "app-99"})}, adopt.Refuse, false, []string{"i-abc"}},
+		{"an untagged resource is refused", plain, []adopt.Candidate{tagged("i-bare", map[string]string{})}, adopt.Refuse, false, []string{"<untagged>"}},
+		{"a matching Name proves nothing", plain, []adopt.Candidate{tagged("i-abc", map[string]string{"Name": "myapp"})}, adopt.Refuse, false, nil},
+		{"two resources claiming the subscription are refused", migrating,
+			[]adopt.Candidate{owned("i-abc", "sub-7"), tagged("i-def", map[string]string{"Owner": "app-42"})}, adopt.Refuse, false, []string{"i-abc", "i-def"}},
+		{"an invalid identity refuses", adopt.Identity{}, []adopt.Candidate{owned("i-abc", "")}, adopt.Refuse, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, err := adopt.Decide(tc.id, tc.candidates)
 
-func TestIdentity_FilterMatchesOnValueNotTagKey(t *testing.T) {
-	f := adopt.Identity{AppID: "app-42"}.Filter()
-
-	if want := "Name=tag:" + adopt.TagAppID + ",Values=app-42"; f != want {
-		t.Errorf("Filter() = %q, want the value filter %q, never a tag-key filter that matches every app", f, want)
-	}
-}
-
-func candidate(appID string) adopt.Candidate {
-	return adopt.Candidate{ResourceID: "i-abc", Tags: map[string]string{
-		adopt.TagAppID:     appID,
-		adopt.TagManagedBy: adopt.ManagedByValue,
-	}}
-}
-
-func TestDecide_AdoptsAnExactAppIdMatch(t *testing.T) {
-	d, err := adopt.Decide(adopt.Identity{AppID: "app-42"}, []adopt.Candidate{candidate("app-42")})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if d.Action != adopt.Adopt {
-		t.Errorf("Action = %v, want Adopt", d.Action)
-	}
-	if d.Candidate.ResourceID != "i-abc" {
-		t.Errorf("Candidate = %+v", d.Candidate)
-	}
-}
-
-func TestDecide_CreatesWhenNothingExists(t *testing.T) {
-	d, err := adopt.Decide(adopt.Identity{AppID: "app-42"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if d.Action != adopt.Create {
-		t.Errorf("Action = %v, want Create", d.Action)
-	}
-}
-
-func TestDecide_RefusesAResourceBelongingToAnotherApp(t *testing.T) {
-	d, err := adopt.Decide(adopt.Identity{AppID: "app-42"}, []adopt.Candidate{candidate("app-99")})
-	if err == nil {
-		t.Fatal("expected a refusal")
-	}
-	if d.Action != adopt.Refuse {
-		t.Errorf("Action = %v, want Refuse", d.Action)
-	}
-	if !strings.Contains(err.Error(), "app-99") {
-		t.Errorf("refusal must name the conflicting owner, got %v", err)
-	}
-}
-
-func TestDecide_RefusesACandidateWithNoAppIdTag(t *testing.T) {
-	c := adopt.Candidate{ResourceID: "i-untagged", Tags: map[string]string{}}
-	d, err := adopt.Decide(adopt.Identity{AppID: "app-42"}, []adopt.Candidate{c})
-	if err == nil {
-		t.Fatal("expected a refusal for an untagged candidate")
-	}
-	if d.Action != adopt.Refuse {
-		t.Errorf("Action = %v, want Refuse", d.Action)
-	}
-}
-
-func TestDecide_RefusesWhenTwoCandidatesMatch(t *testing.T) {
-	a, b := candidate("app-42"), candidate("app-42")
-	b.ResourceID = "i-def"
-
-	d, err := adopt.Decide(adopt.Identity{AppID: "app-42"}, []adopt.Candidate{a, b})
-	if err == nil {
-		t.Fatal("expected a refusal for an ambiguous match")
-	}
-	if d.Action != adopt.Refuse {
-		t.Errorf("Action = %v, want Refuse", d.Action)
-	}
-	if !strings.Contains(err.Error(), "i-abc") || !strings.Contains(err.Error(), "i-def") {
-		t.Errorf("refusal must name both candidates so the operator can resolve it, got %v", err)
-	}
-}
-
-func TestDecide_RefusesWhenTheNameMatchesButTheIdDiffers(t *testing.T) {
-	c := adopt.Candidate{ResourceID: "i-abc", Tags: map[string]string{
-		"Name":             "myapp",
-		adopt.TagAppID:     "app-99",
-		adopt.TagManagedBy: adopt.ManagedByValue,
-	}}
-	d, err := adopt.Decide(adopt.Identity{AppID: "app-42", Name: "myapp"}, []adopt.Candidate{c})
-	if err == nil {
-		t.Fatal("a matching Name must never override a differing AppId")
-	}
-	if d.Action != adopt.Refuse {
-		t.Errorf("Action = %v, want Refuse", d.Action)
-	}
-}
-
-func TestDecide_RefusesACandidateManagedByAnotherSystem(t *testing.T) {
-	c := candidate("app-42")
-	c.Tags[adopt.TagManagedBy] = "some-other-platform"
-
-	d, err := adopt.Decide(adopt.Identity{AppID: "app-42"}, []adopt.Candidate{c})
-	if err == nil {
-		t.Fatal("expected a refusal for a resource another system manages")
-	}
-	if d.Action != adopt.Refuse {
-		t.Errorf("Action = %v, want Refuse", d.Action)
-	}
-}
-
-func TestDecide_RefusesOnAnInvalidIdentity(t *testing.T) {
-	if _, err := adopt.Decide(adopt.Identity{}, []adopt.Candidate{candidate("app-42")}); err == nil {
-		t.Error("an identity with no app id must refuse, not match everything")
+			if d.Action != tc.want || d.Retag != tc.wantRetag {
+				t.Fatalf("Decide = %v (retag %v), %v; want %v (retag %v)", d.Action, d.Retag, err, tc.want, tc.wantRetag)
+			}
+			if (tc.want == adopt.Refuse) != (err != nil) {
+				t.Fatalf("Decide error = %v; a refusal, and only a refusal, says why", err)
+			}
+			for _, s := range tc.wantInErr {
+				if !strings.Contains(err.Error(), s) {
+					t.Errorf("refusal %q does not name %q", err, s)
+				}
+			}
+			if tc.want == adopt.Adopt && d.Candidate.ResourceID == "" {
+				t.Errorf("an adoption names no resource: %+v", d)
+			}
+		})
 	}
 }
 
 func TestDecide_DefaultIsRefuseNotAdopt(t *testing.T) {
 	var zero adopt.Action
-	if zero == adopt.Adopt {
-		t.Error("the zero Action must not be Adopt — an unset decision has to fail safe")
-	}
 	if zero != adopt.Refuse {
-		t.Errorf("the zero Action = %v, want Refuse", zero)
+		t.Errorf("the zero Action = %v, want Refuse, so an unset decision fails safe", zero)
 	}
 }
 
-func TestIsAlreadyExists_RecognisesStructuredAWSCodes(t *testing.T) {
-	for _, msg := range []string{
-		"EntityAlreadyExists: Role with name mitstack-app already exists",
-		"InvalidGroup.Duplicate: The security group 'sg-x' already exists",
-		"BucketAlreadyOwnedByYou: Your previous request to create the named bucket succeeded",
-		"RepositoryAlreadyExistsException: The repository named x already exists",
-		"AlreadyExistsException: Stack [x] already exists",
-	} {
-		if !adopt.IsAlreadyExists(msg) {
-			t.Errorf("IsAlreadyExists(%q) = false, want true", msg)
-		}
-	}
-}
-
-func TestIsAlreadyExists_RecognisesPlainNoColorEngineOutput(t *testing.T) {
-	plain := `Error: creating IAM Role (mitstack-app): operation error IAM: CreateRole,
-	https response error StatusCode: 409, EntityAlreadyExists: Role with name
-	mitstack-app already exists.`
-	if !adopt.IsAlreadyExists(plain) {
-		t.Error("IsAlreadyExists must match plain -no-color engine output (#478)")
-	}
-}
-
-func TestIsAlreadyExists_IsNotFooledByUnrelatedText(t *testing.T) {
-	for _, msg := range []string{
-		"AccessDenied: not authorized to perform iam:CreateRole",
-		"the resource does not exist",
-		"",
-	} {
-		if adopt.IsAlreadyExists(msg) {
-			t.Errorf("IsAlreadyExists(%q) = true, want false", msg)
-		}
-	}
-}
-
-func TestPlan_AdoptsEveryDriftedSatelliteNotJustThePrimary(t *testing.T) {
-	id := adopt.Identity{AppID: "app-42"}
+func TestPlan_AdoptsEveryPresentMemberAndSaysWhichToRetag(t *testing.T) {
+	id := adopt.Identity{Subscription: "sub-7", Legacy: legacy}
 	found := map[string][]adopt.Candidate{
-		"instance":     {candidate("app-42")},
-		"ssm-document": {candidate("app-42")},
-		"dlm-role":     nil, // genuinely absent -> create
+		"instance":     {owned("i-abc", "sub-7")},
+		"ssm-document": {tagged("doc-1", map[string]string{"Owner": "app-42"})},
+		"dlm-role":     nil,
 	}
 
 	plan, err := adopt.Plan(id, found)
+
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Plan: %v", err)
 	}
-	if plan["instance"].Action != adopt.Adopt || plan["ssm-document"].Action != adopt.Adopt {
-		t.Errorf("plan = %+v, want every present satellite adopted", plan)
+	if plan["instance"].Action != adopt.Adopt || plan["instance"].Retag {
+		t.Errorf("plan[instance] = %+v, want adopted with nothing to retag", plan["instance"])
+	}
+	if plan["ssm-document"].Action != adopt.Adopt || !plan["ssm-document"].Retag {
+		t.Errorf("plan[ssm-document] = %+v, want adopted and retagged", plan["ssm-document"])
 	}
 	if plan["dlm-role"].Action != adopt.Create {
-		t.Errorf("plan[dlm-role].Action = %v, want Create", plan["dlm-role"].Action)
+		t.Errorf("plan[dlm-role] = %+v, want Create", plan["dlm-role"])
 	}
 }
 
-func TestPlan_OneForeignSatelliteRefusesTheWholePlan(t *testing.T) {
-	id := adopt.Identity{AppID: "app-42"}
+func TestPlan_OneForeignMemberRefusesTheWholePlan(t *testing.T) {
 	found := map[string][]adopt.Candidate{
-		"instance":     {candidate("app-42")},
-		"ssm-document": {candidate("app-99")},
+		"instance":     {owned("i-abc", "sub-7")},
+		"ssm-document": {owned("doc-1", "sub-9")},
 	}
 
-	_, err := adopt.Plan(id, found)
-	if err == nil {
-		t.Fatal("a foreign satellite must refuse the entire plan, not just its own member")
+	_, err := adopt.Plan(adopt.Identity{Subscription: "sub-7"}, found)
+
+	if err == nil || !strings.Contains(err.Error(), "ssm-document") {
+		t.Errorf("Plan error = %v, want a refusal naming ssm-document", err)
 	}
-	if !strings.Contains(err.Error(), "ssm-document") {
-		t.Errorf("the refusal must name the offending member, got %v", err)
+}
+
+func TestIsAlreadyExists(t *testing.T) {
+	for _, tc := range []struct {
+		msg  string
+		want bool
+	}{
+		{"EntityAlreadyExists: Role with name acme-app already exists", true},
+		{"InvalidGroup.Duplicate: The security group 'sg-x' already exists", true},
+		{"BucketAlreadyOwnedByYou: Your previous request to create the named bucket succeeded", true},
+		{"RepositoryAlreadyExistsException: The repository named x already exists", true},
+		{"AlreadyExistsException: Stack [x] already exists", true},
+		{"Error: creating IAM Role (acme-app): operation error IAM: CreateRole,\n\thttps response error StatusCode: 409, EntityAlreadyExists", true},
+		{"AccessDenied: not authorized to perform iam:CreateRole", false},
+		{"the resource does not exist", false},
+		{"", false},
+	} {
+		if got := adopt.IsAlreadyExists(tc.msg); got != tc.want {
+			t.Errorf("IsAlreadyExists(%q) = %v, want %v", tc.msg, got, tc.want)
+		}
 	}
 }
