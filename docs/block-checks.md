@@ -30,10 +30,12 @@ reason.
 | `deliverable` | The block has its own `Dockerfile`, and it copies nothing from `examples/operator-kit`, the folder of the platform's repository where the kit once lived, which a block's own build cannot reach |
 | `manifest` | The manifest parses strictly as `mitstack/v1beta`, and `contract.CheckManifest`, the platform's own checks, accepts it against the block's `type-snapshot.json`, as [Writing the manifest](manifest.md) lists. On a pull request, a `spec.version` that differs from the base branch's manifest needs both `spec.releaseClass` and `spec.releaseNote`. A `spec.version` equal to the base branch's fails when the pull request changes any file other than Markdown, a file under `.github/` or `LICENSE`, and the message names the files and the missing version bump |
 
-An OpenTofu-only block runs blockverify with `--opentofu-only`, which changes
-what `trust-plumbing` judges and skips the five suites that judge a Go
-operator, as [Checks for an OpenTofu-only
-block](#checks-for-an-opentofu-only-block) describes.
+An OpenTofu-only block, a module with no Go code of its own, runs
+`blockverify --standalone --opentofu-only .`. The flag changes what
+`trust-plumbing` judges and skips the five suites that judge a Go operator:
+`contract`, `secret-safety`, `guarded-client`, `teardown` and `resources`.
+[Checks for an OpenTofu-only block](#checks-for-an-opentofu-only-block) gives
+the details.
 
 A file holding a `TestNoSecretLeak` or `TestUnsubscribeDeletes` test must not
 build `kittest.FakeResource`, the kit's own stand-in block, because a test over
@@ -368,7 +370,7 @@ With `--opentofu-only`, each suite answers as this table shows:
 
 | Suite | What it judges for an OpenTofu-only block |
 |---|---|
-| `trust-plumbing` | `manifest.yaml` exists and declares `contract: kit/v1`, a `.tf` or `.tofu` file sits at the root, and no `go.mod` or `.go` file sits anywhere in the tree. A block with Go code of its own runs without the flag |
+| `trust-plumbing` | `manifest.yaml` exists and declares `contract: kit/v1`, a `.tf` or `.tofu` file sits at the root, and no `go.mod` or `.go` file sits anywhere in the tree, a Go test file included. These replace the Go rules on `go.mod`, the kit floor and the `handler` import. A block with Go code of its own runs without the flag |
 | `contract`, `secret-safety`, `guarded-client`, `teardown`, `resources` | `skipped`, since each judges a Go operator and the block's operator is opentofu-operator |
 | `deliverable`, `manifest` | The same as for any block |
 
