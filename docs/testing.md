@@ -157,6 +157,11 @@ contribution, because it offers none or main already held each one, and main
 holds no file the contribution's record created. GitHub then holds nothing of
 it, and the guard needs no listed object for it.
 
+The guard runs the fake GitHub API the test hands it, so passing it says
+nothing about your real client. Both implement `observe.GitHubTagAPI`,
+`MainFile` included, and the compiler holds the real client to it wherever
+it serves an `observe.GitHubTagged`.
+
 After the unsubscribe, the check fails the block on each of these, naming the
 path or branch:
 

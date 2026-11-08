@@ -218,12 +218,26 @@ type GitHubTagAPI interface {
 	ActionsSecretNames(ctx context.Context, d contract.Desired, repo string) ([]string, error)
 	ActionsVariableNames(ctx context.Context, d contract.Desired, repo string) ([]string, error)
 	Commits(ctx context.Context, d contract.Desired, repo string) ([]GitHubCommitPaths, error)
+	// MainFile reads a file on the repository's default branch, answering false when it holds no file at path, so the lister can tell whether main still holds what a recorded scaffold contribution created.
+	MainFile(ctx context.Context, d contract.Desired, repo, path string) ([]byte, bool, error)
 }
 
-// GitHubMainFileAPI reads a file on a repository's default branch, which GitHubTagged needs when the subscription records a scaffold contribution that created files.
-type GitHubMainFileAPI interface {
-	// MainFile answers false when the default branch holds no file at path.
-	MainFile(ctx context.Context, d contract.Desired, repo, path string) ([]byte, bool, error)
+// gitHubListAPI is GitHubTagAPI without MainFile, all the repository and commit observers ask of their API.
+type gitHubListAPI interface {
+	RepositoriesWithTopic(ctx context.Context, d contract.Desired, topic string) ([]GitHubRepositoryTopics, error)
+	Webhooks(ctx context.Context, d contract.Desired, repo string) ([]GitHubWebhook, error)
+	ActionsSecretNames(ctx context.Context, d contract.Desired, repo string) ([]string, error)
+	ActionsVariableNames(ctx context.Context, d contract.Desired, repo string) ([]string, error)
+	Commits(ctx context.Context, d contract.Desired, repo string) ([]GitHubCommitPaths, error)
+}
+
+var _ gitHubListAPI = GitHubTagAPI(nil)
+
+// listingOnly serves a gitHubListAPI to a GitHubTagged that leaves contributions out, so it never reads main.
+type listingOnly struct{ gitHubListAPI }
+
+func (listingOnly) MainFile(_ context.Context, _ contract.Desired, repo, path string) ([]byte, bool, error) {
+	return nil, false, fmt.Errorf("observe: %s on main of %s was read through an API that reads no file on main", path, repo)
 }
 
 // GitHubTagged lists what a subscription holds on the repositories carrying its topic and on those its github.repository or github.gitops-repository requirements bind, where a webhook counts only when it points at ProcessorURL, and each scaffold contribution it records while main holds a file the contribution created.
@@ -371,12 +385,8 @@ func createdFiles(name string, identity map[string]string) (string, []landedFile
 
 // mainHoldsOne reports whether main of repo holds one of files at its recorded blob.
 func (l GitHubTagged) mainHoldsOne(ctx context.Context, d contract.Desired, repo string, files []landedFile) (bool, error) {
-	api, ok := l.API.(GitHubMainFileAPI)
-	if !ok {
-		return false, fmt.Errorf("observe: the subscription records a scaffold contribution that created files in %s, but the GitHub API does not implement observe.GitHubMainFileAPI, so the lister cannot read whether main still holds them", repo)
-	}
 	for _, f := range files {
-		content, held, err := api.MainFile(ctx, d, repo, f.Path)
+		content, held, err := l.API.MainFile(ctx, d, repo, f.Path)
 		if err != nil {
 			return false, fmt.Errorf("observe: read %s on main of %s: %w", f.Path, repo, err)
 		}
