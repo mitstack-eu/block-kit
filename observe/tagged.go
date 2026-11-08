@@ -358,7 +358,7 @@ func createdFiles(identity map[string]string) (string, []landedFile) {
 func (l GitHubTagged) mainHoldsOne(ctx context.Context, d contract.Desired, repo string, files []landedFile) (bool, error) {
 	api, ok := l.API.(GitHubMainFileAPI)
 	if !ok {
-		return false, fmt.Errorf("observe: the subscription records a scaffold contribution that created files in %s, but the GitHub API is no GitHubMainFileAPI, so the lister cannot read whether main still holds them", repo)
+		return false, fmt.Errorf("observe: the subscription records a scaffold contribution that created files in %s, but the GitHub API does not implement observe.GitHubMainFileAPI, so the lister cannot read whether main still holds them", repo)
 	}
 	for _, f := range files {
 		content, held, err := api.MainFile(ctx, d, repo, f.Path)
