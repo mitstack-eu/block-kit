@@ -160,25 +160,13 @@ jobs:
         run: mv block-kit "$RUNNER_TEMP/block-kit"
 
       # On a pull request blockverify judges spec.version against the base
-      # commit's manifest.yaml and the files the pull request changes. The
-      # checkout is shallow, so the base commit is fetched first. Both files
-      # go to RUNNER_TEMP, outside the tree blockverify judges, and a base
-      # with no manifest.yaml writes no manifest, which blockverify reads as a
-      # block new on this branch. HEAD is the merge commit, so its diff with
-      # the base is what the merge changes.
+      # commit's manifest.yaml and the files the pull request changes. Both
+      # files go to RUNNER_TEMP, outside the tree blockverify judges.
       - name: Write the base commit's manifest and the changed files
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          git fetch --depth=1 origin "$BASE_SHA"
-          if git cat-file -e "$BASE_SHA:manifest.yaml" 2>/dev/null; then
-            git show "$BASE_SHA:manifest.yaml" > "$RUNNER_TEMP/base-manifest.yaml"
-          else
-            echo "the base commit $BASE_SHA has no manifest.yaml, so the block is new on this branch"
-          fi
-          git diff --no-renames -z --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"
+        run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
 
       - name: Judge the comments this pull request adds
         if: github.event_name == 'pull_request'
@@ -189,19 +177,7 @@ jobs:
       - name: blockverify (standalone contract check)
         env:
           EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          pr_flags=()
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            pr_flags=(--base-manifest "$RUNNER_TEMP/base-manifest.yaml" --changed-files "$RUNNER_TEMP/changed-files")
-          fi
-          ./blockverify --standalone --json "${pr_flags[@]}" . > blockverify-report.json
-          cat blockverify-report.json
-          verdict=$(jq -r .verdict blockverify-report.json)
-          if [ "$verdict" != "pass" ]; then
-            echo "blockverify verdict was '$verdict', expected 'pass'" >&2
-            exit 1
-          fi
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"
 
       # A failing run's report is exactly the one that must not be lost.
       - name: Upload blockverify report
@@ -259,47 +235,22 @@ jobs:
       - name: Remove the kit checkout from the block tree
         run: mv block-kit "$RUNNER_TEMP/block-kit"
 
-      # The same two files the Go job writes on a pull request. This checkout
-      # keeps no credential, so the fetch hands git the job's token through
-      # the environment alone, and nothing writes it into the tree.
+      # This checkout keeps no credential, so the fetch of the base commit
+      # takes the job's token through git's environment, and nothing writes it
+      # into the tree.
       - name: Write the base commit's manifest and the changed files
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)" \
-            git --config-env=http.extraheader=AUTH_HEADER fetch --depth=1 origin "$BASE_SHA"
-          if git cat-file -e "$BASE_SHA:manifest.yaml" 2>/dev/null; then
-            git show "$BASE_SHA:manifest.yaml" > "$RUNNER_TEMP/base-manifest.yaml"
-          else
-            echo "the base commit $BASE_SHA has no manifest.yaml, so the block is new on this branch"
-          fi
-          git diff --no-renames -z --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"
+          FETCH_TOKEN: ${{ github.token }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
 
       # blockverify reads only the tree and runs none of the block's code, so
-      # it judges the block before the job assumes the verify role. The report
-      # prints before the verdict decides the step, so a failing run's log
-      # names what failed.
+      # it judges the block before the job assumes the verify role.
       - name: blockverify (standalone contract check)
         env:
           EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          pr_flags=()
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            pr_flags=(--base-manifest "$RUNNER_TEMP/base-manifest.yaml" --changed-files "$RUNNER_TEMP/changed-files")
-          fi
-          report="$RUNNER_TEMP/blockverify-report.json"
-          status=0
-          "$RUNNER_TEMP/blockverify" --standalone --opentofu-only --json "${pr_flags[@]}" . > "$report" || status=$?
-          cat "$report"
-          verdict=$(jq -r .verdict "$report")
-          if [ "$status" -ne 0 ] || [ "$verdict" != "pass" ]; then
-            echo "blockverify exited $status with verdict '$verdict', expected 'pass'" >&2
-            exit 1
-          fi
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only
 
       - name: Upload blockverify report
         if: always()
