@@ -571,4 +571,10 @@ func TestGitHubTagged_FailsARecordedContributionItCannotRead(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Errorf("ListTagged whose read of main fails = %v; want the read's error", err)
 	}
+
+	d.RecordedResources["offer"] = contract.RecordedResource{Type: "github.scaffold-contribution", Identity: map[string]string{"repository": "acme/app", "files": "not a list"}}
+	_, err = ghLister(&mainFiles{fakeGitHub: ghWorld()}).ListTagged(context.Background(), d, ghSub)
+	if err == nil || !strings.Contains(err.Error(), "acme/app") {
+		t.Errorf("ListTagged over a contribution whose landing record does not decode = %v; want an error naming acme/app, since the lister cannot tell what the contribution created", err)
+	}
 }

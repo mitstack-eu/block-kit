@@ -1248,7 +1248,11 @@ func (b *landingBlock) record(ctx context.Context, d contract.Desired, prior lan
 	if b.teardown == "records one file" {
 		delete(files, "Dockerfile")
 	}
-	return landing.Offer(ctx, b.client(), landing.Landing{Repository: b.repo.Repo, Files: files, Prior: prior})
+	rec, err := landing.Offer(ctx, b.client(), landing.Landing{Repository: b.repo.Repo, Files: files, Prior: prior})
+	if err == nil && b.teardown == "commits its offer itself" {
+		b.repo.Seed(files)
+	}
+	return rec, err
 }
 
 // offered is what the contribution offers app-scaffold, the starter files unless teardown is "offers no file".
@@ -1615,6 +1619,7 @@ func TestAssertBlock_ListsAContributionFromItsLandingRecord(t *testing.T) {
 		{name: "a contribution whose offered files the check commits is listed from its record"},
 		{name: "a contribution offering no file holds nothing on GitHub for a lister to list", teardown: "offers no file"},
 		{name: "a contribution whose files the check commits fails when its lister lists nothing", nothingListed: true, want: []string{`resource "` + landingType + `"`, "untagged"}},
+		{name: "a contribution whose created files main holds before the check commits fails when its lister lists nothing", teardown: "commits its offer itself", nothingListed: true, want: []string{`resource "` + landingType + `"`, "untagged"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := landingBlockThat(t, landingType, tc.teardown, true)

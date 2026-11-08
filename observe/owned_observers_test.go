@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mitstack-eu/block-kit/capabilities/github/landing"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/observe"
 )
@@ -110,5 +111,22 @@ func TestOwnedObservers_ResolveAnEmptyIdentityWhileUnsubscribing(t *testing.T) {
 				t.Errorf("subscribing: got %+v, %v; want unknown", got, err)
 			}
 		})
+	}
+}
+
+// The repository observer reads only repositories, so a recorded contribution its API cannot read on main does not fail it.
+func TestGitHubRepository_ResolvesAnEmptyIdentityBesideAContributionItsAPICannotRead(t *testing.T) {
+	identity, err := landing.Record{Repository: "acme/app", Files: []landing.File{{Path: "Dockerfile", Blob: landing.BlobHash([]byte("FROM nginx:1.27\n")), Created: true}}}.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := refFor("github.repository", nil)
+	ref.Unsubscribing = true
+	ref.Desired.RecordedResources = map[string]contract.RecordedResource{"contribution": {Type: "github.scaffold-contribution", Identity: identity}}
+
+	got, err := observe.GitHubRepository{API: (&owned{}).holds("sub-1", "acme/app")}.ObserveResource(context.Background(), ref)
+
+	if err != nil || got.State != contract.Present || got.Identity["repo"] != "acme/app" {
+		t.Errorf("got %+v, %v; want present naming repo acme/app", got, err)
 	}
 }
