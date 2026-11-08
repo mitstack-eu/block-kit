@@ -442,14 +442,16 @@ func TestPublishBlockWorkflow_ReadsAPrivateGHCRBaseOnlyInTheJobsThatBuildTheImag
 			struct{ name, got, want string }{job + " hands docker the job's own token through the environment", step("env.GHCR_TOKEN"), "${{ github.token }}"},
 		)
 	}
-	for i := 0; ; i++ {
-		step := "jobs.conformance.steps." + strconv.Itoa(i) + "."
-		if _, ok := all[step+"name"]; !ok && all[step+"uses"] == "" && all[step+"run"] == "" {
-			break
-		}
-		if strings.HasPrefix(all[step+"uses"], "actions/checkout@") {
-			cases = append(cases, struct{ name, got, want string }{fmt.Sprintf("conformance checkout %d keeps no credential the block's code could read", i),
-				fieldOr(all, step+"with.persist-credentials"), "false"})
+	for job := range builders {
+		for i := 0; ; i++ {
+			step := "jobs." + job + ".steps." + strconv.Itoa(i) + "."
+			if _, ok := all[step+"name"]; !ok && all[step+"uses"] == "" && all[step+"run"] == "" {
+				break
+			}
+			if strings.HasPrefix(all[step+"uses"], "actions/checkout@") {
+				cases = append(cases, struct{ name, got, want string }{fmt.Sprintf("%s checkout %d keeps no credential the block's code or image could read", job, i),
+					fieldOr(all, step+"with.persist-credentials"), "false"})
+			}
 		}
 	}
 	for _, after := range []string{"go test", "blockverify (standalone contract check)"} {
