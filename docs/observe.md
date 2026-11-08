@@ -436,7 +436,7 @@ type and the id that names it.
 
 | Lister | What it lists |
 |---|---|
-| `observe.AWSTagged` | Every AWS resource carrying the tag `mitstack:subscription` (`observe.AWSSubscriptionTag`), typed from its ARN, such as `aws.iam-instance-profile`, `aws.elastic-ip`, `aws.security-group-rule`, `aws.dlm-lifecycle-policy` or `aws.ssm-document` |
+| `observe.AWSTagged` | Every AWS resource carrying the tag `mitstack:subscription` (`observe.AWSSubscriptionTag`), typed from its ARN, such as `aws.iam-instance-profile`, `aws.elastic-ip`, `aws.security-group-rule`, `aws.dlm-lifecycle-policy`, `aws.ssm-document` or `aws.ssm-parameter`. A parameter's id is its name, with the leading slash its ARN leaves out of a name in a hierarchy |
 | `observe.HetznerLabelled` | Every Hetzner Cloud object carrying the label `mitstack.dev/subscription` (`observe.HetznerSubscriptionLabel`) |
 | `observe.GitHubTagged` | What a subscription holds on GitHub, as the next paragraphs describe |
 

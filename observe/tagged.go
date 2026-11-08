@@ -69,6 +69,7 @@ var awsResourceTypes = map[string]string{
 	"ec2/security-group-rule": "aws.security-group-rule",
 	"dlm/policy":              "aws.dlm-lifecycle-policy",
 	"ssm/document":            "aws.ssm-document",
+	"ssm/parameter":           "aws.ssm-parameter",
 }
 
 // awsPathedTypes are the IAM types whose ARN carries a path before the name.
@@ -129,6 +130,10 @@ func taggedARN(arn string) Tagged {
 	}
 	if awsPathedTypes[typ] {
 		id = path.Base(id)
+	}
+	// SSM requires a name in a hierarchy to start with a slash, and the name's ARN drops it.
+	if typ == "aws.ssm-parameter" && strings.Contains(id, "/") {
+		id = "/" + id
 	}
 	return Tagged{Type: typ, ID: id}
 }

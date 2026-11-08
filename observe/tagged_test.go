@@ -93,6 +93,26 @@ func TestAWSTagged_ListsEachPartARNAsItsCatalogueType(t *testing.T) {
 	}
 }
 
+func TestAWSTagged_ListsAnSSMParameterByTheNameItWasPutUnder(t *testing.T) {
+	api := &fakeTagging{arns: []string{
+		"arn:aws:ssm:eu-central-1:123456789012:parameter/mitstack-app/myapp/postgres-db/sub-1/password",
+		"arn:aws:ssm:eu-central-1:123456789012:parameter/flat-name",
+	}}
+
+	got, err := observe.AWSTagged{API: api}.ListTagged(context.Background(), contract.Desired{}, "sub-1")
+
+	if err != nil {
+		t.Fatalf("ListTagged: %v", err)
+	}
+	want := []observe.Tagged{
+		{Type: "aws.ssm-parameter", ID: "/mitstack-app/myapp/postgres-db/sub-1/password"},
+		{Type: "aws.ssm-parameter", ID: "flat-name"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListTagged(%q) =\n%+v\nwant\n%+v", api.arns, got, want)
+	}
+}
+
 func TestAWSTagged_ReturnsTheAPIsError(t *testing.T) {
 	boom := errors.New("tagging: throttled")
 	_, err := observe.AWSTagged{API: &fakeTagging{err: boom}}.ListTagged(context.Background(), contract.Desired{}, "sub-1")
