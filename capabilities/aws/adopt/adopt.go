@@ -4,6 +4,7 @@ package adopt
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -26,7 +27,7 @@ func (id Identity) Validate() error {
 	if strings.TrimSpace(id.Subscription) == "" {
 		return errors.New("adopt: Subscription is required, since an identity without it matches every resource")
 	}
-	if (id.Legacy.Key == "") != (id.Legacy.Value == "") {
+	if id.Legacy != (Tag{}) && (strings.TrimSpace(id.Legacy.Key) == "" || strings.TrimSpace(id.Legacy.Value) == "") {
 		return errors.New("adopt: a legacy tag needs both a key and a value, since a key alone matches every resource that carries it")
 	}
 	if id.Legacy.Key == observe.AWSSubscriptionTag {
@@ -88,12 +89,18 @@ func Decide(id Identity, candidates []Candidate) (Decision, error) {
 	}
 
 	var matches, conflicts []Candidate
-	seen := map[string]bool{}
+	seen := map[string]map[string]string{}
 	for _, c := range candidates {
-		if c.ResourceID != "" && seen[c.ResourceID] {
+		if c.ResourceID == "" {
+			return Decision{Action: Refuse}, errors.New("adopt: refusing a candidate with no resource id, which can be neither imported nor reported")
+		}
+		if tags, ok := seen[c.ResourceID]; ok {
+			if !maps.Equal(tags, c.Tags) {
+				return Decision{Action: Refuse}, fmt.Errorf("adopt: refusing %s, since two views of it disagree on its tags", c.ResourceID)
+			}
 			continue
 		}
-		seen[c.ResourceID] = true
+		seen[c.ResourceID] = c.Tags
 		if owner, ok := c.Tags[observe.AWSSubscriptionTag]; ok {
 			if owner == id.Subscription {
 				matches = append(matches, c)
