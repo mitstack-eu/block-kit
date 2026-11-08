@@ -57,20 +57,19 @@ func parseNamespacedName(kind, id string) (namespace, name string, err error) {
 		kind, id)
 }
 
+// typeIDPattern is the one grammar of a resource type id, which ParseResourceTypeID holds and the manifest schema states.
+var typeIDPattern = regexp.MustCompile(`^(@[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?/)?[a-z]([a-z0-9-]{0,38}[a-z0-9])?\.[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+
 // ParseResourceTypeID splits <capability>.<name> or @<org>/<capability>.<name> into namespace, capability and name, trimming nothing.
 func ParseResourceTypeID(id string) (namespace, capability, name string, err error) {
-	rest := id
-	if strings.HasPrefix(id, "@") {
-		org, after, ok := splitNamespace(id)
-		if !ok || !isSlug(org) {
-			return "", "", "", resourceTypeIDError(id)
-		}
-		namespace, rest = org, after
-	}
-	capability, name, hasDot := strings.Cut(rest, ".")
-	if !hasDot || !isSlug(capability) || !isKebab(name) {
+	if !typeIDPattern.MatchString(id) {
 		return "", "", "", resourceTypeIDError(id)
 	}
+	rest := id
+	if org, after, ok := splitNamespace(id); ok {
+		namespace, rest = org, after
+	}
+	capability, name, _ = strings.Cut(rest, ".")
 	return namespace, capability, name, nil
 }
 
@@ -78,7 +77,7 @@ func resourceTypeIDError(id string) error {
 	return fmt.Errorf(
 		"resource type id %q is neither a community type <capability>.<name> nor a private type @<org>/<capability>.<name>, "+
 			"where org and capability are each 1 to 40 lowercase letters, digits and dashes that start and end with a letter or digit, "+
-			"and name is lowercase kebab case",
+			"capability starts with a letter, and name is lowercase kebab case that starts with a letter",
 		id)
 }
 

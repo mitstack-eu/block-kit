@@ -2,7 +2,7 @@
   "$defs": {
     "typeId": {
       "description": "A resource type id: a community type <capability>.<name>, or an org's private type @<org>/<capability>.<name>, in lowercase kebab case.",
-      "pattern": "^(@[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?/)?[a-z][a-z0-9]*(-[a-z0-9]+)*\\.[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "pattern": "^(@[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?/)?[a-z]([a-z0-9-]{0,38}[a-z0-9])?\\.[a-z][a-z0-9]*(-[a-z0-9]+)*$",
       "type": "string"
     },
     "typeIds": {
