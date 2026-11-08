@@ -402,6 +402,62 @@ func TestVerifiedCustomDomain(t *testing.T) {
 	}
 }
 
+func TestValidateCustomDomain_RefusesAnythingButABareHostname(t *testing.T) {
+	cases := map[string]string{
+		"newline injection":                "app.example.com\nSite: evil.example.com {",
+		"CRLF injection":                   "app.example.com\r\nreverse_proxy evil-upstream:8080",
+		"embedded space":                   "app example.com",
+		"caddy directive open brace":       "app.example.com { reverse_proxy evil:8080 }",
+		"caddy directive close brace only": "app.example.com }",
+		"control character":                "app.example.com\x00",
+		"tab character":                    "app.example.com\t",
+		"leading dot":                      ".app.example.com",
+		"trailing dot":                     "app.example.com.",
+		"double dot":                       "app..example.com",
+		"wildcard host":                    "*.example.com",
+		"bare wildcard":                    "*",
+		"scheme prefix":                    "https://app.example.com",
+		"path suffix":                      "app.example.com/admin",
+		"port suffix":                      "app.example.com:8080",
+		"label starting with a hyphen":     "-app.example.com",
+		"label ending with a hyphen":       "app-.example.com",
+		"underscore":                       "my_app.example.com",
+		"overlong label":                   strings.Repeat("a", 64) + ".example.com",
+		"overlong hostname":                strings.Repeat("a.", 130) + "example.com",
+	}
+	for name, domain := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := reach.ValidateCustomDomain(domain); err == nil {
+				t.Errorf("ValidateCustomDomain(%q) = nil, want a refusal, since the value reaches an edge's config", domain)
+			}
+		})
+	}
+}
+
+func TestValidateCustomDomain_AcceptsAHostnameAndTheEmptyOptOut(t *testing.T) {
+	for _, domain := range []string{"", "app.example.com", "checkout.aurum.io", "www.my-shop.co.uk", "a.b.c.example.com", "App.Example.COM",
+		strings.Repeat("a", 63) + ".example.com"} {
+		if err := reach.ValidateCustomDomain(domain); err != nil {
+			t.Errorf("ValidateCustomDomain(%q) = %v, want nil", domain, err)
+		}
+	}
+}
+
+func TestVerifiedCustomDomain_RefusesWhatValidateCustomDomainRefusesBeforeAnyLookup(t *testing.T) {
+	for _, domain := range []string{"*.example.org", "my_app.example.org", "myapp.example.org.", "myapp example.org"} {
+		resolver := &fakeResolver{addrs: map[string][]string{domain: {"203.0.113.10"}}}
+
+		got, err := reach.VerifiedCustomDomain(context.Background(), resolver, domain, []string{"203.0.113.10"})
+
+		if got != "" || err == nil || !strings.Contains(err.Error(), "not a bare hostname") {
+			t.Errorf("VerifiedCustomDomain(%q) = %q, %v; want a refusal saying it is not a bare hostname", domain, got, err)
+		}
+		if resolver.calls != 0 {
+			t.Errorf("VerifiedCustomDomain(%q) consulted the resolver %d times, want none", domain, resolver.calls)
+		}
+	}
+}
+
 // The verified domain widens the barrier by itself and its real subdomains for the one call it is passed to, never to a lookalike.
 func TestVerifiedCustomDomain_WidensTrustedAppURLByItselfAlone(t *testing.T) {
 	verified, err := reach.VerifiedCustomDomain(context.Background(), &fakeResolver{addrs: map[string][]string{"plain.mitstack.dev": {"203.0.113.10"}}},
