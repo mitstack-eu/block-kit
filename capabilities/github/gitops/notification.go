@@ -64,8 +64,7 @@ type Outcome struct {
 	Detail string
 }
 
-// Check judges Argo CD's notification at revision, then at the block's own commit, the newest at or before revision that changed one of paths, and then the app's newest notification when it names that commit or a later one in which no commit changed one of paths.
-// Revision must hold the block's files as it committed them, and an empty revision is an error.
+// Check judges Argo CD's verdict on the block's own commit, or on a later revision in which no commit changed one of paths, and errs on an empty revision.
 func Check(ctx context.Context, src Notifications, repo Repository, app, revision string, paths []string) (Outcome, error) {
 	pending := Outcome{Verdict: VerdictPending, Revision: revision}
 	if revision == "" {

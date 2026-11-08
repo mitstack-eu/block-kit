@@ -35,8 +35,7 @@ type Repository interface {
 	Changed(ctx context.Context, revision string) (string, []string, error)
 }
 
-// CommitManifests refuses a file carrying a secret, then commits the files that differ from head, retrying a moved tip a bounded number of times.
-// When none differ it commits nothing and returns the block's own last commit, the newest that changed one of the files, never a sibling's head.
+// CommitManifests refuses a file carrying a secret, then commits the files that differ from head, retrying a moved tip a bounded number of times, and returns the block's own last commit when none differ.
 // The guard matches a value only verbatim or as its own standard base64, so a block must never render secret material in any form.
 func CommitManifests(ctx context.Context, repo Repository, files map[string][]byte, message string, secrets []string) (string, bool, error) {
 	if err := refuseSecrets(files, secrets); err != nil {
@@ -376,10 +375,7 @@ func (l lineage) at(revision string) int {
 	if l.own < 0 {
 		return -1
 	}
-	if i := slices.Index(l.commits[:l.own+1], revision); i >= 0 {
-		return i
-	}
-	return -1
+	return slices.Index(l.commits[:l.own+1], revision)
 }
 
 // changedAfterOwn names the oldest commit after the block's own, up to the one at index i, that changed one of its paths, and the first such path.
