@@ -120,7 +120,10 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The block's own tests run in this tree, so it keeps no token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -143,6 +146,7 @@ jobs:
           repository: mitstack-eu/block-kit
           ref: ${{ inputs.kit-ref }}
           path: block-kit
+          persist-credentials: false
 
       - name: Build blockverify
         working-directory: block-kit
@@ -161,11 +165,14 @@ jobs:
 
       # On a pull request blockverify judges spec.version against the base
       # commit's manifest.yaml and the files the pull request changes. Both
-      # files go to RUNNER_TEMP, outside the tree blockverify judges.
+      # files go to RUNNER_TEMP, outside the tree blockverify judges. The
+      # checkout keeps no credential, so the fetch of the base commit takes
+      # the job's token through git's environment.
       - name: Write the base commit's manifest and the changed files
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FETCH_TOKEN: ${{ github.token }}
         run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
 
       - name: Judge the comments this pull request adds
@@ -475,6 +482,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Trivy reads these from its working directory with no flag, so a
       # committed one could silence a finding. None is allowed anywhere.
@@ -503,6 +512,7 @@ jobs:
           repository: mitstack-eu/block-kit
           ref: ${{ inputs.kit-ref }}
           path: block-kit
+          persist-credentials: false
 
       - name: Build blockverify and blockprov
         working-directory: block-kit
