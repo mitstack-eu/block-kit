@@ -36,7 +36,13 @@ const usageMessage = `blockverify: standalone conformance runner for a mitstack 
 external repository.
 
 Usage:
-  blockverify [--json] --standalone [--base-manifest <path>] [--changed-files <path>] <dir>
+  blockverify [--json] --standalone [--opentofu-only] [--base-manifest <path>] [--changed-files <path>] <dir>
+
+--opentofu-only judges an OpenTofu-only block, a module with no Go code of
+its own whose image serves it through the opentofu-operator binary.
+trust-plumbing then needs a .tf or .tofu file at the root and fails a go.mod
+or .go file anywhere in the tree, and the suites that judge a Go operator are
+skipped. deliverable and manifest judge the block as they judge any other.
 
 --base-manifest names the base branch's manifest.yaml. When the file exists,
 a spec.version that differs from the base's needs spec.releaseClass and
@@ -64,7 +70,7 @@ func Run(args []string, stdout io.Writer) int {
 		return 2
 	}
 
-	report := runStandalone(a.target, a.baseManifest, a.changedFiles)
+	report := runStandalone(a.target, a.baseManifest, a.changedFiles, a.opentofuOnly)
 
 	if a.jsonOut {
 		raw, err := json.Marshal(report)
@@ -85,6 +91,7 @@ func Run(args []string, stdout io.Writer) int {
 
 type cliArgs struct {
 	jsonOut, standalone bool
+	opentofuOnly        bool
 	target              string
 	baseManifest        string
 	changedFiles        string
@@ -98,6 +105,8 @@ func parseArgs(args []string) (a cliArgs, ok bool) {
 			a.jsonOut = true
 		case "--standalone":
 			a.standalone = true
+		case "--opentofu-only":
+			a.opentofuOnly = true
 		case "--base-manifest":
 			if i+1 == len(args) {
 				return a, false
@@ -118,17 +127,21 @@ func parseArgs(args []string) (a cliArgs, ok bool) {
 }
 
 // runStandalone runs the suites in the fixed contract order.
-func runStandalone(target, baseManifest, changedFiles string) Report {
-	suites := []SuiteResult{
-		trustPlumbingSuite(target),
-		contractSuite(target),
-		secretSafetySuite(target),
-		guardedClientSuite(target),
-		teardownSuite(target),
-		resourcesSuite(target),
-		deliverableSuite(target),
-		manifestSuite(target, baseManifest, changedFiles),
+func runStandalone(target, baseManifest, changedFiles string, opentofuOnly bool) Report {
+	var suites []SuiteResult
+	if opentofuOnly {
+		suites = opentofuOnlySuites(target)
+	} else {
+		suites = []SuiteResult{
+			trustPlumbingSuite(target),
+			contractSuite(target),
+			secretSafetySuite(target),
+			guardedClientSuite(target),
+			teardownSuite(target),
+			resourcesSuite(target),
+		}
 	}
+	suites = append(suites, deliverableSuite(target), manifestSuite(target, baseManifest, changedFiles))
 
 	verdict := "pass"
 	for _, s := range suites {
