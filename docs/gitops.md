@@ -14,7 +14,8 @@ A block's `EnsureResources` ships its whole desired state with
 `gitops.Deploy` before it reports the resources it rendered. `Deploy` takes a
 `gitops.BlockDeploy` holding the app, every file, the commit message, the
 request's secret values and the poll interval. It commits every file once and
-waits on that revision, or on the branch's head when nothing changed. The
+waits on that revision. When nothing changed, it waits on the block's own last
+commit, the newest one that changed one of its files. The
 `gitops.Deployed` it returns carries the revision, whether it committed, and
 Argo CD's verdict, so a failed sync comes back in `Deployed.Outcome` for the
 block to refuse:
@@ -147,11 +148,36 @@ until Argo CD reports on the app. A sync in phase `Error` or `Failed`, or with
 health `Degraded`, makes observe return an error carrying the phase, the
 health and the message.
 
-`gitops.Check` and `gitops.Wait` judge only the notification for the exact
-revision you hand them. Use them when you need the outcome of one particular
-commit, since a notification for any other revision leaves them pending.
-`Wait` polls until the deploy succeeds or fails, and a failed deploy is an
-outcome there, not an error.
+## Judging a commit in a repository other blocks share
+
+Several blocks can commit to one GitOps repository, as an app's deploy and its
+database do. Argo CD reports only the newest revision it synced, so a sibling's
+later commit can be the only revision it ever names.
+
+`gitops.Check` and `gitops.Wait` take the block's revision, the repository and
+the paths the block owns. `Wait` calls `Check` until the deploy succeeds or
+fails, and a failed deploy is an outcome there, not an error. `Check` reads
+the notifications in this order:
+
+1. The notification at the revision you hand it.
+2. The notification at the block's own commit, the newest commit at or before
+   that revision that changed one of the paths. A revision a block recorded
+   from a sibling's head therefore leads back to the block's own commit.
+3. The app's newest notification, when it names the block's own commit or a
+   later one. Every commit after the block's own, up to that revision, must
+   leave the block's paths alone.
+
+When a later commit changed one of the block's paths, `Check` stays pending,
+and `Outcome.Detail` names that commit and the path. `Outcome.Revision` is the
+block's own commit the verdict is for, and `Outcome.Notification.Revision` is
+the revision Argo CD reported. A later revision is judged exactly as the
+block's own: phase `Succeeded` with health `Healthy` succeeds.
+
+The walk reads at most 50 commits back from head, through `Repository.Changed`.
+`CommitManifests` uses the same walk to find the block's own last commit when
+nothing differs. The code is `Check` in
+`capabilities/github/gitops/notification.go` and `walkLineage` in
+`capabilities/github/gitops/repository.go`.
 
 ## Which notifications a block reads
 

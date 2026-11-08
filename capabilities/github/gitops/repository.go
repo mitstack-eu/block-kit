@@ -36,6 +36,7 @@ type Repository interface {
 }
 
 // CommitManifests refuses a file carrying a secret, then commits the files that differ from head, retrying a moved tip a bounded number of times.
+// When none differ it commits nothing and returns the block's own last commit, the newest that changed one of the files, never a sibling's head.
 // The guard matches a value only verbatim or as its own standard base64, so a block must never render secret material in any form.
 func CommitManifests(ctx context.Context, repo Repository, files map[string][]byte, message string, secrets []string) (string, bool, error) {
 	if err := refuseSecrets(files, secrets); err != nil {
@@ -307,7 +308,8 @@ func commitFiles(ctx context.Context, repo Repository, files map[string][]byte, 
 			return "", false, cerr
 		}
 		if len(changes) == 0 {
-			return head, false, nil
+			own, err := lastChanged(ctx, repo, head, sortedPaths(files))
+			return own, false, err
 		}
 		var rev string
 		rev, err = repo.Commit(ctx, head, changes, message)
@@ -319,6 +321,84 @@ func commitFiles(ctx context.Context, repo Repository, files map[string][]byte, 
 		}
 	}
 	return "", false, fmt.Errorf("gitops: the tip moved on each of %d tries: %w", maxCommitTries, err)
+}
+
+// maxLineageWalk bounds how many commits CommitManifests and Check read back from head.
+const maxLineageWalk = 50
+
+// lineage is the first-parent chain from head down to the block's own commit, head first, with the block's paths each commit changed.
+type lineage struct {
+	commits []string
+	owned   [][]string
+	// own indexes the block's own commit, -1 when the walk never reached the revision it started from.
+	own int
+}
+
+// walkLineage reads back from head to the newest commit at or before revision that changed one of paths, or to the oldest commit within the bound when none did, since head then holds the block's files as that commit does.
+func walkLineage(ctx context.Context, repo Repository, head, revision string, paths []string) (lineage, error) {
+	l := lineage{own: -1}
+	reached := false
+	for rev := head; rev != "" && len(l.commits) < maxLineageWalk; {
+		parent, changed, err := repo.Changed(ctx, rev)
+		if err != nil {
+			return lineage{}, fmt.Errorf("gitops: reading what %s changed: %w", rev, err)
+		}
+		var owned []string
+		for _, path := range changed {
+			if slices.Contains(paths, path) {
+				owned = append(owned, path)
+			}
+		}
+		l.commits, l.owned = append(l.commits, rev), append(l.owned, owned)
+		reached = reached || rev == revision
+		if reached && len(owned) > 0 {
+			l.own = len(l.commits) - 1
+			return l, nil
+		}
+		rev = parent
+	}
+	if reached {
+		l.own = len(l.commits) - 1
+	}
+	return l, nil
+}
+
+// ownRevision is the block's own commit, or revision itself when the walk never reached it.
+func (l lineage) ownRevision(revision string) string {
+	if l.own < 0 {
+		return revision
+	}
+	return l.commits[l.own]
+}
+
+// at indexes revision when it is the block's own commit or a later one, and is -1 otherwise.
+func (l lineage) at(revision string) int {
+	if l.own < 0 {
+		return -1
+	}
+	if i := slices.Index(l.commits[:l.own+1], revision); i >= 0 {
+		return i
+	}
+	return -1
+}
+
+// changedAfterOwn names the oldest commit after the block's own, up to the one at index i, that changed one of its paths, and the first such path.
+func (l lineage) changedAfterOwn(i int) (string, string) {
+	for j := l.own - 1; j >= i; j-- {
+		if len(l.owned[j]) > 0 {
+			return l.commits[j], l.owned[j][0]
+		}
+	}
+	return "", ""
+}
+
+// lastChanged returns the newest commit at or before revision that changed one of paths, or the oldest within the bound when none did.
+func lastChanged(ctx context.Context, repo Repository, revision string, paths []string) (string, error) {
+	l, err := walkLineage(ctx, repo, revision, revision, paths)
+	if err != nil {
+		return "", err
+	}
+	return l.ownRevision(revision), nil
 }
 
 func changesAt(ctx context.Context, repo Repository, revision string, files map[string][]byte) (map[string][]byte, error) {
