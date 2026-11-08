@@ -3,6 +3,7 @@ package observe_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -70,6 +71,11 @@ func (f *owned) Commits(context.Context, contract.Desired, string) ([]observe.Gi
 	return f.commits, f.err
 }
 
+// MainFile fails every read, so an observer that read main for a contribution would fail with it.
+func (f *owned) MainFile(_ context.Context, _ contract.Desired, repo, path string) ([]byte, bool, error) {
+	return nil, false, fmt.Errorf("owned: read %s on main of %s, which no repository observer needs", path, repo)
+}
+
 var ownedObservers = []struct {
 	typ, key, id, item string
 	build              func(f *owned) observer
@@ -114,8 +120,8 @@ func TestOwnedObservers_ResolveAnEmptyIdentityWhileUnsubscribing(t *testing.T) {
 	}
 }
 
-// The repository observer reads only repositories, so a recorded contribution its API cannot read on main does not fail it.
-func TestGitHubRepository_ResolvesAnEmptyIdentityBesideAContributionItsAPICannotRead(t *testing.T) {
+// The repository observer reads only repositories, so a recorded contribution whose files main cannot be read for does not fail it.
+func TestGitHubRepository_ResolvesAnEmptyIdentityBesideAContributionItCannotRead(t *testing.T) {
 	identity, err := landing.Record{Repository: "acme/app", Files: []landing.File{{Path: "Dockerfile", Blob: landing.BlobHash([]byte("FROM nginx:1.27\n")), Created: true}}}.Identity()
 	if err != nil {
 		t.Fatal(err)
@@ -128,5 +134,55 @@ func TestGitHubRepository_ResolvesAnEmptyIdentityBesideAContributionItsAPICannot
 
 	if err != nil || got.State != contract.Present || got.Identity["repo"] != "acme/app" {
 		t.Errorf("got %+v, %v; want present naming repo acme/app", got, err)
+	}
+}
+
+// listsWithoutMainFile lists topic repositories and trailer commits but reads no file on main, as a repository or commit observer's API may.
+type listsWithoutMainFile struct {
+	observe.GitHubRepositoryAPI
+	observe.GitHubCommitAPI
+	f *owned
+}
+
+func (w listsWithoutMainFile) RepositoriesWithTopic(ctx context.Context, d contract.Desired, topic string) ([]observe.GitHubRepositoryTopics, error) {
+	return w.f.RepositoriesWithTopic(ctx, d, topic)
+}
+func (w listsWithoutMainFile) Webhooks(ctx context.Context, d contract.Desired, repo string) ([]observe.GitHubWebhook, error) {
+	return w.f.Webhooks(ctx, d, repo)
+}
+func (w listsWithoutMainFile) ActionsSecretNames(ctx context.Context, d contract.Desired, repo string) ([]string, error) {
+	return w.f.ActionsSecretNames(ctx, d, repo)
+}
+func (w listsWithoutMainFile) ActionsVariableNames(ctx context.Context, d contract.Desired, repo string) ([]string, error) {
+	return w.f.ActionsVariableNames(ctx, d, repo)
+}
+func (w listsWithoutMainFile) Commits(ctx context.Context, d contract.Desired, repo string) ([]observe.GitHubCommitPaths, error) {
+	return w.f.Commits(ctx, d, repo)
+}
+
+// The repository and commit observers resolve an empty identity while unsubscribing from listing alone, so an API that cannot read main keeps that.
+func TestGitHubRepositoryAndCommit_ResolveAnEmptyIdentityWithAnAPIThatReadsNoFile(t *testing.T) {
+	trailer := "\n\n" + observe.GitHubSubscriptionTrailer("sub-1")
+	api := listsWithoutMainFile{f: &owned{
+		held:    map[string][]string{observe.GitHubSubscriptionTopic("sub-1"): {"acme/app"}},
+		commits: []observe.GitHubCommitPaths{{SHA: "new1", Message: "Add" + trailer}},
+	}}
+	for _, tc := range []struct {
+		typ   string
+		build observer
+		key   string
+		want  string
+	}{
+		{"github.repository", observe.GitHubRepository{API: api}, "repo", "acme/app"},
+		{"github.commit", observe.GitHubCommit{API: api}, "sha", "new1"},
+	} {
+		ref := refFor(tc.typ, nil)
+		ref.Unsubscribing = true
+
+		got, err := tc.build.ObserveResource(context.Background(), ref)
+
+		if err != nil || got.State != contract.Present || got.Identity[tc.key] != tc.want {
+			t.Errorf("%s: got %+v, %v; want present naming %s %q", tc.typ, got, err, tc.key, tc.want)
+		}
 	}
 }

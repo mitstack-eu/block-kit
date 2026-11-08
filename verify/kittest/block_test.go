@@ -1568,6 +1568,8 @@ func TestAssertBlock_CommitsAContributionsOfferedFilesBeforeReadingMainAfterUnsu
 // mainAPI is GitHub as observe.GitHubTagged reads it, holding the fake repository on no topic and nothing on it but what main holds.
 type mainAPI struct{ repo *landingtest.Fake }
 
+var _ observe.GitHubTagAPI = mainAPI{}
+
 func (mainAPI) RepositoriesWithTopic(context.Context, contract.Desired, string) ([]observe.GitHubRepositoryTopics, error) {
 	return nil, nil
 }

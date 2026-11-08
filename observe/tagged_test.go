@@ -176,8 +176,22 @@ type fakeGitHub struct {
 	secrets   map[string][]string
 	variables map[string][]string
 	commits   map[string][]observe.GitHubCommitPaths
+	main      map[string]map[string]string
 	err       error
+	readErr   error
 	asked     []string
+	read      []string
+}
+
+var _ observe.GitHubTagAPI = (*fakeGitHub)(nil)
+
+func (f *fakeGitHub) MainFile(_ context.Context, _ contract.Desired, repo, path string) ([]byte, bool, error) {
+	f.read = append(f.read, repo+"/"+path)
+	if f.readErr != nil {
+		return nil, false, f.readErr
+	}
+	content, held := f.main[repo][path]
+	return []byte(content), held, nil
 }
 
 func (f *fakeGitHub) RepositoriesWithTopic(_ context.Context, _ contract.Desired, topic string) ([]observe.GitHubRepositoryTopics, error) {
@@ -483,19 +497,15 @@ func TestGitHubSubscriptionHelpers_FollowADR0085(t *testing.T) {
 	}
 }
 
-// mainFiles is a fakeGitHub whose default branches hold files, so the lister can read a recorded contribution there.
-type mainFiles struct {
-	*fakeGitHub
-	main    map[string]map[string]string
-	readErr error
-}
+// A block's GitHub client that cannot read main fails to compile as a GitHubTagAPI, rather than fail its listing in production.
+func TestGitHubTagAPI_RequiresMainFile(t *testing.T) {
+	want := reflect.TypeOf(func(context.Context, contract.Desired, string, string) ([]byte, bool, error) { return nil, false, nil })
 
-func (m *mainFiles) MainFile(_ context.Context, _ contract.Desired, repo, path string) ([]byte, bool, error) {
-	if m.readErr != nil {
-		return nil, false, m.readErr
+	m, ok := reflect.TypeOf((*observe.GitHubTagAPI)(nil)).Elem().MethodByName("MainFile")
+
+	if !ok || m.Type != want {
+		t.Errorf("GitHubTagAPI.MainFile = %v, present %v; want the method %v", m.Type, ok, want)
 	}
-	content, held := m.main[repo][path]
-	return []byte(content), held, nil
 }
 
 const offeredDockerfile = "FROM nginx:1.27\n"
@@ -532,7 +542,8 @@ func TestGitHubTagged_ListsARecordedContributionWhileMainHoldsAFileItCreated(t *
 		{"a resource of another type keeps the same record", "github.workflow-file", []landing.File{createdDockerfile}, map[string]string{"Dockerfile": offeredDockerfile}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			api := &mainFiles{fakeGitHub: ghWorld(), main: map[string]map[string]string{"acme/app": tc.main}}
+			api := ghWorld()
+			api.main = map[string]map[string]string{"acme/app": tc.main}
 
 			got, err := ghLister(api).ListTagged(context.Background(), recordedDesired(t, tc.typ, tc.files), ghSub)
 
@@ -551,29 +562,28 @@ func TestGitHubTagged_ListsARecordedContributionWhileMainHoldsAFileItCreated(t *
 }
 
 func TestGitHubTagged_ReadsNoFileForAContributionThatCreatedNone(t *testing.T) {
-	_, err := ghLister(ghWorld()).ListTagged(context.Background(), recordedDesired(t, "github.scaffold-contribution", []landing.File{}), ghSub)
+	api := ghWorld()
 
-	if err != nil {
-		t.Errorf("ListTagged over an API that reads no file, for a contribution that created none: %v; want no error, since there is nothing to read", err)
+	_, err := ghLister(api).ListTagged(context.Background(), recordedDesired(t, "github.scaffold-contribution", []landing.File{}), ghSub)
+
+	if err != nil || len(api.read) > 0 {
+		t.Errorf("ListTagged for a contribution that created no file read %q and returned %v; want no read and no error, since there is nothing to read", api.read, err)
 	}
 }
 
 func TestGitHubTagged_FailsARecordedContributionItCannotRead(t *testing.T) {
 	d := recordedDesired(t, "github.scaffold-contribution", []landing.File{createdDockerfile})
 	boom := errors.New("github: rate limited")
+	api := ghWorld()
+	api.readErr = boom
 
-	_, err := ghLister(ghWorld()).ListTagged(context.Background(), d, ghSub)
-	if err == nil || !strings.Contains(err.Error(), "acme/app") {
-		t.Errorf("ListTagged over an API that reads no file on main = %v; want an error naming acme/app, since the lister cannot tell whether main holds the contribution", err)
-	}
-
-	_, err = ghLister(&mainFiles{fakeGitHub: ghWorld(), readErr: boom}).ListTagged(context.Background(), d, ghSub)
+	_, err := ghLister(api).ListTagged(context.Background(), d, ghSub)
 	if !errors.Is(err, boom) {
 		t.Errorf("ListTagged whose read of main fails = %v; want the read's error", err)
 	}
 
 	d.RecordedResources["offer"] = contract.RecordedResource{Type: "github.scaffold-contribution", Identity: map[string]string{"repository": "acme/app", "files": "not a list"}}
-	_, err = ghLister(&mainFiles{fakeGitHub: ghWorld()}).ListTagged(context.Background(), d, ghSub)
+	_, err = ghLister(ghWorld()).ListTagged(context.Background(), d, ghSub)
 	if err == nil || !strings.Contains(err.Error(), "acme/app") {
 		t.Errorf("ListTagged over a contribution whose landing record does not decode = %v; want an error naming acme/app, since the lister cannot tell what the contribution created", err)
 	}
