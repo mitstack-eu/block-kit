@@ -1,6 +1,6 @@
 package gitops_test
 
-// A deploy is judged from the Argo CD notification of its exact revision: Succeeded and Healthy succeed, Error, Failed or Degraded fail, and anything else is pending.
+// A deploy is judged from the Argo CD notification of its own commit, or of a later revision in which no commit changed its files: Succeeded and Healthy succeed, Error, Failed or Degraded fail, and anything else is pending.
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -103,16 +104,16 @@ func TestCheck(t *testing.T) {
 		wantReads int
 	}{
 		{"it reads once and returns the verdict with the notification", func(s *gitopstest.Notifications) { s.Set(decodeADR(t, adrBody)) },
-			gitops.Outcome{Verdict: gitops.VerdictSucceeded, Notification: decodeADR(t, adrBody)}, nil, 1},
-		{"no notification yet is pending", func(*gitopstest.Notifications) {}, gitops.Outcome{Verdict: gitops.VerdictPending}, nil, 1},
-		{"a source error is returned", func(s *gitopstest.Notifications) { s.FailWith(boom) }, gitops.Outcome{Verdict: gitops.VerdictPending}, boom, 0},
+			gitops.Outcome{Verdict: gitops.VerdictSucceeded, Notification: decodeADR(t, adrBody), Revision: adrRevision}, nil, 1},
+		{"no notification yet is pending on the revision handed in", func(*gitopstest.Notifications) {}, gitops.Outcome{Verdict: gitops.VerdictPending, Revision: adrRevision}, nil, 1},
+		{"a source error is returned", func(s *gitopstest.Notifications) { s.FailWith(boom) }, gitops.Outcome{Verdict: gitops.VerdictPending, Revision: adrRevision}, boom, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			notes := gitopstest.NewNotifications()
 			tc.seed(notes)
 
-			out, err := gitops.Check(context.Background(), notes, "app-alpha", adrRevision)
+			out, err := gitops.Check(context.Background(), notes, gitopstest.NewRepository(), "app-alpha", adrRevision, []string{nsPath})
 
 			if !reflect.DeepEqual(out, tc.want) || !errors.Is(err, tc.wantErr) {
 				t.Errorf("Check = %+v, %v; want %+v, %v", out, err, tc.want, tc.wantErr)
@@ -136,11 +137,11 @@ func TestWait(t *testing.T) {
 		exact    bool
 	}{
 		{"it polls through none and pending until succeeded, and reads no more", []gitops.Notification{{}, note("Running", "Progressing"), decodeADR(t, adrBody)},
-			5 * time.Second, gitops.Outcome{Verdict: gitops.VerdictSucceeded, Notification: decodeADR(t, adrBody)}, nil, 3, true},
+			5 * time.Second, gitops.Outcome{Verdict: gitops.VerdictSucceeded, Notification: decodeADR(t, adrBody), Revision: adrRevision}, nil, 3, true},
 		{"a failed verdict ends the wait as an outcome, not an error", []gitops.Notification{note("Running", "Progressing"), failed},
-			5 * time.Second, gitops.Outcome{Verdict: gitops.VerdictFailed, Notification: failed}, nil, 2, true},
+			5 * time.Second, gitops.Outcome{Verdict: gitops.VerdictFailed, Notification: failed, Revision: adrRevision}, nil, 2, true},
 		{"a context ending while pending returns its error with a pending outcome after polling", []gitops.Notification{note("Running", "Progressing")},
-			30 * time.Millisecond, gitops.Outcome{Verdict: gitops.VerdictPending, Notification: note("Running", "Progressing")}, context.DeadlineExceeded, 2, false},
+			30 * time.Millisecond, gitops.Outcome{Verdict: gitops.VerdictPending, Notification: note("Running", "Progressing"), Revision: adrRevision}, context.DeadlineExceeded, 2, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,13 +150,92 @@ func TestWait(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), tc.timeout)
 			defer cancel()
 
-			out, err := gitops.Wait(ctx, notes, "app-alpha", adrRevision, time.Millisecond)
+			out, err := gitops.Wait(ctx, notes, gitopstest.NewRepository(), "app-alpha", adrRevision, []string{nsPath}, time.Millisecond)
 
 			if out.Verdict != tc.want.Verdict || (tc.wantErr == nil && !reflect.DeepEqual(out, tc.want)) || !errors.Is(err, tc.wantErr) {
 				t.Errorf("Wait = %+v, %v; want %+v, %v", out, err, tc.want, tc.wantErr)
 			}
 			if reads := notes.Reads("app-alpha", adrRevision); reads < tc.minReads || (tc.exact && reads != tc.minReads) {
 				t.Errorf("Wait read %d times, want %d (exactly: %v)", reads, tc.minReads, tc.exact)
+			}
+		})
+	}
+}
+
+func TestCheck_SharedRepository(t *testing.T) {
+	alpha, beta := alphaFiles(), betaFiles()
+	beta2 := map[string][]byte{betaPath: []byte("beta 2\n")}
+	healthy, degraded := note("Succeeded", "Healthy"), note("Succeeded", "Degraded")
+	cases := []struct {
+		name         string
+		history      []map[string][]byte
+		recorded     int
+		notified     int
+		n            gitops.Notification
+		want         gitops.Verdict
+		wantOwn      int
+		wantNotified int
+		wantDetail   []string
+	}{
+		{"a sibling's later commit Argo CD reports, holding the block's files, settles the block on it",
+			[]map[string][]byte{alpha, beta}, 0, 1, healthy, gitops.VerdictSucceeded, 0, 1, nil},
+		{"a sibling's later commit Argo CD reports degraded fails the block, since success still needs the health it needed",
+			[]map[string][]byte{alpha, beta}, 0, 1, degraded, gitops.VerdictFailed, 0, 1, nil},
+		{"a later revision that changes the block's file is not settled on, naming the commit and the file",
+			[]map[string][]byte{alpha, {saPath: []byte("kind: ServiceAccount\n")}}, 0, 1, healthy, gitops.VerdictPending, 0, -1, []string{"@1", saPath}},
+		{"a later revision that drops the block's file is not settled on, naming the commit and the file",
+			[]map[string][]byte{alpha, {nsPath: nil}}, 0, 1, healthy, gitops.VerdictPending, 0, -1, []string{"@1", nsPath}},
+		{"Argo CD reporting only a sibling's commit from before the block's own leaves the block pending on its own",
+			[]map[string][]byte{beta, alpha}, 1, 0, healthy, gitops.VerdictPending, 1, -1, nil},
+		{"a recorded sibling's commit is traced back to the block's own, and a newer revision holding its files settles it",
+			[]map[string][]byte{alpha, beta, beta2}, 1, 2, healthy, gitops.VerdictSucceeded, 0, 2, nil},
+		{"a recorded sibling's commit is traced back to the block's own, whose own notification settles it",
+			[]map[string][]byte{alpha, beta}, 1, 0, healthy, gitops.VerdictSucceeded, 0, 0, nil},
+		{"a notification at exactly the recorded revision is judged on it as before",
+			[]map[string][]byte{alpha, beta}, 1, 1, healthy, gitops.VerdictSucceeded, 1, 1, nil},
+		{"no notification at all leaves the block pending on its own commit",
+			[]map[string][]byte{alpha, beta}, 0, -1, healthy, gitops.VerdictPending, 0, -1, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := gitopstest.NewRepository()
+			var revisions []string
+			for i, files := range tc.history {
+				head, _ := repo.Head(context.Background())
+				rev, err := repo.Commit(context.Background(), head, files, "commit "+strconv.Itoa(i))
+				if err != nil {
+					t.Fatal(err)
+				}
+				revisions = append(revisions, rev)
+			}
+			notes := gitopstest.NewNotifications()
+			if tc.notified >= 0 {
+				n := tc.n
+				n.Revision = revisions[tc.notified]
+				notes.Set(n)
+			}
+			at := func(i int) string {
+				if i < 0 {
+					return ""
+				}
+				return revisions[i]
+			}
+
+			out, err := gitops.Check(context.Background(), notes, repo, "app-alpha", revisions[tc.recorded], []string{nsPath, saPath})
+
+			if err != nil || out.Verdict != tc.want || out.Revision != at(tc.wantOwn) || out.Notification.Revision != at(tc.wantNotified) {
+				t.Fatalf("Check(%s) = %+v, %v over %v; want %q on own %q judged at %q", at(tc.recorded), out, err, revisions, tc.want, at(tc.wantOwn), at(tc.wantNotified))
+			}
+			for _, want := range tc.wantDetail {
+				if want == "@1" {
+					want = revisions[1]
+				}
+				if !strings.Contains(out.Detail, want) {
+					t.Errorf("Detail = %q, want it to name %q", out.Detail, want)
+				}
+			}
+			if tc.wantDetail == nil && out.Detail != "" {
+				t.Errorf("Detail = %q, want none", out.Detail)
 			}
 		})
 	}

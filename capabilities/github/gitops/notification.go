@@ -54,29 +54,65 @@ type Notifications interface {
 	Latest(ctx context.Context, app, revision string) (Notification, bool, error)
 }
 
+// Outcome is the verdict and the notification it was read from, at Revision or at a later revision holding the block's files as Revision does.
 type Outcome struct {
 	Verdict      Verdict
 	Notification Notification
+	// Revision is the one handed to Check when Argo CD reported on it, and otherwise the block's own commit at or before it.
+	Revision string
+	// Detail names the commit and file that keep a later revision Argo CD reports from settling the block.
+	Detail string
 }
 
-// An empty revision is an error.
-func Check(ctx context.Context, src Notifications, app, revision string) (Outcome, error) {
-	pending := Outcome{Verdict: VerdictPending}
+// Check judges Argo CD's verdict on the block's own commit, or on a later revision in which no commit changed one of paths, and errs on an empty revision.
+func Check(ctx context.Context, src Notifications, repo Repository, app, revision string, paths []string) (Outcome, error) {
+	pending := Outcome{Verdict: VerdictPending, Revision: revision}
 	if revision == "" {
 		return pending, errors.New("gitops: no revision to judge")
 	}
-	n, ok, err := src.Latest(ctx, app, revision)
+	if out, ok, err := checkAt(ctx, src, app, revision); ok || err != nil {
+		return out, err
+	}
+	head, err := repo.Head(ctx)
+	if err != nil {
+		return pending, fmt.Errorf("gitops: reading head: %w", err)
+	}
+	line, err := walkLineage(ctx, repo, head, revision, paths)
 	if err != nil {
 		return pending, err
 	}
-	if !ok {
+	own := line.ownRevision(revision)
+	pending.Revision = own
+	if own != revision {
+		if out, ok, err := checkAt(ctx, src, app, own); ok || err != nil {
+			return out, err
+		}
+	}
+	newest, ok, err := src.Latest(ctx, app, "")
+	if err != nil || !ok {
+		return pending, err
+	}
+	at := line.at(newest.Revision)
+	if at < 0 {
 		return pending, nil
 	}
-	return Outcome{Verdict: Judge(n, revision), Notification: n}, nil
+	if moved, path := line.changedAfterOwn(at); moved != "" {
+		pending.Detail = fmt.Sprintf("Argo CD reports %s at %s, but commit %s after the block's own %s changed %s", app, newest.Revision, moved, own, path)
+		return pending, nil
+	}
+	return Outcome{Verdict: Judge(newest, newest.Revision), Notification: newest, Revision: own}, nil
+}
+
+func checkAt(ctx context.Context, src Notifications, app, revision string) (Outcome, bool, error) {
+	n, ok, err := src.Latest(ctx, app, revision)
+	if err != nil || !ok {
+		return Outcome{Verdict: VerdictPending, Revision: revision}, false, err
+	}
+	return Outcome{Verdict: Judge(n, revision), Notification: n, Revision: revision}, true, nil
 }
 
 // A failed deploy is an outcome, not an error.
-func Wait(ctx context.Context, src Notifications, app, revision string, poll time.Duration) (Outcome, error) {
+func Wait(ctx context.Context, src Notifications, repo Repository, app, revision string, paths []string, poll time.Duration) (Outcome, error) {
 	if poll <= 0 {
 		return Outcome{Verdict: VerdictPending}, errors.New("gitops: the poll interval must be positive")
 	}
@@ -89,7 +125,7 @@ func Wait(ctx context.Context, src Notifications, app, revision string, poll tim
 			return last, ctx.Err()
 		case <-timer.C:
 		}
-		out, err := Check(ctx, src, app, revision)
+		out, err := Check(ctx, src, repo, app, revision, paths)
 		if err != nil || out.Verdict != VerdictPending {
 			return out, err
 		}

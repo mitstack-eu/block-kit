@@ -1,6 +1,6 @@
 package gitops_test
 
-// CommitManifests commits on head what differs, retrying a moved tip, and refuses a secret before any write; Revert restores the block's files to the last revision Argo CD judged healthy.
+// CommitManifests commits on head what differs, retrying a moved tip, returns the block's own last commit when nothing differs, and refuses a secret before any write; LastChanged finds that commit from any revision; Revert restores the block's files to the last revision Argo CD judged healthy.
 
 import (
 	"context"
@@ -81,6 +81,34 @@ func TestCommitManifests(t *testing.T) {
 			func(t *testing.T, repo *gitopstest.Repository, seeded, rev string, _ error) {
 				if rev != seeded || len(repo.Commits()) != 1 {
 					t.Errorf("revision %q with %d commits, want head %q and no new commit", rev, len(repo.Commits()), seeded)
+				}
+			}},
+		{"files already at head, where head is a sibling's commit, return the block's own last commit and not head", func(t *testing.T, repo *gitopstest.Repository) string {
+			own := mustCommit(t, repo, alphaFiles())
+			if _, err := repo.Commit(ctx, own, foreign, "app-beta"); err != nil {
+				t.Fatal(err)
+			}
+			return own
+		}, alphaFiles(), nil, false, nil,
+			func(t *testing.T, repo *gitopstest.Repository, seeded, rev string, _ error) {
+				head, _ := repo.Head(ctx)
+				if rev != seeded || len(repo.Commits()) != 2 {
+					t.Errorf("revision %q with %d commits, want the block's own commit %q, not the sibling's head %q, and no new commit", rev, len(repo.Commits()), seeded, head)
+				}
+			}},
+		{"a removal of files no commit ever held returns the oldest commit read, from which head holds them as they are", func(t *testing.T, repo *gitopstest.Repository) string {
+			first, err := repo.Commit(ctx, "", foreign, "app-beta")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.Commit(ctx, first, map[string][]byte{betaPath: []byte("beta 2\n")}, "app-beta again"); err != nil {
+				t.Fatal(err)
+			}
+			return first
+		}, map[string][]byte{nsPath: nil}, nil, false, nil,
+			func(t *testing.T, repo *gitopstest.Repository, seeded, rev string, _ error) {
+				if rev != seeded || len(repo.Commits()) != 2 {
+					t.Errorf("revision %q with %d commits, want the oldest commit %q and no new commit", rev, len(repo.Commits()), seeded)
 				}
 			}},
 		{"one changed file commits on top of head and keeps every other path", func(t *testing.T, repo *gitopstest.Repository) string {
@@ -465,4 +493,45 @@ func TestSecretValues_CollectsTheCredentialsAndNeverTheGithubOwner(t *testing.T)
 	if slices.Contains(got, "mitstack-eu") {
 		t.Errorf("SecretValues = %q, want the github owner omitted", got)
 	}
+}
+
+// failingChanged is a repository whose history cannot be read.
+type failingChanged struct{ *gitopstest.Repository }
+
+func (failingChanged) Changed(context.Context, string) (string, []string, error) {
+	return "", nil, errors.New("history unreadable")
+}
+
+func TestLastChanged(t *testing.T) {
+	ctx := context.Background()
+	foreign := map[string][]byte{betaPath: []byte("beta\n")}
+	paths := []string{nsPath, saPath}
+	t.Run("a sibling's commit at head leads back to the block's own commit", func(t *testing.T) {
+		repo := gitopstest.NewRepository()
+		own := mustCommit(t, repo, alphaFiles())
+		head, err := repo.Commit(ctx, own, foreign, "app-beta")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := gitops.LastChanged(ctx, repo, head, paths); err != nil || got != own {
+			t.Errorf("LastChanged(%s) = %q, %v; want the block's own commit %q", head, got, err, own)
+		}
+	})
+	t.Run("the block's own commit at head is head", func(t *testing.T) {
+		repo := gitopstest.NewRepository()
+		if _, err := repo.Commit(ctx, "", foreign, "app-beta"); err != nil {
+			t.Fatal(err)
+		}
+		own := mustCommit(t, repo, alphaFiles())
+		if got, err := gitops.LastChanged(ctx, repo, own, paths); err != nil || got != own {
+			t.Errorf("LastChanged(%s) = %q, %v; want head", own, got, err)
+		}
+	})
+	t.Run("an unreadable history fails rather than naming a commit", func(t *testing.T) {
+		repo := gitopstest.NewRepository()
+		own := mustCommit(t, repo, alphaFiles())
+		if got, err := gitops.LastChanged(ctx, failingChanged{repo}, own, paths); err == nil {
+			t.Errorf("LastChanged on an unreadable history = %q, nil; want an error", got)
+		}
+	})
 }
