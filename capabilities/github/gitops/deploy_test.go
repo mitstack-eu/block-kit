@@ -126,9 +126,17 @@ func deployBriefly(t *testing.T, repo *gitopstest.Repository, notes gitops.Notif
 	defer cancel()
 	got, err := gitops.Deploy(ctx, repo, notes, b)
 	if err != nil || got.Outcome.Verdict != gitops.VerdictSucceeded {
-		t.Fatalf("Deploy(%s) = %+v, %v; want it settled on Argo CD's newest revision %v", b.Message, got, err, repo.Commits())
+		t.Fatalf("Deploy(%s) = %+v, %v; want it settled on Argo CD's newest revision among %v", b.Message, got, err, revisionsOf(repo))
 	}
 	return got
+}
+
+func revisionsOf(repo *gitopstest.Repository) []string {
+	var revisions []string
+	for _, c := range repo.Commits() {
+		revisions = append(revisions, c.Revision+" "+c.Message)
+	}
+	return revisions
 }
 
 func TestDeploy_SharedRepository(t *testing.T) {
@@ -140,7 +148,7 @@ func TestDeploy_SharedRepository(t *testing.T) {
 
 		commits := repo.Commits()
 		if len(commits) != 2 || got.Revision != commits[0].Revision || got.Outcome.Notification.Revision != commits[1].Revision {
-			t.Errorf("Deployed on %q settled at %q, commits %+v; want its own commit first and the sibling's after it as the settled revision", got.Revision, got.Outcome.Notification.Revision, commits)
+			t.Errorf("Deployed on %q settled at %q, commits %v; want its own commit first and the sibling's after it as the settled revision", got.Revision, got.Outcome.Notification.Revision, revisionsOf(repo))
 		}
 	})
 	t.Run("files already at head, where head is a sibling's commit, record the block's own last commit and settle", func(t *testing.T) {
@@ -168,7 +176,7 @@ func TestDeploy_SharedRepository(t *testing.T) {
 
 		commits := repo.Commits()
 		if len(commits) != 2 || beta.Revision != commits[0].Revision || alpha.Revision != commits[1].Revision {
-			t.Errorf("alpha on %q, beta on %q, commits %+v; want beta's commit first and alpha's landed on it, each recorded by its own block", alpha.Revision, beta.Revision, commits)
+			t.Errorf("alpha on %q, beta on %q, commits %v; want beta's commit first and alpha's landed on it, each recorded by its own block", alpha.Revision, beta.Revision, revisionsOf(repo))
 		}
 	})
 }
