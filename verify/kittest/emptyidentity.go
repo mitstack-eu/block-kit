@@ -22,8 +22,9 @@ func (c *blockCheck) emptyIdentityUnsubscribe() {
 			continue
 		}
 		var held []string
+		holdsNothing := c.providerHoldsNothing(typ)
 		for _, t := range tagged {
-			if t.Type == typ && !c.providerHoldsNothing(typ) {
+			if t.Type == typ && !holdsNothing {
 				held = append(held, t.ID)
 			}
 		}
