@@ -176,6 +176,20 @@ func manifestOnly(content string) dirFunc {
 	return fixture(func(*testing.T) map[string]string { return map[string]string{manifestFile: content} })
 }
 
+// opentofuBlock is an OpenTofu-only block as its repository holds it: a module, the image it builds, its manifest and its type snapshot.
+func opentofuBlock(opts ...option) dirFunc {
+	return fixture(func(t *testing.T) map[string]string {
+		files := map[string]string{
+			manifestFile: manifestHead,
+			"main.tf":    "resource \"aws_s3_bucket\" \"data\" {\n  bucket_prefix = \"data-\"\n}\n",
+			"Dockerfile": "FROM opentofu-operator\nCOPY . /module/\n",
+			"README.md":  "# An OpenTofu-only block\n",
+		}
+		withTypeSnapshot(t, files)
+		return files
+	}, opts...)
+}
+
 func emptyDir(t *testing.T) string { return t.TempDir() }
 
 func testdataDir(name string) dirFunc {

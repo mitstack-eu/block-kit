@@ -299,9 +299,9 @@ func TestWorkflow_EachJobRunsItsCommands(t *testing.T) {
 		name, job, label string
 		commands         []string
 	}{
-		{"conformance runs blockverify standalone with its JSON report", "conformance", "blockverify (standalone contract check)", []string{"./blockverify --standalone --json"}},
-		{"conformance hands blockverify the base manifest on a pull request", "conformance", "blockverify (standalone contract check)", []string{`if [ "$EVENT_NAME" = "pull_request" ]`, "--base-manifest"}},
-		{"conformance fetches the base commit a shallow clone does not hold", "conformance", "Write the base commit's manifest and the changed files", []string{`git fetch --depth=1 origin "$BASE_SHA"`}},
+		{"conformance runs blockverify through run-blockverify.sh with its JSON report, the event and the base manifest's directory", "conformance", "blockverify (standalone contract check)", []string{`run-blockverify.sh" ./blockverify blockverify-report.json`, `"$EVENT_NAME" "$RUNNER_TEMP"`}},
+		{"conformance fetches the base commit through the kit's write-pr-base.sh", "conformance", "Write the base commit's manifest and the changed files", []string{`write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"`}},
+		{"OpenTofu conformance runs blockverify on the tree with --opentofu-only", "opentofu-conformance", "blockverify (standalone contract check)", []string{`run-blockverify.sh" "$RUNNER_TEMP/blockverify"`, "--opentofu-only"}},
 		{"OpenTofu conformance checks the module's format inside the block's image", "opentofu-conformance", "tofu fmt -check", []string{`--entrypoint tofu "$IMAGE_ID" fmt -check`}},
 		{"OpenTofu conformance runs the module's tests inside the block's image", "opentofu-conformance", "tofu test", []string{"tofu -chdir=/module test"}},
 		{"OpenTofu conformance runs the operator's block-verify inside the block's image", "opentofu-conformance", "block-verify", []string{`--entrypoint block-verify "$IMAGE_ID" -test.v`}},
@@ -742,8 +742,8 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 			"blockverify (standalone contract check)", "Upload blockverify report", "Build the block image", "Scan the block image",
 		}},
 		{"opentofu-conformance", "write", []string{
-			"actions/checkout", "actions/setup-go", "Checkout block-kit", "Remove the kit checkout from the block tree", "Configure AWS credentials for the verify role",
-			"Log in to the operator image's registry", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image",
+			"actions/checkout", "actions/setup-go", "Checkout block-kit", "Build blockverify", "Remove the kit checkout from the block tree",
+			"Write the base commit's manifest and the changed files", "blockverify (standalone contract check)", "Upload blockverify report", "Configure AWS credentials for the verify role", "Log in to the operator image's registry", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image",
 		}},
 		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks"}},
 		{"scripts", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Lint every tracked shell script with shellcheck"}},

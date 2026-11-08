@@ -9,9 +9,11 @@
 # An OpenTofu-only block, a module with no go.mod whose image builds on the
 # opentofu-operator image, sets `opentofu-only`. Its checks then run in the
 # `opentofu-conformance` job in place of `conformance`, under the same check
-# name. That job assumes the caller's AWS_BLOCK_VERIFY_ROLE_ARN role to pull
-# the operator image, builds the block's image once, and runs `tofu fmt`,
-# `tofu test` and the operator's block-verify inside it. The publish job runs
+# name. That job runs the kit's blockverify with --opentofu-only on the tree,
+# which on a pull request judges spec.version as the Go job does. It then
+# assumes the caller's AWS_BLOCK_VERIFY_ROLE_ARN role to pull the operator
+# image, builds the block's image once, and runs `tofu fmt`, `tofu test` and
+# the operator's block-verify inside it. The publish job runs
 # block-verify again in the image it pushed and signs that result into the
 # provenance record, with the kit version the operator binary was built with.
 #
@@ -158,25 +160,13 @@ jobs:
         run: mv block-kit "$RUNNER_TEMP/block-kit"
 
       # On a pull request blockverify judges spec.version against the base
-      # commit's manifest.yaml and the files the pull request changes. The
-      # checkout is shallow, so the base commit is fetched first. Both files
-      # go to RUNNER_TEMP, outside the tree blockverify judges, and a base
-      # with no manifest.yaml writes no manifest, which blockverify reads as a
-      # block new on this branch. HEAD is the merge commit, so its diff with
-      # the base is what the merge changes.
+      # commit's manifest.yaml and the files the pull request changes. Both
+      # files go to RUNNER_TEMP, outside the tree blockverify judges.
       - name: Write the base commit's manifest and the changed files
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          git fetch --depth=1 origin "$BASE_SHA"
-          if git cat-file -e "$BASE_SHA:manifest.yaml" 2>/dev/null; then
-            git show "$BASE_SHA:manifest.yaml" > "$RUNNER_TEMP/base-manifest.yaml"
-          else
-            echo "the base commit $BASE_SHA has no manifest.yaml, so the block is new on this branch"
-          fi
-          git diff --no-renames -z --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"
+        run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
 
       - name: Judge the comments this pull request adds
         if: github.event_name == 'pull_request'
@@ -187,19 +177,7 @@ jobs:
       - name: blockverify (standalone contract check)
         env:
           EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          pr_flags=()
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            pr_flags=(--base-manifest "$RUNNER_TEMP/base-manifest.yaml" --changed-files "$RUNNER_TEMP/changed-files")
-          fi
-          ./blockverify --standalone --json "${pr_flags[@]}" . > blockverify-report.json
-          cat blockverify-report.json
-          verdict=$(jq -r .verdict blockverify-report.json)
-          if [ "$verdict" != "pass" ]; then
-            echo "blockverify verdict was '$verdict', expected 'pass'" >&2
-            exit 1
-          fi
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"
 
       # A failing run's report is exactly the one that must not be lost.
       - name: Upload blockverify report
@@ -233,7 +211,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # The image scan's GO-2026-5932 exception builds a Go tool of the kit's.
+      # blockverify and the image scan's GO-2026-5932 exception are Go tools
+      # of the kit's.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ inputs.go-version }}
@@ -246,9 +225,39 @@ jobs:
           path: block-kit
           persist-credentials: false
 
+      # The image copies the block's whole tree, so blockverify and its report
+      # live in RUNNER_TEMP.
+      - name: Build blockverify
+        working-directory: block-kit
+        run: go build -o "$RUNNER_TEMP/blockverify" ./verify/blockverify
+
       # The image builds from `.`, so the kit leaves the block's tree first.
       - name: Remove the kit checkout from the block tree
         run: mv block-kit "$RUNNER_TEMP/block-kit"
+
+      # This checkout keeps no credential, so the fetch of the base commit
+      # takes the job's token through git's environment, and nothing writes it
+      # into the tree.
+      - name: Write the base commit's manifest and the changed files
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FETCH_TOKEN: ${{ github.token }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
+
+      # blockverify reads only the tree and runs none of the block's code, so
+      # it judges the block before the job assumes the verify role.
+      - name: blockverify (standalone contract check)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only
+
+      - name: Upload blockverify report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: blockverify-report
+          path: ${{ runner.temp }}/blockverify-report.json
 
       - name: Configure AWS credentials for the verify role
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3

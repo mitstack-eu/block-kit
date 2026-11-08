@@ -1,6 +1,6 @@
 package main
 
-// Run refuses anything but standalone mode, runs every suite and reports one verdict, exit code and digest pair.
+// Run refuses anything but standalone mode, runs every suite for a Go block or, under --opentofu-only, an OpenTofu-only one, and reports one verdict, exit code and digest pair.
 
 import (
 	"crypto/sha256"
@@ -146,6 +146,11 @@ func TestRun(t *testing.T) {
 			exit: exitNotJudged, verdict: "fail", suites: map[string]suiteWant{"manifest": {"fail", append([]string{manifestFile, perr.Error()}, wants...)}}})
 	}
 
+	runCases(t, cases)
+}
+
+func runCases(t *testing.T, cases []runCase) {
+	t.Helper()
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir, base, changed := c.dir(t), "", ""
@@ -196,6 +201,63 @@ func TestRun(t *testing.T) {
 			}
 		})
 	}
+}
+
+var (
+	opentofuStandalone  = []string{"--json", "--standalone", "--opentofu-only", "$DIR"}
+	opentofuPullRequest = []string{"--json", "--standalone", "--opentofu-only", "--base-manifest", "$BASE", "--changed-files", "$CHANGED", "$DIR"}
+)
+
+// An OpenTofu module with no Go code of its own answers every suite, and its spec.version is held to the base branch's as a Go block's is.
+func TestRun_OpenTofuOnly(t *testing.T) {
+	released := withVersion(t, "1.1.0") + "  releaseClass: feature\n  releaseNote: Adds the data bucket.\n"
+	skipped := suiteWant{"skipped", []string{"--opentofu-only"}}
+	plumbing := func(detail ...string) map[string]suiteWant {
+		return map[string]suiteWant{"trust-plumbing": {"fail", detail}}
+	}
+	from100 := baseManifest(withVersion(t, "1.0.0"))
+	cases := []runCase{
+		{name: "an OpenTofu-only block passes, each suite answering and none failing for want of Go code", dir: opentofuBlock(), args: opentofuStandalone, exit: 0, verdict: "pass",
+			suites: map[string]suiteWant{
+				"trust-plumbing": {"pass", []string{"kit/v1", "main.tf"}},
+				"contract":       skipped,
+				"secret-safety":  skipped,
+				"guarded-client": skipped,
+				"teardown":       skipped,
+				"resources":      skipped,
+				"deliverable":    {status: "pass"},
+				"manifest":       {status: "pass"},
+			}},
+		{name: "--opentofu-only after the target judges the target", dir: opentofuBlock(), args: []string{"--json", "--standalone", "$DIR", "--opentofu-only"}, exit: 0, verdict: "pass"},
+		{name: "a module in a file of the .tofu extension passes trust-plumbing, naming it", dir: opentofuBlock(without("main.tf"), with("main.tofu", "locals {}\n")), args: opentofuStandalone,
+			exit: 0, verdict: "pass", suites: map[string]suiteWant{"trust-plumbing": {"pass", []string{"main.tofu"}}}},
+		{name: "a pull request changing the module with the base's version fails, naming its file and the kept version", dir: opentofuBlock(), base: from100,
+			changed: changedFiles("main.tf"), args: opentofuPullRequest, exit: 1, verdict: "fail",
+			suites: map[string]suiteWant{"trust-plumbing": {status: "pass"}, "manifest": {"fail", []string{"main.tf", "spec.version 1.0.0", "version bump"}}}},
+		{name: "a pull request changing the module with a raised, released version passes", dir: opentofuBlock(with(manifestFile, released)), base: from100,
+			changed: changedFiles("main.tf"), args: opentofuPullRequest, exit: 0, verdict: "pass",
+			suites: map[string]suiteWant{"manifest": {"pass", []string{"1.0.0 to 1.1.0"}}}},
+		{name: "a pull request changing only README.md and .github/workflows/ci.yml with the base's version passes", dir: opentofuBlock(), base: from100,
+			changed: changedFiles("README.md", ".github/workflows/ci.yml"), args: opentofuPullRequest, exit: 0, verdict: "pass"},
+		{name: "a first pull request whose base has no manifest reads the block as new and passes", dir: opentofuBlock(), base: missingBase,
+			changed: changedFiles("main.tf", manifestFile), args: opentofuPullRequest, exit: 0, verdict: "pass",
+			suites: map[string]suiteWant{"manifest": {"pass", []string{"does not exist, so the block is new"}}}},
+		{name: "a tree holding a Go module file fails trust-plumbing, naming it", dir: opentofuBlock(with("go.mod", kitGoMod(t))), args: opentofuStandalone, exit: 1, verdict: "fail",
+			suites: plumbing("go.mod", "--opentofu-only")},
+		{name: "a tree holding a nested Go file fails trust-plumbing, naming it", dir: opentofuBlock(with("tools/gen.go", "package tools\n")), args: opentofuStandalone, exit: 1, verdict: "fail",
+			suites: plumbing("tools/gen.go", "--opentofu-only")},
+		{name: "a tree with no OpenTofu file at its root fails trust-plumbing, naming both extensions", dir: opentofuBlock(without("main.tf"), with("modules/bucket/main.tf", "locals {}\n")),
+			args: opentofuStandalone, exit: 1, verdict: "fail", suites: plumbing(".tf", ".tofu")},
+		{name: "a tree with no manifest fails trust-plumbing, naming the file", dir: opentofuBlock(without(manifestFile)), args: opentofuStandalone, exit: 1, verdict: "fail",
+			suites: plumbing(manifestFile)},
+		{name: "another lifecycle contract fails trust-plumbing, naming it", dir: opentofuBlock(with(manifestFile, replaced(t, manifestHead, "contract: kit/v1", "contract: kit/v2"))),
+			args: opentofuStandalone, exit: 1, verdict: "fail", suites: plumbing("kit/v2")},
+		{name: "the same tree without the flag is judged as a Go block and fails trust-plumbing", dir: opentofuBlock(), args: jsonStandalone, exit: 1, verdict: "fail",
+			suites: plumbing("go.mod")},
+		{name: "the usage names --opentofu-only", dir: emptyDir, args: []string{}, exit: 2, stdout: []string{"--opentofu-only"}},
+	}
+
+	runCases(t, cases)
 }
 
 var update = flag.Bool("update", false, "update golden files")

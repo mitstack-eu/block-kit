@@ -1,13 +1,12 @@
 package scripts_test
 
-// publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
+// publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
 
 import (
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -186,43 +185,67 @@ func TestPublishBlockWorkflow_ACallerNamingNoRegistryReadsInTheSummaryThatNothin
 	}
 }
 
+const (
+	kitScript   = `bash "$RUNNER_TEMP/block-kit/scripts/`
+	writePRBase = kitScript + `write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"`
+)
+
+// stepAt returns the index of job's first step whose key holds value, or -1.
+func stepAt(all map[string]string, job, key, value string) int {
+	n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(stepOf(all, job, key, value), "jobs."+job+".steps."), "."))
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// Both conformance jobs hand blockverify a pull request's base manifest and changed files through the kit's two scripts, so the version rule reads one implementation.
 func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 	all := publishWorkflow(t)
-	const flag = `--changed-files "$RUNNER_TEMP/changed-files"`
-
-	run := all[stepOf(all, "conformance", "name", "blockverify (standalone contract check)")+"run"]
-
-	if !strings.Contains(run, flag) {
-		t.Errorf("the blockverify step's run =\n%s\nwant it to pass %s", run, flag)
+	jobs := []struct{ job, judge, token string }{
+		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"`, ""},
+		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only`, "${{ github.token }}"},
+	}
+	for _, j := range jobs {
+		moved, wrote, judged := stepAt(all, j.job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, j.job, "run", writePRBase), stepAt(all, j.job, "run", j.judge)
+		step := func(i int, key string) string { return all["jobs."+j.job+".steps."+strconv.Itoa(i)+"."+key] }
+		cases := []struct{ name, got, want string }{
+			{"the kit reaches RUNNER_TEMP before the write, and the write comes before blockverify", strconv.FormatBool(moved >= 0 && moved < wrote && wrote < judged), "true"},
+			{"the write runs on a pull request alone, since a push has no base commit", step(wrote, "if"), "github.event_name == 'pull_request'"},
+			{"blockverify learns the event", step(judged, "env.EVENT_NAME"), "${{ github.event_name }}"},
+			{"the fetch takes the job's token only where the checkout keeps none", step(wrote, "env.FETCH_TOKEN"), j.token},
+		}
+		for _, tc := range cases {
+			t.Run(j.job+": "+tc.name, func(t *testing.T) {
+				if tc.got != tc.want {
+					t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
+				}
+			})
+		}
 	}
 }
 
-func TestPublishBlockWorkflow_ThePullRequestStepListsEveryFileTheMergeChanges(t *testing.T) {
-	const name = "Write the base commit's manifest and the changed files"
-	prefix := stepOf(publishWorkflow(t), "conformance", "name", name)
-	if prefix == "" {
-		t.Fatalf("conformance has no step %q", name)
+// The image copies the block's whole tree, so the OpenTofu job keeps blockverify and its report in RUNNER_TEMP and runs it before the verify role is assumed.
+func TestPublishBlockWorkflow_TheOpenTofuJobBuildsBlockverifyFromItsKitCheckout(t *testing.T) {
+	all := publishWorkflow(t)
+	const job = "opentofu-conformance"
+	kit, moved := stepAt(all, job, "with.ref", "${{ inputs.kit-ref }}"), stepAt(all, job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`)
+	built := stepAt(all, job, "run", `go build -o "$RUNNER_TEMP/blockverify" ./verify/blockverify`)
+	judged, assumed := stepAt(all, job, "name", "blockverify (standalone contract check)"), stepAt(all, job, "name", "Configure AWS credentials for the verify role")
+	report := stepOf(all, job, "with.name", "blockverify-report")
+	cases := []struct{ name, got, want string }{
+		{"blockverify builds from the kit checkout before it leaves the tree", strconv.FormatBool(kit >= 0 && kit < built && built < moved), "true"},
+		{"the build runs in the kit checkout", all["jobs."+job+".steps."+strconv.Itoa(built)+".working-directory"], "block-kit"},
+		{"blockverify runs before the job assumes the verify role", strconv.FormatBool(judged >= 0 && judged < assumed), "true"},
+		{"the report uploads whatever the verdict", all[report+"if"], "always()"},
+		{"the report uploads from RUNNER_TEMP", all[report+"with.path"], "${{ runner.temp }}/blockverify-report.json"},
 	}
-	repo, shas := gitRepo(t,
-		change{write: map[string]string{"manifest.yaml": "spec:\n  version: 1.0.0\n", "README.md": "# block\n", "resource.go": "package main\n", "old.go": "package main\n"}},
-		change{write: map[string]string{"README.md": "# block, changed\n", "resource.go": "package main\n\nfunc changed() {}\n", "new.go": "package main\n"}, remove: []string{"old.go"}})
-	git(t, repo, "remote", "add", "origin", "file://"+repo)
-	temp := t.TempDir()
-	step := filepath.Join(temp, "step.sh")
-	if err := os.WriteFile(step, []byte(publishWorkflow(t)[prefix+"run"]), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("bash", "-e", step)
-	cmd.Dir, cmd.Env = repo, append(hermeticEnv(), "BASE_SHA="+shas[0], "RUNNER_TEMP="+temp)
-
-	out, err := cmd.CombinedOutput()
-
-	if err != nil {
-		t.Fatalf("step %q: %v\n%s", name, err, out)
-	}
-	changed, err := os.ReadFile(filepath.Join(temp, "changed-files"))
-	if want := "README.md\x00new.go\x00old.go\x00resource.go\x00"; err != nil || string(changed) != want {
-		t.Errorf("changed-files = %q (err %v), want %q, each path NUL-terminated and a moved file under both paths", changed, err, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
+			}
+		})
 	}
 }
 
