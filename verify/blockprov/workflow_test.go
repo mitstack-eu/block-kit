@@ -739,18 +739,18 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		{"conformance", "<absent>", []string{
 			"actions/checkout", "actions/setup-go", "go vet", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck",
 			"Remove the kit checkout from the block tree", "Write the base commit's manifest and the changed files", "Judge the comments this pull request adds",
-			"blockverify (standalone contract check)", "Upload blockverify report", "Build the block image", "Scan the block image",
+			"blockverify (standalone contract check)", "Upload blockverify report", "Log in to GHCR with the job's own token", "Build the block image", "Scan the block image",
 		}},
 		{"opentofu-conformance", "write", []string{
 			"actions/checkout", "actions/setup-go", "Checkout block-kit", "Build blockverify", "Remove the kit checkout from the block tree",
-			"Write the base commit's manifest and the changed files", "blockverify (standalone contract check)", "Upload blockverify report", "Configure AWS credentials for the verify role", "Log in to the operator image's registry", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image",
+			"Write the base commit's manifest and the changed files", "blockverify (standalone contract check)", "Upload blockverify report", "Configure AWS credentials for the verify role", "Log in to the operator image's registry", "Log in to GHCR with the job's own token", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image",
 		}},
 		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks"}},
 		{"scripts", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Lint every tracked shell script with shellcheck"}},
 		{"publish", "write", []string{
 			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Configure AWS credentials", "Checkout block-kit",
 			"Build blockverify and blockprov", "Remove the kit checkout from the block tree", "Log in to ECR", "Probe the version tag and its provenance record",
-			"Build and push image", "Determine the kit version pinned in go.mod", "Determine the kit version the operator image was built with",
+			"Log in to GHCR with the job's own token", "Build and push image", "Determine the kit version pinned in go.mod", "Determine the kit version the operator image was built with",
 			"blockverify (standalone, for blockprov build's report)", "block-verify inside the image, for blockprov build's result",
 			"blockprov build", "Fetch ECR password", "blockprov push",
 		}},

@@ -409,3 +409,72 @@ func TestPublishBlockWorkflow_TheAttestationJobFailsOnARefusalNamingIt(t *testin
 		})
 	}
 }
+
+const ghcrLogin = "Log in to GHCR with the job's own token"
+
+// Only the jobs that build the block's image may read a private base image, and each logs in only for a caller that turns ghcr-login on.
+func TestPublishBlockWorkflow_ReadsAPrivateGHCRBaseOnlyInTheJobsThatBuildTheImage(t *testing.T) {
+	all := publishWorkflow(t)
+	builders := map[string]struct{ build, gate string }{
+		"conformance":          {"Build the block image", "inputs.ghcr-login && github.event_name == 'pull_request'"},
+		"opentofu-conformance": {"Build the block image", "inputs.ghcr-login"},
+		"publish":              {"Build and push image", "inputs.ghcr-login && steps.existing.outputs.published == 'false'"},
+	}
+	cases := []struct{ name, got, want string }{
+		{"ghcr-login is a boolean input", all["on.workflow_call.inputs.ghcr-login.type"], "boolean"},
+		{"ghcr-login is off unless a caller turns it on", all["on.workflow_call.inputs.ghcr-login.default"], "false"},
+		{"the workflow-level ceiling grants no packages permission", fieldOr(all, "permissions.packages"), "<absent>"},
+	}
+	for _, job := range []string{"conformance", "opentofu-conformance", "secrets", "scripts", "platform-verdict", "attest", "publish", "no-registry"} {
+		want := "<absent>"
+		if _, ok := builders[job]; ok {
+			want = "read"
+		}
+		cases = append(cases, struct{ name, got, want string }{job + " packages permission", fieldOr(all, "jobs."+job+".permissions.packages"), want})
+	}
+	for job, b := range builders {
+		login, build := stepAt(all, job, "name", ghcrLogin), stepAt(all, job, "name", b.build)
+		step := func(key string) string { return fieldOr(all, "jobs."+job+".steps."+strconv.Itoa(login)+"."+key) }
+		cases = append(cases,
+			struct{ name, got, want string }{job + " logs in before it builds the image", strconv.FormatBool(login >= 0 && login < build), "true"},
+			struct{ name, got, want string }{job + " logs in only for a caller that turns ghcr-login on", step("if"), b.gate},
+			struct{ name, got, want string }{job + " hands docker the job's own token through the environment", step("env.GHCR_TOKEN"), "${{ github.token }}"},
+		)
+	}
+	for _, after := range []string{"go test", "blockverify (standalone contract check)"} {
+		cases = append(cases, struct{ name, got, want string }{"conformance logs in after " + after + " has run the block's code",
+			strconv.FormatBool(stepAt(all, "conformance", "name", after) < stepAt(all, "conformance", "name", ghcrLogin)), "true"})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPublishBlockWorkflow_TheGHCRLoginSendsTheTokenOnStdinAlone(t *testing.T) {
+	for _, job := range []string{"conformance", "opentofu-conformance", "publish"} {
+		t.Run(job, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "bin", "docker"), "#!/bin/sh\necho \"$@\" > \"$PWD/argv\"\ncat > \"$PWD/stdin\"\n")
+
+			out, exit := runNamed(t, job, ghcrLogin, dir, "", "PATH="+filepath.Join(dir, "bin")+":"+os.Getenv("PATH"),
+				"GHCR_TOKEN=ghs_jobtoken", "GITHUB_ACTOR=block-bot")
+
+			argv, _ := os.ReadFile(filepath.Join(dir, "argv"))
+			stdin, _ := os.ReadFile(filepath.Join(dir, "stdin"))
+			if exit != 0 || string(argv) != "login ghcr.io --username block-bot --password-stdin\n" || string(stdin) != "ghs_jobtoken" {
+				t.Errorf("exit %d, output %q, docker argv %q, stdin %q; want docker login ghcr.io as the actor with the token on stdin alone", exit, out, argv, stdin)
+			}
+		})
+	}
+}
+
+func fieldOr(all map[string]string, path string) string {
+	if v, ok := all[path]; ok {
+		return v
+	}
+	return "<absent>"
+}
