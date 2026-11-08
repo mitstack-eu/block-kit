@@ -146,6 +146,11 @@ func TestRun(t *testing.T) {
 			exit: exitNotJudged, verdict: "fail", suites: map[string]suiteWant{"manifest": {"fail", append([]string{manifestFile, perr.Error()}, wants...)}}})
 	}
 
+	runCases(t, cases)
+}
+
+func runCases(t *testing.T, cases []runCase) {
+	t.Helper()
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir, base, changed := c.dir(t), "", ""

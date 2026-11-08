@@ -3,7 +3,9 @@ package scripts_test
 // publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
 
 import (
+	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -186,43 +188,171 @@ func TestPublishBlockWorkflow_ACallerNamingNoRegistryReadsInTheSummaryThatNothin
 	}
 }
 
+const (
+	writeBaseStep   = "Write the base commit's manifest and the changed files"
+	blockverifyStep = "blockverify (standalone contract check)"
+)
+
+var conformanceJobs = []string{"conformance", "opentofu-conformance"}
+
+// stepAt returns the index of job's first step whose key holds value, or -1.
+func stepAt(all map[string]string, job, key, value string) int {
+	n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(stepOf(all, job, key, value), "jobs."+job+".steps."), "."))
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
 func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 	all := publishWorkflow(t)
-	const flag = `--changed-files "$RUNNER_TEMP/changed-files"`
-
-	run := all[stepOf(all, "conformance", "name", "blockverify (standalone contract check)")+"run"]
-
-	if !strings.Contains(run, flag) {
-		t.Errorf("the blockverify step's run =\n%s\nwant it to pass %s", run, flag)
+	for _, job := range conformanceJobs {
+		t.Run(job, func(t *testing.T) {
+			wrote, judged := stepAt(all, job, "name", writeBaseStep), stepAt(all, job, "name", blockverifyStep)
+			if wrote < 0 || judged < wrote {
+				t.Fatalf("%s writes the base manifest at step %d and runs blockverify at step %d; want both, the write first", job, wrote, judged)
+			}
+			if got := all[stepOf(all, job, "name", writeBaseStep)+"if"]; got != "github.event_name == 'pull_request'" {
+				t.Errorf("the step %q runs if %q; want it to run on a pull request alone, since a push has no base commit", writeBaseStep, got)
+			}
+			run := all[stepOf(all, job, "name", blockverifyStep)+"run"]
+			for _, flag := range []string{`--base-manifest "$RUNNER_TEMP/base-manifest.yaml"`, `--changed-files "$RUNNER_TEMP/changed-files"`} {
+				if !strings.Contains(run, flag) {
+					t.Errorf("the blockverify step's run =\n%s\nwant it to pass %s", run, flag)
+				}
+			}
+		})
 	}
 }
 
-func TestPublishBlockWorkflow_ThePullRequestStepListsEveryFileTheMergeChanges(t *testing.T) {
-	const name = "Write the base commit's manifest and the changed files"
-	prefix := stepOf(publishWorkflow(t), "conformance", "name", name)
-	if prefix == "" {
-		t.Fatalf("conformance has no step %q", name)
+// The OpenTofu job's image copies the whole tree, so its blockverify and report live in RUNNER_TEMP, where the Go job keeps its binary in the tree.
+func TestPublishBlockWorkflow_BlockverifyJudgesTheVersionOnAPullRequestAlone(t *testing.T) {
+	for _, job := range conformanceJobs {
+		for _, event := range []string{"pull_request", "push"} {
+			for _, verdict := range []string{"pass", "fail"} {
+				t.Run(job+" on "+event+" answering "+verdict, func(t *testing.T) {
+					tree, temp := t.TempDir(), t.TempDir()
+					binDir := map[string]string{"conformance": tree, "opentofu-conformance": temp}[job]
+					writeFile(t, filepath.Join(binDir, "blockverify"),
+						"#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+filepath.Join(temp, "args")+"\"\necho '{\"verdict\":\""+verdict+"\"}'\n")
+
+					out, exit := runNamed(t, job, blockverifyStep, tree, "", "RUNNER_TEMP="+temp, "EVENT_NAME="+event)
+
+					raw, err := os.ReadFile(filepath.Join(temp, "args"))
+					if err != nil {
+						t.Fatalf("blockverify never ran: %v\n%s", err, out)
+					}
+					args := strings.Fields(string(raw))
+					if (exit == 0) != (verdict == "pass") {
+						t.Errorf("exit %d for verdict %q; want the step to fail exactly when blockverify does\n%s", exit, verdict, out)
+					}
+					onPullRequest := event == "pull_request"
+					for flag, want := range map[string]bool{
+						"--standalone":    true,
+						"--base-manifest": onPullRequest,
+						"--changed-files": onPullRequest,
+						"--opentofu-only": job == "opentofu-conformance",
+					} {
+						if slices.Contains(args, flag) != want {
+							t.Errorf("blockverify ran with %q; want %s passed %v", args, flag, want)
+						}
+					}
+					if job == "opentofu-conformance" {
+						if entries, _ := os.ReadDir(tree); len(entries) != 0 {
+							t.Errorf("the step left %d entries in the tree the image copies, starting with %s; want none", len(entries), entries[0].Name())
+						}
+					}
+				})
+			}
+		}
 	}
-	repo, shas := gitRepo(t,
-		change{write: map[string]string{"manifest.yaml": "spec:\n  version: 1.0.0\n", "README.md": "# block\n", "resource.go": "package main\n", "old.go": "package main\n"}},
-		change{write: map[string]string{"README.md": "# block, changed\n", "resource.go": "package main\n\nfunc changed() {}\n", "new.go": "package main\n"}, remove: []string{"old.go"}})
+}
+
+func TestPublishBlockWorkflow_TheOpenTofuJobBuildsBlockverifyFromItsKitCheckout(t *testing.T) {
+	all := publishWorkflow(t)
+	const job = "opentofu-conformance"
+	kit, moved := stepAt(all, job, "with.ref", "${{ inputs.kit-ref }}"), stepAt(all, job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`)
+	built := stepAt(all, job, "run", `go build -o "$RUNNER_TEMP/blockverify" ./verify/blockverify`)
+	judged, assumed := stepAt(all, job, "name", blockverifyStep), stepAt(all, job, "name", "Configure AWS credentials for the verify role")
+	report := stepOf(all, job, "with.name", "blockverify-report")
+	cases := []struct{ name, got, want string }{
+		{"blockverify builds from the kit checkout before it leaves the tree", strconv.FormatBool(kit >= 0 && kit < built && built < moved), "true"},
+		{"the build runs in the kit checkout", all["jobs."+job+".steps."+strconv.Itoa(built)+".working-directory"], "block-kit"},
+		{"blockverify runs before the job assumes the verify role", strconv.FormatBool(judged >= 0 && judged < assumed), "true"},
+		{"the report uploads whatever the verdict", all[report+"if"], "always()"},
+		{"the report uploads from RUNNER_TEMP", all[report+"with.path"], "${{ runner.temp }}/blockverify-report.json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+// runWriteBaseStep runs job's pull-request step in repo against base, and returns the RUNNER_TEMP it wrote to.
+func runWriteBaseStep(t *testing.T, job, repo, base string) (temp, out string, err error) {
+	t.Helper()
+	prefix := stepOf(publishWorkflow(t), job, "name", writeBaseStep)
+	if prefix == "" {
+		t.Fatalf("%s has no step %q", job, writeBaseStep)
+	}
 	git(t, repo, "remote", "add", "origin", "file://"+repo)
-	temp := t.TempDir()
+	temp = t.TempDir()
 	step := filepath.Join(temp, "step.sh")
 	if err := os.WriteFile(step, []byte(publishWorkflow(t)[prefix+"run"]), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("bash", "-e", step)
-	cmd.Dir, cmd.Env = repo, append(hermeticEnv(), "BASE_SHA="+shas[0], "RUNNER_TEMP="+temp)
+	cmd.Dir, cmd.Env = repo, append(hermeticEnv(), "BASE_SHA="+base, "RUNNER_TEMP="+temp, "GITHUB_TOKEN=ghs_test")
+	raw, err := cmd.CombinedOutput()
+	return temp, string(raw), err
+}
 
-	out, err := cmd.CombinedOutput()
+func TestPublishBlockWorkflow_ThePullRequestStepListsEveryFileTheMergeChanges(t *testing.T) {
+	for _, job := range conformanceJobs {
+		t.Run(job, func(t *testing.T) {
+			repo, shas := gitRepo(t,
+				change{write: map[string]string{"manifest.yaml": "spec:\n  version: 1.0.0\n", "README.md": "# block\n", "resource.go": "package main\n", "old.go": "package main\n"}},
+				change{write: map[string]string{"README.md": "# block, changed\n", "resource.go": "package main\n\nfunc changed() {}\n", "new.go": "package main\n"}, remove: []string{"old.go"}})
 
-	if err != nil {
-		t.Fatalf("step %q: %v\n%s", name, err, out)
+			temp, out, err := runWriteBaseStep(t, job, repo, shas[0])
+
+			if err != nil {
+				t.Fatalf("step %q: %v\n%s", writeBaseStep, err, out)
+			}
+			changed, err := os.ReadFile(filepath.Join(temp, "changed-files"))
+			if want := "README.md\x00new.go\x00old.go\x00resource.go\x00"; err != nil || string(changed) != want {
+				t.Errorf("changed-files = %q (err %v), want %q, each path NUL-terminated and a moved file under both paths", changed, err, want)
+			}
+			base, err := os.ReadFile(filepath.Join(temp, "base-manifest.yaml"))
+			if want := "spec:\n  version: 1.0.0\n"; err != nil || string(base) != want {
+				t.Errorf("base-manifest.yaml = %q (err %v), want the base commit's manifest %q", base, err, want)
+			}
+		})
 	}
-	changed, err := os.ReadFile(filepath.Join(temp, "changed-files"))
-	if want := "README.md\x00new.go\x00old.go\x00resource.go\x00"; err != nil || string(changed) != want {
-		t.Errorf("changed-files = %q (err %v), want %q, each path NUL-terminated and a moved file under both paths", changed, err, want)
+}
+
+func TestPublishBlockWorkflow_ThePullRequestStepWritesNoBaseManifestForABlockNewOnTheBranch(t *testing.T) {
+	for _, job := range conformanceJobs {
+		t.Run(job, func(t *testing.T) {
+			repo, shas := gitRepo(t, writes("README.md", "# block\n"),
+				change{write: map[string]string{"manifest.yaml": "spec:\n  version: 0.1.0\n", "main.tf": "locals {}\n"}})
+
+			temp, out, err := runWriteBaseStep(t, job, repo, shas[0])
+
+			if err != nil || !strings.Contains(out, "new on this branch") {
+				t.Fatalf("step %q: %v\n%s\nwant it to pass, saying the block is new on this branch", writeBaseStep, err, out)
+			}
+			if _, err := os.Stat(filepath.Join(temp, "base-manifest.yaml")); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("base-manifest.yaml stat err = %v; want it absent, which blockverify reads as a new block", err)
+			}
+			changed, err := os.ReadFile(filepath.Join(temp, "changed-files"))
+			if want := "main.tf\x00manifest.yaml\x00"; err != nil || string(changed) != want {
+				t.Errorf("changed-files = %q (err %v), want %q", changed, err, want)
+			}
+		})
 	}
 }
 
