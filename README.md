@@ -199,6 +199,7 @@ provider and in `capabilities` per provider:
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
 | `helpers/healthz` | Every block, since the platform's edge asks each operator for `/healthz` | The health handler, a module of its own that an operator on any kit release mounts |
 | `helpers/reportproof` | A cluster or server block whose nodes report to mitstack | The proof that signs each report, and the check that verifies it |
+| `helpers/redundancy` | A block that removes or replaces one member of a redundant set, such as a gateway, an etcd member or a database instance | The guard an operator calls before it removes a member, which refuses the removal unless fresh readings show the rest of the set keeping its minimum |
 | `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials for the AWS account a call names |
 | `capabilities/aws/apphostname` | A block that gives an app its hostname | The app's A record in mitstack's apps zone, held by one subscription, with an in-memory zone for tests in `capabilities/aws/apphostname/apphostnametest` |
 | `capabilities/github/ghapi` | A block that calls the GitHub API | A GitHub REST client whose host the operator decides |
