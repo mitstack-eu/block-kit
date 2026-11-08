@@ -1,9 +1,10 @@
 package scripts_test
 
-// publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
+// publish-block.yml keeps no token in any checkout, runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
 
 import (
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,13 +15,18 @@ import (
 	"testing"
 )
 
-func publishWorkflow(t *testing.T) map[string]string {
+func publishWorkflowText(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile("../.github/workflows/publish-block.yml")
 	if err != nil {
 		t.Fatalf("reading publish-block.yml: %v", err)
 	}
-	return workflowFields(string(raw))
+	return string(raw)
+}
+
+func publishWorkflow(t *testing.T) map[string]string {
+	t.Helper()
+	return workflowFields(publishWorkflowText(t))
 }
 
 func TestPublishBlockWorkflow_ScansEveryEventBeforePublish(t *testing.T) {
@@ -45,27 +51,18 @@ func TestPublishBlockWorkflow_ScansEveryEventBeforePublish(t *testing.T) {
 		{"the scripts job takes its lint from kit-ref", step("scripts", "with.ref", "${{ inputs.kit-ref }}"), "true"},
 		{"the scripts job lints the block with the kit's script", step("scripts", "run", "bash block-kit/scripts/lint-scripts.sh block"), "true"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.got != tc.want {
-				t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
-			}
-		})
-	}
+	checkFields(t, "publish-block.yml", "", cases)
 }
 
 func TestPublishBlockWorkflow_APullRequestRunsThePublishScan(t *testing.T) {
 	const scan, image = `bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" `, `"block:${GITHUB_SHA}"`
-	raw, err := os.ReadFile("../.github/workflows/publish-block.yml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	all := workflowFields(string(raw))
+	raw := publishWorkflowText(t)
+	all := workflowFields(raw)
 	if run := all[stepOf(all, "publish", "name", "Build and push image")+"run"]; !strings.Contains(run, scan) {
 		t.Fatalf("the publish job's build runs\n%s\nwant it to run %s", run, scan)
 	}
 	for _, copied := range []string{"aquasecurity/trivy", "trivy image", "--ignore-unfixed", "--exit-code"} {
-		if strings.Contains(string(raw), copied) {
+		if strings.Contains(raw, copied) {
 			t.Errorf("publish-block.yml holds %q, a second copy of what scan-image.sh pins", copied)
 		}
 	}
@@ -89,13 +86,7 @@ func TestPublishBlockWorkflow_APullRequestRunsThePublishScan(t *testing.T) {
 			{"the scan runs on a pull request alone, since publish scans a push", step(scanned, "if"), "github.event_name == 'pull_request'"},
 			{"the scan runs the publish job's script", step(scanned, "run"), scan + image},
 		}
-		for _, tc := range cases {
-			t.Run(job+": "+tc.name, func(t *testing.T) {
-				if tc.got != tc.want {
-					t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
-				}
-			})
-		}
+		checkFields(t, "publish-block.yml", job+": ", cases)
 	}
 }
 
@@ -144,13 +135,7 @@ func TestPublishBlockWorkflow_PublishesOnlyForACallerNamingARegistry(t *testing.
 		{"the no-registry summary waits for every check, as publish does", field("jobs.no-registry.needs"), everyCheck},
 		{"the no-registry summary job is granted nothing, since it only writes the summary", field("jobs.no-registry.permissions"), "{}"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.got != tc.want {
-				t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
-			}
-		})
-	}
+	checkFields(t, "publish-block.yml", "", cases)
 }
 
 // A block repository naming no registry still gets its checks, its platform verdict and its attestation, since none of those jobs reads the registry.
@@ -202,9 +187,9 @@ func stepAt(all map[string]string, job, key, value string) int {
 // Both conformance jobs hand blockverify a pull request's base manifest and changed files through the kit's two scripts, so the version rule reads one implementation.
 func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 	all := publishWorkflow(t)
-	jobs := []struct{ job, judge, token string }{
-		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"`, ""},
-		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only`, "${{ github.token }}"},
+	jobs := []struct{ job, judge string }{
+		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"`},
+		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only`},
 	}
 	for _, j := range jobs {
 		moved, wrote, judged := stepAt(all, j.job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, j.job, "run", writePRBase), stepAt(all, j.job, "run", j.judge)
@@ -213,15 +198,29 @@ func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 			{"the kit reaches RUNNER_TEMP before the write, and the write comes before blockverify", strconv.FormatBool(moved >= 0 && moved < wrote && wrote < judged), "true"},
 			{"the write runs on a pull request alone, since a push has no base commit", step(wrote, "if"), "github.event_name == 'pull_request'"},
 			{"blockverify learns the event", step(judged, "env.EVENT_NAME"), "${{ github.event_name }}"},
-			{"the fetch takes the job's token only where the checkout keeps none", step(wrote, "env.FETCH_TOKEN"), j.token},
+			{"the fetch takes the job's token, since the checkout keeps none", step(wrote, "env.FETCH_TOKEN"), "${{ github.token }}"},
 		}
-		for _, tc := range cases {
-			t.Run(j.job+": "+tc.name, func(t *testing.T) {
-				if tc.got != tc.want {
-					t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
-				}
-			})
+		checkFields(t, "publish-block.yml", j.job+": ", cases)
+	}
+}
+
+// No job pushes to git, so no checkout writes the job's token into the tree where the block's own code and tests run.
+func TestPublishBlockWorkflow_EveryCheckoutKeepsNoToken(t *testing.T) {
+	raw := publishWorkflowText(t)
+	all := workflowFields(raw)
+	checkouts := 0
+	for _, key := range slices.Sorted(maps.Keys(all)) {
+		step, isUses := strings.CutSuffix(key, ".uses")
+		if !isUses || !strings.Contains(step, ".steps.") || !strings.HasPrefix(all[key], "actions/checkout@") {
+			continue
 		}
+		checkouts++
+		if got := all[step+".with.persist-credentials"]; got != "false" {
+			t.Errorf("checkout %s, named %q, sets persist-credentials %q, want false", step, all[step+".name"], got)
+		}
+	}
+	if want := strings.Count(raw, "uses: actions/checkout@"); checkouts != want {
+		t.Errorf("the test read %d checkout steps, but publish-block.yml has %d, so it missed some", checkouts, want)
 	}
 }
 
@@ -240,13 +239,7 @@ func TestPublishBlockWorkflow_TheOpenTofuJobBuildsBlockverifyFromItsKitCheckout(
 		{"the report uploads whatever the verdict", all[report+"if"], "always()"},
 		{"the report uploads from RUNNER_TEMP", all[report+"with.path"], "${{ runner.temp }}/blockverify-report.json"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.got != tc.want {
-				t.Errorf("publish-block.yml field = %q, want %q", tc.got, tc.want)
-			}
-		})
-	}
+	checkFields(t, "publish-block.yml", "", cases)
 }
 
 func TestPublishBlockWorkflow_AsksThePlatformOnlyWhereAStarterTurnsItOn(t *testing.T) {
