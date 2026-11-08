@@ -175,7 +175,9 @@ block's own: phase `Succeeded` with health `Healthy` succeeds.
 
 The walk reads at most 50 commits back from head, through `Repository.Changed`.
 `CommitManifests` uses the same walk to find the block's own last commit when
-nothing differs. The code is `Check` in
+nothing differs. `LastChanged` gives you that commit from any revision, such as
+when an observe has no recorded commit and must name the one head still
+holds. The code is `Check` in
 `capabilities/github/gitops/notification.go` and `walkLineage` in
 `capabilities/github/gitops/repository.go`.
 

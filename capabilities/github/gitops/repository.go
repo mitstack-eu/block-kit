@@ -308,7 +308,7 @@ func commitFiles(ctx context.Context, repo Repository, files map[string][]byte, 
 			return "", false, cerr
 		}
 		if len(changes) == 0 {
-			own, err := lastChanged(ctx, repo, head, sortedPaths(files))
+			own, err := LastChanged(ctx, repo, head, sortedPaths(files))
 			return own, false, err
 		}
 		var rev string
@@ -392,8 +392,8 @@ func (l lineage) changedAfterOwn(i int) (string, string) {
 	return "", ""
 }
 
-// lastChanged returns the newest commit at or before revision that changed one of paths, or the oldest within the bound when none did.
-func lastChanged(ctx context.Context, repo Repository, revision string, paths []string) (string, error) {
+// LastChanged returns the block's own commit, the newest at or before revision that changed one of paths, or the oldest within the bound when none did.
+func LastChanged(ctx context.Context, repo Repository, revision string, paths []string) (string, error) {
 	l, err := walkLineage(ctx, repo, revision, revision, paths)
 	if err != nil {
 		return "", err
