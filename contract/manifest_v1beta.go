@@ -3,7 +3,6 @@ package contract
 import (
 	"fmt"
 	"reflect"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -18,8 +17,6 @@ var (
 
 // v1betaDecoder refuses every null, and every plain scalar YAML reads as a number or a boolean where a string is declared.
 var v1betaDecoder = manifestDecoder{version: ManifestAPIVersion, tag: "json"}
-
-var typeIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*\.[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
 // decodeBlockManifest also holds what the types cannot say: type is block or capability, names and references are unique, no resource name holds a slash, and every provides entry names a resource not marked many.
 func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
@@ -39,6 +36,9 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 	}
 	markedMany := make(map[string]bool, len(b.Spec.Resources))
 	for i, r := range b.Spec.Resources {
+		if strings.Contains(r.Name, "/") && r.Name == r.Type {
+			return nil, fmt.Errorf("spec.resources[%d].name: %q is the id of a private type, which holds a slash, so name the resource without a slash", i, r.Name)
+		}
 		if strings.Contains(r.Name, "/") {
 			return nil, fmt.Errorf("spec.resources[%d].name: %q holds a slash, which is kept for the members of an entry marked many, named <entry>/<key>", i, r.Name)
 		}
@@ -180,8 +180,8 @@ func typeList(n *yamlNode, path string) ([]string, error) {
 }
 
 func typeID(n *yamlNode, path string) (string, error) {
-	if !typeIDPattern.MatchString(n.value) {
-		return "", fmt.Errorf("%s: %q is not a type id, which is <capability>.<name> in lowercase kebab case", path, n.value)
+	if _, _, _, err := ParseResourceTypeID(n.value); err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
 	}
 	return n.value, nil
 }

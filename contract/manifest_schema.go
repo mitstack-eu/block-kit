@@ -39,7 +39,7 @@ func GenerateManifestSchema() ([]byte, error) {
 		"and a provides entry that names no resource or one marked many."
 	doc["$defs"] = map[string]any{
 		"typeId": map[string]any{
-			"description": "A resource type id, <capability>.<name> in lowercase kebab case.",
+			"description": "A resource type id: a community type <capability>.<name>, or an org's private type @<org>/<capability>.<name>, in lowercase kebab case.",
 			"type":        "string",
 			"pattern":     typeIDPattern.String(),
 		},
