@@ -3,9 +3,11 @@ package scripts_test
 // write-pr-base.sh writes a pull request's base manifest and every file its merge changes, and run-blockverify.sh hands them to blockverify on a pull request alone and fails on any verdict but pass.
 
 import (
+	"encoding/base64"
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,6 +16,10 @@ import (
 
 func TestWritePRBase_WritesTheBaseManifestAndEveryFileTheMergeChanges(t *testing.T) {
 	script, err := filepath.Abs("write-pr-base.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	realGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +34,7 @@ func TestWritePRBase_WritesTheBaseManifestAndEveryFileTheMergeChanges(t *testing
 		changed, written string
 	}{
 		{"a block with a base manifest gets it and every changed path, a removed file included", "", edited, editedFiles, baseManifest},
-		{"a fetch given a token passes it to git through the environment", "ghs_test", edited, editedFiles, baseManifest},
+		{"a fetch given a token hands git its header through the environment", "ghs_test", edited, editedFiles, baseManifest},
 		{"a block new on the branch gets no base manifest", "", []change{writes("README.md", "# block\n"),
 			{write: map[string]string{"manifest.yaml": "spec:\n  version: 0.1.0\n", "main.tf": "locals {}\n"}}}, "main.tf\x00manifest.yaml\x00", ""},
 	}
@@ -36,12 +42,24 @@ func TestWritePRBase_WritesTheBaseManifestAndEveryFileTheMergeChanges(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			repo, shas := gitRepo(t, tc.history...)
 			git(t, repo, "remote", "add", "origin", "file://"+repo)
-			out := t.TempDir()
+			out, bin := t.TempDir(), t.TempDir()
+			fetchLog := filepath.Join(bin, "fetch.log")
+			writeFile(t, filepath.Join(bin, "git"), "#!/bin/sh\ncase \" $* \" in *\" fetch \"*) printf '%s\\n%s\\n' \"$*\" \"$AUTH_HEADER\" > \""+fetchLog+"\";; esac\nexec \""+realGit+"\" \"$@\"\n")
+			env := []string{"FETCH_TOKEN=" + tc.token, "PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH")}
 
-			log, exit := runBash(t, []string{"FETCH_TOKEN=" + tc.token}, "-c", `cd "$1" && bash "$2" "$3" "$4"`, "write", repo, script, shas[0], out)
+			log, exit := runBash(t, env, "-c", `cd "$1" && bash "$2" "$3" "$4"`, "write", repo, script, shas[0], out)
 
 			if exit != 0 {
 				t.Fatalf("write-pr-base.sh exit %d:\n%s", exit, log)
+			}
+			wantHeader := ""
+			if tc.token != "" {
+				wantHeader = "AUTHORIZATION: basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+tc.token))
+			}
+			fetched, err := os.ReadFile(fetchLog)
+			args, header, _ := strings.Cut(strings.TrimSuffix(string(fetched), "\n"), "\n")
+			if err != nil || header != wantHeader || strings.Contains(args, "--config-env=http.extraheader=AUTH_HEADER") != (tc.token != "") {
+				t.Errorf("git fetch ran with %q and AUTH_HEADER %q (err %v); want AUTH_HEADER %q, handed over by --config-env exactly when a token is set", args, header, err, wantHeader)
 			}
 			if changed, err := os.ReadFile(filepath.Join(out, "changed-files")); err != nil || string(changed) != tc.changed {
 				t.Errorf("changed-files = %q (err %v), want %q, each path NUL-terminated", changed, err, tc.changed)
