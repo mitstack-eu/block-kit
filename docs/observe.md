@@ -478,9 +478,11 @@ repository holds a file the record created at its recorded blob. Before the
 other block commits the files, or once the app has changed every one, it
 lists nothing. To read main, your API also implements
 `observe.GitHubMainFileAPI`, whose `MainFile` returns a file's content on the
-default branch, and false when the branch holds no such path. When a record
-created files and the API lacks `MainFile`, the listing fails rather than
-leave the contribution out.
+default branch, and false when the branch holds no such path. The listing
+fails rather than leave the contribution out when its record does not decode,
+or when the record created files and the API lacks `MainFile`. The
+`observe.GitHubRepository` observer lists only repositories, so a recorded
+contribution never fails it.
 
 A resource whose type carries no tag of its own still needs a listed object,
 so its lister finds it by whatever stands in for the tag.

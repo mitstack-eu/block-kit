@@ -26,7 +26,7 @@ func (o GitHubRepository) ObserveResource(ctx context.Context, r contract.Resour
 // githubOwned lists by the subscription's topic when the observer's API can, and is otherwise nil.
 func githubOwned(api any) TaggedLister {
 	if a, ok := api.(GitHubTagAPI); ok {
-		return GitHubTagged{API: a}
+		return GitHubTagged{API: a, withoutContributions: true}
 	}
 	return nil
 }

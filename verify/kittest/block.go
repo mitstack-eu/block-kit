@@ -277,8 +277,8 @@ type blockCheck struct {
 	failedRemovals map[string]bool
 	// failedWaits holds each resource whose waitingOnPerson answer already failed, for the same reason.
 	failedWaits map[string]bool
-	// committedNothing holds each scaffold contribution with a landing record for which the check wrote no file onto main, so GitHub holds nothing of it for a lister to list.
-	committedNothing map[string]bool
+	// holdsNothing holds each scaffold contribution with a landing record for which the check wrote no file onto main and main holds no file the record created, so GitHub holds nothing of it for a lister to list.
+	holdsNothing map[string]bool
 }
 
 // unitNames lists the names a guard reads, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
@@ -347,7 +347,7 @@ func (c *blockCheck) repositories() (map[string]*landingtest.Fake, bool) {
 	return nil, false
 }
 
-// commitContributions writes each file a scaffold contribution offers onto the fake main, as app-scaffold commits it, fails an offered file the contribution's landing record does not name at its blob, since unsubscribe could not remove it, and notes each contribution it writes no file for.
+// commitContributions writes each file a scaffold contribution offers onto the fake main, as app-scaffold commits it, fails an offered file the contribution's landing record does not name at its blob, since unsubscribe could not remove it, and notes each contribution of which main holds nothing.
 func (c *blockCheck) commitContributions(resp contract.Response) {
 	repos, ok := c.repositories()
 	if !ok {
@@ -382,14 +382,19 @@ func (c *blockCheck) commitContributions(resp contract.Response) {
 				commit[path] = offer.Files[path]
 			}
 		}
-		if len(commit) == 0 {
-			if c.committedNothing == nil {
-				c.committedNothing = map[string]bool{}
-			}
-			c.committedNothing[name] = true
+		if len(commit) > 0 {
+			repo.Seed(commit)
 			continue
 		}
-		repo.Seed(commit)
+		if !slices.ContainsFunc(rec.Files, func(f landing.File) bool {
+			content, held := main[f.Path]
+			return f.Created && held && landing.BlobHash([]byte(content)) == f.Blob
+		}) {
+			if c.holdsNothing == nil {
+				c.holdsNothing = map[string]bool{}
+			}
+			c.holdsNothing[name] = true
+		}
 	}
 }
 
@@ -759,7 +764,7 @@ func (c *blockCheck) taggedMatchDeclared() {
 		}
 	}
 	listable := maps.Clone(c.desired.RecordedResources)
-	maps.DeleteFunc(listable, func(name string, _ contract.RecordedResource) bool { return c.committedNothing[name] })
+	maps.DeleteFunc(listable, func(name string, _ contract.RecordedResource) bool { return c.holdsNothing[name] })
 	for _, name := range untagged(listable, tagged) {
 		c.resourceProblem(name, "untagged: the provider lists no %s carrying the subscription's id for it, so the platform can neither find it nor tear it down; tag it where Ensure creates it", c.desired.RecordedResources[name].Type)
 	}

@@ -237,6 +237,8 @@ type GitHubTagged struct {
 	Variables []string
 	// CommitType, when set, counts a repository's trailer commits once as that type while the branch holds a path they wrote; otherwise each path they wrote counts as a github.workflow-file.
 	CommitType string
+	// withoutContributions leaves recorded contributions out, for an observer that reads repositories alone.
+	withoutContributions bool
 }
 
 func (l GitHubTagged) topicRepositories(ctx context.Context, d contract.Desired, subscriptionID string) ([]string, error) {
@@ -324,13 +326,19 @@ type landedFile struct {
 
 // contributions lists each recorded scaffold contribution by the repository its landing record names, since another block commits its files under no trailer of this subscription's.
 func (l GitHubTagged) contributions(ctx context.Context, d contract.Desired) ([]Tagged, error) {
+	if l.withoutContributions {
+		return nil, nil
+	}
 	var out []Tagged
 	for _, name := range slices.Sorted(maps.Keys(d.RecordedResources)) {
 		r := d.RecordedResources[name]
 		if r.Type != githubContributionType {
 			continue
 		}
-		repo, created := createdFiles(r.Identity)
+		repo, created, err := createdFiles(name, r.Identity)
+		if err != nil {
+			return nil, err
+		}
 		if len(created) == 0 {
 			continue
 		}
@@ -345,13 +353,20 @@ func (l GitHubTagged) contributions(ctx context.Context, d contract.Desired) ([]
 	return out, nil
 }
 
-// createdFiles returns the repository a landing record names and the files it created there, and no file for an identity holding no record.
-func createdFiles(identity map[string]string) (string, []landedFile) {
-	var files []landedFile
-	if identity["repository"] == "" || json.Unmarshal([]byte(identity["files"]), &files) != nil {
-		return "", nil
+// createdFiles returns the repository the landing record of resource name names and the files it created there, no file for an identity holding no record, and an error for a record that does not decode.
+func createdFiles(name string, identity map[string]string) (string, []landedFile, error) {
+	repo, raw := identity["repository"], identity["files"]
+	if repo == "" && raw == "" {
+		return "", nil, nil
 	}
-	return identity["repository"], slices.DeleteFunc(files, func(f landedFile) bool { return !f.Created })
+	if repo == "" {
+		return "", nil, fmt.Errorf("observe: the landing record of scaffold contribution %q names no repository", name)
+	}
+	var files []landedFile
+	if err := json.Unmarshal([]byte(raw), &files); err != nil {
+		return "", nil, fmt.Errorf("observe: the landing record of scaffold contribution %q in %s holds no list of files: %w", name, repo, err)
+	}
+	return repo, slices.DeleteFunc(files, func(f landedFile) bool { return !f.Created }), nil
 }
 
 // mainHoldsOne reports whether main of repo holds one of files at its recorded blob.
