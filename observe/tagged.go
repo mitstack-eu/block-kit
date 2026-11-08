@@ -3,8 +3,12 @@ package observe
 import (
 	"cmp"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -214,9 +218,29 @@ type GitHubTagAPI interface {
 	ActionsSecretNames(ctx context.Context, d contract.Desired, repo string) ([]string, error)
 	ActionsVariableNames(ctx context.Context, d contract.Desired, repo string) ([]string, error)
 	Commits(ctx context.Context, d contract.Desired, repo string) ([]GitHubCommitPaths, error)
+	// MainFile reads a file on the repository's default branch, answering false when it holds no file at path, so the lister can tell whether main still holds what a recorded scaffold contribution created.
+	MainFile(ctx context.Context, d contract.Desired, repo, path string) ([]byte, bool, error)
 }
 
-// GitHubTagged lists what a subscription holds on the repositories carrying its topic and on those its github.repository or github.gitops-repository requirements bind, where a webhook counts only when it points at ProcessorURL.
+// gitHubListAPI is GitHubTagAPI without MainFile, all the repository and commit observers ask of their API.
+type gitHubListAPI interface {
+	RepositoriesWithTopic(ctx context.Context, d contract.Desired, topic string) ([]GitHubRepositoryTopics, error)
+	Webhooks(ctx context.Context, d contract.Desired, repo string) ([]GitHubWebhook, error)
+	ActionsSecretNames(ctx context.Context, d contract.Desired, repo string) ([]string, error)
+	ActionsVariableNames(ctx context.Context, d contract.Desired, repo string) ([]string, error)
+	Commits(ctx context.Context, d contract.Desired, repo string) ([]GitHubCommitPaths, error)
+}
+
+var _ gitHubListAPI = GitHubTagAPI(nil)
+
+// listingOnly serves a gitHubListAPI to a GitHubTagged that leaves contributions out, so it never reads main.
+type listingOnly struct{ gitHubListAPI }
+
+func (listingOnly) MainFile(_ context.Context, _ contract.Desired, repo, path string) ([]byte, bool, error) {
+	return nil, false, fmt.Errorf("observe: %s on main of %s was read through an API that reads no file on main", path, repo)
+}
+
+// GitHubTagged lists what a subscription holds on the repositories carrying its topic and on those its github.repository or github.gitops-repository requirements bind, where a webhook counts only when it points at ProcessorURL, and each scaffold contribution it records while main holds a file the contribution created.
 type GitHubTagged struct {
 	API GitHubTagAPI
 	// RepositoryType defaults to github.repository.
@@ -227,6 +251,8 @@ type GitHubTagged struct {
 	Variables []string
 	// CommitType, when set, counts a repository's trailer commits once as that type while the branch holds a path they wrote; otherwise each path they wrote counts as a github.workflow-file.
 	CommitType string
+	// withoutContributions leaves recorded contributions out, for an observer that reads repositories alone.
+	withoutContributions bool
 }
 
 func (l GitHubTagged) topicRepositories(ctx context.Context, d contract.Desired, subscriptionID string) ([]string, error) {
@@ -296,7 +322,87 @@ func (l GitHubTagged) ListTagged(ctx context.Context, d contract.Desired, subscr
 		}
 		out = append(out, on...)
 	}
+	contributions, err := l.contributions(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, contributions...), nil
+}
+
+const githubContributionType = "github.scaffold-contribution"
+
+// landedFile is one file of the landing record capabilities/github/landing keeps in a resource's identity, decoded here since that package imports this one.
+type landedFile struct {
+	Path    string `json:"path"`
+	Blob    string `json:"blob"`
+	Created bool   `json:"created"`
+}
+
+// contributions lists each recorded scaffold contribution by the repository its landing record names, since another block commits its files under no trailer of this subscription's.
+func (l GitHubTagged) contributions(ctx context.Context, d contract.Desired) ([]Tagged, error) {
+	if l.withoutContributions {
+		return nil, nil
+	}
+	var out []Tagged
+	for _, name := range slices.Sorted(maps.Keys(d.RecordedResources)) {
+		r := d.RecordedResources[name]
+		if r.Type != githubContributionType {
+			continue
+		}
+		repo, created, err := createdFiles(name, r.Identity)
+		if err != nil {
+			return nil, err
+		}
+		if len(created) == 0 {
+			continue
+		}
+		held, err := l.mainHoldsOne(ctx, d, repo, created)
+		if err != nil {
+			return nil, err
+		}
+		if held {
+			out = append(out, Tagged{Type: githubContributionType, ID: repo})
+		}
+	}
 	return out, nil
+}
+
+// createdFiles returns the repository the landing record of resource name names and the files it created there, no file for an identity holding no record, and an error for a record that does not decode.
+func createdFiles(name string, identity map[string]string) (string, []landedFile, error) {
+	repo, raw := identity["repository"], identity["files"]
+	if repo == "" && raw == "" {
+		return "", nil, nil
+	}
+	if repo == "" {
+		return "", nil, fmt.Errorf("observe: the landing record of scaffold contribution %q names no repository", name)
+	}
+	var files []landedFile
+	if err := json.Unmarshal([]byte(raw), &files); err != nil {
+		return "", nil, fmt.Errorf("observe: the landing record of scaffold contribution %q in %s holds no list of files: %w", name, repo, err)
+	}
+	return repo, slices.DeleteFunc(files, func(f landedFile) bool { return !f.Created }), nil
+}
+
+// mainHoldsOne reports whether main of repo holds one of files at its recorded blob.
+func (l GitHubTagged) mainHoldsOne(ctx context.Context, d contract.Desired, repo string, files []landedFile) (bool, error) {
+	for _, f := range files {
+		content, held, err := l.API.MainFile(ctx, d, repo, f.Path)
+		if err != nil {
+			return false, fmt.Errorf("observe: read %s on main of %s: %w", f.Path, repo, err)
+		}
+		if held && gitBlobHash(content) == f.Blob {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// gitBlobHash is the hash git gives content as a blob, which a landing record keeps for each file.
+func gitBlobHash(content []byte) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "blob %d\x00", len(content))
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (l GitHubTagged) onRepository(ctx context.Context, d contract.Desired, repo, subscriptionID string, carriesTopic bool) ([]Tagged, error) {

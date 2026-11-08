@@ -148,9 +148,22 @@ block commits its files, as
 describes. So for such a resource the check first writes each file its
 `scaffoldContribution` output offers onto the fake main. It fails an offered
 file whose content's git blob hash the resource's landing record does not
-name, since unsubscribe could not recognise the file to remove it. After the
-unsubscribe,
-the check fails the block on each of these, naming the path or branch:
+name, since unsubscribe could not recognise the file to remove it.
+
+The tagging guard reads the block's lister after these writes, so the lister
+must list each contribution whose files the check wrote, as
+`observe.GitHubTagged` does. Sometimes the check writes no file for a
+contribution, because it offers none or main already held each one, and main
+holds no file the contribution's record created. GitHub then holds nothing of
+it, and the guard needs no listed object for it.
+
+The guard runs the fake GitHub API the test hands it, so passing it says
+nothing about your real client. Both implement `observe.GitHubTagAPI`,
+`MainFile` included, and the compiler holds the real client to it wherever
+it serves an `observe.GitHubTagged`.
+
+After the unsubscribe, the check fails the block on each of these, naming the
+path or branch:
 
 | What the check finds | The problem it reports |
 |---|---|

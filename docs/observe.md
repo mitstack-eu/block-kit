@@ -42,10 +42,10 @@ While `Unsubscribing` is true, the observers for `aws.s3-bucket`, `aws.vpc`,
 `aws.security-group`, `aws.ec2-instance`, `aws.ebs-volume`, `aws.iam-role`,
 `hetzner.server`, `hetzner.primary-ip`, `hetzner.network`, `hetzner.firewall`
 and `github.repository` then list what carries the subscription's id, when the
-observer's API also implements `AWSTaggingAPI`, `HetznerLabelAPI` or
-`GitHubTagAPI`. A list that finds an object of the type answers `Present` with
-that object's identity, a list that finds none answers `Absent`, and a failed
-list returns its error.
+observer's API also implements `AWSTaggingAPI`, `HetznerLabelAPI` or every
+`GitHubTagAPI` method but `MainFile`. A list that finds an object of the type
+answers `Present` with that object's identity, a list that finds none answers
+`Absent`, and a failed list returns its error.
 
 These observers read a convention the block sets on the objects it creates, and `EC2Instance` shares it so it can leave out the egress proxy.
 
@@ -54,7 +54,7 @@ These observers read a convention the block sets on the objects it creates, and 
 | `EC2Instance`, `EgressProxy` | The block tags the egress proxy instance `mitstack:role=egress-proxy` (`AWSRoleTag`, `AWSRoleEgressProxy`). `EC2Instance` never resolves to that instance. | `AWSRoleTaggingAPI` beside `AWSTaggingAPI` |
 | `SSMAssociation` | The observer lists the associations that run each SSM document the subscription tagged. One row reads `Present` while any of them remains, so it can wait on a sibling's association. | `SSMAssociationsAPI` beside `AWSTaggingAPI` |
 | `EC2Container` | The container carries the label `mitstack:subscription` (`ContainerSubscriptionLabel`). The observer reads the labelled containers, stopped ones included, on the instance the subscription's `aws.ec2-instance` requirement is bound to, which `Desired.Bindings` records. | None, and no binding means `Unknown` |
-| `GitHubCommit` | The last paragraph of the commit message is the trailer line `Mitstack-Subscription: <subscription id>` (`GitHubSubscriptionTrailer`). The observer takes the newest such commit of the first repository carrying it, topic-tagged repositories before bound ones. | `GitHubTagAPI`, whose `Commits` sets `SHA` |
+| `GitHubCommit` | The last paragraph of the commit message is the trailer line `Mitstack-Subscription: <subscription id>` (`GitHubSubscriptionTrailer`). The observer takes the newest such commit of the first repository carrying it, topic-tagged repositories before bound ones. | Every `GitHubTagAPI` method but `MainFile`, with `Commits` setting `SHA` |
 
 The role read and the association read run with every tag listing, so a failing association read also fails the lookup of an unrelated type, with an error and never an absent answer.
 Without the extra API, or without a bound instance, these observers answer
@@ -469,6 +469,21 @@ only when it points at the lister's `ProcessorURL`, and the repository itself
 counts only when it carries the topic. When the lister's `CommitType` is set,
 a repository's trailer commits count once, as that type, while the branch
 still holds a path they wrote.
+
+Another block commits the files of a scaffold contribution, under no trailer
+of this subscription's. So the lister finds a recorded
+`github.scaffold-contribution` through its landing record instead. It lists
+the contribution once, by the repository the record names, while main of that
+repository holds a file the record created at its recorded blob. Before the
+other block commits the files, or once the app has changed every one, it
+lists nothing. It reads main through `GitHubTagAPI`'s `MainFile`, which
+returns a file's content on the default branch, and false when the branch
+holds no such path. `MainFile` is part of the interface, so a GitHub client
+that cannot read main fails to compile as a `GitHubTagAPI`. Without the
+method it would compile and then fail its listing in production. The listing
+also fails, rather than leave the contribution out, when the record does not
+decode. The `observe.GitHubRepository` and `observe.GitHubCommit` observers
+read no contribution, so they need every method but `MainFile`.
 
 A resource whose type carries no tag of its own still needs a listed object,
 so its lister finds it by whatever stands in for the tag.

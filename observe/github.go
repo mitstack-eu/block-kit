@@ -23,10 +23,10 @@ func (o GitHubRepository) ObserveResource(ctx context.Context, r contract.Resour
 	return existence(r, exists, err, map[string]string{"repo": ids[0]})
 }
 
-// githubOwned lists by the subscription's topic when the observer's API can, and is otherwise nil.
+// githubOwned lists by the subscription's topic when the observer's API has every GitHubTagAPI method but MainFile, and is otherwise nil.
 func githubOwned(api any) TaggedLister {
-	if a, ok := api.(GitHubTagAPI); ok {
-		return GitHubTagged{API: a}
+	if a, ok := api.(gitHubListAPI); ok {
+		return GitHubTagged{API: listingOnly{a}, withoutContributions: true}
 	}
 	return nil
 }
@@ -38,17 +38,17 @@ type GitHubCommitAPI interface {
 // GitHubCommit observes a github.commit by its repo and sha, reporting
 // sourceSha and, when the identity holds a branch, sourceBranch; with neither
 // while unsubscribing, it takes the newest commit carrying the subscription's
-// trailer when its API also implements GitHubTagAPI.
+// trailer when its API also has every GitHubTagAPI method but MainFile.
 type GitHubCommit struct {
 	API GitHubCommitAPI
 }
 
 func (o GitHubCommit) heldByTrailer(ctx context.Context, r contract.ResourceRef, noKey contract.Observation) (contract.Observation, error) {
-	api, ok := o.API.(GitHubTagAPI)
+	api, ok := o.API.(gitHubListAPI)
 	if !r.Unsubscribing || !ok || r.Desired.SubscriptionID == "" {
 		return noKey, nil
 	}
-	repo, sha, err := GitHubTagged{API: api}.newestTrailerCommit(ctx, r.Desired, r.Desired.SubscriptionID)
+	repo, sha, err := GitHubTagged{API: listingOnly{api}}.newestTrailerCommit(ctx, r.Desired, r.Desired.SubscriptionID)
 	switch {
 	case err != nil:
 		return contract.Observation{}, err
