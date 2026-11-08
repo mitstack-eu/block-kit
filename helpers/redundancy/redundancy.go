@@ -59,21 +59,19 @@ func (m Minimum) of(size int) (int, string) {
 	}
 }
 
-// Set is a redundant set: what its members are, each member's latest reading, and the minimum it keeps serving.
+// Set is a redundant set: the Name a refusal calls its members, such as "etcd members", each member's latest reading, and the minimum it keeps serving.
 type Set struct {
-	// Name says what the members are in a refusal, such as "gateways" or "etcd members".
 	Name    string
 	Members []Member
 	Minimum Minimum
 }
 
-// AllowRemoval returns nil when removing the named member leaves at least the set's minimum serving, judged only by readings taken at or after stepStart.
-// A member with no reading, or a reading from before stepStart, counts as not serving. A shortfall returns a *handler.Refused of class ClassBelowMinimum naming each remaining member's reading, and a call that cannot be judged returns a plain error.
+// AllowRemoval returns nil when the members left after removing member keep the minimum serving by readings taken at or after stepStart, a *handler.Refused of class ClassBelowMinimum naming each one's reading when they do not, and a plain error for a call it cannot judge.
 func (s Set) AllowRemoval(member string, stepStart time.Time) error {
 	if err := s.judgeable(member, stepStart); err != nil {
 		return fmt.Errorf("redundancy: removing %q from the %s: %w", member, s.Name, err)
 	}
-	minimum, rule := s.Minimum.of(len(s.Members))
+	minimum, basis := s.Minimum.of(len(s.Members))
 	remaining := s.without(member)
 	left := 0
 	for _, m := range remaining {
@@ -85,7 +83,7 @@ func (s Set) AllowRemoval(member string, stepStart time.Time) error {
 		return nil
 	}
 	return handler.Refuse(ClassBelowMinimum, "removing %q from the %s would leave %d serving, below their minimum of %d (%s), judged by readings since %s: %s",
-		member, s.Name, left, minimum, rule, stamp(stepStart), describe(remaining, stepStart))
+		member, s.Name, left, minimum, basis, stamp(stepStart), describe(remaining, stepStart))
 }
 
 func (s Set) judgeable(member string, stepStart time.Time) error {
