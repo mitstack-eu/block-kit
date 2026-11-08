@@ -304,10 +304,15 @@ snapshot does not hold. A block passes the snapshot to `handler.New` as
 | `stateful` | A resource of the type can hold data, so replacing it loses the data |
 | `parts` | The objects that exist only to serve one resource of the type, such as the push role of an ECR repository, each with its `type` and `count`, the most one resource holds |
 | `endsWithSubscription` | The resource's absence cannot be observed, so it ends when the block's unsubscribe succeeds |
+| `providerHoldsNothing` | The resource is a record its block hands out, such as a runner label, and no provider holds an object of it, so no lister lists one |
 
 `endsWithSubscription` marks a type such as `github.scaffold-contribution`,
 the starter files a block commits into the app's repository. They stay in the
 repository's history after unsubscribe, so no observer can prove them gone.
+`providerHoldsNothing` marks a type whose resource stands for no provider
+object, such as a runner label an app writes into its workflow. The checks in
+[Testing a block](testing.md) then want no listed object for it and an absent
+answer when it is torn down.
 `contract.ParseTypeSnapshot` refuses a part with no type, a part whose type
 the snapshot does not hold, and a count below one.
 

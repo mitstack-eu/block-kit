@@ -9,7 +9,7 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-// emptyIdentityUnsubscribe sends each recorded resource an unsubscribing observe that names no identity, as the engine does for a row a failed create left without one, and holds the answer to what the provider holds of its type; a file-landing type is left out, since its record is the only way to find what it landed.
+// emptyIdentityUnsubscribe sends each recorded resource an unsubscribing observe that names no identity, as the engine does for a row a failed create left without one, and holds the answer to what the provider holds of its type, which is nothing for a type marked providerHoldsNothing; a file-landing type is left out, since its record is the only way to find what it landed.
 func (c *blockCheck) emptyIdentityUnsubscribe() {
 	tagged, err := c.listTagged()
 	if err != nil {
@@ -23,7 +23,7 @@ func (c *blockCheck) emptyIdentityUnsubscribe() {
 		}
 		var held []string
 		for _, t := range tagged {
-			if t.Type == typ {
+			if t.Type == typ && !c.providerHoldsNothing(typ) {
 				held = append(held, t.ID)
 			}
 		}
@@ -46,6 +46,8 @@ func (c *blockCheck) emptyIdentityAnswer(name, typ string, held []string, resp c
 	switch {
 	case o == nil:
 		c.resourceProblem(name, "an unsubscribing observe with an empty identity answered no observe")
+	case c.providerHoldsNothing(typ) && o.State != contract.Absent:
+		c.resourceProblem(name, "observed %s %s, but the type snapshot marks %s providerHoldsNothing, so the provider holds none of it, want absent", o.State, probe, typ)
 	case len(held) == 0 && o.State != contract.Absent:
 		c.resourceProblem(name, "observed %s %s while the provider holds no %s, want absent", o.State, probe, typ)
 	case len(held) > 0 && o.State == contract.Absent:

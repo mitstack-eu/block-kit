@@ -757,6 +757,8 @@ func (c *blockCheck) taggedMatchDeclared() {
 		switch {
 		case t.Type == "":
 			c.resourceProblem(t.ID, "it carries the subscription's id, but is of no type the provider's lister knows, so no declared resource matches it")
+		case c.providerHoldsNothing(t.Type):
+			c.resourceProblem(t.ID, "it carries the subscription's id as type %s, but the type snapshot marks %s providerHoldsNothing, so no provider object stands for a resource of it", t.Type, t.Type)
 		case room[t.Type] == 0:
 			c.resourceProblem(t.ID, "it carries the subscription's id as type %s, but neither the manifest's resources nor the parts their types list account for another of that type", t.Type)
 		default:
@@ -764,10 +766,18 @@ func (c *blockCheck) taggedMatchDeclared() {
 		}
 	}
 	listable := maps.Clone(c.desired.RecordedResources)
-	maps.DeleteFunc(listable, func(name string, _ contract.RecordedResource) bool { return c.holdsNothing[name] })
+	maps.DeleteFunc(listable, func(name string, r contract.RecordedResource) bool {
+		return c.holdsNothing[name] || c.providerHoldsNothing(r.Type)
+	})
 	for _, name := range untagged(listable, tagged) {
 		c.resourceProblem(name, "untagged: the provider lists no %s carrying the subscription's id for it, so the platform can neither find it nor tear it down; tag it where Ensure creates it", c.desired.RecordedResources[name].Type)
 	}
+}
+
+// providerHoldsNothing reports whether the block's type snapshot marks typ as a type no provider holds an object of.
+func (c *blockCheck) providerHoldsNothing(typ string) bool {
+	t, ok := c.in.Config.Types.Lookup(typ)
+	return ok && t.ProviderHoldsNothing
 }
 
 // untagged names, in name order, each recorded resource that no tagged object of its type is left for, giving a resource the object its identity names before any other of its type.

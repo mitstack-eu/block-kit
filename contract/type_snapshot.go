@@ -36,6 +36,9 @@ type SnapshotType struct {
 	// EndsWithSubscription marks a type whose resource ends with the block's unsubscribe, since its absence cannot be observed.
 	EndsWithSubscription bool `json:"endsWithSubscription,omitempty"`
 
+	// ProviderHoldsNothing marks a type whose resource is a record its block hands out, which no provider holds an object of, so no lister lists one.
+	ProviderHoldsNothing bool `json:"providerHoldsNothing,omitempty"`
+
 	// Parts are the objects that exist only to serve one resource of the type, which the tag guard accounts to that resource.
 	Parts []SnapshotPart `json:"parts,omitempty"`
 
