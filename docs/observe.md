@@ -470,6 +470,18 @@ counts only when it carries the topic. When the lister's `CommitType` is set,
 a repository's trailer commits count once, as that type, while the branch
 still holds a path they wrote.
 
+Another block commits the files of a scaffold contribution, under no trailer
+of this subscription's. So the lister finds a recorded
+`github.scaffold-contribution` through its landing record instead. It lists
+the contribution once, by the repository the record names, while main of that
+repository holds a file the record created at its recorded blob. Before the
+other block commits the files, or once the app has changed every one, it
+lists nothing. To read main, your API also implements
+`observe.GitHubMainFileAPI`, whose `MainFile` returns a file's content on the
+default branch, and false when the branch holds no such path. When a record
+created files and the API lacks `MainFile`, the listing fails rather than
+leave the contribution out.
+
 A resource whose type carries no tag of its own still needs a listed object,
 so its lister finds it by whatever stands in for the tag.
 `mitstack.app-hostname` is one such type: a Route 53 record carries no tag, so
