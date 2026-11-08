@@ -1,9 +1,10 @@
 package scripts_test
 
-// publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
+// publish-block.yml keeps no token in any checkout, runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
 
 import (
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -202,9 +203,9 @@ func stepAt(all map[string]string, job, key, value string) int {
 // Both conformance jobs hand blockverify a pull request's base manifest and changed files through the kit's two scripts, so the version rule reads one implementation.
 func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 	all := publishWorkflow(t)
-	jobs := []struct{ job, judge, token string }{
-		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"`, ""},
-		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only`, "${{ github.token }}"},
+	jobs := []struct{ job, judge string }{
+		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"`},
+		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only`},
 	}
 	for _, j := range jobs {
 		moved, wrote, judged := stepAt(all, j.job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, j.job, "run", writePRBase), stepAt(all, j.job, "run", j.judge)
@@ -213,7 +214,7 @@ func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 			{"the kit reaches RUNNER_TEMP before the write, and the write comes before blockverify", strconv.FormatBool(moved >= 0 && moved < wrote && wrote < judged), "true"},
 			{"the write runs on a pull request alone, since a push has no base commit", step(wrote, "if"), "github.event_name == 'pull_request'"},
 			{"blockverify learns the event", step(judged, "env.EVENT_NAME"), "${{ github.event_name }}"},
-			{"the fetch takes the job's token only where the checkout keeps none", step(wrote, "env.FETCH_TOKEN"), j.token},
+			{"the fetch takes the job's token, since the checkout keeps none", step(wrote, "env.FETCH_TOKEN"), "${{ github.token }}"},
 		}
 		for _, tc := range cases {
 			t.Run(j.job+": "+tc.name, func(t *testing.T) {
@@ -222,6 +223,29 @@ func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// No job pushes to git, so no checkout writes the job's token into the tree where the block's own code and tests run.
+func TestPublishBlockWorkflow_EveryCheckoutKeepsNoToken(t *testing.T) {
+	raw, err := os.ReadFile("../.github/workflows/publish-block.yml")
+	if err != nil {
+		t.Fatalf("reading publish-block.yml: %v", err)
+	}
+	all := workflowFields(string(raw))
+	read := 0
+	for _, key := range slices.Sorted(maps.Keys(all)) {
+		step, isUses := strings.CutSuffix(key, ".uses")
+		if !isUses || !strings.Contains(step, ".steps.") || !strings.HasPrefix(all[key], "actions/checkout@") {
+			continue
+		}
+		read++
+		if got := all[step+".with.persist-credentials"]; got != "false" {
+			t.Errorf("%s (%q) checks out with persist-credentials %q, want false", step, all[step+".name"], got)
+		}
+	}
+	if want := strings.Count(string(raw), "uses: actions/checkout@"); read != want {
+		t.Errorf("read %d checkout steps, but publish-block.yml names actions/checkout %d times", read, want)
 	}
 }
 
