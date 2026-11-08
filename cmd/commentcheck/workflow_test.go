@@ -120,7 +120,7 @@ func TestWorkflow_CommentCheckRunsOnEveryPullRequest(t *testing.T) {
 	removal := find(conformance, 0, `mv block-kit "\$RUNNER_TEMP/block-kit"`)
 	buildAt := find(conformance, 0, `\./cmd/commentcheck`)
 	build := entry(conformance, buildAt)
-	check := entry(conformance, find(conformance, find(conformance, 0, `git fetch .*"\$BASE_SHA"`)+1, `\./commentcheck\b`))
+	check := entry(conformance, find(conformance, find(conformance, 0, `write-pr-base\.sh" "\$BASE_SHA"`)+1, `\./commentcheck\b`))
 	for _, c := range []struct{ name, got, want string }{
 		{"ci.yml comment-check runs only on a pull request", ci["if"], onPullRequest},
 		{"ci.yml comment-check checks out full history", entry(ci, 0)["with.fetch-depth"], "0"},

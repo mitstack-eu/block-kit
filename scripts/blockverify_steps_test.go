@@ -58,8 +58,8 @@ func TestWritePRBase_WritesTheBaseManifestAndEveryFileTheMergeChanges(t *testing
 			}
 			fetched, err := os.ReadFile(fetchLog)
 			args, header, _ := strings.Cut(strings.TrimSuffix(string(fetched), "\n"), "\n")
-			if err != nil || header != wantHeader || strings.Contains(args, "--config-env=http.extraheader=AUTH_HEADER") != (tc.token != "") {
-				t.Errorf("git fetch ran with %q and AUTH_HEADER %q (err %v); want AUTH_HEADER %q, handed over by --config-env exactly when a token is set", args, header, err, wantHeader)
+			if err != nil || !strings.HasSuffix(args, "fetch --depth=1 origin "+shas[0]) || header != wantHeader || strings.Contains(args, "--config-env=http.extraheader=AUTH_HEADER") != (tc.token != "") {
+				t.Errorf("git fetch ran with %q and AUTH_HEADER %q (err %v); want a shallow fetch of the base sha %s, and AUTH_HEADER %q handed over by --config-env exactly when a token is set", args, header, err, shas[0], wantHeader)
 			}
 			if changed, err := os.ReadFile(filepath.Join(out, "changed-files")); err != nil || string(changed) != tc.changed {
 				t.Errorf("changed-files = %q (err %v), want %q, each path NUL-terminated", changed, err, tc.changed)
