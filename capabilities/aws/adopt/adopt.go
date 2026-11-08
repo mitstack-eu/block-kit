@@ -1,4 +1,4 @@
-// Package adopt, an optional helper for AWS, decides whether a retried subscribe creates, adopts or refuses a resource, so it converges without taking over another app's resources.
+// Package adopt, an optional helper for AWS, decides whether a retried subscribe creates, adopts or refuses a resource by the kit's subscription tag, so it converges without taking over a resource that is not its own.
 package adopt
 
 import (
@@ -7,48 +7,45 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mitstack-eu/block-kit/observe"
 )
 
-const (
-	TagAppID          = "AppId"
-	TagSubscriptionID = "SubscriptionId"
-	TagManagedBy      = "ManagedBy"
-)
+type Tag struct {
+	Key   string
+	Value string
+}
 
-const ManagedByValue = "mitstack"
-
-// Identity matches on AppID alone, since a resubscribe brings a new subscription id for the same app and a name proves nothing.
+// Identity proves ownership by observe.AWSSubscriptionTag. Legacy is the tag an earlier release of the block wrote instead, which still proves ownership of a resource carrying no subscription tag until the block's next write adds it.
 type Identity struct {
-	AppID          string
-	SubscriptionID string
-	Name           string
+	Subscription string
+	Legacy       Tag
 }
 
 func (id Identity) Validate() error {
-	if strings.TrimSpace(id.AppID) == "" {
-		return errors.New("adopt: AppID is required — an identity without it matches every app's resources")
+	if strings.TrimSpace(id.Subscription) == "" {
+		return errors.New("adopt: Subscription is required, since an identity without it matches every resource")
+	}
+	if (id.Legacy.Key == "") != (id.Legacy.Value == "") {
+		return errors.New("adopt: a legacy tag needs both a key and a value, since a key alone matches every resource that carries it")
+	}
+	if id.Legacy.Key == observe.AWSSubscriptionTag {
+		return fmt.Errorf("adopt: the legacy tag cannot be %s, which already proves ownership", observe.AWSSubscriptionTag)
 	}
 	return nil
 }
 
-// Tags omits an unknown subscription id rather than writing it empty.
 func (id Identity) Tags() map[string]string {
-	t := map[string]string{
-		TagAppID:     id.AppID,
-		TagManagedBy: ManagedByValue,
-	}
-	if id.SubscriptionID != "" {
-		t[TagSubscriptionID] = id.SubscriptionID
-	}
-	if id.Name != "" {
-		t["Name"] = id.Name
-	}
-	return t
+	return map[string]string{observe.AWSSubscriptionTag: id.Subscription}
 }
 
-// Filter matches the AppId tag's value, never only its key, which every app's resources carry.
-func (id Identity) Filter() string {
-	return "Name=tag:" + TagAppID + ",Values=" + id.AppID
+// Lookups lists the tag values a caller searches by, each matching a value and never only a key, and unions the results into the candidates.
+func (id Identity) Lookups() []Tag {
+	out := []Tag{{Key: observe.AWSSubscriptionTag, Value: id.Subscription}}
+	if id.Legacy.Key != "" {
+		out = append(out, id.Legacy)
+	}
+	return out
 }
 
 type Action int
@@ -77,31 +74,39 @@ type Candidate struct {
 	Tags       map[string]string
 }
 
+// Decision's Retag reports an adopted resource that only its legacy tag names, so the caller writes Identity.Tags onto it on its next write.
 type Decision struct {
 	Action    Action
 	Candidate Candidate
+	Retag     bool
 }
 
-// Decide refuses whenever identity is not exact: another app's or an untagged candidate, one another system manages, or two that claim the app.
+// Decide refuses whenever identity is not exact: another subscription's or an untagged candidate, or two that claim the subscription.
 func Decide(id Identity, candidates []Candidate) (Decision, error) {
 	if err := id.Validate(); err != nil {
 		return Decision{Action: Refuse}, err
 	}
 
-	var matches []Candidate
-	var conflicts []Candidate
+	var matches, conflicts []Candidate
+	seen := map[string]bool{}
 	for _, c := range candidates {
-		owner := c.Tags[TagAppID]
-		switch {
-		case owner == id.AppID:
-			if mb, ok := c.Tags[TagManagedBy]; ok && mb != ManagedByValue {
-				conflicts = append(conflicts, c)
-				continue
-			}
-			matches = append(matches, c)
-		default:
-			conflicts = append(conflicts, c)
+		if c.ResourceID != "" && seen[c.ResourceID] {
+			continue
 		}
+		seen[c.ResourceID] = true
+		if owner, ok := c.Tags[observe.AWSSubscriptionTag]; ok {
+			if owner == id.Subscription {
+				matches = append(matches, c)
+			} else {
+				conflicts = append(conflicts, c)
+			}
+			continue
+		}
+		if id.Legacy.Key != "" && c.Tags[id.Legacy.Key] == id.Legacy.Value {
+			matches = append(matches, c)
+			continue
+		}
+		conflicts = append(conflicts, c)
 	}
 
 	if len(conflicts) > 0 {
@@ -112,7 +117,8 @@ func Decide(id Identity, candidates []Candidate) (Decision, error) {
 	case 0:
 		return Decision{Action: Create}, nil
 	case 1:
-		return Decision{Action: Adopt, Candidate: matches[0]}, nil
+		_, tagged := matches[0].Tags[observe.AWSSubscriptionTag]
+		return Decision{Action: Adopt, Candidate: matches[0], Retag: !tagged}, nil
 	default:
 		ids := make([]string, 0, len(matches))
 		for _, m := range matches {
@@ -120,27 +126,29 @@ func Decide(id Identity, candidates []Candidate) (Decision, error) {
 		}
 		sort.Strings(ids)
 		return Decision{Action: Refuse}, fmt.Errorf(
-			"adopt: %d resources claim %s=%s (%s) — the invariant is already broken; adopting one would orphan the rest",
-			len(matches), TagAppID, id.AppID, strings.Join(ids, ", "))
+			"adopt: %d resources claim subscription %s (%s), so adopting one would orphan the rest",
+			len(matches), id.Subscription, strings.Join(ids, ", "))
 	}
 }
 
 func conflictError(id Identity, conflicts []Candidate) error {
 	parts := make([]string, 0, len(conflicts))
 	for _, c := range conflicts {
-		owner := c.Tags[TagAppID]
-		if owner == "" {
+		owner, ok := c.Tags[observe.AWSSubscriptionTag]
+		switch {
+		case ok:
+			owner = "subscription " + owner
+		case id.Legacy.Key != "" && c.Tags[id.Legacy.Key] != "":
+			owner = id.Legacy.Key + "=" + c.Tags[id.Legacy.Key]
+		default:
 			owner = "<untagged>"
-		}
-		if mb, ok := c.Tags[TagManagedBy]; ok && mb != ManagedByValue {
-			owner += " managed by " + mb
 		}
 		parts = append(parts, fmt.Sprintf("%s (%s)", c.ResourceID, owner))
 	}
 	sort.Strings(parts)
 	return fmt.Errorf(
-		"adopt: refusing — %s does not exactly match %s=%s. A name or shape that merely looks right is not identity; adopting here would take over a resource that is not this app's",
-		strings.Join(parts, ", "), TagAppID, id.AppID)
+		"adopt: refusing, since %s is not subscription %s's. A name or shape that merely looks right is not identity, and adopting it would take over a resource that is not this subscription's",
+		strings.Join(parts, ", "), id.Subscription)
 }
 
 // Plan refuses the whole graph if any member refuses, since a partial adoption splits an app across two owners.

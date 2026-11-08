@@ -14,14 +14,44 @@ const (
 	ParamKey  = "dataSnapshotId"
 )
 
-// TagRole marks a snapshot an orphan sweep must keep.
 const (
-	TagRole   = "mitstack:handover"
-	TagAppID  = "mitstack:app-id"
-	RoleData  = "data"
 	StateDone = "completed"
 	StateFail = "error"
 )
+
+const (
+	roleSuffix  = "handover"
+	appIDSuffix = "app-id"
+	roleData    = "data"
+)
+
+// Marker tags a snapshot as a handover an orphan sweep must keep. Prefix starts each marker key and is the caller's own, so no other tool's tag collides with it, and Extra carries any further tags the caller's sweep or observer reads.
+type Marker struct {
+	Prefix string
+	Extra  map[string]string
+}
+
+func (m Marker) Validate() error {
+	if m.Prefix == "" {
+		return errors.New("handover: a marker needs a key prefix the caller owns, or its tags collide with another tool's")
+	}
+	return nil
+}
+
+// Tags writes the marker keys last, so an Extra tag of the same key never unmarks the snapshot.
+func (m Marker) Tags(appID string) map[string]string {
+	t := make(map[string]string, len(m.Extra)+2)
+	for k, v := range m.Extra {
+		t[k] = v
+	}
+	t[m.Prefix+roleSuffix] = roleData
+	t[m.Prefix+appIDSuffix] = appID
+	return t
+}
+
+func (m Marker) IsHandover(tags map[string]string) bool {
+	return m.Prefix != "" && tags[m.Prefix+roleSuffix] == roleData
+}
 
 // ErrNoVolume reports an app with no data volume to snapshot, which is no teardown failure.
 var ErrNoVolume = errors.New("handover: no data volume found for this app")
@@ -61,25 +91,16 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-func Tag(appID string) map[string]string {
-	return map[string]string{
-		TagRole:  RoleData,
-		TagAppID: appID,
-		"AppId":  appID,
-	}
-}
-
-func IsHandover(tags map[string]string) bool {
-	return tags[TagRole] == RoleData
-}
-
 // Snapshot returns the snapshot's id only once it has completed, since EC2 returns an id before the data is captured and the caller destroys the volume next.
-func Snapshot(ctx context.Context, api API, appID string, opts Options) (string, error) {
+func Snapshot(ctx context.Context, api API, marker Marker, appID string, opts Options) (string, error) {
 	if api == nil {
 		return "", errors.New("handover: no EC2 API configured — refusing to report a successful handover that never ran")
 	}
 	if appID == "" {
 		return "", errors.New("handover: appID is required — an untagged snapshot cannot be found again")
+	}
+	if err := marker.Validate(); err != nil {
+		return "", err
 	}
 	o := opts.withDefaults()
 
@@ -92,9 +113,9 @@ func Snapshot(ctx context.Context, api API, appID string, opts Options) (string,
 	}
 
 	// ASCII only: EC2 rejects a non-ASCII description.
-	desc := fmt.Sprintf("mitstack handover snapshot for app %s", appID)
+	desc := fmt.Sprintf("handover snapshot of the data volume of app %s", appID)
 
-	snapshotID, err := api.CreateSnapshot(ctx, volumeID, desc, Tag(appID))
+	snapshotID, err := api.CreateSnapshot(ctx, volumeID, desc, marker.Tags(appID))
 	if err != nil {
 		return "", fmt.Errorf("handover: create snapshot of %s: %w", volumeID, err)
 	}

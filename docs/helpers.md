@@ -22,9 +22,9 @@ package has [a page of its own](gitops.md).
 | `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
-| `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made |
-| `capabilities/aws/awsnames` | Names an app's account-unique AWS resources, such as its ECR repository and IAM roles |
-| `capabilities/aws/handover` | Hands an app's data volume to a replacement host through an EBS snapshot |
+| `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made, judging each by the kit's subscription tag |
+| `capabilities/aws/awsnames` | Names an app's account-unique AWS resources under the caller's prefix, such as its ECR repository and IAM roles |
+| `capabilities/aws/handover` | Hands an app's data volume to a replacement host through an EBS snapshot marked under the caller's tag prefix |
 | `helpers/tftpl` | Renders in Go an OpenTofu template its module also renders with `templatefile` |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
