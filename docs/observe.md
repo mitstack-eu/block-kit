@@ -43,9 +43,9 @@ While `Unsubscribing` is true, the observers for `aws.s3-bucket`, `aws.vpc`,
 `hetzner.server`, `hetzner.primary-ip`, `hetzner.network`, `hetzner.firewall`
 and `github.repository` then list what carries the subscription's id, when the
 observer's API also implements `AWSTaggingAPI`, `HetznerLabelAPI` or every
-`GitHubTagAPI` method but `MainFile`. A list that finds an object of the type answers `Present` with
-that object's identity, a list that finds none answers `Absent`, and a failed
-list returns its error.
+`GitHubTagAPI` method but `MainFile`. A list that finds an object of the type
+answers `Present` with that object's identity, a list that finds none answers
+`Absent`, and a failed list returns its error.
 
 These observers read a convention the block sets on the objects it creates, and `EC2Instance` shares it so it can leave out the egress proxy.
 
