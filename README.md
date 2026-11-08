@@ -201,6 +201,10 @@ provider and in `capabilities` per provider:
 | `helpers/reportproof` | A cluster or server block whose nodes report to mitstack | The proof that signs each report, and the check that verifies it |
 | `helpers/redundancy` | A block that removes or replaces one member of a redundant set, such as a gateway, an etcd member or a database instance | The guard an operator calls before it removes a member, which refuses the removal unless fresh readings show the rest of the set keeping its minimum |
 | `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials for the AWS account a call names |
+| `capabilities/aws/adopt` | A block whose retried subscribe may find its own AWS resources already made | The choice to create, adopt or refuse each resource by its `AppId` tag, refusing a resource of another app or another system |
+| `capabilities/aws/awsnames` | A block that creates an app's account-unique AWS resources | The one name of each, such as the ECR repository, the instance and deploy roles and the CloudFormation stack |
+| `capabilities/aws/handover` | A block that replaces an app's host and keeps its data | A snapshot of the app's EBS data volume, returned only once it completes and tagged so an orphan sweep keeps it |
+| `helpers/tftpl` | A block that renders in Go a template its OpenTofu module also renders | The subset of `templatefile` the module uses, refusing a missing or unused value and any other directive |
 | `capabilities/aws/apphostname` | A block that gives an app its hostname | The app's A record in mitstack's apps zone, held by one subscription, with an in-memory zone for tests in `capabilities/aws/apphostname/apphostnametest` |
 | `capabilities/github/ghapi` | A block that calls the GitHub API | A GitHub REST client whose host the operator decides |
 | `capabilities/github/gitops` | A block that deploys to Kubernetes through Argo CD | Commits the block's files to a GitOps repository and judges the deploy, with test fakes in `capabilities/github/gitops/gitopstest` |

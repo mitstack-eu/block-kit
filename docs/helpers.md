@@ -22,6 +22,10 @@ package has [a page of its own](gitops.md).
 | `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
+| `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made |
+| `capabilities/aws/awsnames` | Names an app's account-unique AWS resources, such as its ECR repository and IAM roles |
+| `capabilities/aws/handover` | Hands an app's data volume to a replacement host through an EBS snapshot |
+| `helpers/tftpl` | Renders in Go an OpenTofu template its module also renders with `templatefile` |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
 | `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name |
@@ -491,7 +495,12 @@ block that serves no web app is never held back.
 
 The probe dials only a host under `apps.mitstack.dev`, a custom domain
 `reach.VerifiedCustomDomain` confirmed, or a public IP address, so a request
-cannot point it at a private address or the cloud's metadata endpoint. A
+cannot point it at a private address or the cloud's metadata endpoint.
+`reach.ValidateCustomDomain` is the check `VerifiedCustomDomain` runs before
+any lookup, and a block calls it alone when it validates a requested domain.
+It refuses anything but a bare hostname, such as a scheme, a port, a path, a
+wildcard, a brace or a control character, so the value never becomes config in
+an edge's Caddy or ACME setup, and it accepts an empty domain. A
 status below 500 counts as serving, and so does a TLS failure on certificate
 trust alone, since it proves the app's edge is up.
 

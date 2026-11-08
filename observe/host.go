@@ -86,3 +86,47 @@ func (o EC2Container) ObserveResource(ctx context.Context, r contract.ResourceRe
 		return unknown("resource %q: container %s is %s", r.Name, ids[1], state), nil
 	}
 }
+
+// postgresProbe prints PRESENT=1, PRESENT=0 when Docker answers without the container, or PRESENT=unknown, then READY=<pg_isready's exit status> for a present container.
+const postgresProbe = `if docker inspect %[1]s >/dev/null 2>&1; then echo PRESENT=1; docker exec %[1]s pg_isready -U postgres >/dev/null 2>&1; echo READY=$?
+elif docker version >/dev/null 2>&1; then echo PRESENT=0; else echo PRESENT=unknown; fi`
+
+// EC2PostgresDatabase observes an aws.ec2-postgres-database's container by its instanceId and container, and reports only presence, identity and dbName, so a block that provides it reports the type's other outputs.
+type EC2PostgresDatabase struct {
+	API HostCommander
+}
+
+func (o EC2PostgresDatabase) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	ids, obs, ok := identityKeys(r, "instanceId", "container")
+	if !ok {
+		return obs, nil
+	}
+	if !containerName.MatchString(ids[1]) {
+		return unknown("resource %q: container name %q is not one the observer can ask about", r.Name, ids[1]), nil
+	}
+	stdout, err := o.API.RunOnInstance(ctx, r.Desired, ids[0], fmt.Sprintf(postgresProbe, ids[1]))
+	if err != nil {
+		return contract.Observation{}, err
+	}
+	markers := map[string]string{}
+	for _, line := range strings.Split(stdout, "\n") {
+		if key, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			markers[key] = value
+		}
+	}
+	switch presence, readiness := markers["PRESENT"], markers["READY"]; {
+	case presence == "0":
+		return absent(), nil
+	case presence != "1":
+		return unknown("resource %q: Docker could not say whether container %s exists", r.Name, ids[1]), nil
+	case readiness == "":
+		return unknown("resource %q: container %s exists, but the probe gave no readiness answer", r.Name, ids[1]), nil
+	case readiness != "0":
+		return unknown("resource %q: container %s exists but is not ready for connections (pg_isready exited %s)", r.Name, ids[1], readiness), nil
+	}
+	var outputs map[string]string
+	if db := r.Identity["database"]; db != "" {
+		outputs = map[string]string{"dbName": db}
+	}
+	return present(r, outputs), nil
+}
