@@ -28,7 +28,7 @@ package has [a page of its own](gitops.md).
 | `helpers/tftpl` | Renders in Go an OpenTofu template its module also renders with `templatefile` |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
-| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name |
+| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, or reads a server's `serverType` input |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
