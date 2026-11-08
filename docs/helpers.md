@@ -19,6 +19,7 @@ package has [a page of its own](gitops.md).
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `helpers/healthz` | Serves its health check, which every block does |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
+| `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
@@ -599,6 +600,82 @@ such as `the proof was minted for another body`:
    more than ten minutes away. Each time allows `reportproof.Leeway`, one
    minute, for clocks that drift.
 
+## Removing a member of a redundant set
+
+This section is for the author of a block whose step removes or replaces one
+member of a redundant set. A redundant set is a group of members that serve
+the same thing, so the cluster keeps working while one of them is gone:
+gateways, control-plane nodes with their etcd members, OpenBao members,
+database instances or workers. A replacement that runs while a second member
+is down can take the set below its quorum, the number of members it needs to
+keep serving. `helpers/redundancy` holds the one guard every such step calls
+first, so no block writes its own check.
+
+The guard judges only readings taken since the step began. A member that no
+read has seen counts as not serving, and so does a member whose latest reading
+is older than the step. An old reading proves only that the member served
+then, and a removal must rest on what serves now.
+
+### Calling the guard
+
+Build a `redundancy.Set` from the readings your block already observes, then
+call `AllowRemoval` with the member to remove and the time the step began.
+Return its error as it stands:
+
+```go
+set := redundancy.Set{
+	Name: "etcd members",
+	Members: []redundancy.Member{
+		{Name: "cp-1", Reading: &redundancy.Reading{At: reportTime, Serving: true}},
+		{Name: "cp-2", Reading: &redundancy.Reading{At: reportTime, Serving: false}},
+		{Name: "cp-3", Reading: &redundancy.Reading{At: reportTime, Serving: true}},
+	},
+	Minimum: redundancy.Majority(),
+}
+if err := set.AllowRemoval("cp-3", stepStart); err != nil {
+	return err
+}
+```
+
+A `Reading` holds when the member was read and whether it served. Take `At`
+from the source you read: a node report's `madeAt`, else its `receivedAt`, or
+the time your block ran a provider read. A member nothing has read gets a nil
+`Reading`. `stepStart` is the moment your step began, such as the start of the
+`upgrade` call, so a reading from an earlier call never counts.
+
+### The minimum each set keeps
+
+`Set.Minimum` is the number of members that must still serve once the member
+goes. The guard counts it over the whole set, the member being removed
+included. A `Minimum` left unset is an error, so no set falls back to keeping
+none.
+
+| Set | Minimum | Members that must still serve |
+|---|---|---|
+| etcd members, OpenBao members | `redundancy.Majority()` | More than half the set: 2 of 3, or 3 of 5 |
+| Gateways, database instances, workers | `redundancy.AllButOne()` | Every member but the one removed, and at least one |
+| A set of one member with no redundancy | `redundancy.NoRedundancy()` | None, and only a set of one may declare it |
+
+`AllButOne` keeps at least one member serving, so a set of one refuses its
+own replacement. A block whose single gateway may go while its replacement
+comes up declares `NoRedundancy` for that set.
+
+### What a refusal says
+
+A removal that would leave fewer serving members than the minimum returns a
+`*handler.Refused` of class `redundancy-below-minimum`, the
+`redundancy.ClassBelowMinimum` constant. Its detail names the member being
+removed, the minimum and every other member with its reading:
+
+```text
+refused:redundancy-below-minimum: removing "cp-3" from the etcd members would leave 1 serving, below their minimum of 2 (a majority of 3), judged by readings since 2026-11-08T09:00:00Z: "cp-1" read serving at 2026-11-08T09:01:00Z; "cp-2" read not serving at 2026-11-08T09:01:00Z
+```
+
+A call the guard cannot judge returns a plain error, since the mistake is the
+block's own. That covers a set with no minimum, a zero `stepStart`, a member
+the set does not hold, a name listed twice, and `NoRedundancy` on a set of
+more than one. `ExampleSet_AllowRemoval` in
+`helpers/redundancy/redundancy_test.go` runs the call above.
 
 ## Getting AWS credentials from the request
 
