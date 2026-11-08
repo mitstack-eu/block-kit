@@ -37,6 +37,9 @@ func TestIdentity_RefusesAnIdentityThatWouldMatchTooMuch(t *testing.T) {
 		{"a legacy tag with no value", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Key: "Owner"}}},
 		{"a legacy tag with no key", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Value: "app-42"}}},
 		{"a legacy tag that is the subscription tag", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Key: observe.AWSSubscriptionTag, Value: "sub-1"}}},
+		{"a legacy tag with a blank value", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Key: "Owner", Value: "  "}}},
+		{"a legacy tag with a blank key", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Key: "  ", Value: "app-42"}}},
+		{"a legacy tag of blanks alone", adopt.Identity{Subscription: "sub-7", Legacy: adopt.Tag{Key: " ", Value: " "}}},
 	} {
 		if err := tc.id.Validate(); err == nil {
 			t.Errorf("%s: Validate() = nil, want a refusal", tc.name)
@@ -83,6 +86,10 @@ func TestDecide(t *testing.T) {
 		{"a matching Name proves nothing", plain, []adopt.Candidate{tagged("i-abc", map[string]string{"Name": "myapp"})}, adopt.Refuse, false, nil},
 		{"two resources claiming the subscription are refused", migrating,
 			[]adopt.Candidate{owned("i-abc", "sub-7"), tagged("i-def", map[string]string{"Owner": "app-42"})}, adopt.Refuse, false, []string{"i-abc", "i-def"}},
+		{"two views of one resource that disagree are refused", migrating,
+			[]adopt.Candidate{tagged("i-abc", map[string]string{"Owner": "app-42"}), tagged("i-abc", map[string]string{observe.AWSSubscriptionTag: "sub-9", "Owner": "app-42"})},
+			adopt.Refuse, false, []string{"i-abc"}},
+		{"a resource with no id is refused, since it cannot be imported", plain, []adopt.Candidate{owned("", "sub-7")}, adopt.Refuse, false, []string{"no resource id"}},
 		{"an invalid identity refuses", adopt.Identity{}, []adopt.Candidate{owned("i-abc", "")}, adopt.Refuse, false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
