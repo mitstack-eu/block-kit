@@ -1,6 +1,6 @@
 package scripts_test
 
-// publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
+// publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
 
 import (
 	"errors"
