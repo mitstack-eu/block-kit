@@ -233,19 +233,19 @@ func TestPublishBlockWorkflow_EveryCheckoutKeepsNoToken(t *testing.T) {
 		t.Fatalf("reading publish-block.yml: %v", err)
 	}
 	all := workflowFields(string(raw))
-	read := 0
+	checkouts := 0
 	for _, key := range slices.Sorted(maps.Keys(all)) {
 		step, isUses := strings.CutSuffix(key, ".uses")
 		if !isUses || !strings.Contains(step, ".steps.") || !strings.HasPrefix(all[key], "actions/checkout@") {
 			continue
 		}
-		read++
+		checkouts++
 		if got := all[step+".with.persist-credentials"]; got != "false" {
-			t.Errorf("%s (%q) checks out with persist-credentials %q, want false", step, all[step+".name"], got)
+			t.Errorf("checkout %s, named %q, sets persist-credentials %q, want false", step, all[step+".name"], got)
 		}
 	}
-	if want := strings.Count(string(raw), "uses: actions/checkout@"); read != want {
-		t.Errorf("read %d checkout steps, but publish-block.yml names actions/checkout %d times", read, want)
+	if want := strings.Count(string(raw), "uses: actions/checkout@"); checkouts != want {
+		t.Errorf("the test read %d checkout steps, but publish-block.yml has %d, so it missed some", checkouts, want)
 	}
 }
 
