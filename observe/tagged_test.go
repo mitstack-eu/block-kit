@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mitstack-eu/block-kit/capabilities/github/landing"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/observe"
 )
@@ -275,7 +276,7 @@ func ghDesired() contract.Desired {
 	}
 }
 
-func ghLister(api *fakeGitHub) observe.GitHubTagged {
+func ghLister(api observe.GitHubTagAPI) observe.GitHubTagged {
 	return observe.GitHubTagged{
 		API:          api,
 		ProcessorURL: ghProcessor,
@@ -479,5 +480,95 @@ func TestGitHubSubscriptionHelpers_FollowADR0085(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("%s: got %q; want %q", tc.name, tc.got, tc.want)
 		}
+	}
+}
+
+// mainFiles is a fakeGitHub whose default branches hold files, so the lister can read a recorded contribution there.
+type mainFiles struct {
+	*fakeGitHub
+	main    map[string]map[string]string
+	readErr error
+}
+
+func (m *mainFiles) MainFile(_ context.Context, _ contract.Desired, repo, path string) ([]byte, bool, error) {
+	if m.readErr != nil {
+		return nil, false, m.readErr
+	}
+	content, held := m.main[repo][path]
+	return []byte(content), held, nil
+}
+
+const offeredDockerfile = "FROM nginx:1.27\n"
+
+var createdDockerfile = landing.File{Path: "Dockerfile", Blob: landing.BlobHash([]byte(offeredDockerfile)), Created: true}
+
+// recordedDesired records one resource of typ whose landing record names acme/app and files.
+func recordedDesired(t *testing.T, typ string, files []landing.File) contract.Desired {
+	t.Helper()
+	identity, err := landing.Record{Repository: "acme/app", Files: files}.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := ghDesired()
+	d.RecordedResources = map[string]contract.RecordedResource{"offer": {Type: typ, Identity: identity}}
+	return d
+}
+
+func TestGitHubTagged_ListsARecordedContributionWhileMainHoldsAFileItCreated(t *testing.T) {
+	contribution := observe.Tagged{Type: "github.scaffold-contribution", ID: "acme/app"}
+	readme := landing.File{Path: "README.md", Blob: landing.BlobHash([]byte("app\n"))}
+	for _, tc := range []struct {
+		name   string
+		typ    string
+		files  []landing.File
+		main   map[string]string
+		listed bool
+	}{
+		{"main holds a file it created at the recorded blob", "github.scaffold-contribution", []landing.File{createdDockerfile}, map[string]string{"Dockerfile": offeredDockerfile}, true},
+		{"the block that commits it has not committed it yet", "github.scaffold-contribution", []landing.File{createdDockerfile}, nil, false},
+		{"the app changed the only file it created", "github.scaffold-contribution", []landing.File{createdDockerfile}, map[string]string{"Dockerfile": offeredDockerfile + "changed by the app\n"}, false},
+		{"it created no file, since main already held the one it offers", "github.scaffold-contribution", []landing.File{readme}, map[string]string{"README.md": "app\n"}, false},
+		{"it offers no file", "github.scaffold-contribution", []landing.File{}, nil, false},
+		{"a resource of another type keeps the same record", "github.workflow-file", []landing.File{createdDockerfile}, map[string]string{"Dockerfile": offeredDockerfile}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &mainFiles{fakeGitHub: ghWorld(), main: map[string]map[string]string{"acme/app": tc.main}}
+
+			got, err := ghLister(api).ListTagged(context.Background(), recordedDesired(t, tc.typ, tc.files), ghSub)
+
+			if err != nil {
+				t.Fatalf("ListTagged: %v", err)
+			}
+			want := 0
+			if tc.listed {
+				want = 1
+			}
+			if n := countTagged(got, contribution); n != want {
+				t.Errorf("ListTagged listed %+v %d times, want %d: %+v", contribution, n, want, got)
+			}
+		})
+	}
+}
+
+func TestGitHubTagged_ReadsNoFileForAContributionThatCreatedNone(t *testing.T) {
+	_, err := ghLister(ghWorld()).ListTagged(context.Background(), recordedDesired(t, "github.scaffold-contribution", []landing.File{}), ghSub)
+
+	if err != nil {
+		t.Errorf("ListTagged over an API that reads no file, for a contribution that created none: %v; want no error, since there is nothing to read", err)
+	}
+}
+
+func TestGitHubTagged_FailsARecordedContributionItCannotRead(t *testing.T) {
+	d := recordedDesired(t, "github.scaffold-contribution", []landing.File{createdDockerfile})
+	boom := errors.New("github: rate limited")
+
+	_, err := ghLister(ghWorld()).ListTagged(context.Background(), d, ghSub)
+	if err == nil || !strings.Contains(err.Error(), "acme/app") {
+		t.Errorf("ListTagged over an API that reads no file on main = %v; want an error naming acme/app, since the lister cannot tell whether main holds the contribution", err)
+	}
+
+	_, err = ghLister(&mainFiles{fakeGitHub: ghWorld(), readErr: boom}).ListTagged(context.Background(), d, ghSub)
+	if !errors.Is(err, boom) {
+		t.Errorf("ListTagged whose read of main fails = %v; want the read's error", err)
 	}
 }

@@ -1244,11 +1244,19 @@ func (b *landingBlock) record(ctx context.Context, d contract.Desired, prior lan
 		return rec, err
 	}
 	b.lost = false
-	files := maps.Clone(starterFiles)
+	files := b.offered()
 	if b.teardown == "records one file" {
 		delete(files, "Dockerfile")
 	}
 	return landing.Offer(ctx, b.client(), landing.Landing{Repository: b.repo.Repo, Files: files, Prior: prior})
+}
+
+// offered is what the contribution offers app-scaffold, the starter files unless teardown is "offers no file".
+func (b *landingBlock) offered() map[string]string {
+	if b.teardown == "offers no file" {
+		return map[string]string{}
+	}
+	return maps.Clone(starterFiles)
 }
 
 func (b *landingBlock) Ensure(ctx context.Context, d contract.Desired) error {
@@ -1320,7 +1328,7 @@ func (o offerObserver) ObserveResource(ctx context.Context, r contract.ResourceR
 	if err != nil || obs.State != contract.Present {
 		return obs, err
 	}
-	fragment, err := json.Marshal(map[string]any{"files": starterFiles})
+	fragment, err := json.Marshal(map[string]any{"files": o.b.offered()})
 	obs.Outputs = map[string]string{"scaffoldContribution": string(fragment)}
 	return obs, err
 }
@@ -1549,6 +1557,83 @@ func TestAssertBlock_CommitsAContributionsOfferedFilesBeforeReadingMainAfterUnsu
 				t.Fatalf("AssertBlock failed = %v; want %v, naming %q: %q", got.failed, tc.want != nil, tc.want, got.logs)
 			}
 			wantProblemNaming(t, got.logs, tc.want...)
+		})
+	}
+}
+
+// mainAPI is GitHub as observe.GitHubTagged reads it, holding the fake repository on no topic and nothing on it but what main holds.
+type mainAPI struct{ repo *landingtest.Fake }
+
+func (mainAPI) RepositoriesWithTopic(context.Context, contract.Desired, string) ([]observe.GitHubRepositoryTopics, error) {
+	return nil, nil
+}
+
+func (mainAPI) Webhooks(context.Context, contract.Desired, string) ([]observe.GitHubWebhook, error) {
+	return nil, nil
+}
+
+func (mainAPI) ActionsSecretNames(context.Context, contract.Desired, string) ([]string, error) {
+	return nil, nil
+}
+
+func (mainAPI) ActionsVariableNames(context.Context, contract.Desired, string) ([]string, error) {
+	return nil, nil
+}
+
+func (mainAPI) Commits(context.Context, contract.Desired, string) ([]observe.GitHubCommitPaths, error) {
+	return nil, nil
+}
+
+func (a mainAPI) MainFile(_ context.Context, _ contract.Desired, repo, path string) ([]byte, bool, error) {
+	if repo != a.repo.Repo {
+		return nil, false, fmt.Errorf("the fake holds %s, not %s", a.repo.Repo, repo)
+	}
+	content, held := a.repo.Main()[path]
+	return []byte(content), held, nil
+}
+
+type listsNothing struct{}
+
+func (listsNothing) ListTagged(context.Context, contract.Desired, string) ([]observe.Tagged, error) {
+	return nil, nil
+}
+
+// listerRepositoryProvider lists through a kit lister and hands the check the block's fake repository.
+type listerRepositoryProvider struct {
+	kittest.ListerProvider
+	b *landingBlock
+}
+
+func (p listerRepositoryProvider) Repository() *landingtest.Fake { return p.b.repo }
+
+func TestAssertBlock_ListsAContributionFromItsLandingRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name, teardown string
+		nothingListed  bool
+		want           []string
+	}{
+		{name: "a contribution whose offered files the check commits is listed from its record"},
+		{name: "a contribution offering no file holds nothing on GitHub for a lister to list", teardown: "offers no file"},
+		{name: "a contribution whose files the check commits fails when its lister lists nothing", nothingListed: true, want: []string{`resource "` + landingType + `"`, "untagged"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := landingBlockThat(t, landingType, tc.teardown, true)
+			b := in.Provider.(repositoryProvider).b
+			var lister observe.TaggedLister = observe.GitHubTagged{API: mainAPI{repo: b.repo}}
+			if tc.nothingListed {
+				lister = listsNothing{}
+			}
+			in.Provider = listerRepositoryProvider{ListerProvider: kittest.ListerProvider{Lister: lister, Loser: repositoryProvider{b: b}}, b: b}
+
+			got := runAndCollect(func(tb testing.TB) { kittest.AssertBlock(tb, in) })
+
+			if got.failed != (tc.want != nil) {
+				t.Fatalf("AssertBlock failed = %v; want %v, naming %q: %q", got.failed, tc.want != nil, tc.want, got.logs)
+			}
+			wantProblemNaming(t, got.logs, tc.want...)
+			if !slices.ContainsFunc(got.logs, func(l string) bool { return strings.Contains(l, "guards ran:") && strings.Contains(l, "tagging") }) {
+				t.Errorf("the tagging guard did not run: %q", got.logs)
+			}
 		})
 	}
 }
