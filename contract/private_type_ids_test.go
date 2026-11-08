@@ -73,7 +73,33 @@ func TestParseManifest_V1BetaRefusesAnUnnamedResourceOfAPrivateTypeAskingForANam
 	raw := edit(t, privateTypeManifest, `    - { name: bucket, type: "@acme/aws.special-bucket" }`, `    - "@acme/aws.special-bucket"`,
 		"  provides: [bucket]\n", "")
 
-	requireRefusedNaming(t, raw, "spec.resources[0]", "@acme/aws.special-bucket", "slash", "give the resource a name")
+	requireRefusedNaming(t, raw, "spec.resources[0].name", "@acme/aws.special-bucket", "name the resource without a slash")
+}
+
+func TestParseManifest_V1BetaRefusesAResourceNamedByAPrivateTypeIDAskingForANameWithoutASlash(t *testing.T) {
+	raw := edit(t, privateTypeManifest, `{ name: bucket, type:`, `{ name: "@acme/aws.special-bucket", type:`, "  provides: [bucket]\n", "")
+
+	requireRefusedNaming(t, raw, "spec.resources[0].name", "@acme/aws.special-bucket", "name the resource without a slash")
+}
+
+func TestResourceTypeIDGrammar_TheSchemaTheManifestAndParseResourceTypeIDAcceptTheSameIDs(t *testing.T) {
+	doc := jsonObject(t, contract.ManifestSchema)
+	pattern := regexp.MustCompile(schemaAt(t, doc, doc, "$defs", "typeId")["pattern"].(string))
+	cases := map[string]bool{
+		"aws.s3-bucket": true, "@acme/aws.special-bucket": true, slug40 + ".x": true, "@acme/" + slug40 + ".x": true, "a--b.x": true,
+		slug41 + ".x": false, "@acme/" + slug41 + ".x": false, "1aws.x": false, "aws.1x": false, "@acme/1aws.x": false,
+		"aws.x--y": false, "@" + slug41 + "/aws.x": false, "aws-.x": false,
+	}
+	for id, want := range cases {
+		t.Run(id, func(t *testing.T) {
+			_, _, _, err := contract.ParseResourceTypeID(id)
+			_, parseErr := contract.ParseManifest(edit(t, privateTypeManifest, `type: "@acme/aws.special-bucket" }`, `type: "`+id+`" }`))
+
+			if got := [3]bool{pattern.MatchString(id), err == nil, parseErr == nil}; got != [3]bool{want, want, want} {
+				t.Errorf("schema pattern, ParseResourceTypeID, ParseManifest accept %q = %v, want all %v (%v; %v)", id, got, want, err, parseErr)
+			}
+		})
+	}
 }
 
 func TestManifestSchema_TypeIDPatternIsTheGrammarTheParserHolds(t *testing.T) {
@@ -89,7 +115,7 @@ func TestManifestSchema_TypeIDPatternIsTheGrammarTheParserHolds(t *testing.T) {
 			t.Errorf("$defs.typeId.pattern %q refuses %q, which ParseManifest accepts", pattern, id)
 		}
 	}
-	for _, id := range []string{"@Acme/aws.x", "acme/aws.x", "@/aws.x", "@acme/aws", "@acme/x/aws.y", "@" + slug41 + "/aws.x"} {
+	for _, id := range []string{"@Acme/aws.x", "acme/aws.x", "@/aws.x", "@acme/aws", "@acme/x/aws.y", "@" + slug41 + "/aws.x", slug41 + ".x"} {
 		if re.MatchString(id) {
 			t.Errorf("$defs.typeId.pattern %q accepts %q, which ParseManifest refuses", pattern, id)
 		}
