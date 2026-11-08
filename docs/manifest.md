@@ -107,6 +107,13 @@ under that name. Two entries that would share a name are refused, and so is a
 resource name holding a slash. A resource's name stays the same across
 versions, because the platform records each resource under it.
 
+A type id is a community type, such as `aws.s3-bucket`, or a private type that
+an org keeps in the catalogue under its own name, such as
+`@acme/aws.special-bucket`. The org part follows the rules for a private block
+id, which [Block ids](#block-ids) gives. Write a private type id in quotes,
+because YAML does not allow `@` at the start of an unquoted value. A private
+type id holds a slash, so a resource of a private type needs its own `name`.
+
 A requirement listing several types is met by whichever of them the app
 offers. The request's `requirementTypes` says which type met each
 requirement, so the block's code reads `requires.host` the same way whether
