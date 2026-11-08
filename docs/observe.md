@@ -158,6 +158,7 @@ block's Hetzner client implements in a few lines.
 | `IAMRole` | `aws.iam-role` | `roleName` | `roleArn`, as a secret output, because the type marks it secret |
 | `Route53Record` | `aws.route53-record` | `hostedZoneId`, `recordName` | `appHostname` and its `https` `appUrl` |
 | `EC2Container` | `aws.ec2-container` | `instanceId`, `container` | The container's state, read from the instance's Docker |
+| `EC2PostgresDatabase` | `aws.ec2-postgres-database` | `instanceId`, `container` | Present once the container's `pg_isready` answers, with `dbName` when the identity holds `database` |
 | `HetznerServer` | `hetzner.server` | `serverId` | Present when running, with `hostId`, `execKind`, `execTarget` and `cloud.region` |
 | `HetznerPrimaryIP` | `hetzner.primary-ip` | `primaryIpId` | `publicIp` |
 | `HetznerFirewall`, `HetznerNetwork` | `hetzner.firewall`, `hetzner.network` | `firewallId`, `networkId` | Whether it exists |
@@ -170,6 +171,14 @@ block's Hetzner client implements in a few lines.
 instance and return its output, such as one built on `helpers/hostexec`. It
 reports a container absent only when Docker answers that no such container
 exists, and empty output is unknown. A script that exits nonzero is an error.
+
+`EC2PostgresDatabase` runs its probe the same way. The probe prints
+`PRESENT=1`, `PRESENT=0` when Docker answers without the container, or
+`PRESENT=unknown` when Docker does not answer, and for a present container it
+then prints `READY=` and the exit status of `pg_isready`. The database is
+present once `READY=0`, absent on `PRESENT=0`, and otherwise unknown. It
+reports presence, identity and `dbName` only, so a block that provides the type
+reports the type's other outputs from its own observer.
 
 ## Observing a type that carries an observe spec
 

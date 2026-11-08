@@ -196,8 +196,11 @@ type Resolver interface {
 
 // One matching address suffices, since round-robin records are ordinary; a resolver error is always a refusal.
 func VerifiedCustomDomain(ctx context.Context, resolver Resolver, domain string, expectedAddrs []string) (string, error) {
-	if domain == "" || strings.ContainsAny(domain, ":/") {
+	if domain == "" {
 		return "", fmt.Errorf("reach: custom domain %q is not a bare hostname", domain)
+	}
+	if err := ValidateCustomDomain(domain); err != nil {
+		return "", fmt.Errorf("reach: custom domain %q is not a bare hostname: %w", domain, err)
 	}
 
 	addrs, err := resolver.LookupHost(ctx, domain)
