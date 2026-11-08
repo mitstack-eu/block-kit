@@ -755,14 +755,31 @@ spec:
     contract: kit/v1
 `
 
-func markedSnapshot(t *testing.T, ids ...string) contract.TypeSnapshot {
+// markedSnapshot sets the snapshot key mark true on each type ids names, through the JSON the platform serves.
+func markedSnapshot(t *testing.T, mark string, ids ...string) contract.TypeSnapshot {
 	t.Helper()
-	snap := typeSnapshot(t)
-	snap.Types = slices.Clone(snap.Types)
-	for i := range snap.Types {
-		if slices.Contains(ids, snap.Types[i].ID) {
-			snap.Types[i].EndsWithSubscription = true
+	raw, err := os.ReadFile("../../contract/testdata/type-snapshot.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Version int              `json:"version"`
+		Types   []map[string]any `json:"types"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range doc.Types {
+		if slices.Contains(ids, typ["id"].(string)) {
+			typ[mark] = true
 		}
+	}
+	if raw, err = json.Marshal(doc); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := contract.ParseTypeSnapshot(raw)
+	if err != nil {
+		t.Fatalf("ParseTypeSnapshot: %v", err)
 	}
 	return snap
 }
@@ -779,7 +796,7 @@ func pullRequestBlock(t *testing.T) (*fakeBlock, kittest.Block) {
 		Config: handler.Config{
 			Resource: b,
 			Manifest: []byte(pullRequestBlockManifest),
-			Types:    markedSnapshot(t, "github.pull-request"),
+			Types:    markedSnapshot(t, "endsWithSubscription", "github.pull-request"),
 			Observers: map[string]handler.Observer{
 				"aws.ec2-instance":    providerObserver{p: p},
 				"github.pull-request": providerObserver{p: p},
@@ -804,6 +821,30 @@ func TestAssertBlock_PassesAMarkedResourceLeftPresentAndFailsAnUnmarkedOne(t *te
 	if !failing.failed {
 		t.Errorf("AssertBlock passed a block that leaves unmarked aws.ec2-instance present: %q", failing.logs)
 	}
+}
+
+// unlistedVolumeBlock holds its volume under no subscription's tag, as a record no provider object stands behind.
+func unlistedVolumeBlock(t *testing.T) kittest.Block {
+	t.Helper()
+	b, in := hostBlock(t)
+	b.untagged = "aws.ebs-volume"
+	return in
+}
+
+func TestCheckBlock_PassesAnUnlistedResourceOnlyWhenTheSnapshotMarksItsTypeProviderHoldsNothing(t *testing.T) {
+	unmarked := unlistedVolumeBlock(t)
+	marked := unlistedVolumeBlock(t)
+	marked.Config.Types = markedSnapshot(t, "providerHoldsNothing", "aws.ebs-volume")
+
+	wantProblemNaming(t, kittest.CheckBlock(unmarked), `resource "aws.ebs-volume"`, "untagged")
+	wantNoProblems(t, kittest.CheckBlock(marked))
+}
+
+func TestCheckBlock_FailsAnObjectListedAsATypeMarkedProviderHoldsNothing(t *testing.T) {
+	_, in := hostBlock(t)
+	in.Config.Types = markedSnapshot(t, "providerHoldsNothing", "aws.ebs-volume")
+
+	wantProblemNaming(t, kittest.CheckBlock(in), `resource "aws.ebs-volume-`, "carries the subscription's id", "providerHoldsNothing")
 }
 
 func partlessSnapshot(t *testing.T) contract.TypeSnapshot {
@@ -1040,7 +1081,7 @@ func TestCheckBlock(t *testing.T) {
 		return func(t *testing.T) kittest.Block {
 			b, in := pullRequestBlock(t)
 			if leave != "" {
-				b.leaveOnDelete, in.Config.Types = leave, markedSnapshot(t, marked...)
+				b.leaveOnDelete, in.Config.Types = leave, markedSnapshot(t, "endsWithSubscription", marked...)
 			}
 			return in
 		}
@@ -1342,7 +1383,7 @@ func landingBlockThat(t *testing.T, typ, teardown string, offer bool) kittest.Bl
 	b := &landingBlock{repo: landingtest.New(t, "acme/weather"), typ: typ, teardown: teardown, offer: offer}
 	types := typeSnapshot(t)
 	if teardown == "leaves its files" {
-		types = markedSnapshot(t, typ)
+		types = markedSnapshot(t, "endsWithSubscription", typ)
 	}
 	var observer handler.Observer = landing.Observer{Client: b.reachableClient}
 	if offer {
