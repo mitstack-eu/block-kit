@@ -81,6 +81,17 @@ func stepWith(all map[string]string, job, key, value string) bool {
 	return stepOf(all, job, key, value) != ""
 }
 
+func checkFields(t *testing.T, workflow, prefix string, cases []struct{ name, got, want string }) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(prefix+tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("%s field = %q, want %q", workflow, tc.got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const checkout, setupGo = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
 	const releaseDryRun = "bash scripts/release-block-kit.sh --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
@@ -159,13 +170,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"record delivery serialises its runs in one concurrency group", field("jobs.record-delivery.concurrency.group"), "record-delivery"},
 		{"record delivery never cancels a run between the board write and the tag advance", field("jobs.record-delivery.concurrency.cancel-in-progress"), "false"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.got != tc.want {
-				t.Errorf("ci.yml field = %q, want %q", tc.got, tc.want)
-			}
-		})
-	}
+	checkFields(t, "ci.yml", "", cases)
 	for _, tc := range []struct{ name, scope, forbidden string }{
 		{"the test job never continues on error, so a failing step fails the check main requires", "jobs.test.", "continue-on-error"},
 		{"the pr key gate never continues on error, so a missing key is a red check", "jobs.pr-key-gate.", "continue-on-error"},
