@@ -8,13 +8,13 @@ import (
 	"strings"
 )
 
-// goOperatorSuites are the suites that judge an operator written in the block's own Go code, in run order.
-var goOperatorSuites = []string{"contract", "secret-safety", "guarded-client", "teardown", "resources"}
+// goOperatorSuiteNames are the suites after trust-plumbing that goBlockSuites runs, in run order.
+var goOperatorSuiteNames = []string{"contract", "secret-safety", "guarded-client", "teardown", "resources"}
 
 // opentofuOnlySuites answers trust-plumbing and each Go operator suite for a block whose image serves an OpenTofu module through the opentofu-operator binary.
 func opentofuOnlySuites(target string) []SuiteResult {
 	suites := []SuiteResult{opentofuTrustPlumbingSuite(target)}
-	for _, name := range goOperatorSuites {
+	for _, name := range goOperatorSuiteNames {
 		suites = append(suites, SuiteResult{name, "skipped",
 			"--opentofu-only judges a block with no Go code of its own, so this suite, which judges a Go operator, has nothing to run; trust-plumbing fails such a block that holds Go code"})
 	}

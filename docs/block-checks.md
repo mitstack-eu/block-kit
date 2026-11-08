@@ -30,6 +30,11 @@ reason.
 | `deliverable` | The block has its own `Dockerfile`, and it copies nothing from `examples/operator-kit`, the folder of the platform's repository where the kit once lived, which a block's own build cannot reach |
 | `manifest` | The manifest parses strictly as `mitstack/v1beta`, and `contract.CheckManifest`, the platform's own checks, accepts it against the block's `type-snapshot.json`, as [Writing the manifest](manifest.md) lists. On a pull request, a `spec.version` that differs from the base branch's manifest needs both `spec.releaseClass` and `spec.releaseNote`. A `spec.version` equal to the base branch's fails when the pull request changes any file other than Markdown, a file under `.github/` or `LICENSE`, and the message names the files and the missing version bump |
 
+An OpenTofu-only block runs blockverify with `--opentofu-only`, which changes
+what `trust-plumbing` judges and skips the five suites that judge a Go
+operator, as [Checks for an OpenTofu-only
+block](#checks-for-an-opentofu-only-block) describes.
+
 A file holding a `TestNoSecretLeak` or `TestUnsubscribeDeletes` test must not
 build `kittest.FakeResource`, the kit's own stand-in block, because a test over
 the kit's fake judges the fake instead of your block. [Testing a
@@ -352,10 +357,31 @@ two variables.
 
 The `opentofu-conformance` job runs in place of the Go `conformance` job and
 reports under the same check name, so `block / conformance` stays the check
-your `main` requires. The operator image is private, so the job assumes the
-verify role to pull it. The job builds your block's image once and runs three
-checks inside it, and on a pull request it then scans the image as the
-publish job does:
+your `main` requires. It first runs blockverify, built from the kit at
+`kit-ref`, over your block's tree with `--opentofu-only`. On a pull request it
+passes the base branch's manifest and the changed files as the Go job does, so
+the `manifest` suite holds `spec.version` to the same rule. A pull request
+that changes `main.tf` and keeps the base branch's version fails, naming
+`main.tf`.
+
+With `--opentofu-only`, each suite answers as this table shows:
+
+| Suite | What it judges for an OpenTofu-only block |
+|---|---|
+| `trust-plumbing` | `manifest.yaml` exists and declares `contract: kit/v1`, a `.tf` or `.tofu` file sits at the root, and no `go.mod` or `.go` file sits anywhere in the tree. A block with Go code of its own runs without the flag |
+| `contract`, `secret-safety`, `guarded-client`, `teardown`, `resources` | `skipped`, since each judges a Go operator and the block's operator is opentofu-operator |
+| `deliverable`, `manifest` | The same as for any block |
+
+To run it on your machine, add the flag to the command in [What blockverify
+judges](#what-blockverify-judges):
+
+```sh
+go run github.com/mitstack-eu/block-kit/verify/blockverify@<tag> --standalone --opentofu-only .
+```
+
+The operator image is private, so the job then assumes the verify role to pull
+it. The job builds your block's image once and runs three checks inside it,
+and on a pull request it then scans the image as the publish job does:
 
 | Check | What it runs |
 |---|---|
@@ -363,9 +389,9 @@ publish job does:
 | `tofu test` | `tofu init` with no backend, then `tofu test` over the module's `.tftest.hcl` files |
 | `block-verify` | The test binary the operator image carries, which runs the kit's guards over the module. Its `TestDeclaredResources` fails, for example, when `manifest.yaml` declares a resource that `resources.json` does not map to the module |
 
-block-verify judges an OpenTofu-only block as blockverify judges a Go block's
-code. It comes from the operator image, while the Go job builds blockverify
-from the kit at `kit-ref`.
+block-verify judges an OpenTofu-only block's module as blockverify's Go
+operator suites judge a Go block's code. It comes from the operator image,
+while blockverify comes from the kit at `kit-ref`.
 
 On a push to your default branch, the `publish` job builds, scans and pushes
 the image as it does for a Go block. The job runs block-verify again in the

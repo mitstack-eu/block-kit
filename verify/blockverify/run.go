@@ -70,7 +70,11 @@ func Run(args []string, stdout io.Writer) int {
 		return 2
 	}
 
-	report := runStandalone(a.target, a.baseManifest, a.changedFiles, a.opentofuOnly)
+	operatorSuites := goBlockSuites
+	if a.opentofuOnly {
+		operatorSuites = opentofuOnlySuites
+	}
+	report := runStandalone(a.target, a.baseManifest, a.changedFiles, operatorSuites)
 
 	if a.jsonOut {
 		raw, err := json.Marshal(report)
@@ -126,22 +130,21 @@ func parseArgs(args []string) (a cliArgs, ok bool) {
 	return a, true
 }
 
-// runStandalone runs the suites in the fixed contract order.
-func runStandalone(target, baseManifest, changedFiles string, opentofuOnly bool) Report {
-	var suites []SuiteResult
-	if opentofuOnly {
-		suites = opentofuOnlySuites(target)
-	} else {
-		suites = []SuiteResult{
-			trustPlumbingSuite(target),
-			contractSuite(target),
-			secretSafetySuite(target),
-			guardedClientSuite(target),
-			teardownSuite(target),
-			resourcesSuite(target),
-		}
+// goBlockSuites answers trust-plumbing and each Go operator suite for a block whose operator is its own Go code.
+func goBlockSuites(target string) []SuiteResult {
+	return []SuiteResult{
+		trustPlumbingSuite(target),
+		contractSuite(target),
+		secretSafetySuite(target),
+		guardedClientSuite(target),
+		teardownSuite(target),
+		resourcesSuite(target),
 	}
-	suites = append(suites, deliverableSuite(target), manifestSuite(target, baseManifest, changedFiles))
+}
+
+// runStandalone runs the suites in the fixed contract order, the first six as operatorSuites answers them.
+func runStandalone(target, baseManifest, changedFiles string, operatorSuites func(target string) []SuiteResult) Report {
+	suites := append(operatorSuites(target), deliverableSuite(target), manifestSuite(target, baseManifest, changedFiles))
 
 	verdict := "pass"
 	for _, s := range suites {
