@@ -15,7 +15,7 @@ const (
 	entrySeparator  = ","
 )
 
-// ServerTypes is a block's serverType input: Allowed lists the types it runs on, Max is the most entries it takes or 0 for as many as Allowed holds, and Default is the list read when a request gives none or "" to refuse that request.
+// ServerTypes is a block's serverType input: Allowed lists the types it runs on, Max is the most entries it takes or 0 for as many as Allowed holds, and Default is the list read when a request gives none, left empty to refuse such a request.
 type ServerTypes struct {
 	Allowed []string
 	Max     int
