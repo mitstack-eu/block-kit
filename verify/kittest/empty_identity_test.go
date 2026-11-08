@@ -111,3 +111,10 @@ func TestCheckBlock_ProbesTheTypeEachRunMeetsARequirementWith(t *testing.T) {
 
 	wantProblemNaming(t, problems, `resource "app-container"`, "empty identity", "requires.host met by hetzner.server")
 }
+
+func TestCheckBlock_WantsAbsentOnAnEmptyIdentityTeardownOfATypeMarkedProviderHoldsNothing(t *testing.T) {
+	_, in := hostBlock(t)
+	in.Config.Types = markedSnapshot(t, "providerHoldsNothing", "aws.ebs-volume")
+
+	wantProblemNaming(t, kittest.CheckBlock(in), `resource "aws.ebs-volume"`, "observed present", "empty identity", "providerHoldsNothing", "want absent")
+}
