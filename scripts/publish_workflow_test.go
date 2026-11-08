@@ -3,6 +3,7 @@ package scripts_test
 // publish-block.yml runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -203,7 +204,7 @@ func stepAt(all map[string]string, job, key, value string) int {
 func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 	all := publishWorkflow(t)
 	jobs := []struct{ job, judge, token string }{
-		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"`, ""},
+		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"`, "${{ github.token }}"},
 		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only`, "${{ github.token }}"},
 	}
 	for _, j := range jobs {
@@ -440,6 +441,16 @@ func TestPublishBlockWorkflow_ReadsAPrivateGHCRBaseOnlyInTheJobsThatBuildTheImag
 			struct{ name, got, want string }{job + " logs in only for a caller that turns ghcr-login on", step("if"), b.gate},
 			struct{ name, got, want string }{job + " hands docker the job's own token through the environment", step("env.GHCR_TOKEN"), "${{ github.token }}"},
 		)
+	}
+	for i := 0; ; i++ {
+		step := "jobs.conformance.steps." + strconv.Itoa(i) + "."
+		if _, ok := all[step+"name"]; !ok && all[step+"uses"] == "" && all[step+"run"] == "" {
+			break
+		}
+		if strings.HasPrefix(all[step+"uses"], "actions/checkout@") {
+			cases = append(cases, struct{ name, got, want string }{fmt.Sprintf("conformance checkout %d keeps no credential the block's code could read", i),
+				fieldOr(all, step+"with.persist-credentials"), "false"})
+		}
 	}
 	for _, after := range []string{"go test", "blockverify (standalone contract check)"} {
 		cases = append(cases, struct{ name, got, want string }{"conformance logs in after " + after + " has run the block's code",
