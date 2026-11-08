@@ -167,9 +167,15 @@ report the attestation binds to.
 ## Where CI runs it
 
 Your block's CI calls the kit's reusable workflow,
-`.github/workflows/publish-block.yml`, with `uses:` and the block's id:
+`.github/workflows/publish-block.yml`, with `uses:` and the block's id, and
+grants the permissions its jobs ask for:
 
 ```yaml
+permissions:
+  contents: read
+  id-token: write
+  packages: read
+
 jobs:
   block:
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@v0.4.0
@@ -249,6 +255,29 @@ each push to `main` that workflow does three things with the token:
 2. It runs `blockverify --standalone --json .` into `report.json`.
 3. It posts the report to `POST https://api.mitstack.dev/v1/blocks/{id}/attestations`,
    and the platform signs a passing report as the block's attestation.
+
+### A private base image on GHCR
+
+When your Dockerfile copies from a private image on `ghcr.io`, set
+`ghcr-login: true`:
+
+```yaml
+    with:
+      block-id: aws-app-infra
+      ghcr-login: true
+```
+
+The jobs that build your image, `conformance`, `opentofu-conformance` and
+`publish`, then log in to `ghcr.io` with their own `GITHUB_TOKEN` just before
+the build. They are the only jobs that hold `packages: read`, and the Go
+conformance job's checkouts keep no token, so your tests never read it. The
+image's package must give your repository read access, as a package your
+repository's own workflow publishes does.
+
+Every caller grants `packages: read`, whether or not it sets `ghcr-login`.
+GitHub refuses to start a reusable workflow whose job asks for a permission
+the calling job does not grant, even a job that would not run, and the run
+then fails with no job started.
 
 ### How the publish job scans the image
 

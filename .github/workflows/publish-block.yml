@@ -17,6 +17,15 @@
 # block-verify again in the image it pushed and signs that result into the
 # provenance record, with the kit version the operator binary was built with.
 #
+# A block whose Dockerfile copies from a private image on ghcr.io sets
+# `ghcr-login`. The three jobs that build the image then log in to ghcr.io
+# with their own GITHUB_TOKEN just before the build, and only they hold
+# `packages: read`. GitHub refuses to start a called workflow whose job asks
+# for a permission its caller's job does not grant, whether or not that job
+# would run, so every caller grants `packages: read` beside `contents: read`
+# and `id-token: write`. The image's package must give the block's repository
+# read access, as a package the repository's own workflow publishes does.
+#
 # The block type's conformance job, `secrets` and `scripts` run on every
 # event. `publish` runs only on a push to the caller's default branch, so a
 # pull-request run of a caller gets the three checks with the publish job
@@ -86,6 +95,10 @@ on:
         required: false
         type: boolean
         default: false
+      ghcr-login:
+        required: false
+        type: boolean
+        default: false
       platform-verdict:
         required: false
         type: boolean
@@ -119,8 +132,12 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:
       contents: read
+      packages: read
     steps:
+      # Neither checkout keeps the job's token, which the block's tests could otherwise read from the checkout's config.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -143,6 +160,7 @@ jobs:
           repository: mitstack-eu/block-kit
           ref: ${{ inputs.kit-ref }}
           path: block-kit
+          persist-credentials: false
 
       - name: Build blockverify
         working-directory: block-kit
@@ -166,6 +184,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FETCH_TOKEN: ${{ github.token }}
         run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
 
       - name: Judge the comments this pull request adds
@@ -187,6 +206,13 @@ jobs:
           name: blockverify-report
           path: blockverify-report.json
 
+      # The login comes after every step that runs the block's code, so that code never reads the credential.
+      - name: Log in to GHCR with the job's own token
+        if: inputs.ghcr-login && github.event_name == 'pull_request'
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
       # A push to the default branch builds and scans the image in publish.
       - name: Build the block image
         if: github.event_name == 'pull_request'
@@ -206,6 +232,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -271,6 +298,12 @@ jobs:
           set -euo pipefail
           REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ inputs.aws-region }}.amazonaws.com"
           aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Log in to GHCR with the job's own token
+        if: inputs.ghcr-login
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Build the block image
         id: image
@@ -473,6 +506,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -584,6 +618,12 @@ jobs:
 
       # Any finding with a fixed version, at any severity, stops the job
       # before the first push, but the one scan-image.sh's exception proves.
+      - name: Log in to GHCR with the job's own token
+        if: inputs.ghcr-login && steps.existing.outputs.published == 'false'
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
       - name: Build and push image
         if: steps.existing.outputs.published == 'false'
         run: |
