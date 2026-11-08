@@ -606,7 +606,9 @@ This section is for the author of a block whose step removes or replaces one
 member of a redundant set. A redundant set is a group of members that serve
 the same thing, so the cluster keeps working while one of them is gone:
 gateways, control-plane nodes with their etcd members, OpenBao members,
-database instances or workers. A replacement that runs while a second member
+database instances or workers. etcd is the database a Kubernetes control plane
+keeps the cluster's state in, and OpenBao is a store of secrets; each runs as a
+few members that agree by majority. A replacement that runs while a second member
 is down can take the set below its quorum, the number of members it needs to
 keep serving. `helpers/redundancy` holds the one guard every such step calls
 first, so no block writes its own check.
@@ -638,21 +640,25 @@ if err := set.AllowRemoval("cp-3", stepStart); err != nil {
 ```
 
 A `Reading` holds when the member was read and whether it served. Take `At`
-from the source you read: a node report's `madeAt`, else its `receivedAt`, or
-the time your block ran a provider read. A member nothing has read gets a nil
+from the source you read. For a node report, take the time the node made it,
+its body's `madeAt`, else the time mitstack received it, `receivedAt`, as
+[Signing a node report](#signing-a-node-report) describes the report. For a
+provider read, take the time your block ran it. The guard trusts `At` as you
+give it, so take it from the source and never from your own clock after the
+fact. A member nothing has read gets a nil
 `Reading`. `stepStart` is the moment your step began, such as the start of the
 `upgrade` call, so a reading from an earlier call never counts.
 
 ### The minimum each set keeps
 
 `Set.Minimum` is the number of members that must still serve once the member
-goes. The guard counts it over the whole set, the member being removed
-included. A `Minimum` left unset is an error, so no set falls back to keeping
+goes. Its size comes from the whole set, the member being removed included,
+while only the other members' readings count toward it. A `Minimum` left unset is an error, so no set falls back to keeping
 none.
 
 | Set | Minimum | Members that must still serve |
 |---|---|---|
-| etcd members, OpenBao members | `redundancy.Majority()` | More than half the set: 2 of 3, or 3 of 5 |
+| etcd members, OpenBao members | `redundancy.Majority()` | More than half the set: 2 of 3, 3 of 4, or 3 of 5 |
 | Gateways, database instances, workers | `redundancy.AllButOne()` | Every member but the one removed, and at least one |
 | A set of one member with no redundancy | `redundancy.NoRedundancy()` | None, and only a set of one may declare it |
 
