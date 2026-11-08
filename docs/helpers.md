@@ -640,10 +640,13 @@ if err := set.AllowRemoval("cp-3", stepStart); err != nil {
 ```
 
 A `Reading` holds when the member was read and whether it served. Take `At`
-from the source you read. For a node report, take the time the node made it,
-its body's `madeAt`, else the time mitstack received it, `receivedAt`, as
-[Signing a node report](#signing-a-node-report) describes the report. For a
-provider read, take the time your block ran it. The guard trusts `At` as you
+from the source you read. For a node report, take the time the node began
+its read, the body's `madeAt`. When the body carries none, take the time the
+platform received the report, `observe.NodeReport.ReceivedAt`.
+[Observing a resource the platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
+describes both fields, and `NodeReported.ObserveResource` in `observe/node_reported.go` picks
+between them the same way. For a provider read, take the time your block ran
+it. The guard trusts `At` as you
 give it, so take it from the source and never from your own clock after the
 fact. A member nothing has read gets a nil
 `Reading`. `stepStart` is the moment your step began, such as the start of the
