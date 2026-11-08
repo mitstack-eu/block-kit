@@ -509,6 +509,8 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Trivy reads these from its working directory with no flag, so a
       # committed one could silence a finding. None is allowed anywhere.
@@ -537,6 +539,7 @@ jobs:
           repository: mitstack-eu/block-kit
           ref: ${{ inputs.kit-ref }}
           path: block-kit
+          persist-credentials: false
 
       - name: Build blockverify and blockprov
         working-directory: block-kit
@@ -616,14 +619,14 @@ jobs:
           echo "no provenance record at ${RECORD_TAG}; completing it for ${DIGEST}"
           echo "record=false" >> "$GITHUB_OUTPUT"
 
-      # Any finding with a fixed version, at any severity, stops the job
-      # before the first push, but the one scan-image.sh's exception proves.
       - name: Log in to GHCR with the job's own token
         if: inputs.ghcr-login && steps.existing.outputs.published == 'false'
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
+      # Any finding with a fixed version, at any severity, stops the job
+      # before the first push, but the one scan-image.sh's exception proves.
       - name: Build and push image
         if: steps.existing.outputs.published == 'false'
         run: |
