@@ -98,7 +98,7 @@ func (e *dbEnv) compose(t *testing.T, app string) dockerhost.Compose {
 
 func (e *dbEnv) observe(t *testing.T, d contract.Desired) contract.Observation {
 	t.Helper()
-	obs, err := e.db.ObserveResource(context.Background(), contract.ResourceRef{Name: dockerhost.DatabaseResource, Desired: d})
+	obs, err := e.db.Observers()[dockerhost.DatabaseResource].ObserveResource(context.Background(), contract.ResourceRef{Name: dockerhost.DatabaseResource, Desired: d})
 	if err != nil {
 		t.Fatalf("ObserveResource = %v", err)
 	}
@@ -182,45 +182,63 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name, class, says string
 		params            map[string]string
-		before            func(*dbEnv)
+		before            func(*testing.T, *dbEnv)
+		edit              func(*contract.Desired)
 	}{
 		{name: "a variable the app's env.names holds", class: "env-mapping", says: "DB_HOST, which the app's env.names already names",
-			before: func(e *dbEnv) { e.host.Set(map[string]string{"shop/env.names": "DB_HOST=secret:host\n"}) }},
+			before: func(_ *testing.T, e *dbEnv) { e.host.Set(map[string]string{"shop/env.names": "DB_HOST=secret:host\n"}) }},
 		{name: "a variable another block gives", class: "env-mapping", says: "DB_PASSWORD, which docker-cache's gives file already names",
-			before: func(e *dbEnv) { e.host.Set(map[string]string{"shop/docker-cache.gives": "DB_PASSWORD=generated\n"}) }},
+			before: func(_ *testing.T, e *dbEnv) {
+				e.host.Set(map[string]string{"shop/docker-cache.gives": "DB_PASSWORD=generated\n"})
+			}},
 		{name: "an env input naming no value", class: "invalid-param", says: `"X=nothing" names "nothing"`, params: map[string]string{"env": "X=nothing"}},
+		{name: "an env input giving two values one name", class: "invalid-param", says: "host and port would both be DB_PORT", params: map[string]string{"env": "DB_PORT=host"}},
 		{name: "memory past what the host has free", class: "host-full", says: "the host has 2.5 vCPU, 512 MiB and 69 GiB of disk free",
 			params: map[string]string{"dbMemory": "1Gi"},
-			before: func(e *dbEnv) {
+			before: func(_ *testing.T, e *dbEnv) {
 				e.host.Set(map[string]string{"blog/reservations/docker-app-slice.json": `{"cpuMillis":1000,"memoryBytes":6979321856,"diskBytes":1073741824}`})
 			}},
 		{name: "CPU past what the host has free", class: "host-full", says: "asks for 4 vCPU", params: map[string]string{"dbCpu": "4"}},
 		{name: "disk past what the host has free", class: "host-full", says: "asks for 0.5 vCPU, 512 MiB and 71 GiB of disk", params: map[string]string{"dbDisk": "71Gi"}},
 		{name: "a host that takes no backups", class: "host-takes-no-backups", says: "the host holds no backup public key",
-			before: func(e *dbEnv) { e.host.BackupError = "the host holds no backup public key" }},
+			before: func(_ *testing.T, e *dbEnv) { e.host.BackupError = "the host holds no backup public key" }},
+		{name: "a host that has sent no report", says: "no node report giving its allocatable capacity",
+			before: func(_ *testing.T, e *dbEnv) { e.host.Silent = true }},
 		{name: "an app whose database another subscription holds", class: "app-taken", says: "belongs to the subscription sub_db_other",
-			before: func(e *dbEnv) {
+			before: func(t *testing.T, e *dbEnv) {
 				other := dbDesired("shop", nil)
 				other.SubscriptionID = "sub_db_other"
-				if _, err := e.db.EnsureResources(context.Background(), other); err != nil {
-					panic(err)
-				}
+				e.land(t, other)
+			}},
+		{name: "a request without the GitHub connection", class: "missing-github-access", says: "the GitHub connection is missing",
+			edit: func(d *contract.Desired) { d.Secrets = nil }},
+		{name: "a host repository outside the connection's account", class: "host-binding", says: "is not a repository of the GitHub connection's account acme",
+			edit: func(d *contract.Desired) {
+				d.Bindings["host"]["clusterRepoUrl"] = "https://github.com/other/docker-host"
+			}},
+		{name: "a GitHub API base off the allowlist", class: "untrusted-api-base", says: "github api base rejected",
+			edit: func(d *contract.Desired) {
+				d.Instances = map[string]contract.InstanceConfig{"github": {Endpoint: "https://api.github.example.org"}}
 			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newDBEnv(t)
 			if tc.before != nil {
-				tc.before(e)
+				tc.before(t, e)
 			}
 			held := e.host.Under("shop")
+			d := dbDesired("shop", tc.params)
+			if tc.edit != nil {
+				tc.edit(&d)
+			}
 
-			_, err := e.db.EnsureResources(context.Background(), dbDesired("shop", tc.params))
+			_, err := e.db.EnsureResources(context.Background(), d)
 
-			if refused(err) != tc.class || !strings.Contains(err.Error(), tc.says) {
-				t.Errorf("EnsureResources = %v; want a %s refusal naming %q", err, tc.class, tc.says)
+			if err == nil || refused(err) != tc.class || !strings.Contains(err.Error(), tc.says) {
+				t.Errorf("EnsureResources = %v; want a %q refusal naming %q", err, tc.class, tc.says)
 			}
 			if got := e.host.Under("shop"); !maps.Equal(got, held) {
-				t.Errorf("a refused subscribe left shop holding %v; want it as it was, %v", slices.Collect(maps.Keys(got)), slices.Collect(maps.Keys(held)))
+				t.Errorf("a refused subscribe left shop holding %v; want it as it was, %v", slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(held)))
 			}
 		})
 	}
@@ -276,8 +294,11 @@ func TestDatabase_UnsubscribeRemovesTheFilesOnlyOnceTheFinalBackupIsUploaded(t *
 			asked, pending, e.host.Main()["shop/"+dbBlock+".backup-request"])
 	}
 	e.host.BackupResult = "failed: the store answered 403"
-	if _, err := e.db.Delete(ctx, dbDesired("shop", nil)); err == nil || waits(err) || len(e.host.Under("shop")) != 6 {
-		t.Errorf("Delete after a failed final backup = %v holding %d files; want a failure that removed nothing", err, len(e.host.Under("shop")))
+	if _, err := e.db.Delete(ctx, dbDesired("shop", nil)); err == nil || waits(err) || !strings.Contains(err.Error(), "the store answered 403") {
+		t.Errorf("Delete after a failed final backup = %v; want a failure naming the host's reason", err)
+	}
+	if got, want := slices.Sorted(maps.Keys(e.host.Under("shop"))), append(landedFiles("shop"), "shop/compose.yaml", "shop/"+dbBlock+".backup-request"); !slices.Equal(got, slices.Sorted(slices.Values(want))) {
+		t.Errorf("a failed final backup left shop holding %v; want everything kept, %v", got, want)
 	}
 	e.host.BackupResult = dockerhosttest.Uploaded
 	if _, err := e.db.Delete(ctx, dbDesired("shop", nil)); err != nil {
@@ -295,23 +316,59 @@ func TestDatabase_UnsubscribeRemovesADatabaseTheHostNeverMadeAVolumeForAndLeaves
 	other := dbDesired("shop", nil)
 	other.SubscriptionID = "sub_db_other"
 
-	if _, err := e.db.Delete(ctx, other); err != nil || len(e.host.Under("shop")) != 4 {
-		t.Errorf("another subscription's Delete = %v leaving %d files; want shop's database left whole", err, len(e.host.Under("shop")))
+	if _, err := e.db.Delete(ctx, other); err != nil || !slices.Equal(slices.Sorted(maps.Keys(e.host.Under("shop"))), landedFiles("shop")) {
+		t.Errorf("another subscription's Delete = %v leaving %v; want shop's database left whole", err, slices.Sorted(maps.Keys(e.host.Under("shop"))))
 	}
 	if _, err := e.db.Delete(ctx, dbDesired("shop", nil)); err != nil || len(e.host.Under("shop")) != 0 {
 		t.Errorf("Delete of a database with no volume = %v leaving %v; want it removed with no backup", err, e.host.Under("shop"))
 	}
 }
 
+func landedFiles(app string) []string {
+	return slices.Sorted(slices.Values([]string{app + "/" + dbBlock + ".backup", app + "/" + dbBlock + ".compose.yaml", app + "/" + dbBlock + ".gives", app + "/reservations/" + dbBlock + ".json"}))
+}
+
+func TestDatabase_UnsubscribeKeepsTheDatabaseWhileTheHostCannotShowAFinalBackup(t *testing.T) {
+	for name, host := range map[string]func(*dockerhosttest.Host){
+		"a host that has sent no report": func(h *dockerhosttest.Host) { h.Silent = true },
+		"a host that takes no backups":   func(h *dockerhosttest.Host) { h.BackupError = "the host holds no backup public key" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newDBEnv(t)
+			e.land(t, dbDesired("shop", nil))
+			e.host.Volumes["shop"] = true
+			host(e.host)
+
+			_, err := e.db.Delete(context.Background(), dbDesired("shop", nil))
+
+			if err == nil || !slices.Equal(slices.Sorted(maps.Keys(e.host.Under("shop"))), landedFiles("shop")) {
+				t.Errorf("Delete = %v leaving %v; want an error or a wait with shop's database kept whole", err, slices.Sorted(maps.Keys(e.host.Under("shop"))))
+			}
+		})
+	}
+}
+
+func TestDatabase_SubscriptionLogsReadsTheDatabaseContainersOwnLines(t *testing.T) {
+	e := newDBEnv(t)
+	e.land(t, dbDesired("shop", nil))
+	e.host.Containers["shop"] = map[string]any{"subscription": "sub_db_shop", "logs": "LOG: ready\n"}
+
+	lines, err := e.db.SubscriptionLogs(context.Background(), dbDesired("shop", nil))
+
+	if err != nil || !slices.Equal(lines, []string{"shop-store | LOG: ready"}) {
+		t.Errorf("SubscriptionLogs = %q, %v; want the container's line led by its name", lines, err)
+	}
+}
+
 func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealthy(t *testing.T) {
 	logs := "LOG: ready\nFATAL: password authentication failed for user \"app\"\n"
 	for _, tc := range []struct {
-		name   string
-		land   bool
-		host   func(*dockerhosttest.Host)
-		state  contract.State
-		says   string
-		unwell bool
+		name                          string
+		land                          bool
+		host                          func(*dockerhosttest.Host)
+		state                         contract.State
+		says                          string
+		unwell, neverActive, recorded bool
 	}{
 		{name: "nothing landed", state: contract.Absent},
 		{name: "landed and running", land: true, state: contract.Present, says: "shop-store runs"},
@@ -319,6 +376,17 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 		{name: "an agent behind on the database's files", land: true, host: func(h *dockerhosttest.Host) { h.Lagging = "0000000" }, state: contract.Unknown, says: "last synced"},
 		{name: "a container still starting", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"health": "starting"} },
 			state: contract.Unknown, says: "still starting"},
+		{name: "a database missing its gives file", land: true, host: func(h *dockerhosttest.Host) { h.Set(map[string]string{"shop/" + dbBlock + ".gives": ""}) },
+			state: contract.Unknown, says: "without " + dbBlock + ".gives"},
+		{name: "a report naming no container of the database", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"container": "shop-web"} },
+			state: contract.Unknown, says: "shows no shop-store"},
+		{name: "a container that exited", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"state": "exited", "logs": logs} },
+			state: contract.Unknown, says: "reads exited: FATAL: password authentication failed"},
+		{name: "an unhealthy container that never read active", land: true, neverActive: true, state: contract.Unknown, says: "before it ever read active",
+			host: func(h *dockerhosttest.Host) {
+				h.Containers["shop"] = map[string]any{"health": "unhealthy", "logs": logs}
+			}},
+		{name: "a request naming its repository only in the recorded identity", land: true, recorded: true, state: contract.Present, says: "shop-store runs"},
 		{name: "an unhealthy container", land: true, state: contract.Present, unwell: true, says: "FATAL: password authentication failed",
 			host: func(h *dockerhosttest.Host) {
 				h.Containers["shop"] = map[string]any{"health": "unhealthy", "logs": logs}
@@ -333,7 +401,14 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 				tc.host(e.host)
 			}
 
-			obs := e.observe(t, dbDesired("shop", nil))
+			d := dbDesired("shop", nil)
+			d.NeverActive = tc.neverActive
+			if tc.recorded {
+				d.Bindings["host"]["clusterRepoUrl"] = ""
+				d.RecordedResources = map[string]contract.RecordedResource{dockerhost.DatabaseResource: {Identity: map[string]string{"repo": dbRepo}}}
+			}
+
+			obs := e.observe(t, d)
 
 			detail := obs.StatusDetail
 			if obs.Unhealthy != nil {
