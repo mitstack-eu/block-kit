@@ -26,6 +26,7 @@ func TestFiles_EachNamesItsPathInTheImageAndItsSha256Pin(t *testing.T) {
 		{"the k3s installer", tools.K3sInstaller, "/k3s/install.sh"},
 		{"kube-bench's config", tools.KubeBenchConfig[0], "/kube-bench/cfg/config.yaml"},
 		{"kube-bench's k3s-cis-1.11 policies", tools.KubeBenchConfig[6], "/kube-bench/cfg/k3s-cis-1.11/policies.yaml"},
+		{"the sign-in companion's CA bundle", tools.SignInCA, "/mitstack-signin/ca-certificates.crt"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
