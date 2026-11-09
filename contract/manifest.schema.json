@@ -556,7 +556,7 @@
         },
         "requires": {
           "items": {
-            "description": "A requirement: a type id, or an object of its type, its name and many.",
+            "description": "A requirement: a type id, or an object of its type, its name, many and optional, which accepts one offer or none and is never set beside many.",
             "oneOf": [
               {
                 "$ref": "#/$defs/typeId"
@@ -570,6 +570,9 @@
                   "name": {
                     "minLength": 1,
                     "type": "string"
+                  },
+                  "optional": {
+                    "type": "boolean"
                   },
                   "type": {
                     "$ref": "#/$defs/typeIds"

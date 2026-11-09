@@ -69,7 +69,7 @@ func TestManifestSchema_RequirementAndResourceCarryExactlyTheirKeys(t *testing.T
 		list       string
 		properties []string
 	}{
-		{"requires", []string{"many", "name", "type"}},
+		{"requires", []string{"many", "name", "optional", "type"}},
 		{"resources", []string{"many", "name", "type"}},
 	}
 	for _, tc := range cases {

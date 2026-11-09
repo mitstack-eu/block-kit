@@ -61,6 +61,24 @@ spec:
     contract: kit/v1
 `
 
+const optionalHostBlockManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: container-block
+  name: Container Block
+spec:
+  version: 1.0.0
+  requires:
+    - { name: host, type: hetzner.server, optional: true }
+  resources:
+    - { name: app-container, type: [aws.ec2-container, hetzner.server-container] }
+  provides: [app-container]
+  lifecycle:
+    endpoint: https://container-block.example/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1
+`
+
 func typeSnapshot(t *testing.T) contract.TypeSnapshot {
 	t.Helper()
 	raw, err := os.ReadFile("../../contract/testdata/type-snapshot.json")
@@ -143,6 +161,9 @@ type fakeBlock struct {
 	leaveOnDelete   string
 	hideReplacement bool
 	failOnHostType  string
+	// hostOptional lets a container ensure run with no host bound, and ensured holds every Desired an ensure was handed.
+	hostOptional bool
+	ensured      []contract.Desired
 	// untagged names the resource its ensure creates without the subscription's tag.
 	untagged string
 
@@ -197,7 +218,8 @@ func (b *fakeBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]
 	b.counts.begin()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.container && d.Bindings["host"]["hostId"] == "" {
+	b.ensured = append(b.ensured, d)
+	if b.container && !b.hostOptional && d.Bindings["host"]["hostId"] == "" {
 		return nil, fmt.Errorf("no hostId bound for requires.host")
 	}
 	if b.created == nil {
@@ -546,6 +568,72 @@ func TestCheckBlock_NamesTheListedTypeWhoseRunFails(t *testing.T) {
 		}
 		if strings.Contains(p, "aws.ec2-instance") {
 			t.Errorf("problem %q names aws.ec2-instance, whose run passes", p)
+		}
+	}
+}
+
+func optionalHostBlock(t *testing.T) (*fakeBlock, kittest.Block) {
+	t.Helper()
+	b, in := containerBlock(t)
+	in.Config.Manifest = []byte(optionalHostBlockManifest)
+	in.Requirements = map[string]map[string]map[string]string{
+		"host": {"hetzner.server": {"hostId": "4711", "execKind": "ssh", "execTarget": "198.51.100.9"}},
+	}
+	return b, in
+}
+
+func TestCheckBlock_RunsAnOptionalRequirementUnboundAndNamesThatRunWhenItFails(t *testing.T) {
+	_, in := optionalHostBlock(t)
+
+	problems := kittest.CheckBlock(in)
+
+	wantProblemNaming(t, problems, "no hostId bound", "requires.host unbound")
+	for _, p := range problems {
+		if !strings.Contains(p, "requires.host unbound") {
+			t.Errorf("problem %q does not name the unbound run, yet the bound run passes", p)
+		}
+	}
+}
+
+func TestCheckBlock_HandsTheUnboundRunOfAnOptionalRequirementNoBindingAndNoTypeForIt(t *testing.T) {
+	b, in := optionalHostBlock(t)
+	b.hostOptional = true
+	in.Desired.Bindings = map[string]map[string]string{"host": {"hostId": "set-by-the-fixture"}}
+	in.Desired.RequirementTypes = map[string]string{"host": "hetzner.server"}
+
+	problems := kittest.CheckBlock(in)
+
+	wantNoProblems(t, problems)
+	bound, unbound := 0, 0
+	for _, d := range b.ensured {
+		_, hasBinding := d.Bindings["host"]
+		_, hasType := d.RequirementTypes["host"]
+		switch {
+		case hasBinding && hasType:
+			bound++
+		case !hasBinding && !hasType:
+			unbound++
+		default:
+			t.Errorf("an ensure was handed Bindings %v and RequirementTypes %v, want both or neither to hold host", d.Bindings, d.RequirementTypes)
+		}
+	}
+	if bound == 0 || unbound == 0 {
+		t.Errorf("CheckBlock ran %d ensures with host bound and %d with it unbound, want at least one of each", bound, unbound)
+	}
+	if in.Desired.Bindings["host"]["hostId"] != "set-by-the-fixture" {
+		t.Errorf("CheckBlock changed the fixture's Desired.Bindings to %v, want it left as handed", in.Desired.Bindings)
+	}
+}
+
+func TestCheckBlock_RunsARequirementWithoutOptionalOnlyBound(t *testing.T) {
+	b, in := containerBlock(t)
+
+	problems := kittest.CheckBlock(in)
+
+	wantNoProblems(t, problems)
+	for _, d := range b.ensured {
+		if _, ok := d.Bindings["host"]; !ok {
+			t.Errorf("an ensure was handed Bindings %v with no host, want every run of a requirement without optional bound", d.Bindings)
 		}
 	}
 }

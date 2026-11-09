@@ -65,7 +65,8 @@ func GenerateManifestSchema() ([]byte, error) {
 func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 	switch t {
 	case requirementType:
-		return entrySchema("A requirement: a type id, or an object of its type, its name and many."), nil
+		return entrySchema("A requirement: a type id, or an object of its type, its name, many and optional, which accepts one offer or none and is never set beside many.",
+			"optional"), nil
 	case resourceType:
 		return entrySchema("A resource the block creates: a type id, or an object of its type, its name and many."), nil
 	case durationType:
@@ -126,11 +127,14 @@ func structSchema(t reflect.Type) (map[string]any, error) {
 	return s, nil
 }
 
-func entrySchema(description string) map[string]any {
+func entrySchema(description string, flags ...string) map[string]any {
 	props := map[string]any{
 		"type": map[string]any{"$ref": typeIDsRef},
 		"name": map[string]any{"type": "string", "minLength": 1},
 		"many": map[string]any{"type": "boolean"},
+	}
+	for _, flag := range flags {
+		props[flag] = map[string]any{"type": "boolean"}
 	}
 	return map[string]any{
 		"description": description,

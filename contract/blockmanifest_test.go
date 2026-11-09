@@ -279,6 +279,11 @@ func TestParseManifest_V1BetaReadsEachFieldAsWritten(t *testing.T) {
 		{"many absent reads false", requires(""), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Many }, false},
 		{"many: true reads true", requires("      many: true\n"), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Many }, true},
 		{"many: false reads false", requires("      many: false\n"), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Many }, false},
+		{"optional absent reads false", requires(""), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Optional }, false},
+		{"optional: true reads true", requires("      optional: true\n"), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Optional }, true},
+		{"optional: false reads false", requires("      optional: false\n"), func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Optional }, false},
+		{"optional: true keeps the requirement's reference", requires("      optional: true\n"),
+			func(b *contract.BlockManifest) any { return b.Spec.Requires[0].Reference() }, "aws.ec2-instance"},
 		{"a quoted number is a string", spec("  description: \"8080\"\n"), func(b *contract.BlockManifest) any { return b.Spec.Description }, "8080"},
 		{"receivesAppSecrets absent reads false", spec(""), func(b *contract.BlockManifest) any { return b.Spec.ReceivesAppSecrets }, false},
 		{"receivesAppSecrets: true reads true", spec("  receivesAppSecrets: true\n"),
@@ -358,6 +363,11 @@ func TestParseManifest_V1BetaRefusesAManifestNamingWhatIsWrong(t *testing.T) {
 		{"many: 1", requires("      many: 1\n"), []string{"spec.requires[0].many"}},
 		{`many: "true"`, requires("      many: \"true\"\n"), []string{"spec.requires[0].many"}},
 		{"many: sometimes", requires("      many: sometimes\n"), []string{"spec.requires[0].many"}},
+		{"optional: yes", requires("      optional: yes\n"), []string{"spec.requires[0].optional"}},
+		{`optional: "true"`, requires("      optional: \"true\"\n"), []string{"spec.requires[0].optional"}},
+		{"optional: null", requires("      optional: null\n"), []string{"spec.requires[0].optional"}},
+		{"a requirement both optional and many", requires("      optional: true\n      many: true\n"),
+			[]string{"spec.requires[0]", "optional", "many"}},
 		{"a resource's many: yes", beta("      type: aws.vpc\n", "      type: aws.vpc\n      many: yes\n"), []string{"spec.resources[0].many"}},
 		{"a resource name holding a slash", beta("    - name: fallback-network\n", "    - name: fallback/network\n"),
 			[]string{"spec.resources[0].name", `"fallback/network"`, "slash"}},
@@ -461,6 +471,8 @@ func TestManifestTypes_EncodeEachOptionalFlagUnderItsKeyOnlyWhenSet(t *testing.T
 	}{
 		{"spec.receivesAppSecrets", contract.ManifestSpec{ReceivesAppSecrets: true}, contract.ManifestSpec{}, "receivesAppSecrets"},
 		{"spec.lifecycle.needsCredentialRefresh", contract.ManifestLifecycle{NeedsCredentialRefresh: true}, contract.ManifestLifecycle{}, "needsCredentialRefresh"},
+		{"spec.requires[].optional", contract.ManifestRequirement{Types: []string{"aws.ec2-instance"}, Optional: true},
+			contract.ManifestRequirement{Types: []string{"aws.ec2-instance"}}, "optional"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {

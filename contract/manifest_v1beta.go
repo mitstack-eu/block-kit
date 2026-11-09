@@ -68,22 +68,27 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 }
 
 type manifestEntry struct {
-	name  string
-	types []string
-	many  bool
+	name     string
+	types    []string
+	many     bool
+	optional bool
 }
 
+// requirement refuses optional beside many, since many already accepts no offer and also accepts two.
 func (d manifestDecoder) requirement(n *yamlNode, path string) (ManifestRequirement, error) {
-	e, err := d.entry(n, path)
+	e, err := d.entry(n, path, true)
 	if err != nil {
 		return ManifestRequirement{}, err
 	}
-	return ManifestRequirement{Name: e.name, Types: e.types, Many: e.many}, nil
+	if e.optional && e.many {
+		return ManifestRequirement{}, fmt.Errorf("%s is marked both optional and many; optional accepts one offer or none and many collects every offer, so mark it one or the other", path)
+	}
+	return ManifestRequirement{Name: e.name, Types: e.types, Many: e.many, Optional: e.optional}, nil
 }
 
 // resource names an entry without a name by the one type id it lists.
 func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, error) {
-	e, err := d.entry(n, path)
+	e, err := d.entry(n, path, false)
 	if err != nil {
 		return ManifestResource{}, err
 	}
@@ -97,8 +102,8 @@ func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, e
 	return r, nil
 }
 
-// entry refuses a key that is not a field of an entry, and an entry listing several types without a name.
-func (d manifestDecoder) entry(n *yamlNode, path string) (manifestEntry, error) {
+// entry refuses a key that is not a field of an entry, optional on an entry that is no requirement, and an entry listing several types without a name.
+func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (manifestEntry, error) {
 	if n.kind == yamlScalar {
 		id, err := typeID(n, path)
 		return manifestEntry{types: []string{id}}, err
@@ -126,6 +131,8 @@ func (d manifestDecoder) entry(n *yamlNode, path string) (manifestEntry, error) 
 			}
 		case key == "many":
 			err = d.decode(val, reflect.ValueOf(&e.many).Elem(), keyPath)
+		case key == "optional" && requirement:
+			err = d.decode(val, reflect.ValueOf(&e.optional).Elem(), keyPath)
 		default:
 			err = fmt.Errorf("%s is not a field of a %s manifest", keyPath, d.version)
 		}

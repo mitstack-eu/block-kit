@@ -124,6 +124,23 @@ creates it.
 With `many: true`, a requirement collects every resource of its types that the
 app offers, as a list, and the block subscribes even when the list is empty.
 
+With `optional: true`, a requirement takes the one resource of its types the
+app offers, or none. It suits a block that serves apps with and without a
+provider, such as a web app that reads a database only when the app has one:
+
+```yaml
+requires:
+  - { name: database, type: hetzner.server-postgres-database, optional: true }
+```
+
+When the app offers none, the request binds nothing under the requirement's
+name, so `Desired.Bindings` and `Desired.RequirementTypes` hold no entry for
+it and the block's code runs without it. Two offers are refused, as for any
+requirement. A requirement is never both `optional` and `many`, since
+`many` already accepts an empty list. A resource entry takes no `optional`.
+`kittest.CheckBlock` runs the block once more with each optional requirement
+unbound, so a block that cannot run without its provider fails there.
+
 A resource entry with `many: true` stands for zero or more members of its
 type. It suits a resource the block creates a varying number of times, such as
 the servers of a node pool. Here the block keeps one gateway and any number of
