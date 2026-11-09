@@ -587,7 +587,7 @@ func TestCheckBlock_RunsAnOptionalRequirementUnboundAndNamesThatRunWhenItFails(t
 
 	problems := kittest.CheckBlock(in)
 
-	wantProblemNaming(t, problems, `resource "app-container"`, "requires.host unbound")
+	wantProblemNaming(t, problems, "no hostId bound", "requires.host unbound")
 	for _, p := range problems {
 		if !strings.Contains(p, "requires.host unbound") {
 			t.Errorf("problem %q does not name the unbound run, yet the bound run passes", p)
