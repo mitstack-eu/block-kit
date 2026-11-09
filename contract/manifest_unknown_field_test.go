@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// mitstack/v1beta has no lifecycle hooks, retainsOnUnsubscribe, spec.params, spec.naming, spec.dependsOn or optional requirement, and no retired entry key, so each is unknown.
+// mitstack/v1beta has no lifecycle hooks, retainsOnUnsubscribe, spec.params, spec.naming, spec.dependsOn or optional resource, and no retired entry key, so each is unknown.
 func v1betaUnknownFields(t *testing.T) map[string][]byte {
 	beta := func(old, new string) []byte { return edit(t, betaManifest, old, new) }
 	const hostType, containerType = "      type: aws.ec2-instance\n", "      type: aws.ec2-container\n"
@@ -22,9 +22,9 @@ func v1betaUnknownFields(t *testing.T) map[string][]byte {
 		"spec.params":                    beta("  requires:\n", "  params:\n    - name: image\n      label: Container image\n  requires:\n"),
 		"spec.requires[0].bogus":         beta("    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      bogus: 1\n"),
 		"spec.requires[0].capability":    beta("    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      capability: app-host\n"),
-		"spec.requires[0].optional":      beta("    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      optional: true\n"),
 		"spec.requires[0].reads":         beta("    - type: aws.ec2-instance\n", "    - type: aws.ec2-instance\n      reads: [region]\n"),
 		"spec.resources[1].bogus":        beta("      type: aws.security-group\n", "      type: aws.security-group\n      bogus: 1\n"),
+		"spec.resources[1].optional":     beta("      type: aws.security-group\n", "      type: aws.security-group\n      optional: true\n"),
 		"spec.resources[1].ownership":    beta("      type: aws.security-group\n", "      type: aws.security-group\n      ownership: created\n"),
 		"spec.lifecycle.bogus":           beta("    contract: kit/v1\n", "    contract: kit/v1\n    bogus: 1\n"),
 		"spec.lifecycle.hooks":           beta("    contract: kit/v1\n", "    contract: kit/v1\n    hooks: [beforeEnsure]\n"),
