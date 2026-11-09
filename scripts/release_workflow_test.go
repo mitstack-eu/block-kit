@@ -1,4 +1,4 @@
-// Package scripts_test pins the ci.yml jobs that test the kit, cut its release tag with scripts/release-block-kit.sh, and run plain-delivery's commands at a release tag.
+// Package scripts_test pins the ci.yml jobs that test the kit and its tools image, publish that image and cut the release tag that pins it with scripts/release-block-kit.sh, and run plain-delivery's commands at a release tag.
 package scripts_test
 
 import (
@@ -100,6 +100,13 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const moduleScan = "go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C " + rescueSSH + " -scan package ./..."
 	const healthz = "helpers/healthz"
 	const healthzDryRun = "bash scripts/release-block-kit.sh --module " + healthz + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
+	const planned = "steps.plan.outputs.planned != ''"
+	const copyCosign = `bash scripts/copy-tool.sh ghcr.io/sigstore/cosign/cosign:v2.5.3@sha256:f1946d0f30fc8e3777b02f2201e02efdba9fe38f4918162f937052fac98e083f /ko-app/cosign 056df4b41218fff47e879470554e01b0ba8e7608c1bec1e704c9dcded965f00f "$RUNNER_TEMP/bin/cosign"` +
+		"\n" + `echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"`
+	const toolsImageTest = "go test -tags toolsimage -count=1 -run '^TestToolsImage_' ./helpers/tools"
+	const cutPinned = `bash scripts/release-block-kit.sh --tools-image "$TOOLS_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"`
+	const buildToolsImage = "docker build --platform linux/amd64 -t block-kit-tools:ci helpers/tools\n" +
+		"TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -count=1 -run '^TestToolsImage_HoldsEveryFileAtItsPinInALayerOfItsOwn$' ./helpers/tools"
 	raw, err := os.ReadFile("../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatalf("reading ci.yml: %v", err)
@@ -130,7 +137,20 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the release job pins checkout to the platform's sha", strconv.FormatBool(stepWith(all, "release", "uses", checkout)), "true"},
 		{"the release job checks out the tags the version scan reads", strconv.FormatBool(stepWith(all, "release", "with.fetch-depth", "0")), "true"},
 		{"the release job runs its script under bash, so pipefail fails a red release", strconv.FormatBool(stepWith(all, "release", "shell", "bash")), "true"},
-		{"the release job runs the release script into the job summary", strconv.FormatBool(stepWith(all, "release", "run", `bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"`)), "true"},
+		{"the release job plans its tag with the release script's dry run into the job summary", field(stepOf(all, "release", "run", `bash scripts/release-block-kit.sh --dry-run | tee -a "$GITHUB_STEP_SUMMARY"`) + "id"), "plan"},
+		{"the release job pushes the tools image only when a tag is planned", field(stepOf(all, "release", "id", "image") + "if"), planned},
+		{"the release job grants packages: write to push the tools image", field("jobs.release.permissions.packages"), "write"},
+		{"the release job grants id-token: write to sign the tools image keyless", field("jobs.release.permissions.id-token"), "write"},
+		{"the release job names the tools image's package", field("jobs.release.env.TOOLS_PACKAGE"), "ghcr.io/mitstack-eu/block-kit-tools"},
+		{"the release job copies cosign out of its publisher's image by digest", strconv.FormatBool(stepWith(all, "release", "run", copyCosign)), "true"},
+		{"the release job copies every tool out of the image it pushed, through Docker and over the registry's HTTP API",
+			field(stepOf(all, "release", "run", toolsImageTest) + "env.TOOLS_IMAGE"), "${{ steps.image.outputs.ref }}"},
+		{"the release job cuts the tag on a commit that pins the image it pushed", field(stepOf(all, "release", "run", cutPinned) + "env.TOOLS_IMAGE"), "${{ steps.image.outputs.ref }}"},
+		{"the pinned cut runs under bash, so pipefail fails a red release", field(stepOf(all, "release", "run", cutPinned) + "shell"), "bash"},
+		{"the release job pulls the image with no login, then copies its tools, then cuts the tag", strconv.FormatBool(
+			stepAt(all, "release", "name", "Verify the signature and pull the image with no login") < stepAt(all, "release", "run", toolsImageTest) &&
+				stepAt(all, "release", "run", toolsImageTest) < stepAt(all, "release", "run", cutPinned)), "true"},
+		{"the test job builds the tools image and checks every file it holds against its pin", strconv.FormatBool(stepWith(all, "test", "run", buildToolsImage)), "true"},
 		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
 		{"the test job vets and tests the rescuessh module, which ./... leaves out", strconv.FormatBool(stepWith(all, "test", "run", "go -C "+rescueSSH+" vet ./...\ngo -C "+rescueSSH+" test ./...")), "true"},
 		{"the test job scans the packages the rescuessh module imports for known vulnerabilities", strconv.FormatBool(stepWith(all, "test", "run", moduleScan)), "true"},

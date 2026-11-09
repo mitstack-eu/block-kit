@@ -1,0 +1,1 @@
+../helpers/tools/scripts/copy-tool.sh

@@ -200,6 +200,7 @@ provider and in `capabilities` per provider:
 | `helpers/healthz` | Every block, since the platform's edge asks each operator for `/healthz` | The health handler, a module of its own that an operator on any kit release mounts |
 | `helpers/reportproof` | A cluster or server block whose nodes report to mitstack | The proof that signs each report, and the check that verifies it |
 | `helpers/redundancy` | A block that removes or replaces one member of a redundant set, such as a gateway, an etcd member or a database instance | The guard an operator calls before it removes a member, which refuses the removal unless fresh readings show the rest of the set keeping its minimum |
+| `helpers/tools` | A block whose machines or workflows need a tool while they run, such as age on a Docker host or k3s on a node | `copy-tool.sh`, which copies one file out of an image named by digest, the kit's tools image `ghcr.io/mitstack-eu/block-kit-tools` and the path and sha256 of each file it holds, and `toolstest`, a fake registry for your tests |
 | `capabilities/aws/cloudid` | A block whose resources live in AWS | Short-lived AWS credentials for the AWS account a call names |
 | `capabilities/aws/adopt` | A block whose retried subscribe may find its own AWS resources already made | The choice to create, adopt or refuse each resource by the subscription tag `observe.AWSSubscriptionTag`, refusing another subscription's or an untagged resource. A block moving from a tag of its own passes that tag as `Legacy`, and adopt marks each resource only that tag names for retagging |
 | `capabilities/aws/awsnames` | A block that creates an app's account-unique AWS resources | The one name of each under the block's own prefix, such as the ECR repository, the instance and deploy roles and the CloudFormation stack |
@@ -211,6 +212,39 @@ provider and in `capabilities` per provider:
 | `capabilities/github/landing` | A block that lands files in an app's repository | Records each file it lands, and at unsubscribe removes every one main still carries unchanged through one pull request per repository, with a fake of GitHub in `capabilities/github/landing/landingtest` that any block's tests can hold a repository in |
 | `capabilities/hetzner/robot` | A block that adopts a Hetzner dedicated server | Hetzner's Robot webservice: adopt, name and release a server, boot it into the rescue system and back, couple a vSwitch and write the Robot firewall, and hand a secret to the server from a short-lived Cloud server behind a pinned TLS key, with a fake of the webservice in `capabilities/hetzner/robot/robottest`. The rescue SSH session is the module `capabilities/hetzner/robot/rescuessh`, with a fake rescue system in `rescuessh/rescuesshtest` |
 | `capabilities/hetzner/cloud` | A block that creates Hetzner Cloud servers whose public address DNS records name, or reads a server's `serverType` input | A primary IPv4 that outlives its server: a replacement takes the same address, and removing the block deletes it, with a fake of the Cloud API in `capabilities/hetzner/cloud/cloudtest`. `cloud.ServerTypes` reads the `serverType` input as the ordered list of types the block tries, and refuses a type the block does not run on, a repeat, or a list longer than the block takes |
+
+## Tools a block reads while it runs
+
+A tool your block fetches from a GitHub release page while it runs fails
+whenever GitHub's release downloads do. Your block copies each such tool out
+of a container image named by digest instead, so its bytes are fixed and it
+comes from a registry. Three parts of the kit serve this:
+
+1. The tools image, `ghcr.io/mitstack-eu/block-kit-tools`, holds each tool
+   whose publisher ships no image of its own, such as age and the k3s
+   installer. Each kit release publishes it and pins its digest in
+   `tools.Image`.
+2. The helper `helpers/tools` ships `copy-tool.sh`, which copies one file out
+   of an image by digest and checks its sha256. It uses Docker where Docker
+   runs, and otherwise reads the image over the registry's HTTP API, as on a
+   node with no container runtime yet.
+3. The shared check `scripts/check-runtime-downloads.sh` runs in every block's
+   `secrets` job, the publish workflow's scan for leaked secrets, and fails a
+   block whose shipped files name a `releases/download` URL, naming the file
+   and line.
+
+For example, a Docker host that has written `tools.CopyScript` to
+`copy-tool.sh` copies age with:
+
+```sh
+bash copy-tool.sh ghcr.io/mitstack-eu/block-kit-tools:<tag>@sha256:<digest> /age/age \
+  eb7dd1b518f0a307c99cd97782623c5321da049154b04acd2d98d21aa7bc9b2c /var/lib/mitstack-agent/age
+```
+
+[Copying a tool out of an image by digest](docs/helpers.md#copying-a-tool-out-of-an-image-by-digest)
+lists what the image holds and how to test a block against the kit's fake
+registry, and
+[Where CI runs it](docs/block-checks.md#where-ci-runs-it) covers the check.
 
 ## How mitstack reads a teardown's commits
 

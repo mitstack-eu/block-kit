@@ -745,7 +745,7 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 			"actions/checkout", "actions/setup-go", "Checkout block-kit", "Build blockverify", "Remove the kit checkout from the block tree",
 			"Write the base commit's manifest and the changed files", "blockverify (standalone contract check)", "Upload blockverify report", "Configure AWS credentials for the verify role", "Log in to the operator image's registry", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image",
 		}},
-		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks"}},
+		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks", "Fail a shipped file that fetches a tool from a GitHub release page"}},
 		{"scripts", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Lint every tracked shell script with shellcheck"}},
 		{"publish", "write", []string{
 			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Configure AWS credentials", "Checkout block-kit",

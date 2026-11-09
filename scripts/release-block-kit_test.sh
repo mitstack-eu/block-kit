@@ -466,6 +466,69 @@ for row in "diff|^{tree}" "log|^"; do
   assert_no_tag "an unreadable $failing cuts no module tag" "$W" "$MOD/v0.1.1"
 done
 
+# 26. A dry run hands the workflow the tag it plans through GITHUB_OUTPUT, and an unchanged range plans none.
+setup_repo
+tag_at "v0.5.0"
+commit_change "fix: fix the health probe"
+GH_OUT="$W/../gh-output-plan"
+: >"$GH_OUT"
+run_with_gh_output "$GH_OUT" --repo "$W" --head "$(head_sha)" --dry-run
+check "a planning dry run exits 0" 0 "$RC"
+assert_file_contains "a dry run reports the tag it plans" "$GH_OUT" "planned=v0.5.1"
+assert_file_contains "a dry run reports nothing released" "$GH_OUT" "released=false"
+commit_empty "chore: nothing" && tag_at "v0.5.1"
+: >"$GH_OUT"
+run_with_gh_output "$GH_OUT" --repo "$W" --head "$(head_sha)" --dry-run
+assert_file_lacks "a dry run over a released head plans no tag" "$GH_OUT" "planned="
+
+# 27. --tools-image cuts the tag on a commit on top of head that writes the image into the tools package, leaves head's tree alone, and a re-run or the next push builds on it.
+TOOLS="helpers/tools/tools.go"
+DIGEST="sha256:$(printf '%064d' 7)"
+seed_tools() { mkdir -p "$W/helpers/tools" && printf 'package tools\n\nconst Image = ""\n' >"$W/$TOOLS" && git -C "$W" add -A && git -C "$W" commit -q -m "feat: the tools package"; }
+setup_repo
+tag_at "v0.5.0"
+seed_tools
+H="$(head_sha)"
+run --repo "$W" --head "$H" --tools-image "ghcr.io/mitstack-eu/block-kit-tools:v0.5.1@$DIGEST"
+check "a pinned cut exits 0" 0 "$RC"
+PIN="$(git -C "$R" rev-parse -q --verify "refs/tags/v0.5.1^{commit}" 2>/dev/null)"
+assert_tag_at "the pinned tag's commit sits on top of head" "$R" "v0.5.1^" "$H"
+OUT="$(git -C "$W" show "$PIN:$TOOLS")"
+assert_out_contains "the tagged commit names the image" "const Image = \"ghcr.io/mitstack-eu/block-kit-tools:v0.5.1@$DIGEST\""
+OUT="$(git -C "$W" show "$H:$TOOLS")"
+assert_out_contains "head's own tools package still names no image" 'const Image = ""'
+run --repo "$W" --head "$H" --tools-image "ghcr.io/mitstack-eu/block-kit-tools:v0.5.1@$DIGEST"
+check "a re-run over a pinned release exits 0" 0 "$RC"
+assert_kit_tag_count "a re-run over a pinned release cuts nothing" "$W" 2
+commit_change "fix: the next change"
+run --repo "$W" --head "$(head_sha)" --tools-image "ghcr.io/mitstack-eu/block-kit-tools:v0.5.2@$DIGEST"
+check "the push after a pinned release exits 0" 0 "$RC"
+assert_tag_at "the next pinned tag sits on top of the new head" "$R" "v0.5.2^" "$(head_sha)"
+
+# 28. --tools-image refuses an image not named by the planned tag and a digest, and a head whose tools package holds no Image constant, and cuts no tag.
+for row in "ghcr.io/mitstack-eu/block-kit-tools:v0.9.9@$DIGEST|seed_tools" "ghcr.io/mitstack-eu/block-kit-tools:v0.5.1|seed_tools" \
+  "ghcr.io/mitstack-eu/block-kit-tools:v0.5.1@$DIGEST|commit_change"; do
+  IFS='|' read -r ref commit <<<"$row"
+  setup_repo
+  tag_at "v0.5.0"
+  "$commit" "feat: a change"
+  run --repo "$W" --head "$(head_sha)" --tools-image "$ref"
+  check "a pinned cut of $ref after $commit fails" 1 "$RC"
+  assert_out_contains "the refusal names the image ($ref, $commit)" "$ref"
+  assert_kit_tag_count "a refused pin cuts no tag ($ref, $commit)" "$R" 0
+done
+
+# 29. After a pinned release, a push that changes nothing since the released head is judged unchanged, although the tag's commit differs from main in its tools package.
+setup_repo
+tag_at "v0.5.0"
+seed_tools
+run --repo "$W" --head "$(head_sha)" --tools-image "ghcr.io/mitstack-eu/block-kit-tools:v0.5.1@$DIGEST"
+commit_empty "chore: nothing"
+run --repo "$W" --head "$(head_sha)" --tools-image "ghcr.io/mitstack-eu/block-kit-tools:v0.5.2@$DIGEST"
+check "an empty push after a pinned release exits 0" 0 "$RC"
+assert_out_contains "an empty push after a pinned release is judged unchanged" "unchanged"
+assert_kit_tag_count "an empty push after a pinned release cuts nothing" "$W" 2
+
 echo "----"
 echo "release-block-kit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

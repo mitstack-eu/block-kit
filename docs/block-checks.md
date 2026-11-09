@@ -217,12 +217,26 @@ Two scan jobs also run on every event your CI calls the workflow for, and
 `publish` waits for both. The `secrets` job runs `scripts/scan-secrets.sh`,
 which scans your whole history, every commit your `HEAD` reaches, with the
 secret scanner gitleaks 8.21.2, and names the commit that added a secret. The
+same job then runs `scripts/check-runtime-downloads.sh`, which fails when a
+file your repository tracks names a GitHub `releases/download` URL, and names
+each such file and line. A tool fetched from a release page while your block
+runs fails whenever GitHub does, so copy it from an image by digest with
+[`helpers/tools`](helpers.md#copying-a-tool-out-of-an-image-by-digest)
+instead. Test files, which are those named `*_test.*`, `test_*.py` or
+`*.tftest.hcl`, any `testdata/` directory and your repository's own top-level
+`.github/` are left out, since none of them ships. A `.github/` directory
+deeper in the tree is checked, because a block commits what it holds into
+another repository. A build-time download in your block's own `Dockerfile` is
+checked too, so fetch it from an image there as well. The check keeps no
+allow list, so a line that only mentions such a URL, as a README might, is
+reworded or moved into `testdata/`. The
 `scripts` job runs `scripts/lint-scripts.sh`, which runs the shell-script
-linter shellcheck 0.11.0 over every shell script your repository tracks. Both
-scripts come from the kit at `kit-ref`. Each pins its scanner's sha256 in the
-script and refuses to run a download whose sha256 differs.
+linter shellcheck 0.11.0 over every shell script your repository tracks. All
+three scripts come from the kit at `kit-ref`. `scan-secrets.sh` and
+`lint-scripts.sh` each pin their tool's sha256 in the script and refuse to run
+a download whose sha256 differs.
 
-To run either on your own checkout, clone the kit beside your block at the
+To run any of them on your own checkout, clone the kit beside your block at the
 tag your `kit-ref` names, shown as `<tag>`, and run it from your block's
 directory:
 
@@ -230,6 +244,7 @@ directory:
 git clone --branch <tag> https://github.com/mitstack-eu/block-kit ../block-kit
 bash ../block-kit/scripts/scan-secrets.sh .
 bash ../block-kit/scripts/lint-scripts.sh .
+bash ../block-kit/scripts/check-runtime-downloads.sh .
 ```
 
 With the calling job named `block`, as above, the checks to require in your

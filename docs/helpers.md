@@ -20,6 +20,7 @@ package has [a page of its own](gitops.md).
 | `helpers/healthz` | Serves its health check, which every block does |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
 | `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
+| `helpers/tools` | Copies a tool onto a machine or a runner while it runs, such as age onto a Docker host or k3s onto a node |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made, judging each by the kit's subscription tag |
@@ -608,6 +609,112 @@ such as `the proof was minted for another body`:
 5. `exp` is present and not past, `nbf` if present has come, and `exp` is no
    more than ten minutes away. Each time allows `reportproof.Leeway`, one
    minute, for clocks that drift.
+
+## Copying a tool out of an image by digest
+
+This section is for the author of a block whose machines or workflows need a
+tool while they run, such as age on a Docker host, k3s on a cluster node or a
+scanner in a build. A tool fetched from a GitHub release page fails whenever
+GitHub's release downloads do. A block therefore copies each tool out of a
+container image named by digest, which fixes its bytes and comes from a
+registry, and the kit's [runtime-download check](block-checks.md#where-ci-runs-it)
+fails a block that still names a release download.
+
+`helpers/tools` gives you three things:
+
+1. `tools.CopyScript`, the script `copy-tool.sh`, which your block writes onto
+   the machine or into the workflow that needs the tool.
+2. `tools.Image`, the kit's tools image, `ghcr.io/mitstack-eu/block-kit-tools`
+   named by tag and digest, which each kit release publishes and pins.
+3. A `tools.File` for each file that image holds, naming its path in the image
+   and the sha256 the file must have.
+
+### What the tools image holds
+
+The tools image holds each tool a block reads while it runs whose publisher
+ships no image of its own. `helpers/tools/Dockerfile` fetches each one once,
+when the image is built, and checks it against `helpers/tools/tools.sha256`.
+Each tool sits in a layer of its own, so a machine reading the image over the
+registry's HTTP API downloads only the layer it needs.
+
+| Go name | Path in the image | What it is |
+|---|---|---|
+| `tools.Age`, `tools.AgeKeygen` | `/age/age`, `/age/age-keygen` | age v1.3.2, the encryption tool a Docker host seals its backups with |
+| `tools.NSAFramework`, `tools.NSAConfigInputs` | `/kubescape/nsa`, `/kubescape/default_config_inputs` | The NSA hardening framework kubescape checks a cluster against, and its default inputs, from kubescape's rule library regolibrary v2.0.38 |
+| `tools.K3sInstaller` | `/k3s/install.sh` | The k3s installer at k3s-io/k3s commit `2d0f82fa2f933cd227fe38e1482558ce4769f464` |
+| `tools.KubeBenchConfig` | `/kube-bench/cfg/config.yaml` and `/kube-bench/cfg/k3s-cis-1.11/` with `config.yaml`, `master.yaml`, `etcd.yaml`, `controlplane.yaml`, `node.yaml` and `policies.yaml` | kube-bench's config at commit `e278a5915a982f2756026de6e2f9ca77077ef9f9`, since its releases stop at k3s-cis-1.9 |
+| `tools.CopyScriptPath` | `/copy-tool/copy-tool.sh` | The helper itself, for an image build to copy with `COPY --from` |
+
+A tool whose publisher ships an image comes from that image instead, named by
+digest, such as k3s from `registry.rancher.com/rancher/k3s-upgrade` at
+`/opt/k3s`, kubescape from `quay.io/kubescape/kubescape-cli` at
+`/usr/bin/kubescape`, and kube-bench from `public.ecr.aws/aquasecurity/kube-bench` at
+`/usr/local/bin/kube-bench`.
+gitleaks, Trivy and golangci-lint ship images too. Describe such a file with a
+`tools.File` of your own, giving its image, path and sha256.
+
+### Running copy-tool.sh
+
+The script takes four arguments:
+
+```sh
+copy-tool.sh <registry>/<repository>[:<tag>]@sha256:<digest> <path in the image> <sha256> <destination>
+```
+
+`File.Args(dest)` returns them for a file, so a block that copies age to its
+host's state directory runs this, with `tools.Age.Args` giving everything
+after the script's name:
+
+```sh
+bash copy-tool.sh ghcr.io/mitstack-eu/block-kit-tools:<tag>@sha256:<digest> /age/age \
+  eb7dd1b518f0a307c99cd97782623c5321da049154b04acd2d98d21aa7bc9b2c /var/lib/mitstack-agent/age
+```
+
+The script picks one of two ways to read the image:
+
+1. Where Docker runs, such as on a Docker host or a GitHub runner, it creates a
+   container from the image, copies the file out and removes the container.
+2. Elsewhere, such as on a k3s node before k3s is installed, it reads the
+   image's manifest, the linux/amd64 entry of a multi-arch index, its config
+   and the one layer holding the file over the registry's HTTP API. It asks
+   for an anonymous pull token when the registry answers 401, and it checks
+   the digest of everything it reads.
+
+Either way it checks the file's sha256 against the one it was given, and it writes the
+destination only once that matches. Any failure exits 1 and names the image
+and the read that failed, such as
+`copy-tool: ghcr.io/...@sha256:...: layer sha256:...: the registry answered HTTP 504`,
+and a digest that differs is named beside the one asked for. The HTTP route
+needs only bash, curl, Python 3, tar and coreutils, which a fresh Ubuntu 24.04
+cloud image and GitHub's ubuntu-24.04 runner both hold. Compressed with
+`gzip -9` and base64-encoded, the script stays under 4,000 bytes, so it fits
+in a k3s node's user data, and a test in `helpers/tools` fails above that.
+
+### Testing a block that copies a tool
+
+`helpers/tools/toolstest` is a fake registry for your block's own tests. It
+serves the images a test pushes over the registry's HTTP API, in plain HTTP,
+behind the same anonymous token challenge ghcr.io answers with. Setting
+`COPY_TOOL_REGISTRY_URL` to its address makes `copy-tool.sh` read every image
+from it over the HTTP API, even where Docker runs:
+
+```go
+reg := toolstest.New(t)
+img := reg.Push(t, "mitstack-eu/block-kit-tools", toolstest.File{Path: "/age/age", Body: "age binary"})
+script, dest := filepath.Join(t.TempDir(), "copy-tool.sh"), filepath.Join(t.TempDir(), "age")
+if err := os.WriteFile(script, []byte(tools.CopyScript), 0o755); err != nil {
+	t.Fatal(err)
+}
+sum := sha256.Sum256([]byte("age binary"))
+cmd := exec.Command("bash", script, img.Ref, "/age/age", hex.EncodeToString(sum[:]), dest)
+cmd.Env = append(os.Environ(), reg.Env())
+```
+
+`reg.Reads()` lists each digest the script read. `reg.Fail(digest, status)`
+answers a read with an error status, `reg.Swap(digest, body)` serves other
+bytes under a digest, and `reg.RefuseTokens(status)` refuses the pull token as
+a private package does, so a test can prove what your block does when a copy
+fails.
 
 ## Removing a member of a redundant set
 

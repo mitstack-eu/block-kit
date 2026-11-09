@@ -7,7 +7,8 @@
 # Usage:
 #   scripts/release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>]
 #                                   [--remote <name>] [--module <path>]
-#                                   [--dry-run] [--verify-only]
+#                                   [--tools-image <ref>] [--dry-run]
+#                                   [--verify-only]
 #
 #   --module <path>  release the nested Go module at path by its own
 #                    <path>/vX.Y.Z tags, judging changes under path alone
@@ -19,7 +20,14 @@
 #   --repo <dir>     the repository every git call runs in (default: the
 #                    repository holding this script).
 #   --remote <name>  where a cut tag is pushed (default origin).
-#   --dry-run        decide and report, create and push nothing.
+#   --tools-image <ref>
+#                    the tools image pushed for this release, by the planned
+#                    tag and its digest. The tag is cut on a commit on top of
+#                    head that writes ref into the Image constant of
+#                    helpers/tools/tools.go, since a digest cannot sit in the
+#                    commit its image is built from.
+#   --dry-run        decide and report, create and push nothing, and hand the
+#                    workflow the planned tag as planned=<tag>.
 #   --verify-only    assert head is released, cut nothing.
 #
 #   exit 0  the kit is unchanged, head already carries a kit tag, the
@@ -28,7 +36,9 @@
 #   exit 1  head is unreachable from any kit tag after the cut, a --verify-only
 #           assertion did not hold, the computed tag is already published
 #           elsewhere, the range asks for a major raise from a v0 tag, or git
-#           could not read the range's changed files or commit messages
+#           could not read the range's changed files or commit messages, or
+#           --tools-image names another tag or no digest, or head's tools
+#           package holds no Image constant
 #   exit 2  an unknown flag
 #
 # Why this exists. This repository IS the kit: github.com/mitstack-eu/block-kit
@@ -44,6 +54,7 @@ set -uo pipefail
 
 KIT_PATH="."
 TAG_PREFIX="v"
+TOOLS_FILE="helpers/tools/tools.go"
 ZERO_SHA="0000000000000000000000000000000000000000"
 
 base=""
@@ -52,6 +63,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 remote="origin"
 dry_run=0
 verify_only=0
+tools_image=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -60,11 +72,12 @@ while [ "$#" -gt 0 ]; do
     --repo)   repo="${2-}";     shift $(( $# > 1 ? 2 : 1 )) ;;
     --remote) remote="${2-}";   shift $(( $# > 1 ? 2 : 1 )) ;;
     --module) KIT_PATH="${2-}"; TAG_PREFIX="${2-}/v"; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --tools-image) tools_image="${2-}"; shift $(( $# > 1 ? 2 : 1 )) ;;
     --dry-run)     dry_run=1;     shift ;;
     --verify-only) verify_only=1; shift ;;
     *)
       echo "release-block-kit: unknown flag: $1" >&2
-      echo "usage: release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>] [--remote <name>] [--module <path>] [--dry-run] [--verify-only]" >&2
+      echo "usage: release-block-kit.sh [--base <sha>] [--head <sha>] [--repo <dir>] [--remote <name>] [--module <path>] [--tools-image <ref>] [--dry-run] [--verify-only]" >&2
       exit 2
       ;;
   esac
@@ -104,6 +117,32 @@ kit_versions() {
 # v0.9.0. A lexical sort picks the wrong base the first time a minor reaches ten.
 newest_kit_version() {
   kit_versions | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1
+}
+
+# pin_tools_image prints a commit on top of head whose tools package names
+# $tools_image, built in a scratch index so the checkout is left alone.
+pin_tools_image() {
+  local tag source pinned blob scratch tree
+  [[ "$tools_image" =~ ^[^@[:space:]]+:([^@:/]+)@sha256:[0-9a-f]{64}$ ]] && tag="${BASH_REMATCH[1]}"
+  if [ "${tag:-}" != "$next_tag" ]; then
+    echo "::error::--tools-image $tools_image is not the tools image tagged $next_tag and named by digest, so no tag is cut." >&2
+    return 1
+  fi
+  source="$(in_repo show "$head_sha:$TOOLS_FILE" 2> /dev/null)"
+  pinned="$(awk -v ref="$tools_image" '/^const Image = ".*"$/ { $0 = "const Image = \"" ref "\"" } 1' <<< "$source")"
+  if ! grep -qxF "const Image = \"$tools_image\"" <<< "$pinned"; then
+    echo "::error::$TOOLS_FILE at $head_sha holds no Image constant to pin $tools_image in, so no tag is cut." >&2
+    return 1
+  fi
+  blob="$(in_repo hash-object -w --stdin <<< "$pinned")" || return 1
+  scratch="$(mktemp -d)" || return 1
+  GIT_INDEX_FILE="$scratch/index" in_repo read-tree "$head_sha" &&
+    GIT_INDEX_FILE="$scratch/index" in_repo update-index --cacheinfo "100644,$blob,$TOOLS_FILE" &&
+    tree="$(GIT_INDEX_FILE="$scratch/index" in_repo write-tree)"
+  local status=$?
+  rm -rf "$scratch"
+  [ "$status" -eq 0 ] || return 1
+  in_repo commit-tree "$tree" -p "$head_sha" -m "Pin the tools image $tools_image in $next_tag"
 }
 
 # raise_level <range> prints the level a whole kit-release line in the range's
@@ -149,7 +188,9 @@ fi
 # new, so the kit counts as changed and no diff is computed.
 if [ -n "$resolved_base" ]; then
   range="$resolved_base..$head_sha"
-  touched="$(in_repo diff --name-only "$resolved_base" "$head_sha" -- "$KIT_PATH")" || fail_unread "the changed files"
+  # Three dots diff from the merge base, since a pinned kit tag sits on a
+  # commit main never holds, whose tools package differs from main's.
+  touched="$(in_repo diff --name-only "$resolved_base...$head_sha" -- "$KIT_PATH")" || fail_unread "the changed files"
 else
   touched="$KIT_PATH"
   range="$head_sha"
@@ -208,8 +249,14 @@ echo "the repository changed in $range: a $level raise from $newest_tag gives $n
 
 if [ "$dry_run" -eq 1 ]; then
   echo "dry run: would cut $next_tag at $head_sha and push it to $remote."
-  emit_output "released=false"
+  emit_output "released=false" "planned=$next_tag"
   exit 0
+fi
+
+release_sha="$head_sha"
+if [ -n "$tools_image" ]; then
+  release_sha="$(pin_tools_image)" || { emit_output "released=false"; exit 1; }
+  echo "$next_tag goes on $release_sha, which pins $tools_image on top of $head_sha."
 fi
 
 # Every block importing this module resolves it by tag, so a name already
@@ -227,8 +274,8 @@ if [ -n "$published" ]; then
   exit 1
 fi
 
-if ! in_repo tag "$next_tag" "$head_sha"; then
-  echo "::error::cannot create $next_tag at $head_sha." >&2
+if ! in_repo tag "$next_tag" "$release_sha"; then
+  echo "::error::cannot create $next_tag at $release_sha." >&2
   emit_output "released=false"
   exit 1
 fi
@@ -250,6 +297,6 @@ if [ -z "$released_by" ]; then
   exit 1
 fi
 
-echo "cut $next_tag at $head_sha and pushed it to $remote."
+echo "cut $next_tag at $release_sha and pushed it to $remote."
 emit_output "released=true" "tag=$next_tag"
 exit 0

@@ -21,6 +21,15 @@ go -C examples/hetzner-firewall test ./...
 go run ./verify/blockverify --standalone examples/hetzner-firewall
 ```
 
+The tools image builds with Docker, and a test behind the `toolsimage` build
+tag checks each file it holds against `helpers/tools/tools.sha256`. CI runs
+both on every event:
+
+```sh
+docker build --platform linux/amd64 -t block-kit-tools:ci helpers/tools
+TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -run '^TestToolsImage_HoldsEveryFileAtItsPinInALayerOfItsOwn$' ./helpers/tools
+```
+
 The rescuessh module, the healthz module and the example block are Go modules
 of their own, so `./...` leaves them out and CI tests each by itself. The
 healthz module is one so that an operator on any kit release can mount the
@@ -87,6 +96,35 @@ at the commercial launch. So while the newest tag is a v0 version, the script
 refuses that line, cuts no tag and fails. Go never reuses a published version,
 so a v1.0.0 cut by mistake would stay on the Go module proxy as the kit's
 newest release.
+
+Each kit tag also publishes the tools image,
+`ghcr.io/mitstack-eu/block-kit-tools`, which `helpers/tools/Dockerfile` builds
+and blocks copy their tools from. The `release` job in
+`.github/workflows/ci.yml` takes these steps:
+
+1. It runs the release script's dry run, which hands the job the planned tag.
+2. It copies cosign, the image signing tool, out of its publisher's image with
+   `scripts/copy-tool.sh`, a link to `helpers/tools/scripts/copy-tool.sh`,
+   which sits in the Go package because `go:embed` reads only files inside it.
+3. It pushes the tools image under the planned tag and signs its digest keyless
+   with the run's identity.
+4. It verifies the signature and pulls the image with no login, which fails
+   while the package is private. GitHub makes a new package private, so an
+   owner makes it public once in the package's settings, and the job then
+   reruns.
+5. It runs the toolsimage tests in `helpers/tools`, which copy every file out
+   of the published image through Docker and over the registry's HTTP API.
+6. It runs the release script with `--tools-image`, which cuts the tag on a
+   commit on top of head. That commit writes the image's reference into
+   `tools.Image` in `helpers/tools/tools.go`, since a digest cannot sit in the
+   commit its image is built from. `main` itself names no image, and its
+   `tools.Image` is empty.
+
+A tag therefore points at a commit `main` never holds. The next push still
+finds its base from that tag, since the tag's commit has `main`'s commit as
+its parent. A block depends on a kit tag, never on a pseudo-version of a `main`
+commit, since Go derives that version from an older tag and its `tools.Image`
+is empty.
 
 The rescuessh module is released by its own tags, such as
 `capabilities/hetzner/robot/rescuessh/v0.1.0`, the form Go resolves for a
