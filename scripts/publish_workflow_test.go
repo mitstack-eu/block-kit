@@ -47,6 +47,7 @@ func TestPublishBlockWorkflow_ScansEveryEventBeforePublish(t *testing.T) {
 		{"the secrets job checks out every commit the block's HEAD reaches", step("secrets", "with.fetch-depth", "0"), "true"},
 		{"the secrets job takes its scan from kit-ref", step("secrets", "with.ref", "${{ inputs.kit-ref }}"), "true"},
 		{"the secrets job scans the block with the kit's script", step("secrets", "run", "bash block-kit/scripts/scan-secrets.sh block"), "true"},
+		{"the secrets job fails a block whose shipped files fetch a tool from a release page", step("secrets", "run", "bash block-kit/scripts/check-runtime-downloads.sh block"), "true"},
 		{"the scripts job checks the block out beside the kit", step("scripts", "with.path", "block"), "true"},
 		{"the scripts job takes its lint from kit-ref", step("scripts", "with.ref", "${{ inputs.kit-ref }}"), "true"},
 		{"the scripts job lints the block with the kit's script", step("scripts", "run", "bash block-kit/scripts/lint-scripts.sh block"), "true"},

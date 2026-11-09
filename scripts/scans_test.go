@@ -1,6 +1,6 @@
 package scripts_test
 
-// scan-secrets.sh and lint-scripts.sh fail a throwaway repository holding what they guard against, pass it once that is gone, and run only a scanner whose sha256 matches its pin.
+// scan-secrets.sh, lint-scripts.sh and check-runtime-downloads.sh fail a throwaway repository holding what they guard against, pass it once that is gone, and run only a scanner whose sha256 matches its pin.
 
 import (
 	"crypto/sha256"
@@ -202,6 +202,46 @@ func TestPinnedTool(t *testing.T) {
 			}
 			if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(bin), "fetch.*")); len(leftovers) > 0 {
 				t.Errorf("pinned_tool left %v in the cache", leftovers)
+			}
+		})
+	}
+}
+
+func TestCheckRuntimeDownloads(t *testing.T) {
+	const fetch = "curl -fsSL -o age.tar.gz https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz\n"
+	const copied = "bash copy-tool.sh ghcr.io/mitstack-eu/block-kit-tools:v1.0.0@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef /age/age " +
+		"eb7dd1b518f0a307c99cd97782623c5321da049154b04acd2d98d21aa7bc9b2c /usr/local/bin/age\n"
+	cases := []struct {
+		name   string
+		repo   []change
+		exit   int
+		naming []string
+	}{
+		{name: "a script that fetches its tool from a release page fails, naming the file and line", repo: []change{writes("scripts/host.sh", "#!/bin/sh\nset -eu\n"+fetch)},
+			exit: 1, naming: []string{"scripts/host.sh:3:"}},
+		{name: "Go source that renders a release-page URL fails, naming the file and line",
+			repo: []change{writes("render.go", "package block\n\nconst k3s = \"https://github.com/k3s-io/k3s/releases/download/{{.K3sVersionPath}}/k3s\"\n")},
+			exit: 1, naming: []string{"render.go:3:"}},
+		{name: "a workflow the block commits into another repository fails", repo: []change{writes("templates/.github/workflows/restore.yml", "steps:\n  - run: "+fetch)},
+			exit: 1, naming: []string{"templates/.github/workflows/restore.yml:2:"}},
+		{name: "a script that copies its tool through copy-tool.sh passes", repo: []change{writes("scripts/host.sh", "#!/bin/sh\nset -eu\n"+copied)}},
+		{name: "a release-page URL in test files, testdata and the repository's own workflows passes", repo: []change{
+			writes("render_test.go", "package block\n\n// "+fetch), writes("scripts/host_test.sh", fetch), writes("scripts/test_host.py", "# "+fetch),
+			writes("tests/main.tftest.hcl", "# "+fetch), writes("cluster/testdata/userdata.yaml", fetch), writes(".github/workflows/ci.yml", "steps:\n  - run: "+fetch)}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, _ := gitRepo(t, c.repo...)
+
+			out, exit := runBash(t, nil, "check-runtime-downloads.sh", repo)
+
+			if exit != c.exit {
+				t.Errorf("check-runtime-downloads.sh exit = %d; want %d\n%s", exit, c.exit, out)
+			}
+			for _, want := range c.naming {
+				if !strings.Contains(out, want) {
+					t.Errorf("check-runtime-downloads.sh output does not name %q:\n%s", want, out)
+				}
 			}
 		})
 	}
