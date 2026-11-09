@@ -485,16 +485,23 @@ attestation that has uploaded no report yet still makes `Done` return a
 
 ### Running an app's database on the host
 
-A block that runs one app's database on its org's Docker host, such as
-docker-postgres, does the same work whatever its engine. `dockerhost.Database`
-holds that work once, so the block writes only what its engine needs: the
-image, the entrypoint, the dump and the restore. A `Database` is the block's
-`handler.Resource`, and it gives the handler its observers and its logs.
+An org's Docker host is a server that runs the org's apps as Docker
+containers, as "Setting up a Docker host" describes. A block that runs one
+app's database there, such as docker-postgres, does the same work whatever its
+engine, the database program it runs, such as PostgreSQL or MariaDB.
+`dockerhost.Database` holds that work once, so the block writes only what its
+engine needs: the image, the entrypoint, the dump and the restore. A
+`Database` is the block's `handler.Resource`, the part that answers a
+subscribe, an upgrade and an unsubscribe, and it gives the handler its
+observers and its logs.
+
+In this example, `postgres()` is the block's own function that returns its
+`Engine`, which the table below describes.
 
 ```go
 db := dockerhost.Database{
 	Block: "docker-postgres", Type: "hetzner.docker-postgres-database",
-	Engine:  engine,
+	Engine:  postgres(),
 	Reports: observe.NodeReportsClient{},
 }
 h, err := handler.New(handler.Config{
@@ -535,11 +542,12 @@ An `Engine` names the rest:
 | `Dump`, `Restore` | One shell command line each, which the host runs in the container to dump the database and to load a dump |
 | `Trouble` | The output lines an unhealthy database quotes as its cause |
 
-An unsubscribe asks the host for a final backup through `FinalBackup`, as the
-section above describes, and removes the files only once that backup is
-uploaded. The observer reads the database present once the host's pull agent
-runs the commit holding its files and its container is running and past
-starting.
+An unsubscribe asks the host for a final backup through `FinalBackup`, as "How
+a block waits for its final backup" describes, and removes the files only once
+that backup is uploaded to the host's backup bucket. The host's pull agent is
+the program on the host that applies each new commit of its repository. The
+observer reads the database present once that agent runs the commit holding
+its files and its container is running and past starting.
 
 A block's test drives the `Database` against `dockerhosttest.Host`, a fake of
 the host's repository and its node report. Set `Database.GitHub` to the fake's

@@ -30,7 +30,6 @@ func (db Database) fileRequest() string     { return db.Block + requestSuffix }
 func (db Database) fileReservation() string { return ReservationDir + "/" + db.Block + ".json" }
 func (db Database) volume() string          { return db.Engine.Service + "-data" }
 
-// ownedFiles are the paths a Database writes in an app's directory, the backup request among them.
 func (db Database) ownedFiles() []string {
 	return []string{db.fileCompose(), db.fileGives(), db.fileBackup(), db.fileRequest(), db.fileReservation()}
 }
@@ -49,6 +48,7 @@ type Compose struct {
 	Volumes  map[string]ComposeVolume  `json:"volumes"`
 }
 
+// ComposeService is the database container's service in a Compose.
 type ComposeService struct {
 	Image         string            `json:"image"`
 	ContainerName string            `json:"container_name"`
@@ -73,6 +73,7 @@ type composeEnvFile struct {
 	Required bool   `json:"required"`
 }
 
+// ComposeHealth is a ComposeService's health check.
 type ComposeHealth struct {
 	Test        []string `json:"test"`
 	Interval    string   `json:"interval"`
