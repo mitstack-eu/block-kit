@@ -229,10 +229,12 @@ comes from a registry. Three parts of the kit serve this:
    runs, and otherwise reads the image over the registry's HTTP API, as on a
    node with no container runtime yet.
 3. The shared check `scripts/check-runtime-downloads.sh` runs in every block's
-   `secrets` job and fails a block whose shipped files name a `releases/download`
-   URL, naming the file and line.
+   `secrets` job, the publish workflow's scan for leaked secrets, and fails a
+   block whose shipped files name a `releases/download` URL, naming the file
+   and line.
 
-For example, a Docker host copies age with:
+For example, a Docker host that has written `tools.CopyScript` to
+`copy-tool.sh` copies age with:
 
 ```sh
 bash copy-tool.sh ghcr.io/mitstack-eu/block-kit-tools:<tag>@sha256:<digest> /age/age \

@@ -627,7 +627,7 @@ fails a block that still names a release download.
 2. `tools.Image`, the kit's tools image, `ghcr.io/mitstack-eu/block-kit-tools`
    named by tag and digest, which each kit release publishes and pins.
 3. A `tools.File` for each file that image holds, naming its path in the image
-   and its sha256 pin.
+   and the sha256 the file must have.
 
 ### What the tools image holds
 
@@ -640,7 +640,7 @@ registry's HTTP API downloads only the layer it needs.
 | Go name | Path in the image | What it is |
 |---|---|---|
 | `tools.Age`, `tools.AgeKeygen` | `/age/age`, `/age/age-keygen` | age v1.3.2, the encryption tool a Docker host seals its backups with |
-| `tools.NSAFramework`, `tools.NSAConfigInputs` | `/kubescape/nsa`, `/kubescape/default_config_inputs` | kubescape's regolibrary v2.0.38 NSA framework and its default inputs |
+| `tools.NSAFramework`, `tools.NSAConfigInputs` | `/kubescape/nsa`, `/kubescape/default_config_inputs` | The NSA hardening framework kubescape checks a cluster against, and its default inputs, from kubescape's rule library regolibrary v2.0.38 |
 | `tools.K3sInstaller` | `/k3s/install.sh` | The k3s installer at k3s-io/k3s commit `2d0f82fa2f933cd227fe38e1482558ce4769f464` |
 | `tools.KubeBenchConfig` | `/kube-bench/cfg/config.yaml` and `/kube-bench/cfg/k3s-cis-1.11/` with `config.yaml`, `master.yaml`, `etcd.yaml`, `controlplane.yaml`, `node.yaml` and `policies.yaml` | kube-bench's config at commit `e278a5915a982f2756026de6e2f9ca77077ef9f9`, since its releases stop at k3s-cis-1.9 |
 | `tools.CopyScriptPath` | `/copy-tool/copy-tool.sh` | The helper itself, for an image build to copy with `COPY --from` |
@@ -680,7 +680,7 @@ The script picks one of two ways to read the image:
    for an anonymous pull token when the registry answers 401, and it checks
    the digest of everything it reads.
 
-Either way it checks the file's sha256 against the pin, and it writes the
+Either way it checks the file's sha256 against the one it was given, and it writes the
 destination only once that matches. Any failure exits 1 and names the image
 and the read that failed, such as
 `copy-tool: ghcr.io/...@sha256:...: layer sha256:...: the registry answered HTTP 504`,
@@ -701,7 +701,12 @@ from it over the HTTP API, even where Docker runs:
 ```go
 reg := toolstest.New(t)
 img := reg.Push(t, "mitstack-eu/block-kit-tools", toolstest.File{Path: "/age/age", Body: "age binary"})
-cmd := exec.Command("bash", script, img.Ref, "/age/age", sha256Hex("age binary"), dest)
+script, dest := filepath.Join(t.TempDir(), "copy-tool.sh"), filepath.Join(t.TempDir(), "age")
+if err := os.WriteFile(script, []byte(tools.CopyScript), 0o755); err != nil {
+	t.Fatal(err)
+}
+sum := sha256.Sum256([]byte("age binary"))
+cmd := exec.Command("bash", script, img.Ref, "/age/age", hex.EncodeToString(sum[:]), dest)
 cmd.Env = append(os.Environ(), reg.Env())
 ```
 

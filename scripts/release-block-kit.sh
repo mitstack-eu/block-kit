@@ -188,7 +188,9 @@ fi
 # new, so the kit counts as changed and no diff is computed.
 if [ -n "$resolved_base" ]; then
   range="$resolved_base..$head_sha"
-  touched="$(in_repo diff --name-only "$resolved_base" "$head_sha" -- "$KIT_PATH")" || fail_unread "the changed files"
+  # Three dots diff from the merge base, since a pinned kit tag sits on a
+  # commit main never holds, whose tools package differs from main's.
+  touched="$(in_repo diff --name-only "$resolved_base...$head_sha" -- "$KIT_PATH")" || fail_unread "the changed files"
 else
   touched="$KIT_PATH"
   range="$head_sha"
