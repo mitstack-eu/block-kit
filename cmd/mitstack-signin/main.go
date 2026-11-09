@@ -53,7 +53,8 @@ func run(listen, data, platform, caFile string) error {
 			Timeout:   10 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}},
 		},
-		Logf: log.Printf,
+		Logf:  log.Printf,
+		Ended: filepath.Join(data, "ended"),
 	})
 	if err != nil {
 		return err

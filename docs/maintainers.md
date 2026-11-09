@@ -22,7 +22,7 @@ go run ./verify/blockverify --standalone examples/hetzner-firewall
 ```
 
 The tools image builds with Docker from the repository's root, since it also
-holds the sign-in companion built from `cmd/mitstack-signin`. A test behind
+holds the sign-in companion built from `cmd/mitstack-signin`, which [the helpers page](helpers.md#opening-an-app-only-to-its-orgs-members) describes. A test behind
 the `toolsimage` build tag checks each file it holds against
 `helpers/tools/tools.sha256` and runs the companion. CI runs both on every
 event:

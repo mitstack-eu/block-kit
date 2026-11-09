@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,13 +61,15 @@ const (
 
 var appIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// Config is where mitstack answers, the key that seals every cookie, state and ticket, and the clock.
+// Config is where mitstack answers, the key that seals every cookie, state and ticket, the clock, and Ended, a
+// file that keeps each signed-out session ended across restarts, since mitstack learns of no sign-out.
 type Config struct {
 	Platform string
 	Key      []byte
 	Client   *http.Client
 	Now      func() time.Time
 	Logf     func(format string, args ...any)
+	Ended    string
 }
 
 type companion struct {
@@ -75,6 +78,7 @@ type companion struct {
 	client   *http.Client
 	now      func() time.Time
 	logf     func(format string, args ...any)
+	ended    string
 
 	mu       sync.Mutex
 	sessions map[string]*memo
@@ -113,13 +117,15 @@ type session struct {
 
 type signInCookie struct {
 	Nonce    string `json:"nonce"`
-	Verifier string `json:"verifier"`
+	Verifier string `json:"verifier,omitempty"`
 	Expires  int64  `json:"expires"`
 }
 
-// target is where a visitor returns once signed in, as a hostname the app serves and a path on it.
+// target is where a visitor returns once signed in, as a hostname the app serves and a path on it, with Handoff the
+// nonce of the sign-in cookie a custom hostname set in the browser that started there.
 type target struct {
 	Nonce   string `json:"nonce,omitempty"`
+	Handoff string `json:"handoff,omitempty"`
 	Host    string `json:"host"`
 	Path    string `json:"path"`
 	Expires int64  `json:"expires"`
@@ -127,6 +133,7 @@ type target struct {
 
 type ticket struct {
 	ID      string  `json:"id"`
+	Handoff string  `json:"handoff"`
 	Host    string  `json:"host"`
 	Path    string  `json:"path"`
 	Session session `json:"session"`
@@ -164,7 +171,7 @@ func New(c Config) (http.Handler, error) {
 		return nil, err
 	}
 	comp := &companion{
-		platform: c.Platform, aead: aead, client: c.Client, now: c.Now, logf: c.Logf,
+		platform: c.Platform, aead: aead, client: c.Client, now: c.Now, logf: c.Logf, ended: c.Ended,
 		sessions: map[string]*memo{}, tickets: map[string]time.Time{}, signIns: map[string]int{},
 	}
 	if comp.client == nil {
@@ -176,7 +183,46 @@ func New(c Config) (http.Handler, error) {
 	if comp.logf == nil {
 		comp.logf = func(string, ...any) {}
 	}
+	if err := comp.loadEnded(); err != nil {
+		return nil, err
+	}
 	return comp, nil
+}
+
+// loadEnded reads the ended sessions that have not expired and writes the file back with only those.
+func (c *companion) loadEnded() error {
+	if c.ended == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(c.ended)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	var kept strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		id, at, ok := strings.Cut(line, " ")
+		expires, err := strconv.ParseInt(at, 10, 64)
+		if !ok || err != nil || !c.now().Before(time.Unix(expires, 0)) {
+			continue
+		}
+		c.sessions[id] = &memo{ended: true, expires: time.Unix(expires, 0)}
+		kept.WriteString(line + "\n")
+	}
+	return os.WriteFile(c.ended, []byte(kept.String()), 0o600)
+}
+
+func (c *companion) keepEnded(s session) {
+	if c.ended == "" {
+		return
+	}
+	f, err := os.OpenFile(c.ended, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err == nil {
+		_, err = fmt.Fprintf(f, "%s %d\n", s.ID, s.Expires)
+		err = errors.Join(err, f.Close())
+	}
+	if err != nil {
+		c.logf("signin: a signed-out session was not kept ended across restarts: %v", err)
+	}
 }
 
 // LoadKey reads the companion's key from path, creating it on the first start, and refuses a file of another size.
@@ -349,7 +395,9 @@ func (c *companion) start(w http.ResponseWriter, r *http.Request, rt route) {
 	now := c.now()
 	dest := target{Host: rt.host, Path: safePath(r.URL.Query().Get("return"))}
 	if rt.host != rt.signInHost {
+		dest.Handoff = encode(random(32))
 		dest.Expires = now.Add(signInLifetime).Unix()
+		setCookie(w, SignInCookie, c.seal("handoff", rt.app+"\x00"+rt.host, signInCookie{Nonce: dest.Handoff, Expires: dest.Expires}), int(signInLifetime/time.Second))
 		redirect(w, "https://"+rt.signInHost+"/.mitstack/start?to="+url.QueryEscape(c.seal("to", rt.app, dest)))
 		return
 	}
@@ -417,17 +465,24 @@ func (c *companion) signedIn(w http.ResponseWriter, rt route, dest target, s ses
 		redirect(w, dest.Path)
 		return
 	}
-	t := ticket{ID: encode(random(16)), Host: dest.Host, Path: dest.Path, Session: s, Expires: c.now().Add(ticketLifetime).Unix()}
+	t := ticket{ID: encode(random(16)), Handoff: dest.Handoff, Host: dest.Host, Path: dest.Path, Session: s, Expires: c.now().Add(ticketLifetime).Unix()}
 	redirect(w, "https://"+dest.Host+"/.mitstack/handoff?ticket="+url.QueryEscape(c.seal("ticket", rt.app, t)))
 }
 
+// handoff accepts a ticket only in the browser that started the sign-in on this hostname, whose sign-in cookie
+// holds the ticket's nonce, so nobody can hand a visitor a link that signs them in as someone else.
 func (c *companion) handoff(w http.ResponseWriter, r *http.Request, rt route) {
 	var t ticket
-	if !c.open("ticket", rt.app, r.URL.Query().Get("ticket"), &t) || t.Host != rt.host ||
+	var started signInCookie
+	cookie, err := r.Cookie(SignInCookie)
+	if err != nil || !c.open("handoff", rt.app+"\x00"+rt.host, cookie.Value, &started) ||
+		!c.open("ticket", rt.app, r.URL.Query().Get("ticket"), &t) || t.Host != rt.host || t.Handoff == "" ||
+		subtle.ConstantTimeCompare([]byte(started.Nonce), []byte(t.Handoff)) != 1 ||
 		!c.now().Before(time.Unix(t.Expires, 0)) || !c.useTicket(t.ID, time.Unix(t.Expires, 0)) {
-		page(w, http.StatusBadRequest, "This sign-in link was used already or has expired. Open the app again.")
+		page(w, http.StatusBadRequest, "This sign-in link was used already, has expired, or did not start in this browser. Open the app again.")
 		return
 	}
+	clearCookie(w, SignInCookie)
 	c.setSession(w, rt, t.Session)
 	redirect(w, safePath(t.Path))
 }
@@ -450,12 +505,26 @@ func (c *companion) setSession(w http.ResponseWriter, rt route, s session) {
 	setCookie(w, SessionCookie, c.seal("session", rt.app+"\x00"+rt.host, s), maxAge)
 }
 
+// signOut ends the session only on a POST from this hostname's own pages, and offers a form on a GET, so a link or
+// an image on another site signs nobody out.
 func (c *companion) signOut(w http.ResponseWriter, r *http.Request, rt route) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		fmt.Fprint(w, "<!doctype html><meta charset=utf-8><title>mitstack sign-in</title>"+
+			`<form method=post action="/.mitstack/sign-out"><button>Sign out of this app</button></form>`+"\n")
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && origin != "https://"+rt.host {
+		page(w, http.StatusForbidden, "Sign out from this app's own page.")
+		return
+	}
 	if s, ok := c.session(r, rt); ok {
 		m := c.memoOf(s)
 		m.mu.Lock()
 		m.ended = true
 		m.mu.Unlock()
+		c.keepEnded(s)
 	}
 	clearCookie(w, SessionCookie)
 	page(w, http.StatusOK, "You are signed out of this app.")
@@ -530,6 +599,9 @@ func (c *companion) ask(req *http.Request, into any) verdict {
 
 func (c *companion) allowSignIn(r *http.Request) bool {
 	address := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		address = host
+	}
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		parts := strings.Split(forwarded, ",")
 		address = strings.TrimSpace(parts[len(parts)-1])

@@ -21,7 +21,7 @@ package has [a page of its own](gitops.md).
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
 | `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
 | `helpers/tools` | Copies a tool onto a machine or a runner while it runs, such as age onto a Docker host or k3s onto a node |
-| `helpers/signin` | Is the Docker host block, which runs the sign-in companion that opens an app only to its org's members |
+| `helpers/signin` | Is hcloud-docker-host, which runs the sign-in companion that opens an app only to its org's members, as [Opening an app only to its org's members](#opening-an-app-only-to-its-orgs-members) describes |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made, judging each by the kit's subscription tag |
@@ -257,27 +257,58 @@ if err != nil {
 
 ### Opening an app only to its org's members
 
-A route with `SignIn` set lets a request through to the app only once the
-host's sign-in companion has signed the visitor in through mitstack as a
-member of the app's org. The companion re-checks the member at mitstack at
-most five minutes after the last check. A route with `SignIn` unset renders
-exactly what it did before.
+The sign-in companion is a small program that runs as one container on each
+Docker host, beside the edge. The edge asks it about each request to an app
+that opens only to its org's members. It signs a visitor in through mitstack's
+own OAuth routes, and it remembers each member in a cookie only it can read,
+sealed with a key it keeps on the host. It asks mitstack again whether the
+visitor is still a member at most five minutes after it last asked. A removed
+member therefore loses the app within five minutes.
 
-`dockerhost.SignIn` has three fields:
+A `dockerhost.Route` turns this on with its `SignIn` field. With `SignIn`
+unset, the route renders exactly what it did before. `dockerhost.SignIn` has
+three fields:
 
 | Field | What it holds |
 |---|---|
-| `AppID` | The app's mitstack id, from which mitstack derives the app's sign-in client |
-| `SignInHostname` | The app's hostname in mitstack's apps zone, where mitstack returns a member after sign-in |
-| `Hostnames` | Every hostname the app's route serves, the only ones a sign-in returns a visitor to |
+| `AppID` | The app's mitstack id, such as `app_8d21b0c4`. mitstack signs a visitor in for the app under the OAuth client id `app:` followed by this id, which nothing registers |
+| `SignInHostname` | The app's hostname under `apps.mitstack.dev`, such as `costs.apps.mitstack.dev`, where mitstack sends a member back after sign-in |
+| `Hostnames` | Every hostname the app's route serves, the only ones a sign-in sends a visitor back to |
 
-Each route's site then does three things, in order:
+A docker-app-slice route for an app that also serves a custom domain renders
+one site per hostname, each with the same `SignIn`:
+
+```go
+signIn := &dockerhost.SignIn{
+	AppID:          "app_8d21b0c4",
+	SignInHostname: "costs.apps.mitstack.dev",
+	Hostnames:      []string{"costs.apps.mitstack.dev", "shop.example.com"},
+}
+edge := dockerhost.Edge{Compress: true}
+var route strings.Builder
+for _, name := range signIn.Hostnames {
+	site, err := edge.Site(dockerhost.Route{Hostname: name, Upstream: "costs-app:8080", SignIn: signIn})
+	if err != nil {
+		return err
+	}
+	route.WriteString(site)
+}
+```
+
+A visitor who opens the custom domain signs in on `SignInHostname`, since
+mitstack sends members back only to a hostname under `apps.mitstack.dev`. The
+companion then hands the session over to the custom domain with a link that
+works once, within 60 seconds, and only in the browser that started the
+sign-in.
+
+Each route's site does three things, in order:
 
 1. It deletes the five member headers, `X-Mitstack-User`, `X-Mitstack-Email`,
    `X-Mitstack-Name`, `X-Mitstack-Org` and `X-Mitstack-Role`, from every
    request a visitor sends.
-2. It sends every path under `/.mitstack/` to the companion, which answers the
-   sign-in callback, the custom-domain handoff and sign-out there.
+2. It sends every path under `/.mitstack/` to the companion, which answers
+   mitstack's return after sign-in, the custom domain's handoff and sign-out
+   there. Sign-out ends the session only on a `POST` from the app's own page.
 3. It asks the companion about every other request through caddy's
    `forward_auth`, and passes it to the app with the five headers only on a
    2xx answer.
@@ -286,12 +317,13 @@ Each route's site then does three things, in order:
 hostname in `Hostnames` that a route could not hold, and a `Hostnames` that
 leaves out the route's own hostname or `SignInHostname`.
 
-The companion is the program `helpers/signin` serves, built into the tools
-image at `tools.SignInPath` with the CA bundle it trusts beside it. The host's
-block runs it from the image as a container named `signin.ContainerName` on
-`appnet`, with a volume at `/data` that keeps its key across restarts. It
-holds no mitstack credential, since each call it makes carries a member's own
-app token.
+The companion's code is `helpers/signin`, and its program is built into the
+tools image at `tools.SignInPath`, with the CA bundle it trusts beside it. The
+hcloud-docker-host block runs it from that image as a container named
+`signin.ContainerName` on `appnet`. A volume at `/data` keeps its key and the
+sessions signed out across restarts. It holds no mitstack credential. Each
+call it makes carries the token mitstack issued for that one member and app,
+which opens only `GET /oauth/userinfo`.
 
 ### Sizing an app against what the host holds
 
