@@ -11,6 +11,9 @@ const Image = ""
 
 const CopyScriptPath = "/copy-tool/copy-tool.sh"
 
+// SignInPath is the sign-in companion in the tools image, which a Docker host runs from the image as a container.
+const SignInPath = "/mitstack-signin/mitstack-signin"
+
 //go:embed tools.sha256 scripts/copy-tool.sh
 var embedded embed.FS
 
@@ -30,6 +33,7 @@ var (
 	NSAConfigInputs = pinned("/kubescape/default_config_inputs")
 	K3sInstaller    = pinned("/k3s/install.sh")
 	KubeBenchConfig = pinnedUnder("/kube-bench/cfg/")
+	SignInCA        = pinned("/mitstack-signin/ca-certificates.crt")
 )
 
 func pinned(path string) File {

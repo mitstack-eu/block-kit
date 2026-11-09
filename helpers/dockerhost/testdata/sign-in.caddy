@@ -1,0 +1,25 @@
+costs.apps.mitstack.dev {
+  encode zstd gzip
+  request_header -X-Mitstack-User
+  request_header -X-Mitstack-Email
+  request_header -X-Mitstack-Name
+  request_header -X-Mitstack-Org
+  request_header -X-Mitstack-Role
+  handle /.mitstack/* {
+    reverse_proxy mitstack-signin:8080 {
+      header_up X-Mitstack-App app_8d21b0c4
+      header_up X-Mitstack-Sign-In-Host costs.apps.mitstack.dev
+      header_up X-Mitstack-Hosts "costs.apps.mitstack.dev shop.example.com"
+    }
+  }
+  handle {
+    forward_auth mitstack-signin:8080 {
+      uri /.mitstack/check
+      header_up X-Mitstack-App app_8d21b0c4
+      header_up X-Mitstack-Sign-In-Host costs.apps.mitstack.dev
+      header_up X-Mitstack-Hosts "costs.apps.mitstack.dev shop.example.com"
+      copy_headers X-Mitstack-User X-Mitstack-Email X-Mitstack-Name X-Mitstack-Org X-Mitstack-Role
+    }
+    reverse_proxy costs-app:8080
+  }
+}

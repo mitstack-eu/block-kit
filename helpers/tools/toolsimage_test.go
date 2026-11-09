@@ -20,7 +20,7 @@ import (
 )
 
 func everyFile() []tools.File {
-	return append([]tools.File{tools.Age, tools.AgeKeygen, tools.NSAFramework, tools.NSAConfigInputs, tools.K3sInstaller,
+	return append([]tools.File{tools.Age, tools.AgeKeygen, tools.NSAFramework, tools.NSAConfigInputs, tools.K3sInstaller, tools.SignInCA,
 		{Path: tools.CopyScriptPath, SHA256: sha(tools.CopyScript)}}, tools.KubeBenchConfig...)
 }
 
@@ -84,5 +84,15 @@ func TestToolsImage_CopyToolCopiesEveryFileThroughDockerAndOverTheRegistryAPI(t 
 	}
 	if len(distinct) != len(layerOf) {
 		t.Errorf("tools share layers: %v; want each tool in a layer of its own", layerOf)
+	}
+}
+
+func TestToolsImage_RunsTheSignInCompanion(t *testing.T) {
+	image := os.Getenv("TOOLS_IMAGE")
+
+	out := docker(t, "run", "--rm", "--network", "none", "--entrypoint", tools.SignInPath, image, "-version")
+
+	if !strings.HasPrefix(out, "mitstack-signin ") {
+		t.Errorf("%s -version in %s printed %q; want it to name itself", tools.SignInPath, image, out)
 	}
 }
