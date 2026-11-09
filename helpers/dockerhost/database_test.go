@@ -31,6 +31,12 @@ const (
 	storeImage = "example.org/store:2.1@sha256:0f9e"
 )
 
+var (
+	_ handler.Resource         = dockerhost.Database{}
+	_ handler.ResourceReporter = dockerhost.Database{}
+	_ handler.Observer         = dockerhost.Database{}
+)
+
 type dbEnv struct {
 	host *dockerhosttest.Host
 	db   dockerhost.Database
@@ -232,10 +238,11 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 				tc.edit(&d)
 			}
 
-			_, err := e.db.EnsureResources(context.Background(), d)
+			var resource handler.Resource = e.db
+			err := resource.Ensure(context.Background(), d)
 
 			if err == nil || refused(err) != tc.class || !strings.Contains(err.Error(), tc.says) {
-				t.Errorf("EnsureResources = %v; want a %q refusal naming %q", err, tc.class, tc.says)
+				t.Errorf("Ensure = %v; want a %q refusal naming %q", err, tc.class, tc.says)
 			}
 			if got := e.host.Under("shop"); !maps.Equal(got, held) {
 				t.Errorf("a refused subscribe left shop holding %v; want it as it was, %v", slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(held)))
@@ -363,17 +370,34 @@ func TestDatabase_SubscriptionLogsReadsTheDatabaseContainersOwnLines(t *testing.
 func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealthy(t *testing.T) {
 	logs := "LOG: ready\nFATAL: password authentication failed for user \"app\"\n"
 	for _, tc := range []struct {
-		name                          string
-		land                          bool
-		host                          func(*dockerhosttest.Host)
-		state                         contract.State
-		says                          string
-		unwell, neverActive, recorded bool
+		name                                 string
+		land, other                          bool
+		host                                 func(*dockerhosttest.Host)
+		engine                               func(*dockerhost.Engine)
+		state                                contract.State
+		says                                 string
+		unwell, neverActive, recorded, whole bool
 	}{
 		{name: "nothing landed", state: contract.Absent},
+		{name: "a database another subscription holds", land: true, other: true, state: contract.Absent},
 		{name: "landed and running", land: true, state: contract.Present, says: "shop-store runs"},
 		{name: "a silent host", land: true, host: func(h *dockerhosttest.Host) { h.Silent = true }, state: contract.Unknown, says: "no node report"},
-		{name: "an agent behind on the database's files", land: true, host: func(h *dockerhosttest.Host) { h.Lagging = "0000000" }, state: contract.Unknown, says: "last synced"},
+		{name: "a report naming no synced commit", land: true, host: func(h *dockerhosttest.Host) { h.Unsynced = true }, state: contract.Unknown,
+			says: "carries no host.agent.syncedCommit"},
+		{name: "an agent behind on the database's files", land: true, state: contract.Unknown, says: "whose " + dbBlock + ".gives differs from main's head",
+			host: func(h *dockerhosttest.Host) {
+				synced := h.Head()
+				h.Set(map[string]string{"shop/" + dbBlock + ".gives": "DB_HOST=fixed:elsewhere\n"})
+				h.Lagging = synced
+			}},
+		{name: "an agent behind only on another app's files", land: true, state: contract.Present, says: "shop-store runs",
+			host: func(h *dockerhosttest.Host) {
+				synced := h.Head()
+				h.Set(map[string]string{"web/README.md": "Another app.\n"})
+				h.Lagging = synced
+			}},
+		{name: "an agent that synced a commit the repository does not hold", land: true, host: func(h *dockerhosttest.Host) { h.Lagging = "0000000" },
+			state: contract.Unknown, says: "whether the database's files changed since cannot be read"},
 		{name: "a container still starting", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"health": "starting"} },
 			state: contract.Unknown, says: "still starting"},
 		{name: "a database missing its gives file", land: true, host: func(h *dockerhosttest.Host) { h.Set(map[string]string{"shop/" + dbBlock + ".gives": ""}) },
@@ -382,6 +406,13 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 			state: contract.Unknown, says: "shows no shop-store"},
 		{name: "a container that exited", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"state": "exited", "logs": logs} },
 			state: contract.Unknown, says: "reads exited: FATAL: password authentication failed"},
+		{name: "a container that exited on a host that sends no output", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"state": "exited"} },
+			state: contract.Unknown, says: "reads exited; this host's node report carries no container output"},
+		{name: "an unhealthy container of an engine naming no trouble", land: true, state: contract.Present, unwell: true, whole: true, says: "shop-store reads unhealthy",
+			engine: func(en *dockerhost.Engine) { en.Trouble = nil },
+			host: func(h *dockerhosttest.Host) {
+				h.Containers["shop"] = map[string]any{"health": "unhealthy", "logs": logs}
+			}},
 		{name: "an unhealthy container that never read active", land: true, neverActive: true, state: contract.Unknown, says: "before it ever read active",
 			host: func(h *dockerhosttest.Host) {
 				h.Containers["shop"] = map[string]any{"health": "unhealthy", "logs": logs}
@@ -395,10 +426,17 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 		t.Run(tc.name, func(t *testing.T) {
 			e := newDBEnv(t)
 			if tc.land {
-				e.land(t, dbDesired("shop", nil))
+				landed := dbDesired("shop", nil)
+				if tc.other {
+					landed.SubscriptionID = "sub_db_other"
+				}
+				e.land(t, landed)
 			}
 			if tc.host != nil {
 				tc.host(e.host)
+			}
+			if tc.engine != nil {
+				tc.engine(&e.db.Engine)
 			}
 
 			d := dbDesired("shop", nil)
@@ -414,7 +452,7 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 			if obs.Unhealthy != nil {
 				detail = obs.Unhealthy.Detail
 			}
-			if obs.State != tc.state || (obs.Unhealthy != nil) != tc.unwell || !strings.Contains(detail, tc.says) {
+			if obs.State != tc.state || (obs.Unhealthy != nil) != tc.unwell || !strings.Contains(detail, tc.says) || (tc.whole && detail != tc.says) {
 				t.Errorf("ObserveResource = %+v; want %s, unhealthy %v, naming %q", obs, tc.state, tc.unwell, tc.says)
 			}
 			if obs.State == contract.Present && (obs.Outputs["host"] != "shop-store" || obs.Outputs["port"] != "7000") {
