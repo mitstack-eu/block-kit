@@ -31,8 +31,6 @@ type Host struct {
 	BackupError  string
 	Volumes      map[string]bool
 	BackupResult string
-	// RunRequest is the request the host's backup run answers, each app's own request when empty.
-	RunRequest string
 	// Containers replaces an app's running container with the fields it holds, such as state, health and logs.
 	Containers map[string]map[string]any
 }
@@ -102,9 +100,6 @@ func (h *Host) NodeReports(_ context.Context, _ contract.Desired, subID string) 
 		}
 		volumes = append(volumes, map[string]any{"app": app, "block": h.Block, "volume": h.Service + "-data", "mounted": true})
 		request := strings.TrimSpace(main[app+"/"+h.Block+".backup-request"])
-		if h.RunRequest != "" {
-			request = h.RunRequest
-		}
 		if request != "" && h.BackupResult != "" {
 			runs = append(runs, map[string]any{"app": app, "block": h.Block, "object": app + "/20261102T120000Z-5f1c.age", "result": h.BackupResult, "request": request})
 		}
