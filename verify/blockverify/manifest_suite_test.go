@@ -154,10 +154,10 @@ func TestManifestSuite(t *testing.T) {
 		cases = append(cases, fails("unquoted metadata.id "+idLine+" fails, asking for quotes", withID(t, idLine), "manifest.yaml", "metadata.id", "quote"))
 	}
 	for path, spec := range map[string]string{
-		"spec.frobnicate":           "  frobnicate: true\n",
-		"spec.futureSection":        "  futureSection:\n    outputs: not-the-outputs\n",
-		"spec.requires[0].optional": "  requires:\n    - type: aws.vpc\n      optional: true\n",
-		"spec.dependsOn":            "  dependsOn:\n    - weather-app\n",
+		"spec.frobnicate":             "  frobnicate: true\n",
+		"spec.futureSection":          "  futureSection:\n    outputs: not-the-outputs\n",
+		"spec.requires[0].frobnicate": "  requires:\n    - type: aws.vpc\n      frobnicate: true\n",
+		"spec.dependsOn":              "  dependsOn:\n    - weather-app\n",
 	} {
 		cases = append(cases, fails("an unknown field "+path+" fails with the parser's message", head+spec, "manifest.yaml", path, refusal(t, head+spec, path)))
 	}
