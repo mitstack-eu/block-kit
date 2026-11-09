@@ -518,6 +518,17 @@ for row in "ghcr.io/mitstack-eu/block-kit-tools:v0.9.9@$DIGEST|seed_tools" "ghcr
   assert_kit_tag_count "a refused pin cuts no tag ($ref, $commit)" "$R" 0
 done
 
+# 29. After a pinned release, a push that changes nothing since the released head is judged unchanged, although the tag's commit differs from main in its tools package.
+setup_repo
+tag_at "v0.5.0"
+seed_tools
+run --repo "$W" --head "$(head_sha)" --tools-image "ghcr.io/mitstack-eu/block-kit-tools:v0.5.1@$DIGEST"
+commit_empty "chore: nothing"
+run --repo "$W" --head "$(head_sha)" --tools-image "ghcr.io/mitstack-eu/block-kit-tools:v0.5.2@$DIGEST"
+check "an empty push after a pinned release exits 0" 0 "$RC"
+assert_out_contains "an empty push after a pinned release is judged unchanged" "unchanged"
+assert_kit_tag_count "an empty push after a pinned release cuts nothing" "$W" 2
+
 echo "----"
 echo "release-block-kit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
