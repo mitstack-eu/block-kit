@@ -21,13 +21,24 @@ go -C examples/hetzner-firewall test ./...
 go run ./verify/blockverify --standalone examples/hetzner-firewall
 ```
 
-The tools image builds with Docker, and a test behind the `toolsimage` build
-tag checks each file it holds against `helpers/tools/tools.sha256`. CI runs
-both on every event:
+The tools image builds with Docker from the repository's root, since it also
+holds the sign-in companion built from `cmd/mitstack-signin`. A test behind
+the `toolsimage` build tag checks each file it holds against
+`helpers/tools/tools.sha256` and runs the companion. CI runs both on every
+event:
 
 ```sh
-docker build --platform linux/amd64 -t block-kit-tools:ci helpers/tools
-TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -run '^TestToolsImage_HoldsEveryFileAtItsPinInALayerOfItsOwn$' ./helpers/tools
+docker build --platform linux/amd64 -f helpers/tools/Dockerfile -t block-kit-tools:ci .
+TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -run '^TestToolsImage_(HoldsEveryFileAtItsPinInALayerOfItsOwn|RunsTheSignInCompanion)$' ./helpers/tools
+```
+
+A test behind the `edgecaddy` build tag runs the sign-in route `Edge.Site`
+renders in a real caddy, on the host's network, and proves that a header a
+visitor sends under a member header's name never reaches the app. CI runs it
+against `caddy:2`, the image every Docker host's edge pulls:
+
+```sh
+CADDY_IMAGE=caddy:2 go test -tags edgecaddy -run '^TestEdge_' ./helpers/dockerhost
 ```
 
 The rescuessh module, the healthz module and the example block are Go modules

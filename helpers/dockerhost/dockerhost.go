@@ -58,10 +58,12 @@ type File struct {
 	Content string
 }
 
-// Route sends one hostname's requests to an upstream, a container on appnet named with its port as name:port.
+// Route sends one hostname's requests to an upstream, a container on appnet named with its port as name:port, and
+// with SignIn set only once the app's org has signed the visitor in.
 type Route struct {
 	Hostname string
 	Upstream string
+	SignIn   *SignIn
 }
 
 // Edge serves each route's hostname on a publicly trusted certificate, and PublicIP on caddy's internal CA to
@@ -138,6 +140,9 @@ func (e Edge) Site(r Route) (string, error) {
 }
 
 func (e Edge) site(r Route) string {
+	if r.SignIn != nil {
+		return e.signInSite(r)
+	}
 	return block(r.Hostname+" {", append(e.encoding(), "reverse_proxy "+r.Upstream)...)
 }
 
@@ -195,6 +200,11 @@ func checkRoute(r Route) error {
 	}
 	if net.ParseIP(r.Hostname) != nil {
 		return fmt.Errorf("edge: route %s is an IP address, which the edge serves on its internal CA already", r.Hostname)
+	}
+	if r.SignIn != nil {
+		if err := checkSignIn(r); err != nil {
+			return err
+		}
 	}
 	return checkUpstream(r.Upstream)
 }

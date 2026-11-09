@@ -21,6 +21,7 @@ package has [a page of its own](gitops.md).
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
 | `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
 | `helpers/tools` | Copies a tool onto a machine or a runner while it runs, such as age onto a Docker host or k3s onto a node |
+| `helpers/signin` | Is the Docker host block, which runs the sign-in companion that opens an app only to its org's members |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made, judging each by the kit's subscription tag |
@@ -253,6 +254,44 @@ if err != nil {
 	return err
 }
 ```
+
+### Opening an app only to its org's members
+
+A route with `SignIn` set lets a request through to the app only once the
+host's sign-in companion has signed the visitor in through mitstack as a
+member of the app's org. The companion re-checks the member at mitstack at
+most five minutes after the last check. A route with `SignIn` unset renders
+exactly what it did before.
+
+`dockerhost.SignIn` has three fields:
+
+| Field | What it holds |
+|---|---|
+| `AppID` | The app's mitstack id, from which mitstack derives the app's sign-in client |
+| `SignInHostname` | The app's hostname in mitstack's apps zone, where mitstack returns a member after sign-in |
+| `Hostnames` | Every hostname the app's route serves, the only ones a sign-in returns a visitor to |
+
+Each route's site then does three things, in order:
+
+1. It deletes the five member headers, `X-Mitstack-User`, `X-Mitstack-Email`,
+   `X-Mitstack-Name`, `X-Mitstack-Org` and `X-Mitstack-Role`, from every
+   request a visitor sends.
+2. It sends every path under `/.mitstack/` to the companion, which answers the
+   sign-in callback, the custom-domain handoff and sign-out there.
+3. It asks the companion about every other request through caddy's
+   `forward_auth`, and passes it to the app with the five headers only on a
+   2xx answer.
+
+`Site` refuses an app id that is not 1 to 64 letters, digits, `-` or `_`, a
+hostname in `Hostnames` that a route could not hold, and a `Hostnames` that
+leaves out the route's own hostname or `SignInHostname`.
+
+The companion is the program `helpers/signin` serves, built into the tools
+image at `tools.SignInPath` with the CA bundle it trusts beside it. The host's
+block runs it from the image as a container named `signin.ContainerName` on
+`appnet`, with a volume at `/data` that keeps its key across restarts. It
+holds no mitstack credential, since each call it makes carries a member's own
+app token.
 
 ### Sizing an app against what the host holds
 

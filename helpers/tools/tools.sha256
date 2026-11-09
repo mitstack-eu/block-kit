@@ -10,3 +10,4 @@ edfbd6293920ef0faac6b68814e4efa45b7d40e36ee0cd7b76a398b4ccb63fbe  kube-bench/cfg
 74cb35bd3d33fcc116d512a41e6f76e993a1dfdacc12c866983720652025f2f0  kube-bench/cfg/k3s-cis-1.11/controlplane.yaml
 be39f7cc995c10ec06a80ab03f5ef93747973bc445bb59106519b94a17d59be5  kube-bench/cfg/k3s-cis-1.11/node.yaml
 359004dfdc5f92f2a420f38ff57186a3cb965646bc7eefa0c39b80d0792fae6a  kube-bench/cfg/k3s-cis-1.11/policies.yaml
+5961c0a3c65459931c023e0075c09733f09aea4ca439cb85bc4a08bb4f3f568b  mitstack-signin/ca-certificates.crt
