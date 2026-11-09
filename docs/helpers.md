@@ -15,7 +15,7 @@ package has [a page of its own](gitops.md).
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
-| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, or sizes and observes an app on one |
+| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, sizes and observes an app on one, or runs an app's database on one |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `helpers/healthz` | Serves its health check, which every block does |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
@@ -482,6 +482,146 @@ back up. On that report `SyncedCommit` returns an error naming the observer and
 the resource instead of a commit, since a gone host syncs none. A host with no
 attestation that has uploaded no report yet still makes `Done` return a
 `handler.Wait`.
+
+### Running an app's database on the host
+
+An org's Docker host is a server that runs the org's apps as Docker
+containers, as "Setting up a Docker host" describes. The host follows a GitHub
+repository with one directory per app. Its pull agent, a program on the host,
+applies each new commit of that repository by starting or stopping the
+containers the app's directory describes.
+
+A block that runs one app's database there, such as docker-postgres, does the
+same work whatever its engine, the database program it runs, such as
+PostgreSQL or MariaDB. `dockerhost.Database` holds that work once, so the
+block writes only what its engine needs: the image, the entrypoint, the dump
+and the restore.
+
+#### Wiring a Database into the handler
+
+A `Database` is the block's `handler.Resource`, the part that answers a
+subscribe, an upgrade and an unsubscribe, as [Building a
+handler](handler.md#building-a-handler) describes. It is also the observer of
+its one resource, the code that reads what the resource is now, as [What an
+observer answers](observe.md#what-an-observer-answers) describes. It reads the
+database container's output for the block's logs call too.
+
+```go
+db := dockerhost.Database{
+	Block:   "docker-postgres",
+	Type:    "hetzner.docker-postgres-database",
+	Engine:  postgres(),
+	Reports: observe.NodeReportsClient{},
+}
+h, err := handler.New(handler.Config{
+	Resource: db, Observers: db.Observers(), SubscriptionLogs: db.SubscriptionLogs,
+	Manifest: manifestYAML, JWKSURL: jwksURL, Logs: logs,
+})
+```
+
+In this example, `postgres()` is the block's own function that returns its
+`Engine`, which the table below describes. `manifestYAML`, `jwksURL` and
+`logs` are what every block hands `handler.New`, as [Building a
+handler](handler.md#building-a-handler) describes. The fields of a `Database`
+are these:
+
+| Field | What it is |
+|---|---|
+| `Block` | The block's id, which names its files in the app's directory and labels its volume and backups |
+| `Type` | The catalogue type of the database resource, the type the manifest's resource names |
+| `Engine` | What the engine needs, in the table below |
+| `Reports` | Where the host's node reports come from: `observe.NodeReportsClient{}` in production, and the fake in a test |
+| `GitHub` | Makes the client of the host's repository. Leave it nil in production, and the client waits 30 seconds at most per call |
+| `Now` | The clock, nil for the system clock |
+
+The manifest declares one resource, named `dockerhost.DatabaseResource`, and
+requires `host`, the org's Docker host subscription. The `Database` reads the
+host's `subscriptionId` and `clusterRepoUrl` from that binding, and the
+subscription's `github` connection gives it the token for the repository. The
+host itself uploads each backup to its own backup bucket, so the `Database`
+reads no bucket binding.
+
+#### What a subscribe writes
+
+A subscribe or an upgrade reads these inputs:
+
+| Input | What it is | Default |
+|---|---|---|
+| `appName` | The app's directory on the host: lowercase letters, digits and hyphens | none |
+| `dbCpu` | The CPU the database reserves, such as `0.5` or `250m` | `0.5` |
+| `dbMemory` | The memory it reserves, such as `512Mi` or `1Gi` | `512Mi` |
+| `dbDisk` | The size of its volume, such as `1Gi` | `1Gi` |
+| `env` | Comma-separated `NAME=value` entries that rename a variable the database gives the app | none |
+
+The database gives the app five values, each under a variable: `host` as
+`DB_HOST`, `port` as `DB_PORT`, `dbName` as `DB_NAME`, `username` as
+`DB_USER` and `password` as `DB_PASSWORD`. An `env` of
+`STORE_USER=username, STORE_DB=dbName` gives the username as `STORE_USER` and
+the database name as `STORE_DB`, and leaves the other three as they are.
+
+The `Database` then writes four files in the app's directory, in one commit:
+
+| File | What it holds |
+|---|---|
+| `<block>.compose.yaml` | The Compose file that runs the engine's image as the container `<app>-<Service>` on the app's own network, `app-<app>`, with no port published on the host |
+| `<block>.gives` | One `NAME=fixed:VALUE` line for each of the four fixed values, and `DB_PASSWORD=generated`, for which the host makes a random password once and keeps it |
+| `<block>.backup` | The lines `service=`, `command=` with the engine's dump, `restore=` with its restore and `every=24h`, which tell the host how and how often to back the database up |
+| `reservations/<block>.json` | The CPU, memory and disk the database reserves, which "Sizing an app against what the host holds" reads |
+
+The compose file's volume, `<Service>-data`, carries the label
+`eu.mitstack.size` with the disk the database reserves. The host makes a
+volume with that label as a file of that size, so the database can never
+fill more of the host's disk.
+
+#### When a subscribe is refused
+
+The `Database` writes nothing, and answers a refusal naming its class, when
+any of these holds:
+
+| Class | When |
+|---|---|
+| `app-taken` | The app's directory already holds this block's compose file for another subscription |
+| `env-mapping` | One of the database's variables is already named by the app's `env.names`, the list of variables the app's own block sets, or by another block's gives file |
+| `invalid-param` | An input does not parse, or `env` names a value the database does not give, or gives two values one variable |
+| `disk-fixed` | An upgrade asks for a disk other than the volume's, which the host cannot resize |
+| `host-takes-no-backups` | The host's node report says its backups fail, such as for a host made without a backup public key |
+| `host-full` | The database's reservation does not fit in what the host can give its apps less what its other apps reserve |
+
+A host that has sent no node report yet gets no refusal. The subscribe fails
+with an error saying so, and the next one retries.
+
+#### What the engine gives
+
+An `Engine` names the rest:
+
+| Field | What it is |
+|---|---|
+| `Service` | The compose service, which also names the container and the volume |
+| `Image` | The engine's image, pinned by digest |
+| `Port`, `DataDir` | The port the database listens on, and where its volume mounts |
+| `Entrypoint` | The container's entrypoint. It is given the variable names, as a `dockerhost.Names` map from each value to its variable. It writes a variable as `$NAME`, and the kit escapes each `$` for Compose |
+| `Command`, `Environment`, `Healthcheck` | The container's command, its fixed environment and its health check's test, as Compose takes them |
+| `Dump`, `Restore` | One command line each, given the variable names. The host splits `Dump` into words as a shell would, runs it in the container without a shell, and keeps what it writes to its output as the backup, so a line that reads a variable calls `sh -c` itself. A host that replaces a lost one runs `Restore` through `sh -c` in the new container, with the newest backup on its input |
+| `Trouble` | A regular expression. When the container stops or reads unhealthy, the newest output line it matches is quoted as the cause, and nil quotes none |
+
+#### Removing the database and reading it
+
+An unsubscribe asks the host for a final backup through `FinalBackup`, as "How
+a block waits for its final backup" describes, and removes the files only once
+that backup is uploaded to the host's backup bucket.
+
+The observer reads the database present once the newest node report shows
+that the pull agent has applied a commit holding the database's files as main
+holds them, and that its container is running and past starting. A commit
+that changed only other files leaves the database current. A container that
+reads unhealthy, once the database has read active, is present but unhealthy, with `dockerhost.DatabaseUnhealthy`
+as its cause.
+
+A block's test drives the `Database` against `dockerhosttest.Host`, a fake of
+the host's repository and its node report. Set `Database.GitHub` to the fake's
+`GitHub` and `Database.Reports` to the fake itself. The fake's fields set what
+its next node report holds, such as a silent host, a lagging agent or a
+container's state.
 
 ## Reporting whether an app answers
 

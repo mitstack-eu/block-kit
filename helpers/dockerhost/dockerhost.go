@@ -1,5 +1,5 @@
 // Package dockerhost renders the setup of a host that runs apps as containers behind a caddy edge on the appnet network,
-// with sshd locked to key login, and sizes and observes each app on such a host through its newest node report.
+// with sshd locked to key login, sizes and observes each app on such a host, and runs an app's own database on one.
 package dockerhost
 
 import (
