@@ -143,8 +143,10 @@ type ManifestRequirement struct {
 	// Name is unique in the block and set when the requirement lists more than one type or the block needs two resources of one type.
 	Name string `json:"name,omitempty"`
 	// Many collects every offer of the types and accepts none.
-	Many  bool     `json:"many,omitempty"`
-	Types []string `json:"types,omitempty"`
+	Many bool `json:"many,omitempty"`
+	// Optional accepts one offer of the types or none, and a request binds nothing under the reference when the app holds none.
+	Optional bool     `json:"optional,omitempty"`
+	Types    []string `json:"types,omitempty"`
 }
 
 func (q ManifestRequirement) Reference() string {

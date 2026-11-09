@@ -215,7 +215,7 @@ type blockRun struct {
 	desired contract.Desired
 }
 
-// blockRuns runs once per listed type of each requirement listing more than one, meeting every other requirement with its first type.
+// blockRuns runs once per listed type of each requirement listing more than one, and once with each optional requirement unbound, meeting every other requirement with its first type.
 func blockRuns(spec contract.ManifestSpec, in Block) []blockRun {
 	base := make(map[string]string, len(spec.Requires))
 	for _, q := range spec.Requires {
@@ -231,18 +231,30 @@ func blockRuns(spec contract.ManifestSpec, in Block) []blockRun {
 			types[q.Reference()] = typ
 			runs = append(runs, blockRun{
 				label:   fmt.Sprintf(" (requires.%s met by %s)", q.Reference(), typ),
-				desired: requirementDesired(in.Desired, in.Requirements, types),
+				desired: requirementDesired(in.Desired, in.Requirements, types, ""),
 			})
 		}
 	}
 	if len(runs) == 0 {
-		runs = append(runs, blockRun{desired: requirementDesired(in.Desired, in.Requirements, base)})
+		runs = append(runs, blockRun{desired: requirementDesired(in.Desired, in.Requirements, base, "")})
+	}
+	for _, q := range spec.Requires {
+		if !q.Optional {
+			continue
+		}
+		types := maps.Clone(base)
+		delete(types, q.Reference())
+		runs = append(runs, blockRun{
+			label:   fmt.Sprintf(" (requires.%s unbound)", q.Reference()),
+			desired: requirementDesired(in.Desired, in.Requirements, types, q.Reference()),
+		})
 	}
 	return runs
 }
 
-func requirementDesired(d contract.Desired, requirements map[string]map[string]map[string]string, types map[string]string) contract.Desired {
-	if len(types) == 0 {
+// requirementDesired meets each requirement in types with its type, and hands the one named unbound no binding and no type, as the platform does an optional requirement the app holds no provider for.
+func requirementDesired(d contract.Desired, requirements map[string]map[string]map[string]string, types map[string]string, unbound string) contract.Desired {
+	if len(types) == 0 && unbound == "" {
 		return d
 	}
 	d.RequirementTypes = maps.Clone(d.RequirementTypes)
@@ -259,6 +271,8 @@ func requirementDesired(d contract.Desired, requirements map[string]map[string]m
 			d.Bindings[ref] = outputs
 		}
 	}
+	delete(d.RequirementTypes, unbound)
+	delete(d.Bindings, unbound)
 	return d
 }
 
