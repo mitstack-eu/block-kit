@@ -330,6 +330,11 @@ jobs:
       - name: Scan every commit for secrets with gitleaks
         run: bash block-kit/scripts/scan-secrets.sh block
 
+      # A tool a block fetches from a GitHub release page while it runs fails
+      # whenever GitHub does, so a block copies it from an image by digest.
+      - name: Fail a shipped file that fetches a tool from a GitHub release page
+        run: bash block-kit/scripts/check-runtime-downloads.sh block
+
   scripts:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:

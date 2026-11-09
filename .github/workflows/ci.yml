@@ -22,6 +22,13 @@ jobs:
           go-version: '1.26.10'
       - run: go vet ./...
       - run: go test ./...
+      # Every event builds the tools image and checks each file it holds
+      # against its pin, so a change that breaks it fails here, before a
+      # release would publish it.
+      - name: Build the tools image and check every file it holds
+        run: |
+          docker build --platform linux/amd64 -t block-kit-tools:ci helpers/tools
+          TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -count=1 -run '^TestToolsImage_HoldsEveryFileAtItsPinInALayerOfItsOwn$' ./helpers/tools
       # The example block is a module of its own, which ./... leaves out, and
       # blockverify holds it to the same checks as any other block.
       - name: Test the example block and run blockverify on it
@@ -116,6 +123,12 @@ jobs:
   # unreachable to every block importing it. A thin caller by design: the
   # script owns the decision and the version arithmetic, and no copy of
   # either lives here.
+  # A release also pushes the tools image to the public package
+  # ghcr.io/mitstack-eu/block-kit-tools under the planned tag, signs its digest
+  # keyless, pulls it with no login, and copies every tool out of it. A digest
+  # cannot sit in the commit its image is built from, so the script tags a
+  # commit on top of main's that writes the reference into tools.Image, and
+  # main's tools.Image names no image.
   release:
     name: kit release
     needs: test
@@ -127,23 +140,89 @@ jobs:
     # cannot push the tag it computed.
     permissions:
       contents: write
+      packages: write # the tools image
+      id-token: write # cosign's keyless signature
     concurrency:
       group: kit-release
       cancel-in-progress: false
+    env:
+      TOOLS_PACKAGE: ghcr.io/mitstack-eu/block-kit-tools
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the version scan reads tags, and a shallow checkout has none
-      - name: Cut the kit tag when the tree changed
-        # The shell is named because the default run shell leaves pipefail
-        # off, and a pipeline's status is its last command's. The tee would
-        # then return 0 over every failing exit the script has, so a refused
-        # push or a failed verify would report green.
+      # The shell is named because the default run shell leaves pipefail
+      # off, and a pipeline's status is its last command's. The tee would
+      # then return 0 over every failing exit the script has.
+      # No --base: the script resolves the base from the newest kit tag, so
+      # a run that was skipped or red does not lose its release. The next
+      # push or a dispatch on main picks it up, with no change of its own.
+      - name: Plan the kit tag
+        id: plan
         shell: bash
-        # No --base: the script resolves the base from the newest kit tag, so
-        # a run that was skipped or red does not lose its release. The next
-        # push or a dispatch on main picks it up, with no change of its own.
-        run: bash scripts/release-block-kit.sh | tee -a "$GITHUB_STEP_SUMMARY"
+        run: bash scripts/release-block-kit.sh --dry-run | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.plan.outputs.planned != ''
+        with:
+          go-version: '1.26.10'
+
+      - name: Copy cosign v2.5.3 out of its publisher's image
+        if: steps.plan.outputs.planned != ''
+        run: |
+          bash scripts/copy-tool.sh ghcr.io/sigstore/cosign/cosign:v2.5.3@sha256:f1946d0f30fc8e3777b02f2201e02efdba9fe38f4918162f937052fac98e083f /ko-app/cosign 056df4b41218fff47e879470554e01b0ba8e7608c1bec1e704c9dcded965f00f "$RUNNER_TEMP/bin/cosign"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Push the tools image and sign its digest
+        id: image
+        if: steps.plan.outputs.planned != ''
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.planned }}
+        run: |
+          set -euo pipefail
+          echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx build --push --platform linux/amd64 --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            -t "$TOOLS_PACKAGE:$TAG" --metadata-file "$RUNNER_TEMP/build.json" helpers/tools
+          ref="$TOOLS_PACKAGE:$TAG@$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/build.json")"
+          cosign sign --yes "$ref"
+          docker logout ghcr.io
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "pushed and signed $ref"
+
+      # A k3s node and a Docker host copy their tools with no credential, so
+      # a release needs a public package. GitHub makes a new package private,
+      # so the first release fails here until an owner makes it public.
+      - name: Verify the signature and pull the image with no login
+        if: steps.plan.outputs.planned != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          gh api "orgs/mitstack-eu/packages/container/${TOOLS_PACKAGE##*/}" --jq '{name, visibility, created_at}'
+          cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity https://github.com/mitstack-eu/block-kit/.github/workflows/ci.yml@refs/heads/main \
+            "$REF" > /dev/null
+          docker image rm "${REF%@*}" || true # a copy the push left behind must not answer the pull
+          docker pull "$REF"
+
+      - name: Copy every tool out of the published image, through Docker and over the registry's HTTP API
+        if: steps.plan.outputs.planned != ''
+        env:
+          TOOLS_IMAGE: ${{ steps.image.outputs.ref }}
+        run: go test -tags toolsimage -count=1 -run '^TestToolsImage_' ./helpers/tools
+
+      - name: Cut the kit tag on a commit that pins the tools image
+        if: steps.plan.outputs.planned != ''
+        shell: bash
+        env:
+          TOOLS_IMAGE: ${{ steps.image.outputs.ref }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: bash scripts/release-block-kit.sh --tools-image "$TOOLS_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Cut the rescuessh tag when the module changed
         shell: bash
         run: bash scripts/release-block-kit.sh --module capabilities/hetzner/robot/rescuessh | tee -a "$GITHUB_STEP_SUMMARY"
