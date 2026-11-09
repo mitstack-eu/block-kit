@@ -15,7 +15,7 @@ package has [a page of its own](gitops.md).
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
-| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, or sizes and observes an app on one |
+| `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, sizes and observes an app on one, or runs an app's database on one |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `helpers/healthz` | Serves its health check, which every block does |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
@@ -482,6 +482,68 @@ back up. On that report `SyncedCommit` returns an error naming the observer and
 the resource instead of a commit, since a gone host syncs none. A host with no
 attestation that has uploaded no report yet still makes `Done` return a
 `handler.Wait`.
+
+### Running an app's database on the host
+
+A block that runs one app's database on its org's Docker host, such as
+docker-postgres, does the same work whatever its engine. `dockerhost.Database`
+holds that work once, so the block writes only what its engine needs: the
+image, the entrypoint, the dump and the restore. A `Database` is the block's
+`handler.Resource`, and it gives the handler its observers and its logs.
+
+```go
+db := dockerhost.Database{
+	Block: "docker-postgres", Type: "hetzner.docker-postgres-database",
+	Engine:  engine,
+	Reports: observe.NodeReportsClient{},
+}
+h, err := handler.New(handler.Config{
+	Resource: db, Observers: db.Observers(), SubscriptionLogs: db.SubscriptionLogs,
+	Manifest: manifestYAML, JWKSURL: jwksURL, Logs: logs,
+})
+```
+
+The block's manifest declares one resource, `dockerhost.DatabaseResource`, and
+requires a `host` and a `bucket`. On a subscribe or an upgrade, the `Database`
+works through these steps:
+
+1. It reads `appName`, the sizes `dbCpu`, `dbMemory` and `dbDisk`, and `env`,
+   which renames the variables the database gives the app.
+2. It refuses the request, writing nothing, when another subscription holds the
+   app's database, when the app or another block already names one of its
+   variables, when the disk differs from the volume's, or when the host has no
+   room or takes no backups.
+3. It writes four files in the app's directory of the host's repository: the
+   compose file, the gives file, the backup file and the reservation.
+
+The compose file runs the engine's image as `<app>-<service>` on the app's own
+network, `app-<app>`, with no port published on the host. Its volume carries a
+size label, so the host holds it to the disk the database reserves. The gives
+file is the list of variables the database hands the app. It gives
+`DB_HOST`, `DB_PORT`, `DB_NAME` and `DB_USER` fixed values, and `DB_PASSWORD` a
+password the host generates once.
+
+An `Engine` names the rest:
+
+| Field | What it is |
+|---|---|
+| `Service` | The compose service, which also names the container and the volume |
+| `Image` | The engine's image, pinned by digest |
+| `Port`, `DataDir` | The port the database listens on, and where its volume mounts |
+| `Entrypoint` | The container's entrypoint, given the app's variable names, written with plain `$` signs |
+| `Command`, `Environment`, `Healthcheck` | The container's command, its fixed environment and its health check's test |
+| `Dump`, `Restore` | One shell command line each, which the host runs in the container to dump the database and to load a dump |
+| `Trouble` | The output lines an unhealthy database quotes as its cause |
+
+An unsubscribe asks the host for a final backup through `FinalBackup`, as the
+section above describes, and removes the files only once that backup is
+uploaded. The observer reads the database present once the host's pull agent
+runs the commit holding its files and its container is running and past
+starting.
+
+A block's test drives the `Database` against `dockerhosttest.Host`, a fake of
+the host's repository and its node report. Set `Database.GitHub` to the fake's
+`GitHub` and `Database.Reports` to the fake itself.
 
 ## Reporting whether an app answers
 
