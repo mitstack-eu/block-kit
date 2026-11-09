@@ -73,8 +73,8 @@ func TestServerTypesRead_RefusesAsInvalidParamNamingServerTypeAndTheOffendingEnt
 	}{
 		{"a type the block does not run on", fallbackPair, "cx23,cx11", []string{`"cx11"`, "cx23, cx33, cpx22, cpx32"}},
 		{"a type given twice", fallbackPair, "cx23,cx23", []string{`"cx23"`, "twice"}},
-		{"a list past the most the block takes", fallbackPair, "cx23,cpx22,cx33", []string{`"cx33"`, "at most 2"}},
-		{"a fallback to a block that takes one type", onlyCx23, "cx23,cpx22", []string{`"cpx22"`, "at most 1"}},
+		{"a list past the most the block takes", fallbackPair, "cx23,cpx22,cx33", []string{`"cx33"`, "at most 2", "runs on cx23, cx33, cpx22, cpx32"}},
+		{"a fallback to a block that takes one type", onlyCx23, "cx23,cpx22", []string{`"cpx22"`, "at most 1", "runs on cx23"}},
 		{"an empty entry", fallbackPair, "cx23,,cpx22", []string{`""`, "cx23, cx33, cpx22, cpx32"}},
 		{"no type to a block with no default", onlyCx23, "", []string{"cx23"}},
 	}

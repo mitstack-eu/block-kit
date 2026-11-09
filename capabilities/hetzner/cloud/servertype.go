@@ -22,7 +22,7 @@ type ServerTypes struct {
 	Default string
 }
 
-// Read returns the request's serverType entries in order, and refuses as invalid-param an entry past Max, an entry outside Allowed, or a repeat.
+// Read returns the request's serverType entries in order, and refuses as invalid-param an entry past Max, an entry outside Allowed, or a repeat, naming Allowed when the entry is past Max or outside it.
 func (s ServerTypes) Read(d contract.Desired) ([]string, error) {
 	value := cmp.Or(d.Params[serverTypeParam], s.Default)
 	allowed := strings.Join(s.Allowed, ", ")
@@ -35,8 +35,8 @@ func (s ServerTypes) Read(d contract.Desired) ([]string, error) {
 		entries[i] = entry
 		switch {
 		case s.Max > 0 && i >= s.Max:
-			return nil, handler.Refuse(invalidParam, `params[%q] is %q; the block takes at most %d %s, so its entry %q is one too many`,
-				serverTypeParam, value, s.Max, plural(s.Max, "type"), entry)
+			return nil, handler.Refuse(invalidParam, `params[%q] is %q; the block runs on %s and takes at most %d %s, so its entry %q is one too many`,
+				serverTypeParam, value, allowed, s.Max, plural(s.Max, "type"), entry)
 		case !slices.Contains(s.Allowed, entry):
 			return nil, handler.Refuse(invalidParam, `params[%q] is %q; its entry %q is not a type the block runs on, which are %s`,
 				serverTypeParam, value, entry, allowed)
