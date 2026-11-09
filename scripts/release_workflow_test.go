@@ -105,8 +105,9 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		"\n" + `echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"`
 	const toolsImageTest = "go test -tags toolsimage -count=1 -run '^TestToolsImage_' ./helpers/tools"
 	const cutPinned = `bash scripts/release-block-kit.sh --tools-image "$TOOLS_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"`
-	const buildToolsImage = "docker build --platform linux/amd64 -t block-kit-tools:ci helpers/tools\n" +
-		"TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -count=1 -run '^TestToolsImage_HoldsEveryFileAtItsPinInALayerOfItsOwn$' ./helpers/tools"
+	const buildToolsImage = "docker build --platform linux/amd64 -f helpers/tools/Dockerfile -t block-kit-tools:ci .\n" +
+		"TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -count=1 -run '^TestToolsImage_(HoldsEveryFileAtItsPinInALayerOfItsOwn|RunsTheSignInCompanion)$' ./helpers/tools"
+	const edgeCaddyTest = "CADDY_IMAGE=caddy:2 go test -tags edgecaddy -count=1 -run '^TestEdge_' ./helpers/dockerhost"
 	raw, err := os.ReadFile("../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatalf("reading ci.yml: %v", err)
@@ -151,6 +152,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 			stepAt(all, "release", "name", "Verify the signature and pull the image with no login") < stepAt(all, "release", "run", toolsImageTest) &&
 				stepAt(all, "release", "run", toolsImageTest) < stepAt(all, "release", "run", cutPinned)), "true"},
 		{"the test job builds the tools image and checks every file it holds against its pin", strconv.FormatBool(stepWith(all, "test", "run", buildToolsImage)), "true"},
+		{"the test job runs the sign-in route in the caddy image Docker hosts pull", strconv.FormatBool(stepWith(all, "test", "run", edgeCaddyTest)), "true"},
 		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
 		{"the test job vets and tests the rescuessh module, which ./... leaves out", strconv.FormatBool(stepWith(all, "test", "run", "go -C "+rescueSSH+" vet ./...\ngo -C "+rescueSSH+" test ./...")), "true"},
 		{"the test job scans the packages the rescuessh module imports for known vulnerabilities", strconv.FormatBool(stepWith(all, "test", "run", moduleScan)), "true"},
