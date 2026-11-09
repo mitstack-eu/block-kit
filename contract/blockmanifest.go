@@ -142,9 +142,8 @@ type ManifestSpec struct {
 type ManifestRequirement struct {
 	// Name is unique in the block and set when the requirement lists more than one type or the block needs two resources of one type.
 	Name string `json:"name,omitempty"`
-	// Many collects every offer of the types and accepts none.
-	Many bool `json:"many,omitempty"`
-	// Optional accepts one offer of the types or none, and a request binds nothing under the reference when the app holds none.
+	// Many collects every offer of the types and accepts none; Optional accepts one offer or none, and with none a request binds nothing under the reference.
+	Many     bool     `json:"many,omitempty"`
 	Optional bool     `json:"optional,omitempty"`
 	Types    []string `json:"types,omitempty"`
 }
