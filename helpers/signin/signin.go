@@ -211,9 +211,9 @@ func (c *companion) loadEnded() error {
 	return os.WriteFile(c.ended, []byte(kept.String()), 0o600)
 }
 
-func (c *companion) keepEnded(s session) {
+func (c *companion) keepEnded(s session) error {
 	if c.ended == "" {
-		return
+		return nil
 	}
 	f, err := os.OpenFile(c.ended, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err == nil {
@@ -223,6 +223,7 @@ func (c *companion) keepEnded(s session) {
 	if err != nil {
 		c.logf("signin: a signed-out session was not kept ended across restarts: %v", err)
 	}
+	return err
 }
 
 // LoadKey reads the companion's key from path, creating it on the first start, and refuses a file of another size.
@@ -524,7 +525,11 @@ func (c *companion) signOut(w http.ResponseWriter, r *http.Request, rt route) {
 		m.mu.Lock()
 		m.ended = true
 		m.mu.Unlock()
-		c.keepEnded(s)
+		if err := c.keepEnded(s); err != nil {
+			clearCookie(w, SessionCookie)
+			page(w, http.StatusInternalServerError, "Your sign-out was not recorded on the host, so sign out again.")
+			return
+		}
 	}
 	clearCookie(w, SessionCookie)
 	page(w, http.StatusOK, "You are signed out of this app.")

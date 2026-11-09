@@ -21,7 +21,7 @@ package has [a page of its own](gitops.md).
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |
 | `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
 | `helpers/tools` | Copies a tool onto a machine or a runner while it runs, such as age onto a Docker host or k3s onto a node |
-| `helpers/signin` | Is hcloud-docker-host, which runs the sign-in companion that opens an app only to its org's members, as [Opening an app only to its org's members](#opening-an-app-only-to-its-orgs-members) describes |
+| `helpers/signin` | Builds the sign-in companion, a program a Docker host runs to open an app only to its org's members, as [Opening an app only to its org's members](#opening-an-app-only-to-its-orgs-members) describes. A block reads only its constants, such as `signin.ContainerName` |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made, judging each by the kit's subscription tag |
@@ -258,12 +258,17 @@ if err != nil {
 ### Opening an app only to its org's members
 
 The sign-in companion is a small program that runs as one container on each
-Docker host, beside the edge. The edge asks it about each request to an app
-that opens only to its org's members. It signs a visitor in through mitstack's
-own OAuth routes, and it remembers each member in a cookie only it can read,
-sealed with a key it keeps on the host. It asks mitstack again whether the
-visitor is still a member at most five minutes after it last asked. A removed
-member therefore loses the app within five minutes.
+Docker host, beside the edge, the caddy container that takes the host's web
+traffic. The edge asks it about each request to an app that opens only to its
+org's members, through caddy's `forward_auth` directive, which lets a request
+through only when another program answers it with a 2xx status. The companion
+signs a visitor in through mitstack's OAuth routes, `GET /oauth/authorize`
+and `POST /oauth/token`, the same ones an MCP client uses. It remembers each
+member in a cookie only it can read, sealed with a key it keeps on the host.
+It asks mitstack again whether the visitor is still a member at most five
+minutes after it last asked. A removed member therefore loses the app within
+five minutes. A person who is no member of the app's org sees mitstack's own
+page saying so, with status 403, and the app never sees the request.
 
 A `dockerhost.Route` turns this on with its `SignIn` field. With `SignIn`
 unset, the route renders exactly what it did before. `dockerhost.SignIn` has
@@ -271,7 +276,7 @@ three fields:
 
 | Field | What it holds |
 |---|---|
-| `AppID` | The app's mitstack id, such as `app_8d21b0c4`. mitstack signs a visitor in for the app under the OAuth client id `app:` followed by this id, which nothing registers |
+| `AppID` | The app's mitstack id, such as `app_8d21b0c4`. The companion signs a visitor in under the OAuth client id `app:app_8d21b0c4`, which mitstack derives from the app itself, so no block registers a client |
 | `SignInHostname` | The app's hostname under `apps.mitstack.dev`, such as `costs.apps.mitstack.dev`, where mitstack sends a member back after sign-in |
 | `Hostnames` | Every hostname the app's route serves, the only ones a sign-in sends a visitor back to |
 
@@ -308,7 +313,9 @@ Each route's site does three things, in order:
    request a visitor sends.
 2. It sends every path under `/.mitstack/` to the companion, which answers
    mitstack's return after sign-in, the custom domain's handoff and sign-out
-   there. Sign-out ends the session only on a `POST` from the app's own page.
+   there. Sign-out ends the session only on a `POST` from the app's own page,
+   and only on that hostname. A custom domain's sign-out leaves the session on
+   `SignInHostname`, so the visitor's next visit there signs them back in.
 3. It asks the companion about every other request through caddy's
    `forward_auth`, and passes it to the app with the five headers only on a
    2xx answer.
@@ -317,8 +324,9 @@ Each route's site does three things, in order:
 hostname in `Hostnames` that a route could not hold, and a `Hostnames` that
 leaves out the route's own hostname or `SignInHostname`.
 
-The companion's code is `helpers/signin`, and its program is built into the
-tools image at `tools.SignInPath`, with the CA bundle it trusts beside it. The
+The companion's code is the package `helpers/signin`. Its program,
+`cmd/mitstack-signin`, is built from that package into the kit's tools image,
+at `tools.SignInPath`, with the CA bundle it trusts beside it. The
 hcloud-docker-host block runs it from that image as a container named
 `signin.ContainerName` on `appnet`. A volume at `/data` keeps its key and the
 sessions signed out across restarts. It holds no mitstack credential. Each
