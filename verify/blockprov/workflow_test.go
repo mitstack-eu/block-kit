@@ -733,13 +733,13 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		want    []string
 	}{
 		{"conformance", "<absent>", []string{
-			"actions/checkout", "actions/setup-go", "go vet", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck",
-			"Remove the kit checkout from the block tree", "Write the base commit's manifest and the changed files", "Judge the comments this pull request adds",
+			"actions/checkout", "actions/setup-go", "go vet", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck", "Build checkpolls",
+			"Remove the kit checkout from the block tree", "Write the base commit's manifest and the changed files", "Fail a pull request that adds a fixed sleep or a polling interval", "Judge the comments this pull request adds",
 			"blockverify (standalone contract check)", "Upload blockverify report", "Build the block image", "Scan the block image",
 		}},
 		{"opentofu-conformance", "write", []string{
-			"actions/checkout", "actions/setup-go", "Checkout block-kit", "Build blockverify", "Remove the kit checkout from the block tree",
-			"Write the base commit's manifest and the changed files", "blockverify (standalone contract check)", "Upload blockverify report", "Configure AWS credentials for the verify role", "Log in to the operator image's registry", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image",
+			"actions/checkout", "actions/setup-go", "Checkout block-kit", "Build blockverify", "Build checkpolls", "Remove the kit checkout from the block tree",
+			"Write the base commit's manifest and the changed files", "blockverify (standalone contract check)", "Upload blockverify report", "Fail a pull request that adds a fixed sleep or a polling interval", "Configure AWS credentials for the verify role", "Log in to the operator image's registry", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image",
 		}},
 		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks", "Fail a shipped file that fetches a tool from a GitHub release page"}},
 		{"scripts", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Lint every tracked shell script with shellcheck"}},

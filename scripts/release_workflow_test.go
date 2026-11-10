@@ -127,7 +127,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the test job pins setup-go to the platform's sha", strconv.FormatBool(stepWith(all, "test", "uses", setupGo)), "true"},
 		{"the test job pins go-version to 1.26.10, whose standard library the rescuessh scan finds clean", strconv.FormatBool(stepWith(all, "test", "with.go-version", "'1.26.10'")), "true"},
 		{"the test job runs go vet ./...", strconv.FormatBool(stepWith(all, "test", "run", "go vet ./...")), "true"},
-		{"the test job runs go test ./...", strconv.FormatBool(stepWith(all, "test", "run", "go test ./...")), "true"},
+		{"the test job runs go test ./..., and checkpolls against a pull request's base", strconv.FormatBool(stepWith(all, "test", "run", "go test ./...")) + " " + field(stepOf(all, "test", "run", `go run ./cmd/checkpolls -base "$BASE_SHA"`)+"if") + " " + field(stepOf(all, "test", "run", `go run ./cmd/checkpolls -base "$BASE_SHA"`)+"env.BASE_SHA"), "true github.event_name == 'pull_request' ${{ github.event.pull_request.base.sha }}"},
 		{"the release job needs the test job", field("jobs.release.needs"), "test"},
 		{"the release job runs only on main, by a push or a dispatch, so no unmerged commit is tagged", field("jobs.release.if"),
 			"(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"},
