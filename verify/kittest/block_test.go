@@ -1038,6 +1038,17 @@ func cfnBlock(t *testing.T) kittest.Block {
 	}
 }
 
+// requiringSecretToken returns snap with each type named in ids also requiring the secret output token.
+func requiringSecretToken(snap contract.TypeSnapshot, ids ...string) contract.TypeSnapshot {
+	snap.Types = slices.Clone(snap.Types)
+	for i, typ := range snap.Types {
+		if slices.Contains(ids, typ.ID) {
+			snap.Types[i].Outputs = append(slices.Clone(typ.Outputs), contract.SnapshotOutput{Name: "token", Secret: true, Required: true})
+		}
+	}
+	return snap
+}
+
 const repoHostBlockManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:
@@ -1184,6 +1195,18 @@ func TestCheckBlock(t *testing.T) {
 	github := func(untagged string) func(t *testing.T) kittest.Block {
 		return func(t *testing.T) kittest.Block { return githubBlock(t, untagged) }
 	}
+	// sharingToken is the cfn block with its provided instance and volume both requiring the secret output token, which only the resources named in reporting report.
+	sharingToken := func(reporting ...string) func(t *testing.T) kittest.Block {
+		return func(t *testing.T) kittest.Block {
+			in := cfnBlock(t)
+			in.Config.Types = requiringSecretToken(in.Config.Types, "aws.ec2-instance", "aws.ebs-volume")
+			for _, name := range reporting {
+				amend := func(o *contract.Observation) { o.SecretOutputs = map[string]string{"token": "token-of-" + name} }
+				in.Config.Observers[name] = amendedObserver{inner: in.Config.Observers[name], amend: amend}
+			}
+			return in
+		}
+	}
 	remembering := func(b *fakeBlock, in *kittest.Block) {
 		in.Config.Observers["aws.ec2-instance"] = rememberingObserver{b: b, name: "aws.ec2-instance"}
 	}
@@ -1264,6 +1287,9 @@ func TestCheckBlock(t *testing.T) {
 		{"a provided resource missing only an optional output passes", host(func(b *fakeBlock, in *kittest.Block) {
 			in.Config.Observers["aws.ec2-instance"] = providerObserver{p: b.p, drop: "publicIp"}
 		}), nil, true},
+		{"two provided resources whose types both require the secret token, only one reporting it, fail naming the other and token", sharingToken("aws.ec2-instance"),
+			[][]string{{`resource "aws.ebs-volume"`, `"token"`, "after subscribe"}, {`resource "aws.ebs-volume"`, `"token"`, "after upgrade"}}, true},
+		{"two provided resources whose types both require the secret token, both reporting it, pass", sharingToken("aws.ec2-instance", "aws.ebs-volume"), nil, true},
 		{"a resource of a marked type left present after unsubscribe passes", pullRequest(""), nil, true},
 		{"an unmarked resource left present beside a marked one fails", pullRequest("aws.ec2-instance", "github.pull-request"), [][]string{{`resource "aws.ec2-instance"`, "unsubscribe"}}, false},
 		{"a pull request whose snapshot leaves its type unmarked fails", pullRequest("github.pull-request"), [][]string{{`resource "github.pull-request"`, "unsubscribe"}}, false},
