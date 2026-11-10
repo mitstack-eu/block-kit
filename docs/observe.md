@@ -400,15 +400,19 @@ above:
 - Anything else is unknown, including a report that names no such Application
   or carries no `resources` for it.
 
-Each object in that list also carries Argo CD's `health` of it. The report
-comes from talos-cluster-kit, the kit that sets up the Talos clusters whose
-nodes send these reports. It adds Argo CD's `message` beside any health but
-`Healthy`, and its earlier releases carry neither.
+Each object in that list also carries Argo CD's `health` of it. The node
+report is written by talos-cluster-kit, the Go module that cluster blocks use
+to set up Kubernetes on Talos Linux. The report also carries Argo CD's
+`message` beside any health but `Healthy`, and reports from earlier
+talos-cluster-kit releases carry neither member.
 
-`NodeReported.ObserveHealth` returns the observation `ObserveResource` gives
-together with that health, so a block's deploy can be judged by its own
-objects rather than by its whole Application. It takes the same `ctx` and
-`ref` as `ObserveResource`, and its `Health.Status` reads:
+`NodeReported.ObserveHealth(ctx, ref)` takes the same `ctx` and `ref` as
+`ObserveResource`, where `ref` is the `contract.ResourceRef` naming the
+object. It returns the observation `ObserveResource` gives together with an
+`observe.Health`, so a block's deploy can be judged by its own objects rather
+than by its whole Application. `observe.Health` holds Argo CD's `Status` and
+`Message`. `observe.HealthUnknown`, the string `Unknown`, is the `Status` when
+the report carries no health. Each object decodes as follows:
 
 | The object in the report | `Status` | `Message` |
 |---|---|---|
