@@ -3,7 +3,6 @@ package gitops
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -14,7 +13,7 @@ import (
 	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
-// Only Phase and Health decide a deploy.
+// Notification is one Argo CD notification of an Application's sync, which asks a block for a fresh verdict and fails it only alongside the objects it owns.
 type Notification struct {
 	App          string `json:"app"`
 	Project      string `json:"project"`
@@ -34,104 +33,9 @@ const (
 	VerdictFailed    Verdict = "failed"
 )
 
-// Phase Succeeded with health Healthy succeeds, phase Error or Failed or health Degraded fails, and anything else is pending.
-func Judge(n Notification, revision string) Verdict {
-	if revision == "" || n.Revision != revision {
-		return VerdictPending
-	}
-	switch {
-	case n.Phase == "Succeeded" && n.Health == "Healthy":
-		return VerdictSucceeded
-	case n.Phase == "Error" || n.Phase == "Failed" || n.Health == "Degraded":
-		return VerdictFailed
-	default:
-		return VerdictPending
-	}
-}
-
 type Notifications interface {
 	// Revision "" asks for the newest notification at any revision.
 	Latest(ctx context.Context, app, revision string) (Notification, bool, error)
-}
-
-// Outcome is the verdict and the notification it was read from, at Revision or at a later revision holding the block's files as Revision does.
-type Outcome struct {
-	Verdict      Verdict
-	Notification Notification
-	// Revision is the one handed to Check when Argo CD reported on it, and otherwise the block's own commit at or before it.
-	Revision string
-	// Detail names the commit and file that keep a later revision Argo CD reports from settling the block.
-	Detail string
-}
-
-// Check judges Argo CD's verdict on the block's own commit, or on a later revision in which no commit changed one of paths, and errs on an empty revision.
-func Check(ctx context.Context, src Notifications, repo Repository, app, revision string, paths []string) (Outcome, error) {
-	pending := Outcome{Verdict: VerdictPending, Revision: revision}
-	if revision == "" {
-		return pending, errors.New("gitops: no revision to judge")
-	}
-	if out, ok, err := checkAt(ctx, src, app, revision); ok || err != nil {
-		return out, err
-	}
-	head, err := repo.Head(ctx)
-	if err != nil {
-		return pending, fmt.Errorf("gitops: reading head: %w", err)
-	}
-	line, err := walkLineage(ctx, repo, head, revision, paths)
-	if err != nil {
-		return pending, err
-	}
-	own := line.ownRevision(revision)
-	pending.Revision = own
-	if own != revision {
-		if out, ok, err := checkAt(ctx, src, app, own); ok || err != nil {
-			return out, err
-		}
-	}
-	newest, ok, err := src.Latest(ctx, app, "")
-	if err != nil || !ok {
-		return pending, err
-	}
-	at := line.at(newest.Revision)
-	if at < 0 {
-		return pending, nil
-	}
-	if moved, path := line.changedAfterOwn(at); moved != "" {
-		pending.Detail = fmt.Sprintf("Argo CD reports %s at %s, but commit %s after the block's own %s changed %s", app, newest.Revision, moved, own, path)
-		return pending, nil
-	}
-	return Outcome{Verdict: Judge(newest, newest.Revision), Notification: newest, Revision: own}, nil
-}
-
-func checkAt(ctx context.Context, src Notifications, app, revision string) (Outcome, bool, error) {
-	n, ok, err := src.Latest(ctx, app, revision)
-	if err != nil || !ok {
-		return Outcome{Verdict: VerdictPending, Revision: revision}, false, err
-	}
-	return Outcome{Verdict: Judge(n, revision), Notification: n, Revision: revision}, true, nil
-}
-
-// A failed deploy is an outcome, not an error.
-func Wait(ctx context.Context, src Notifications, repo Repository, app, revision string, paths []string, poll time.Duration) (Outcome, error) {
-	if poll <= 0 {
-		return Outcome{Verdict: VerdictPending}, errors.New("gitops: the poll interval must be positive")
-	}
-	last := Outcome{Verdict: VerdictPending}
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return last, ctx.Err()
-		case <-timer.C:
-		}
-		out, err := Check(ctx, src, repo, app, revision, paths)
-		if err != nil || out.Verdict != VerdictPending {
-			return out, err
-		}
-		last = out
-		timer.Reset(poll)
-	}
 }
 
 const notificationsPath = "/v1/gitops-notifications"

@@ -181,6 +181,7 @@ func findBaseline(ctx context.Context, repo Repository, src Notifications, b Blo
 	return baseline{}, fmt.Errorf("gitops: Argo CD judged none of the %d commits before %s healthy, and none of them is the block's first", maxRevertWalk, b.Failed)
 }
 
+// judgedHealthy reads whether Argo CD notified a sync of revision that succeeded with the whole Application Healthy.
 func judgedHealthy(ctx context.Context, src Notifications, app, revision string) (bool, error) {
 	if revision == "" {
 		return false, nil
@@ -189,7 +190,7 @@ func judgedHealthy(ctx context.Context, src Notifications, app, revision string)
 	if err != nil {
 		return false, fmt.Errorf("gitops: reading the notification for %s at %s: %w", app, revision, err)
 	}
-	return ok && Judge(n, revision) == VerdictSucceeded, nil
+	return ok && n.Revision == revision && n.Phase == "Succeeded" && n.Health == "Healthy", nil
 }
 
 // beforeFirstCommit removes the block's files only when the failed revision is its first commit, since the platform answers only a revision's newest notification and keeps only an app's newest, so an earlier revision may have run healthy unseen.
@@ -330,14 +331,16 @@ type lineage struct {
 	commits []string
 	owned   [][]string
 	// own indexes the block's own commit, -1 when the walk never reached the revision it started from.
-	own int
+	own       int
+	untouched bool
 }
 
 // walkLineage reads back from head to the newest commit at or before revision that changed one of paths, or to the oldest commit within the bound when none did, since head then holds the block's files as that commit does.
 func walkLineage(ctx context.Context, repo Repository, head, revision string, paths []string) (lineage, error) {
 	l := lineage{own: -1}
 	reached := false
-	for rev := head; rev != "" && len(l.commits) < maxLineageWalk; {
+	rev := head
+	for rev != "" && len(l.commits) < maxLineageWalk {
 		parent, changed, err := repo.Changed(ctx, rev)
 		if err != nil {
 			return lineage{}, fmt.Errorf("gitops: reading what %s changed: %w", rev, err)
@@ -359,7 +362,18 @@ func walkLineage(ctx context.Context, repo Repository, head, revision string, pa
 	if reached {
 		l.own = len(l.commits) - 1
 	}
+	l.untouched = rev == "" && !slices.ContainsFunc(l.owned, func(owned []string) bool { return len(owned) > 0 })
 	return l, nil
+}
+
+// neverHeld reads whether no commit in the repository's whole history changed one of paths, false when the history runs past the walk's bound.
+func neverHeld(ctx context.Context, repo Repository, paths []string) (bool, error) {
+	head, err := repo.Head(ctx)
+	if err != nil {
+		return false, fmt.Errorf("gitops: reading head: %w", err)
+	}
+	l, err := walkLineage(ctx, repo, head, head, paths)
+	return err == nil && l.untouched, err
 }
 
 // ownRevision is the block's own commit, or revision itself when the walk never reached it.
@@ -376,6 +390,21 @@ func (l lineage) at(revision string) int {
 		return -1
 	}
 	return slices.Index(l.commits[:l.own+1], revision)
+}
+
+// holding says why revision does not hold the block's files as its own commit own does, "" when it is that commit or a later one in which no commit changed them.
+func (l lineage) holding(revision, own string) string {
+	if revision == own {
+		return ""
+	}
+	i := l.at(revision)
+	if i < 0 {
+		return fmt.Sprintf("which does not hold the block's commit %s", own)
+	}
+	if moved, path := l.changedAfterOwn(i); moved != "" {
+		return fmt.Sprintf("but commit %s after the block's own %s changed %s", moved, own, path)
+	}
+	return ""
 }
 
 // changedAfterOwn names the oldest commit after the block's own, up to the one at index i, that changed one of its paths, and the first such path.

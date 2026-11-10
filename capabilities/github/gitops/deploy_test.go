@@ -1,11 +1,13 @@
 package gitops_test
 
-// Deploy commits a block's whole desired state once and waits for Argo CD's verdict on its own commit, the last one when nothing changed, or on a later revision holding its files.
+// Deploy commits a block's whole desired state once and waits for the verdict on its own commit, the last one when nothing changed, as Argo CD shows its objects at that commit or a later revision holding its files.
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +15,7 @@ import (
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops/gitopstest"
 )
 
-// failingNotes answers a failed sync for any revision, since gitopstest seeds a verdict by a revision a test cannot know before Deploy commits.
+// failingNotes answers a failed sync for any revision, since gitopstest seeds a notification by a revision a test cannot know before Deploy commits.
 type failingNotes struct{}
 
 func (failingNotes) Latest(_ context.Context, app, revision string) (gitops.Notification, bool, error) {
@@ -21,13 +23,21 @@ func (failingNotes) Latest(_ context.Context, app, revision string) (gitops.Noti
 }
 
 func alphaDeploy() gitops.BlockDeploy {
-	return gitops.BlockDeploy{App: "app-alpha", Files: renderApp("app-alpha", "k3s-fsn1").Files, Message: "deploy app-alpha", Secrets: seededSecrets, Poll: time.Millisecond}
+	return gitops.BlockDeploy{Files: renderApp("app-alpha", "k3s-fsn1").Files, Message: "deploy app-alpha", Secrets: seededSecrets, Poll: time.Millisecond}
+}
+
+// appliesHead stands in for the cluster's node reports, showing app-alpha at repo's head with each object Synced and Healthy but those set.
+func appliesHead(repo *gitopstest.Repository, set ...gitopstest.Object) *gitopstest.NodeReports {
+	reports := gitopstest.NewNodeReports()
+	reports.AppliesHead(alphaCluster, "app-alpha", repo, set...)
+	return reports
 }
 
 func TestDeploy(t *testing.T) {
 	cases := []struct {
 		name      string
 		notes     func(repo *gitopstest.Repository) gitops.Notifications
+		set       []gitopstest.Object
 		deploys   int
 		in        func() gitops.BlockDeploy
 		wantErr   error
@@ -35,29 +45,31 @@ func TestDeploy(t *testing.T) {
 		wantCount int
 		check     func(t *testing.T, repo *gitopstest.Repository, first, last gitops.Deployed)
 	}{
-		{"it commits every file once under the message and answers the verdict on that revision", succeeding, 1, alphaDeploy, nil, gitops.VerdictSucceeded, 1,
+		{"it commits every file once under the message and answers the verdict on that revision", succeeding, nil, 1, alphaDeploy, nil, gitops.VerdictSucceeded, 1,
 			func(t *testing.T, repo *gitopstest.Repository, _, got gitops.Deployed) {
 				c := repo.Commits()[0]
-				if !got.Changed || got.Revision != c.Revision || got.Outcome.Notification.Revision != got.Revision {
+				if !got.Changed || got.Revision != c.Revision || got.Outcome.Notification.Revision != got.Revision || got.Outcome.Judged != got.Revision {
 					t.Errorf("Deployed = %+v, want changed on revision %q with its notification", got, c.Revision)
 				}
 				if !reflect.DeepEqual(c.Changes, alphaDeploy().Files) || c.Message != "deploy app-alpha" {
 					t.Errorf("commit = %+v, want every file under the message %q", c, "deploy app-alpha")
 				}
 			}},
-		{"an unchanged desired state lands nothing and waits on its own commit", succeeding, 2, alphaDeploy, nil, gitops.VerdictSucceeded, 1,
+		{"an unchanged desired state lands nothing and waits on its own commit", succeeding, nil, 2, alphaDeploy, nil, gitops.VerdictSucceeded, 1,
 			func(t *testing.T, _ *gitopstest.Repository, first, again gitops.Deployed) {
 				if again.Changed || again.Revision != first.Revision {
 					t.Errorf("second Deployed changed, revision = %v, %q; want false and its own commit %q", again.Changed, again.Revision, first.Revision)
 				}
 			}},
-		{"a failed verdict comes back as the outcome", func(*gitopstest.Repository) gitops.Notifications { return failingNotes{} }, 1, alphaDeploy, nil, gitops.VerdictFailed, 1,
+		{"a failed sync with an object of the block OutOfSync comes back as the outcome", func(*gitopstest.Repository) gitops.Notifications { return failingNotes{} },
+			[]gitopstest.Object{{Object: alphaAccount, Sync: "OutOfSync", Health: "Missing"}}, 1, alphaDeploy, nil, gitops.VerdictFailed, 1,
 			func(t *testing.T, _ *gitopstest.Repository, _, got gitops.Deployed) {
-				if got.Outcome.Notification.Phase != "Failed" {
-					t.Errorf("outcome notification = %+v, want the failed sync Argo CD reported", got.Outcome.Notification)
+				if got.Outcome.Notification.Phase != "Failed" || !strings.Contains(got.Outcome.Detail, "ServiceAccount app-alpha/app-alpha-runtime reads sync OutOfSync") {
+					t.Errorf("outcome = %+v, want the failed sync Argo CD reported and the ServiceAccount it left OutOfSync", got.Outcome)
 				}
 			}},
-		{"a file carrying a secret is refused and nothing is committed", succeeding, 1, func() gitops.BlockDeploy {
+		{"a failed sync on no object of the block leaves the objects to decide", func(*gitopstest.Repository) gitops.Notifications { return failingNotes{} }, nil, 1, alphaDeploy, nil, gitops.VerdictSucceeded, 1, nil},
+		{"a file carrying a secret is refused and nothing is committed", succeeding, nil, 1, func() gitops.BlockDeploy {
 			in := alphaDeploy()
 			in.Files["apps/app-alpha/leak.yaml"] = []byte("token: " + githubToken + "\n")
 			return in
@@ -66,12 +78,12 @@ func TestDeploy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := gitopstest.NewRepository()
-			notes := tc.notes(repo)
+			d := deployOfAlpha(repo, tc.notes(repo), appliesHead(repo, tc.set...))
 			var first, last gitops.Deployed
 			var err error
 
 			for i := range tc.deploys {
-				last, err = gitops.Deploy(context.Background(), repo, notes, tc.in())
+				last, err = gitops.Deploy(context.Background(), d, tc.in())
 				if i == 0 {
 					first = last
 				}
@@ -82,6 +94,46 @@ func TestDeploy(t *testing.T) {
 			}
 			if tc.check != nil {
 				tc.check(t, repo, first, last)
+			}
+		})
+	}
+}
+
+func TestDeploy_ARemovalThatCommitsNothing(t *testing.T) {
+	removal := map[string][]byte{}
+	for path := range alphaDeploy().Files {
+		removal[path] = nil
+	}
+	long := make([]map[string][]byte, 60)
+	for i := range long {
+		long[i] = map[string][]byte{betaPath: fmt.Appendf(nil, "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: app-beta-%d\n", i)}
+	}
+	cases := []struct {
+		name    string
+		history []map[string][]byte
+		want    gitops.Verdict
+		detail  string
+		err     error
+	}{
+		{"in an empty repository it succeeds at once", nil, gitops.VerdictSucceeded, "holds none of the block's files", nil},
+		{"in a repository whose history never held the block's files it succeeds at once", []map[string][]byte{betaFiles()}, gitops.VerdictSucceeded, "holds none of the block's files", nil},
+		{"after a commit that removed the block's files it waits for the verdict on that removal", []map[string][]byte{alphaDeploy().Files, removal}, gitops.VerdictSucceeded, "it removed is applied", nil},
+		{"in a history longer than the 50 commits the walk reads it stays pending until the context ends, since the walk cannot show that no commit held the files", long,
+			gitops.VerdictPending, "declare no Kubernetes object, and the commit removed none", context.DeadlineExceeded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := gitopstest.NewRepository()
+			for _, files := range tc.history {
+				mustCommit(t, repo, files)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+
+			got, err := gitops.Deploy(ctx, deployOfAlpha(repo, gitopstest.NewNotifications(), appliesHead(repo)), gitops.BlockDeploy{Files: removal, Message: "remove app-alpha", Poll: time.Millisecond})
+
+			if !errors.Is(err, tc.err) || got.Changed || got.Outcome.Verdict != tc.want || !strings.Contains(got.Outcome.Detail, tc.detail) || len(repo.Commits()) != len(tc.history) {
+				t.Errorf("Deploy = %+v, %v with %d commits; want %s unchanged with error %v, detail naming %q, and no commit beyond the %d seeded", got, err, len(repo.Commits()), tc.want, tc.err, tc.detail, len(tc.history))
 			}
 		})
 	}
@@ -112,11 +164,11 @@ func (a *argoAtHead) Latest(ctx context.Context, app, revision string) (gitops.N
 }
 
 func betaFiles() map[string][]byte {
-	return map[string][]byte{betaPath: []byte("beta\n")}
+	return map[string][]byte{betaPath: []byte("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: app-beta\n")}
 }
 
 func betaDeploy() gitops.BlockDeploy {
-	return gitops.BlockDeploy{App: "app-alpha", Files: betaFiles(), Message: "deploy app-beta", Poll: time.Millisecond}
+	return gitops.BlockDeploy{Files: betaFiles(), Message: "deploy app-beta", Poll: time.Millisecond}
 }
 
 // deployBriefly bounds a Deploy, so one held on a revision Argo CD never reports ends in DeadlineExceeded.
@@ -124,7 +176,7 @@ func deployBriefly(t *testing.T, repo *gitopstest.Repository, notes gitops.Notif
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	got, err := gitops.Deploy(ctx, repo, notes, b)
+	got, err := gitops.Deploy(ctx, deployOfAlpha(repo, notes, appliesHead(repo)), b)
 	if err != nil || got.Outcome.Verdict != gitops.VerdictSucceeded {
 		t.Fatalf("Deploy(%s) = %+v, %v; want it settled on Argo CD's newest revision among %v", b.Message, got, err, revisionsOf(repo))
 	}
@@ -147,7 +199,7 @@ func TestDeploy_SharedRepository(t *testing.T) {
 		got := deployBriefly(t, repo, argo, alphaDeploy())
 
 		commits := repo.Commits()
-		if len(commits) != 2 || got.Revision != commits[0].Revision || got.Outcome.Notification.Revision != commits[1].Revision {
+		if len(commits) != 2 || got.Revision != commits[0].Revision || got.Outcome.Notification.Revision != commits[1].Revision || got.Outcome.Judged != commits[1].Revision {
 			t.Errorf("Deployed on %q settled at %q, commits %v; want its own commit first and the sibling's after it as the settled revision", got.Revision, got.Outcome.Notification.Revision, revisionsOf(repo))
 		}
 	})

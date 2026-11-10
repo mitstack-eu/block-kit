@@ -1,12 +1,13 @@
 package gitops_test
 
-// The test block, served at block level, commits and removes through Deploy and serves a named validate through its gitops.Resource.
+// The test block, served at block level, commits and removes through Deploy and serves a named validate by judging its own last commit through Check.
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -16,17 +17,18 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
+	"github.com/mitstack-eu/block-kit/capabilities/github/gitops/gitopstest"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
-// namespaceBlock ships its manifests, or their removal, through Deploy, and its gitops.Resource observes the namespace.
+// namespaceBlock ships its manifests, or their removal, through Deploy, and observes the namespace through Check.
 type namespaceBlock struct{ *gitopsBlock }
 
 func (b namespaceBlock) Ensure(ctx context.Context, d contract.Desired) error {
-	out, err := b.resource.Render(d)
+	out, err := renderNamespace(d)
 	if err != nil {
 		return err
 	}
@@ -34,7 +36,7 @@ func (b namespaceBlock) Ensure(ctx context.Context, d contract.Desired) error {
 }
 
 func (b namespaceBlock) Delete(ctx context.Context, d contract.Desired) (map[string]string, error) {
-	out, err := b.resource.Render(d)
+	out, err := renderNamespace(d)
 	if err != nil {
 		return nil, err
 	}
@@ -46,24 +48,54 @@ func (b namespaceBlock) Delete(ctx context.Context, d contract.Desired) (map[str
 }
 
 func (b namespaceBlock) deploy(ctx context.Context, d contract.Desired, app string, files map[string][]byte, message string) error {
-	repo, err := b.resource.Repository(ctx, d)
+	deployment, err := b.deployment(ctx, d, app, files)
 	if err != nil {
 		return err
 	}
-	notes, err := b.resource.Notifications(ctx, d)
-	if err != nil {
-		return err
-	}
-	out, err := gitops.Deploy(ctx, repo, notes, gitops.BlockDeploy{
-		App: app, Files: files, Message: message, Secrets: gitops.SecretValues(d), Poll: time.Millisecond,
-	})
+	out, err := gitops.Deploy(ctx, deployment, gitops.BlockDeploy{Files: files, Message: message, Secrets: gitops.SecretValues(d), Poll: time.Millisecond})
 	if err != nil {
 		return err
 	}
 	if out.Outcome.Verdict == gitops.VerdictFailed {
-		return handler.Refuse("deploy-failed", "Argo CD's sync of %s failed: %s", out.Revision, out.Outcome.Notification.Message)
+		return handler.Refuse("deploy-failed", "the deploy of %s failed: %s", out.Revision, out.Outcome.Detail)
 	}
 	return nil
+}
+
+// ObserveResource judges the block's own last commit, present with the outputs while head holds its files and absent once it holds none.
+func (b namespaceBlock) ObserveResource(ctx context.Context, ref contract.ResourceRef) (contract.Observation, error) {
+	out, err := renderNamespace(ref.Desired)
+	if err != nil {
+		return contract.Observation{}, fmt.Errorf("rendering: %w", err)
+	}
+	deployment, err := b.deployment(ctx, ref.Desired, out.App, out.Files)
+	if err != nil {
+		return contract.Observation{}, err
+	}
+	head, err := deployment.Repository.Head(ctx)
+	if err != nil || head == "" {
+		return contract.Observation{State: contract.Absent}, err
+	}
+	own, err := gitops.LastChanged(ctx, deployment.Repository, head, deployment.Paths)
+	if err != nil {
+		return contract.Observation{}, err
+	}
+	verdict, err := gitops.Check(ctx, deployment, own)
+	if err != nil {
+		return contract.Observation{}, err
+	}
+	_, held, err := deployment.Repository.ReadFile(ctx, head, deployment.Paths[0])
+	switch {
+	case err != nil:
+		return contract.Observation{}, err
+	case verdict.Verdict == gitops.VerdictFailed:
+		return contract.Observation{}, fmt.Errorf("the deploy of %s failed: %s", own, verdict.Detail)
+	case verdict.Verdict == gitops.VerdictPending:
+		return contract.Observation{State: contract.Unknown, StatusDetail: verdict.Detail}, nil
+	case held:
+		return contract.Observation{State: contract.Present, Outputs: out.Outputs}, nil
+	}
+	return contract.Observation{State: contract.Absent}, nil
 }
 
 func serveNamespace(t *testing.T, b *gitopsBlock, logs *webhook.LogBuffer) (*handler.Handler, *kittest.Signer) {
@@ -72,7 +104,7 @@ func serveNamespace(t *testing.T, b *gitopsBlock, logs *webhook.LogBuffer) (*han
 	h, err := handler.New(handler.Config{
 		Resource:  namespaceBlock{b},
 		Manifest:  readNamespaceManifest(t),
-		Observers: map[string]handler.Observer{resourceName: b.resource},
+		Observers: map[string]handler.Observer{resourceName: namespaceBlock{b}},
 		JWKSURL:   s.JWKSServer(t),
 		Logs:      logs,
 	})
@@ -189,7 +221,7 @@ func TestNamespaceBlock(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newNamespaceBlock()
 			if tc.failSync {
-				b.resource.Notifications = func(context.Context, contract.Desired) (gitops.Notifications, error) { return failingNotes{}, nil }
+				b.notifications, b.reports = failingNotes{}, appliesHead(b.repo, gitopstest.Object{Object: alphaAccount, Sync: "OutOfSync", Health: "Missing"})
 			}
 			h, s := serveNamespace(t, b, nil)
 			if tc.before != nil {
@@ -235,8 +267,8 @@ func TestNamespaceBlock_LeaksNoSecretThroughTheHandlersResponsesOrLogs(t *testin
 		Secrets: seededSecrets,
 		Serve: func(logs *webhook.LogBuffer) (http.Handler, *kittest.Signer) {
 			b := newNamespaceBlock()
-			reach := b.resource.Repository
-			b.resource.Repository = func(ctx context.Context, d contract.Desired) (gitops.Repository, error) {
+			reach := b.repository
+			b.repository = func(ctx context.Context, d contract.Desired) (gitops.Repository, error) {
 				if d.AppID == "app-broken" {
 					return nil, errors.New("the GitOps repository for app-broken is unreachable")
 				}

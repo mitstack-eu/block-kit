@@ -139,11 +139,51 @@ type reportBody struct {
 	ArgoCD                        json.RawMessage `json:"argocd"`
 }
 
+// Application is one Argo CD Application as a node report carries it, its Objects nil when the report carries no list of what it applied, as one cut to fit its size does.
+type Application struct {
+	Name string
+	Sync string
+	// Revision is the revision Argo CD last compared the Application against, "" when the report holds null, as before Argo CD's first comparison and for an Application with several sources, and RevisionUnread marks a report from an earlier talos-cluster-kit release, which carries none.
+	Revision       string
+	RevisionUnread bool
+	Objects        []AppliedObject
+}
+
+// AppliedObject is one object an Application applied, with Argo CD's sync status and health of it.
+type AppliedObject struct {
+	Group     string
+	Kind      string
+	Namespace string
+	Name      string
+	Sync      string
+	Health    Health
+}
+
 // reportedApplication is one Argo CD Application; a nil Resources means the report carries no list of what it applied.
 type reportedApplication struct {
-	Name      string           `json:"name"`
-	Sync      string           `json:"sync"`
+	Name string `json:"name"`
+	Sync string `json:"sync"`
+	// Revision stays raw, since a report from an earlier kit release leaves it out and one with no revision to judge holds null.
+	Revision  json.RawMessage  `json:"revision"`
 	Resources *[]appliedObject `json:"resources"`
+}
+
+func (a reportedApplication) read() Application {
+	out := Application{Name: a.Name, Sync: a.Sync}
+	var revision *string
+	if len(a.Revision) == 0 || json.Unmarshal(a.Revision, &revision) != nil {
+		out.RevisionUnread = true
+	} else if revision != nil {
+		out.Revision = *revision
+	}
+	if a.Resources == nil {
+		return out
+	}
+	out.Objects = make([]AppliedObject, 0, len(*a.Resources))
+	for _, o := range *a.Resources {
+		out.Objects = append(out.Objects, AppliedObject{Group: o.Group, Kind: o.Kind, Namespace: o.Namespace, Name: o.Name, Sync: o.Sync, Health: o.health()})
+	}
+	return out
 }
 
 type appliedObject struct {
@@ -151,6 +191,7 @@ type appliedObject struct {
 	Kind      string `json:"kind"`
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
+	Sync      string `json:"sync"`
 	// Health stays raw, since a report that carries no health leaves it out and one whose Argo CD runs no health check for the object's kind holds null.
 	Health  json.RawMessage `json:"health"`
 	Message string          `json:"message"`
@@ -201,29 +242,64 @@ func (o NodeReported) newest(ctx context.Context, r contract.ResourceRef) (*repo
 	if cluster == "" {
 		cluster = r.Desired.SubscriptionID
 	}
-	got, err := o.reports(ctx, r.Desired, cluster)
+	newest, why, err := o.newestOf(ctx, r.Desired, cluster)
 	if err != nil {
 		return nil, contract.Observation{}, err
+	}
+	if newest == nil {
+		return nil, unknown("resource %q: %s", r.Name, why), nil
+	}
+	return newest, contract.Observation{}, nil
+}
+
+func (o NodeReported) newestOf(ctx context.Context, d contract.Desired, cluster string) (*reportBody, string, error) {
+	got, err := o.reports(ctx, d, cluster)
+	if err != nil {
+		return nil, "", err
 	}
 	var newest *reportBody
 	var newestAt time.Time
 	for _, report := range got.Reports {
 		var body reportBody
 		if err := json.Unmarshal(report.Body, &body); err != nil {
-			return nil, contract.Observation{}, fmt.Errorf("observe: reading the node report received at %s: %w", report.ReceivedAt.Format(time.RFC3339), err)
+			return nil, "", fmt.Errorf("observe: reading the node report received at %s: %w", report.ReceivedAt.Format(time.RFC3339), err)
 		}
 		at := report.ReceivedAt
 		if body.MadeAt != nil {
 			at = *body.MadeAt
 		}
-		if at.After(r.Desired.VerbAt) && (newest == nil || at.After(newestAt)) {
+		if at.After(d.VerbAt) && (newest == nil || at.After(newestAt)) {
 			newest, newestAt = &body, at
 		}
 	}
 	if newest == nil {
-		return nil, unknown("resource %q: no node report made since the verb has arrived%s", r.Name, enrolled(cluster, got.Enrolment)), nil
+		return nil, "no node report made since the verb has arrived" + enrolled(cluster, got.Enrolment), nil
 	}
-	return newest, contract.Observation{}, nil
+	return newest, "", nil
+}
+
+// ArgoCDApplication reads the Argo CD Application app from the newest report of cluster made since d's verb, and says why it cannot when no report counts or that report names no such Application.
+func (o NodeReported) ArgoCDApplication(ctx context.Context, d contract.Desired, cluster, app string) (Application, string, error) {
+	newest, why, err := o.newestOf(ctx, d, cluster)
+	if err != nil || newest == nil {
+		return Application{}, why, err
+	}
+	apps, ok := newest.applications()
+	if !ok {
+		return Application{}, "the newest node report could not list Argo CD's Applications", nil
+	}
+	i := slices.IndexFunc(apps, func(a reportedApplication) bool { return a.Name == app })
+	if i < 0 {
+		return Application{}, fmt.Sprintf("the newest node report names no Argo CD Application %q", app), nil
+	}
+	return apps[i].read(), "", nil
+}
+
+func (b reportBody) applications() ([]reportedApplication, bool) {
+	var argo struct {
+		Applications []reportedApplication `json:"applications"`
+	}
+	return argo.Applications, json.Unmarshal(b.ArgoCD, &argo) == nil
 }
 
 // labelled reads the object of kind and name from the objects labelled with the observing subscription's id in the newest counting report.
@@ -267,17 +343,15 @@ func enrolled(cluster string, e *Enrolment) string {
 
 // appliedBy reads the object of kind and name, with Argo CD's health of it, from the list of the Application app in the newest counting report.
 func appliedBy(r contract.ResourceRef, newest reportBody, app, kind, name string) (contract.Observation, Health) {
-	var argo struct {
-		Applications []reportedApplication `json:"applications"`
-	}
-	if json.Unmarshal(newest.ArgoCD, &argo) != nil {
+	apps, ok := newest.applications()
+	if !ok {
 		return unknown("resource %q: the newest node report could not list Argo CD's Applications", r.Name), unreadHealth
 	}
-	i := slices.IndexFunc(argo.Applications, func(a reportedApplication) bool { return a.Name == app })
-	if i < 0 || argo.Applications[i].Resources == nil {
+	i := slices.IndexFunc(apps, func(a reportedApplication) bool { return a.Name == app })
+	if i < 0 || apps[i].Resources == nil {
 		return unknown("resource %q: the newest node report lists no objects the Argo CD Application %q applied", r.Name, app), unreadHealth
 	}
-	application := argo.Applications[i]
+	application := apps[i]
 	for _, o := range *application.Resources {
 		if o.is(kind, r.Identity["namespace"], name) {
 			return present(r, nil), o.health()

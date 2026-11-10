@@ -444,6 +444,41 @@ observe.NodeReported{API: observe.NodeReportsClient{}}
 CD's health only, so a block that provides such a resource reports the type's
 other required outputs from an observer of its own.
 
+### A whole Argo CD Application
+
+`NodeReported.ArgoCDApplication(ctx, d, cluster, app)` reads one Application
+from the newest report of `cluster` made since `d.VerbAt`. `gitops.Check`
+reads it to judge a block's deploy by the block's own objects, as
+[How a GitOps block judges its deploy](gitops.md#how-a-gitops-block-judges-its-deploy)
+describes. Each entry of `argocd.applications` in a report of
+talos-cluster-kit 0.50.0 or later carries the revision Argo CD last compared
+the Application against:
+
+```json
+{"name": "app-alpha", "health": "Degraded", "sync": "Synced", "revision": "9ee9b7e28c000b16a89b7b717e5f3b9fa6fcf611", "resources": [
+  {"group": "apps", "kind": "Deployment", "namespace": "app-alpha", "name": "api", "sync": "Synced", "health": "Healthy"}
+]}
+```
+
+The call returns an `observe.Application`, a reason and an error. The reason
+is empty when the report shows the Application, and otherwise says why it
+does not:
+
+```go
+app, why, err := observe.NodeReported{API: observe.NodeReportsClient{}}.ArgoCDApplication(ctx, d, cluster, "app-alpha")
+```
+
+| `observe.Application` field | What it holds |
+|---|---|
+| `Name` and `Sync` | The entry's `name` and `sync` |
+| `Revision` | The entry's `revision`, empty when it is `null`, as before Argo CD first compares the Application and for an Application with several sources |
+| `RevisionUnread` | True when the entry carries no `revision`, as from a talos-cluster-kit release before 0.50.0 |
+| `Objects` | Each entry of `resources` as an `observe.AppliedObject`, with its group, kind, namespace, name, `Sync` and `Health`, and nil when the report carries no `resources` |
+
+A reason reads like the unknown answers on this page, such as
+`no node report made since the verb has arrived` or
+`the newest node report names no Argo CD Application "app-alpha"`.
+
 ### A cluster that has sent no report
 
 A node spends its cluster's single-use enrolment token before it can send any

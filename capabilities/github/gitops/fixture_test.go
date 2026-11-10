@@ -1,12 +1,14 @@
 package gitops_test
 
-// The test block is one kubernetes.namespace whose Namespace and ServiceAccount a block-level handler commits and a gitops.Resource observes.
+// The test block is one kubernetes.namespace whose Namespace and ServiceAccount a block-level handler commits and judges through Check.
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
@@ -58,20 +60,27 @@ func desiredFor(app string) contract.Desired {
 	}
 }
 
-func renderNamespace(d contract.Desired) (gitops.Rendered, error) {
+// rendered is the test block's Argo CD Application, its files by repository path and its outputs.
+type rendered struct {
+	App     string
+	Files   map[string][]byte
+	Outputs map[string]string
+}
+
+func renderNamespace(d contract.Desired) (rendered, error) {
 	cluster := d.Params["cluster"]
 	if cluster == "" {
-		return gitops.Rendered{}, errors.New("no cluster param")
+		return rendered{}, errors.New("no cluster param")
 	}
 	if d.AppID == "" {
-		return gitops.Rendered{}, errors.New("no app id")
+		return rendered{}, errors.New("no app id")
 	}
 	return renderApp(d.AppID, cluster), nil
 }
 
-func renderApp(app, cluster string) gitops.Rendered {
+func renderApp(app, cluster string) rendered {
 	sa := app + "-runtime"
-	return gitops.Rendered{
+	return rendered{
 		App: app,
 		Files: map[string][]byte{
 			"apps/" + app + "/namespace.yaml": []byte(fmt.Sprintf(
@@ -87,32 +96,37 @@ func alphaOutputs() map[string]string {
 	return map[string]string{"namespace": "app-alpha", "serviceAccount": "app-alpha-runtime"}
 }
 
+// gitopsBlock is the test block's sources: the fakes, and the repository and notifications it reaches, which a test may swap.
 type gitopsBlock struct {
-	repo     *gitopstest.Repository
-	notes    *gitopstest.Notifications
-	resource *gitops.Resource
+	repo          *gitopstest.Repository
+	notes         *gitopstest.Notifications
+	reports       *gitopstest.NodeReports
+	repository    func(ctx context.Context, d contract.Desired) (gitops.Repository, error)
+	notifications gitops.Notifications
 }
 
-// newBlock builds the block over a notification source answering Succeeded and Healthy for every revision of each autoApps app.
-func newBlock(render func(contract.Desired) (gitops.Rendered, error), autoApps ...string) *gitopsBlock {
-	b := &gitopsBlock{repo: gitopstest.NewRepository(), notes: gitopstest.NewNotifications()}
-	for _, app := range autoApps {
+// newNamespaceBlock builds the block over notifications answering Succeeded and Healthy for every revision of app-alpha and app-beta, and node reports showing each at head with every object Synced and Healthy.
+func newNamespaceBlock() *gitopsBlock {
+	b := &gitopsBlock{repo: gitopstest.NewRepository(), notes: gitopstest.NewNotifications(), reports: gitopstest.NewNodeReports()}
+	for _, app := range []string{"app-alpha", "app-beta"} {
 		b.notes.SucceedCommits(app, b.repo)
+		b.reports.AppliesHead(alphaCluster, app, b.repo)
 	}
-	b.resource = &gitops.Resource{
-		Repository: func(context.Context, contract.Desired) (gitops.Repository, error) {
-			return b.repo, nil
-		},
-		Notifications: func(context.Context, contract.Desired) (gitops.Notifications, error) {
-			return b.notes, nil
-		},
-		Render: render,
-	}
+	b.notifications = b.notes
+	b.repository = func(context.Context, contract.Desired) (gitops.Repository, error) { return b.repo, nil }
 	return b
 }
 
-func newNamespaceBlock() *gitopsBlock {
-	return newBlock(renderNamespace, "app-alpha", "app-beta")
+// deployment is the deploy of files into app's Argo CD Application, read through the reports of alphaCluster.
+func (b *gitopsBlock) deployment(ctx context.Context, d contract.Desired, app string, files map[string][]byte) (gitops.Deployment, error) {
+	repo, err := b.repository(ctx, d)
+	if err != nil {
+		return gitops.Deployment{}, err
+	}
+	return gitops.Deployment{
+		Repository: repo, Notifications: b.notifications, NodeReports: b.reports,
+		Desired: d, Application: app, Cluster: alphaCluster, Paths: slices.Sorted(maps.Keys(files)),
+	}, nil
 }
 
 func (b *gitopsBlock) head(t *testing.T) string {
@@ -122,39 +136,4 @@ func (b *gitopsBlock) head(t *testing.T) string {
 		t.Fatalf("Head: %v", err)
 	}
 	return head
-}
-
-// commitApp commits d's render through CommitManifests, as a block-level handler does, and returns the revision holding it.
-func commitApp(t *testing.T, b *gitopsBlock, d contract.Desired) string {
-	t.Helper()
-	out, err := b.resource.Render(d)
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	rev, _, err := gitops.CommitManifests(context.Background(), b.repo, out.Files, out.App+": update manifests", gitops.SecretValues(d))
-	if err != nil {
-		t.Fatalf("CommitManifests: %v", err)
-	}
-	return rev
-}
-
-func removeApp(t *testing.T, b *gitopsBlock, d contract.Desired) string {
-	t.Helper()
-	out, err := b.resource.Render(d)
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	removal := make(map[string][]byte, len(out.Files))
-	for path := range out.Files {
-		removal[path] = nil
-	}
-	rev, _, err := gitops.CommitManifests(context.Background(), b.repo, removal, out.App+": remove manifests", nil)
-	if err != nil {
-		t.Fatalf("CommitManifests of the removal: %v", err)
-	}
-	return rev
-}
-
-func refFor(d contract.Desired) contract.ResourceRef {
-	return contract.ResourceRef{Name: resourceName, Type: resourceType, Identity: map[string]string{"app": d.AppID}, Desired: d}
 }
