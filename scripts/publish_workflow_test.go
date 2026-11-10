@@ -266,6 +266,37 @@ func TestPublishBlockWorkflow_AsksThePlatformOnlyWhereAStarterTurnsItOn(t *testi
 	}
 }
 
+// A caller whose organisation defines no board address runs the three checks it ran before, and the delivery job reports as skipped.
+func TestPublishBlockWorkflow_JudgesDeliveryOnlyForACallerWithABoard(t *testing.T) {
+	all := publishWorkflow(t)
+	run := all[stepOf(all, "delivery", "name", "Judge the commit order and the board keys")+"run"]
+	env := func(name string) string {
+		return all[stepOf(all, "delivery", "name", "Judge the commit order and the board keys")+"env."+name]
+	}
+	cases := []struct{ name, got, want string }{
+		{"the job runs on a pull request from a caller defining TRACKER_BASE_URL", all["jobs.delivery.if"], "github.event_name == 'pull_request' && vars.TRACKER_BASE_URL != ''"},
+		{"the job reads contents alone", all["jobs.delivery.permissions.contents"], "read"},
+		{"the board token is optional for a caller with no board", all["on.workflow_call.secrets.TRACKER_API_TOKEN.required"], "false"},
+		{"the job checks out the full history the commit range needs", strconv.FormatBool(stepWith(all, "delivery", "with.fetch-depth", "0")), "true"},
+		{"the job builds the check with the caller's Go", strconv.FormatBool(stepWith(all, "delivery", "with.go-version", "${{ inputs.go-version }}")), "true"},
+		{"the job runs plain-delivery's pr-delivery at the release ci.yml runs", strconv.FormatBool(strings.HasSuffix(run, "\n"+prDeliveryRun)), "true"},
+		{"the job reads the range and the title from the pull request event", env("BASE_SHA") + " " + env("HEAD_SHA") + " " + env("PR_TITLE"),
+			"${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} ${{ github.event.pull_request.title }}"},
+		{"the job reads the author's account type from the pull request event", env("PR_AUTHOR_TYPE"), "${{ github.event.pull_request.user.type }}"},
+		{"the job reads the board with the caller's address and token", env("TRACKER_BASE_URL") + " " + env("TRACKER_API_TOKEN"), "${{ vars.TRACKER_BASE_URL }} ${{ secrets.TRACKER_API_TOKEN }}"},
+		{"the secrets job still runs on every event", all["jobs.secrets.if"], ""},
+		{"the scripts job still runs on every event", all["jobs.scripts.if"], ""},
+		{"the Go conformance job still runs for every Go block", all["jobs.conformance.if"], "${{ !inputs.opentofu-only }}"},
+	}
+	checkFields(t, "publish-block.yml", "", cases)
+
+	out, exit := runNamed(t, "delivery", "Judge the commit order and the board keys", t.TempDir(), "", "TRACKER_API_TOKEN=")
+
+	if exit == 0 || !strings.Contains(out, "needs the TRACKER_API_TOKEN secret") {
+		t.Errorf("a caller with a board and no token: exit %d, output:\n%s\nwant a failure naming the missing TRACKER_API_TOKEN secret", exit, out)
+	}
+}
+
 type platformCall struct{ method, uri, auth, body string }
 
 func fakePlatform(t *testing.T, status int, answer string) (string, *[]platformCall) {

@@ -92,6 +92,9 @@ func checkFields(t *testing.T, workflow, prefix string, cases []struct{ name, go
 	}
 }
 
+// prDeliveryRun is how ci.yml and publish-block.yml run plain-delivery's delivery check, at one release.
+const prDeliveryRun = `go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.0 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"`
+
 func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const checkout, setupGo = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
 	const releaseDryRun = "bash scripts/release-block-kit.sh --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
@@ -169,13 +172,17 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the test job runs the release script's tests", strconv.FormatBool(stepWith(all, "test", "run", "bash scripts/release-block-kit_test.sh")), "true"},
 		{"the test job dry-runs the release over a pull request's base and head, on a pull request alone",
 			field(stepOf(all, "test", "run", releaseDryRun) + "if"), "github.event_name == 'pull_request'"},
-		{"the pr key gate runs only on a pull request, never on a push", field("jobs.pr-key-gate.if"), "github.event_name == 'pull_request'"},
-		{"the pr key gate checks out the full history the base..head range needs", strconv.FormatBool(stepWith(all, "pr-key-gate", "with.fetch-depth", "0")), "true"},
-		{"the pr key gate pins checkout to the platform's sha", strconv.FormatBool(stepWith(all, "pr-key-gate", "uses", checkout)), "true"},
-		{"the pr key gate pins setup-go to the platform's sha", strconv.FormatBool(stepWith(all, "pr-key-gate", "uses", setupGo)), "true"},
-		{"the pr key gate reads the title from the pull request event, never from a commit", strconv.FormatBool(stepWith(all, "pr-key-gate", "env.PR_TITLE", "${{ github.event.pull_request.title }}")), "true"},
-		{"the pr key gate runs plain-delivery's pr-keys at v0.1.0 on the pull request's base and head", strconv.FormatBool(stepWith(all, "pr-key-gate", "run",
-			"go run github.com/mitstack-eu/plain-delivery/cmd/pr-keys@v0.1.0 \\\n--repo . \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\"")), "true"},
+		{"the delivery check reports as block / delivery, the context every block's main requires", field("jobs.delivery.name"), "block / delivery"},
+		{"the delivery check runs only on a pull request, never on a push", field("jobs.delivery.if"), "github.event_name == 'pull_request'"},
+		{"the delivery check checks out the full history the commit range needs", strconv.FormatBool(stepWith(all, "delivery", "with.fetch-depth", "0")), "true"},
+		{"the delivery check pins checkout to the platform's sha", strconv.FormatBool(stepWith(all, "delivery", "uses", checkout)), "true"},
+		{"the delivery check pins setup-go to the platform's sha", strconv.FormatBool(stepWith(all, "delivery", "uses", setupGo)), "true"},
+		{"the delivery check runs plain-delivery's pr-delivery at its release on the pull request's base and head", field(stepOf(all, "delivery", "run", prDeliveryRun)+"env.BASE_SHA") + " " + field(stepOf(all, "delivery", "run", prDeliveryRun)+"env.HEAD_SHA"),
+			"${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}"},
+		{"the delivery check reads the title and the author's account type from the pull request event", field(stepOf(all, "delivery", "run", prDeliveryRun)+"env.PR_TITLE") + " " + field(stepOf(all, "delivery", "run", prDeliveryRun)+"env.PR_AUTHOR_TYPE"),
+			"${{ github.event.pull_request.title }} ${{ github.event.pull_request.user.type }}"},
+		{"the delivery check reads the board with the recorder's address and token", field(stepOf(all, "delivery", "run", prDeliveryRun)+"env.TRACKER_BASE_URL") + " " + field(stepOf(all, "delivery", "run", prDeliveryRun)+"env.TRACKER_API_TOKEN"),
+			"${{ vars.TRACKER_BASE_URL }} ${{ secrets.TRACKER_API_TOKEN }}"},
 		{"record delivery runs only on main, by a push or a dispatch, so no other ref records keys main never took", field("jobs.record-delivery.if"),
 			"(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"},
 		{"record delivery needs a green test suite and the release job to have run", field("jobs.record-delivery.needs"), "[test, release]"},
@@ -193,9 +200,8 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	checkFields(t, "ci.yml", "", cases)
 	for _, tc := range []struct{ name, scope, forbidden string }{
 		{"the test job never continues on error, so a failing step fails the check main requires", "jobs.test.", "continue-on-error"},
-		{"the pr key gate never continues on error, so a missing key is a red check", "jobs.pr-key-gate.", "continue-on-error"},
-		{"the pr key gate needs no secret", "jobs.pr-key-gate.", "secrets."},
-		{"the pr key gate reads nothing from a commit, since a branch name in a commit is no delivery intent", "jobs.pr-key-gate.", "head_commit"},
+		{"the delivery check never continues on error, so code before its tests is a red check", "jobs.delivery.", "continue-on-error"},
+		{"the delivery check reads nothing from a commit, since a branch name in a commit is no delivery intent", "jobs.delivery.", "head_commit"},
 		{"record delivery never continues on error, so a failed board write is a red run", "jobs.record-delivery.", "continue-on-error"},
 		{"record delivery never reads release's outputs.released, so a push that cut no tag still delivers its keys", "jobs.record-delivery.", "outputs.released"},
 		{"no workflow value derives keys itself instead of calling plain-delivery", "", "MIT-[0-9]"},
