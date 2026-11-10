@@ -5,6 +5,7 @@ package gitops_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -93,6 +94,46 @@ func TestDeploy(t *testing.T) {
 			}
 			if tc.check != nil {
 				tc.check(t, repo, first, last)
+			}
+		})
+	}
+}
+
+func TestDeploy_ARemovalThatCommitsNothing(t *testing.T) {
+	removal := map[string][]byte{}
+	for path := range alphaDeploy().Files {
+		removal[path] = nil
+	}
+	long := make([]map[string][]byte, 60)
+	for i := range long {
+		long[i] = map[string][]byte{betaPath: fmt.Appendf(nil, "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: app-beta-%d\n", i)}
+	}
+	cases := []struct {
+		name    string
+		history []map[string][]byte
+		want    gitops.Verdict
+		detail  string
+		err     error
+	}{
+		{"in an empty repository it succeeds at once", nil, gitops.VerdictSucceeded, "holds none of the block's files", nil},
+		{"in a repository whose history never held the block's files it succeeds at once", []map[string][]byte{betaFiles()}, gitops.VerdictSucceeded, "holds none of the block's files", nil},
+		{"after a commit that removed the block's files it waits for the verdict on that removal", []map[string][]byte{alphaDeploy().Files, removal}, gitops.VerdictSucceeded, "it removed is applied", nil},
+		{"in a history longer than the 50 commits the walk reads it stays pending until the context ends, since the walk cannot show that no commit held the files", long,
+			gitops.VerdictPending, "declare no Kubernetes object, and the commit removed none", context.DeadlineExceeded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := gitopstest.NewRepository()
+			for _, files := range tc.history {
+				mustCommit(t, repo, files)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+
+			got, err := gitops.Deploy(ctx, deployOfAlpha(repo, gitopstest.NewNotifications(), appliesHead(repo)), gitops.BlockDeploy{Files: removal, Message: "remove app-alpha", Poll: time.Millisecond})
+
+			if !errors.Is(err, tc.err) || got.Changed || got.Outcome.Verdict != tc.want || !strings.Contains(got.Outcome.Detail, tc.detail) || len(repo.Commits()) != len(tc.history) {
+				t.Errorf("Deploy = %+v, %v with %d commits; want %s unchanged with error %v, detail naming %q, and no commit beyond the %d seeded", got, err, len(repo.Commits()), tc.want, tc.err, tc.detail, len(tc.history))
 			}
 		})
 	}
