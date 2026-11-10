@@ -112,11 +112,10 @@ type NodeReported struct {
 	API NodeReportsAPI
 }
 
-// Health is Argo CD's health of one object an Application applied, as the newest node report carries it.
+// Health is Argo CD's health of one object an Application applied, as the newest node report carries it, with Argo CD's Message beside any Status but Healthy.
 type Health struct {
 	// Status is Argo CD's status, as Healthy, Progressing, Degraded or Missing, empty for a kind Argo CD runs no health check for, a Secret among them, and HealthUnknown when the report carries none.
-	Status string
-	// Message is Argo CD's message beside a Status other than Healthy.
+	Status  string
 	Message string
 }
 
@@ -157,7 +156,6 @@ type appliedObject struct {
 	Message string          `json:"message"`
 }
 
-// health is Argo CD's health of o, unknown when the report carries none or a value that names no status.
 func (o appliedObject) health() Health {
 	var status *string
 	if len(o.Health) == 0 || json.Unmarshal(o.Health, &status) != nil {
