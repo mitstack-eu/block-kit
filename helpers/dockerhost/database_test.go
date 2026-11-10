@@ -276,6 +276,20 @@ func TestDatabase_LandsOnTheHostRepositoryOfAnOwnerTheRequestCarriesOnlyInTheGit
 	}
 }
 
+func TestDatabase_WaitsForTheHostsNextReportWhileItGivesNoCapacityAndWritesNothing(t *testing.T) {
+	e := newDBEnv(t)
+	e.host.Silent = true
+
+	_, err := e.db.EnsureResources(context.Background(), dbDesired("shop", nil))
+
+	if !waitsForSignal(err) || !strings.Contains(err.Error(), "shop's database waits for that capacity report") {
+		t.Errorf("EnsureResources on a host that has sent no report = %v; want a wait for its next report naming the capacity report", err)
+	}
+	if got := e.host.Under("shop"); len(got) != 0 {
+		t.Errorf("a waiting subscribe left shop holding %v; want nothing", slices.Sorted(maps.Keys(got)))
+	}
+}
+
 func TestDatabase_UpgradeKeepsTheVolumesDiskAndAnUnchangedOneWritesNothing(t *testing.T) {
 	e := newDBEnv(t)
 	e.land(t, dbDesired("shop", map[string]string{"dbDisk": "2Gi"}))

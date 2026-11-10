@@ -31,8 +31,20 @@ func (waitingReporter) EnsureResources(context.Context, contract.Desired) ([]con
 	return nil, handler.Wait("%s", waitDetail)
 }
 
-func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetail(t *testing.T) {
-	blocks := map[string]handler.Resource{"Ensure": waitingBlock{}, "EnsureResources": waitingReporter{}}
+type signalWaitingBlock struct{ waitingBlock }
+
+func (signalWaitingBlock) Ensure(context.Context, contract.Desired) error {
+	return fmt.Errorf("reading the host's report: %w", handler.WaitForSignal("%s", waitDetail))
+}
+
+func (signalWaitingBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
+	return nil, handler.WaitForSignal("%s", waitDetail)
+}
+
+const fromSignalWait = "Ensure, waiting for a signal"
+
+func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetailAndOnlyAWaitForASignalAsksForTheSubscribeAgain(t *testing.T) {
+	blocks := map[string]handler.Resource{"Ensure": waitingBlock{}, "EnsureResources": waitingReporter{}, fromSignalWait: signalWaitingBlock{}}
 	for _, op := range []string{"subscribe", "upgrade", "unsubscribe"} {
 		for from, block := range blocks {
 			t.Run(op+" from "+from, func(t *testing.T) {
@@ -50,6 +62,9 @@ func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetail(t *testing.T) {
 					}
 				} else if !resp.Pending {
 					t.Errorf("%s answered settled, want pending:true", op)
+				}
+				if want := from == fromSignalWait && op != "unsubscribe"; resp.Redrive != want {
+					t.Errorf("%s from %s answered redrive %v, want %v", op, from, resp.Redrive, want)
 				}
 				if calls := len(obs.calls()); calls != 0 {
 					t.Errorf("the resource was observed %d times, want none once the block waits", calls)

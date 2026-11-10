@@ -3,9 +3,15 @@ package dockerhost_test
 // A per-app block reads its size inputs, judges its fit and words its refusal as the console's host-room panel does.
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/helpers/dockerhost"
+	"github.com/mitstack-eu/block-kit/observe"
 )
 
 const (
@@ -90,5 +96,72 @@ func TestDescribe_WritesTheAmountsAsTheHostRoomPanelDoesWithDiskOnlyWhenThereIsS
 		if got := dockerhost.Describe(tc.r); got != tc.want {
 			t.Errorf("Describe(%+v) = %q; want %q", tc.r, got, tc.want)
 		}
+	}
+}
+
+// waitsForSignal reports whether err is a wait that asks for the subscribe to be sent again on the host's next report.
+func waitsForSignal(err error) bool {
+	var w *handler.Waiting
+	return errors.As(err, &w) && w.Redrive
+}
+
+// reportOf reads the host's newest report from reports as a block does, with d naming what the platform attests.
+func reportOf(d contract.Desired, reports ...observe.NodeReport) func(*testing.T) (dockerhost.Report, bool) {
+	return func(t *testing.T) (dockerhost.Report, bool) {
+		t.Helper()
+		report, found, err := dockerhost.NewestReport(context.Background(), &hostReports{reports: reports}, d, hostSub)
+		if err != nil {
+			t.Fatalf("NewestReport = %v; want a report or none", err)
+		}
+		return report, found
+	}
+}
+
+func TestCheckRoom_WaitsForTheHostsCapacityReportRefusesAnAbsentOrFullHostAndPassesWhatFits(t *testing.T) {
+	allocatable := dockerhost.Reservation{CPUMillis: 3500, MemoryBytes: 7 * gib, DiskBytes: 70 * gib}
+	reporting := func(*testing.T) (dockerhost.Report, bool) { return dockerhost.Report{Allocatable: &allocatable}, true }
+	others := dockerhost.Reservation{CPUMillis: 3000, MemoryBytes: 6 * gib}
+	small := dockerhost.Ask{Part: "shop", Kind: "app", Size: dockerhost.Reservation{CPUMillis: 500, MemoryBytes: 512 * mib}}
+	large := dockerhost.Ask{Part: "shop", Kind: "app", Size: dockerhost.Reservation{CPUMillis: 1000, MemoryBytes: 512 * mib}}
+	withDisk := dockerhost.Ask{Part: "shop", Kind: "app", Size: dockerhost.Reservation{CPUMillis: 500, MemoryBytes: 512 * mib, DiskBytes: gib}}
+	for _, tc := range []struct {
+		name   string
+		report func(*testing.T) (dockerhost.Report, bool)
+		ask    dockerhost.Ask
+		others dockerhost.Reservation
+		wait   bool
+		class  string
+		says   []string
+	}{
+		{name: "a host that has sent no report waits for its next report, naming the capacity report", report: reportOf(contract.Desired{}), ask: small, others: others, wait: true,
+			says: []string{"no node report giving its allocatable capacity", "shop waits for that capacity report"}},
+		{name: "a report with no allocatable capacity waits the same", report: reportOf(contract.Desired{}, received(39, `{"host":{"capacity":{}}}`)), ask: small, others: others, wait: true,
+			says: []string{"no node report giving its allocatable capacity", "shop waits for that capacity report"}},
+		{name: "a report stating why it gives no capacity waits, naming the host's own error",
+			report: reportOf(contract.Desired{}, received(39, `{"host":{"capacity":{"error":"nproc printed nothing"}}}`)), ask: small, others: others, wait: true,
+			says: []string{"nproc printed nothing", "shop waits for a report that gives it"}},
+		{name: "a host the platform attests absent is refused host-absent", report: reportOf(attestedAbsent(hostSub)), ask: small, others: others, class: "host-absent",
+			says: []string{"hetzner.docker-host", "hetzner.server absent", "shop cannot be placed on it"}},
+		{name: "an app too large is refused host-full, naming the free and asked amounts", report: reporting, ask: large, others: others, class: "host-full",
+			says: []string{"the host has 0.5 vCPU and 1 GiB free", "shop asks for 1 vCPU and 512 MiB", "give the app less"}},
+		{name: "an app asking for disk on a host its others overfill is refused naming no disk", report: reporting, ask: withDisk,
+			others: dockerhost.Reservation{CPUMillis: 1000, MemoryBytes: gib, DiskBytes: 80 * gib}, class: "host-full",
+			says: []string{"the host has 2.5 vCPU and 6 GiB and no disk free"}},
+		{name: "an app that fits passes", report: reporting, ask: small, others: others},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report, found := tc.report(t)
+
+			err := dockerhost.CheckRoom(report, found, tc.ask, tc.others)
+
+			if waitsForSignal(err) != tc.wait || refused(err) != tc.class || (err == nil) != (!tc.wait && tc.class == "") {
+				t.Fatalf("CheckRoom(%s) = %v; want a wait for the next report %v, refusal class %q", tc.ask.Part, err, tc.wait, tc.class)
+			}
+			for _, want := range tc.says {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("CheckRoom(%s) = %q; want it to name %q", tc.ask.Part, err, want)
+				}
+			}
+		})
 	}
 }
