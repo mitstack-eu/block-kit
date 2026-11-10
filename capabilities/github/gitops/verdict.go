@@ -17,10 +17,8 @@ import (
 type Deployment struct {
 	Repository    Repository
 	Notifications Notifications
-	// NodeReports reads Cluster's node reports, usually observe.NodeReportsClient{}.
-	NodeReports observe.NodeReportsAPI
-	// Desired is the request, and only a node report made after its VerbAt counts.
-	Desired contract.Desired
+	NodeReports   observe.NodeReportsAPI
+	Desired       contract.Desired
 	// Application is the Argo CD Application that applies the block's files, as an identity's argocdApplication names it.
 	Application string
 	// Cluster is the subscription whose node reports carry Application, as an identity's clusterSubscription names it.
@@ -81,7 +79,6 @@ func (d Deployment) complete(revision string) error {
 	return nil
 }
 
-// judgement is one Check of the block's own commit own, whose outcome names revision.
 type judgement struct {
 	d             Deployment
 	line          lineage
@@ -93,13 +90,10 @@ type judgement struct {
 type notice struct {
 	n            Notification
 	found, holds bool
-	// exact marks a notification of the revision handed to Check.
-	exact bool
-	// moved names the commit and path that keep a later notified revision from holding them.
-	moved, path string
+	exact        bool
+	moved, path  string
 }
 
-// readNotice reads the notification at revision, then at the block's own commit, then the Application's newest.
 func (j judgement) readNotice(ctx context.Context, revision string) (notice, error) {
 	for i, at := range slices.Compact([]string{revision, j.own}) {
 		n, ok, err := j.d.Notifications.Latest(ctx, j.d.Application, at)

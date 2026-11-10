@@ -139,16 +139,14 @@ type reportBody struct {
 	ArgoCD                        json.RawMessage `json:"argocd"`
 }
 
-// Application is one Argo CD Application as a node report carries it.
+// Application is one Argo CD Application as a node report carries it, its Objects nil when the report carries no list of what it applied, as one cut to fit its size does.
 type Application struct {
 	Name string
 	Sync string
-	// Revision is the revision Argo CD last compared the Application against, "" when it compared none.
-	Revision string
-	// RevisionUnread marks a report from an earlier talos-cluster-kit release, which carries no revision.
+	// Revision is the revision Argo CD last compared the Application against, "" when it compared none, and RevisionUnread marks a report from an earlier talos-cluster-kit release, which carries none.
+	Revision       string
 	RevisionUnread bool
-	// Objects is nil when the report carries no list of what the Application applied, as one cut to fit its size.
-	Objects []AppliedObject
+	Objects        []AppliedObject
 }
 
 // AppliedObject is one object an Application applied, with Argo CD's sync status and health of it.
