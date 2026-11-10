@@ -22,6 +22,13 @@ jobs:
           go-version: '1.26.10'
       - run: go vet ./...
       - run: go test ./...
+      # The job main requires runs it, so the kit's own pull requests meet
+      # the check publish-block.yml runs on a block's.
+      - name: Fail a pull request that adds a fixed sleep or a polling interval
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: go run ./cmd/checkpolls -base "$BASE_SHA"
       # Every event builds the tools image and checks each file it holds
       # against its pin, so a change that breaks it fails here, before a
       # release would publish it.

@@ -170,6 +170,11 @@ jobs:
         working-directory: block-kit
         run: go build -o ../commentcheck ./cmd/commentcheck
 
+      # The image builds from the block's tree, so the binary stays outside it.
+      - name: Build checkpolls
+        working-directory: block-kit
+        run: go build -o "$RUNNER_TEMP/checkpolls" ./cmd/checkpolls
+
       # blockverify judges `.` and the image builds from `.`, so the kit
       # checked out inside the block's tree must be gone before either reads
       # it, or the block is judged by the kit's own source. The image scan
@@ -188,6 +193,13 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FETCH_TOKEN: ${{ github.token }}
         run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
+
+      - name: Fail a pull request that adds a fixed sleep or a polling interval
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          "$RUNNER_TEMP/checkpolls" -base "$BASE_SHA"
 
       - name: Judge the comments this pull request adds
         if: github.event_name == 'pull_request'
@@ -252,6 +264,10 @@ jobs:
         working-directory: block-kit
         run: go build -o "$RUNNER_TEMP/blockverify" ./verify/blockverify
 
+      - name: Build checkpolls
+        working-directory: block-kit
+        run: go build -o "$RUNNER_TEMP/checkpolls" ./cmd/checkpolls
+
       # The image builds from `.`, so the kit leaves the block's tree first.
       - name: Remove the kit checkout from the block tree
         run: mv block-kit "$RUNNER_TEMP/block-kit"
@@ -279,6 +295,13 @@ jobs:
         with:
           name: blockverify-report
           path: ${{ runner.temp }}/blockverify-report.json
+
+      - name: Fail a pull request that adds a fixed sleep or a polling interval
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          "$RUNNER_TEMP/checkpolls" -base "$BASE_SHA"
 
       - name: Configure AWS credentials for the verify role
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
