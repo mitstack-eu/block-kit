@@ -42,7 +42,7 @@ type Outcome struct {
 	Detail string
 }
 
-// Check judges the block's commit at revision by the objects d.Paths declare, as the newest node report of d.Cluster made since the verb shows them in d.Application at that commit or a later revision in which no commit changed one of d.Paths, since Argo CD's notification speaks for the whole Application.
+// Check judges the block's commit at revision by the objects d.Paths declare, as the newest node report of d.Cluster made since the verb shows them in d.Application at that commit or a later revision in which no commit changed one of d.Paths, since Argo CD's notification speaks for the whole Application and comes once as it turns Degraded, not for a commit landing while it stays so.
 func Check(ctx context.Context, d Deployment, revision string) (Outcome, error) {
 	pending := Outcome{Verdict: VerdictPending, Revision: revision}
 	if err := d.complete(revision); err != nil {
@@ -64,10 +64,11 @@ func Check(ctx context.Context, d Deployment, revision string) (Outcome, error) 
 	if j.notice.exact {
 		j.revision = revision
 	}
-	if !j.notice.holds {
-		return Outcome{Verdict: VerdictPending, Revision: j.revision, Detail: j.notice.describe(d.Application, j.own)}, nil
+	out, err := j.fromReport(ctx)
+	if why := j.notice.describe(d.Application, j.own); why != "" && err == nil {
+		out.Detail += "; " + why
 	}
-	return j.fromReport(ctx)
+	return out, err
 }
 
 func (d Deployment) complete(revision string) error {
