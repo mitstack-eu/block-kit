@@ -40,7 +40,7 @@ type Outcome struct {
 	Detail string
 }
 
-// Check judges the block's commit at revision by the objects d.Paths declare, as the newest node report of d.Cluster made since the verb shows them in d.Application at that commit or a later revision in which no commit changed one of d.Paths, since Argo CD's notification speaks for the whole Application and comes once as it turns Degraded, not for a commit landing while it stays so.
+// Check judges the block's commit at revision by the objects d.Paths declare, as the newest node report of d.Cluster made since the verb shows them in d.Application at that commit or a later revision in which no commit changed one of d.Paths, since Argo CD notifies only of the whole Application.
 func Check(ctx context.Context, d Deployment, revision string) (Outcome, error) {
 	pending := Outcome{Verdict: VerdictPending, Revision: revision}
 	if err := d.complete(revision); err != nil {
@@ -224,7 +224,7 @@ func notReady(app observe.Application, o Object, got *observe.AppliedObject) str
 	return ""
 }
 
-// removedGone succeeds once no object the block's files declared before its own commit, and no longer do, is among those the Application applied.
+// removedGone succeeds once no object the block's files declared before its own commit, and no longer do, is among those the Application applied, and never on a commit that declares and removes none.
 func (j judgement) removedGone(ctx context.Context, app observe.Application, declared []Object) (Verdict, string, error) {
 	parent, _, err := j.d.Repository.Changed(ctx, j.own)
 	if err != nil {
@@ -235,6 +235,9 @@ func (j judgement) removedGone(ctx context.Context, app observe.Application, dec
 		return VerdictPending, "", err
 	}
 	removed := slices.DeleteFunc(before, func(o Object) bool { return slices.Contains(declared, o) })
+	if len(declared) == 0 && len(removed) == 0 {
+		return VerdictPending, fmt.Sprintf("the block's files at %s declare no Kubernetes object, and the commit removed none, so no report can show its deploy", j.own), nil
+	}
 	for _, o := range removed {
 		if find(app, o) != nil {
 			return VerdictPending, fmt.Sprintf("%s, which the commit removed, is still among the objects it applied", o), nil
