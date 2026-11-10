@@ -139,6 +139,34 @@ type appliedObject struct {
 	Kind      string `json:"kind"`
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
+	// Health stays raw, since a report that carries no health leaves it out and one whose Argo CD runs no health check for the object's kind holds null.
+	Health  json.RawMessage `json:"health"`
+	Message string          `json:"message"`
+}
+
+// Health is Argo CD's health of one object an Application applied, as the newest node report carries it.
+type Health struct {
+	// Status is Argo CD's word, such as Healthy, Progressing, Degraded or Missing, empty for a kind Argo CD runs no health check for, such as a Secret, and HealthUnknown when the report carries no health.
+	Status string
+	// Message is Argo CD's message beside a Status other than Healthy.
+	Message string
+}
+
+// HealthUnknown is the Status of an object whose health the report does not carry, as one from an earlier talos-cluster-kit release.
+const HealthUnknown = "Unknown"
+
+var unreadHealth = Health{Status: HealthUnknown}
+
+// health is Argo CD's health of o, unknown when the report carries none or a value that names no status.
+func (o appliedObject) health() Health {
+	var status *string
+	if len(o.Health) == 0 || json.Unmarshal(o.Health, &status) != nil {
+		return unreadHealth
+	}
+	if status == nil {
+		return Health{}
+	}
+	return Health{Status: *status, Message: o.Message}
 }
 
 // is reports whether o is the object kubectlKind names as kubectl does, its kind in any case and its API group after a dot.
@@ -148,24 +176,43 @@ func (o appliedObject) is(kubectlKind, namespace, name string) bool {
 }
 
 func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	obs, _, err := o.ObserveHealth(ctx, r)
+	return obs, err
+}
+
+// ObserveHealth observes r as ObserveResource does and returns, beside an object the Argo CD Application its identity names lists, Argo CD's health of it; every other observation's health reads HealthUnknown.
+func (o NodeReported) ObserveHealth(ctx context.Context, r contract.ResourceRef) (contract.Observation, Health, error) {
 	ids, obs, ok := identityKeys(r, "kind", "name")
 	if !ok {
-		return obs, nil
+		return obs, unreadHealth, nil
 	}
+	newest, obs, err := o.newest(ctx, r)
+	if err != nil || newest == nil {
+		return obs, unreadHealth, err
+	}
+	if app := r.Identity["argocdApplication"]; app != "" {
+		obs, health := appliedBy(r, *newest, app, ids[0], ids[1])
+		return obs, health, nil
+	}
+	return labelled(r, *newest, ids[0], ids[1]), unreadHealth, nil
+}
+
+// newest is the newest report of the identity's cluster made since the verb, or nil with the unknown observation that says why there is none.
+func (o NodeReported) newest(ctx context.Context, r contract.ResourceRef) (*reportBody, contract.Observation, error) {
 	cluster := r.Identity["clusterSubscription"]
 	if cluster == "" {
 		cluster = r.Desired.SubscriptionID
 	}
 	got, err := o.reports(ctx, r.Desired, cluster)
 	if err != nil {
-		return contract.Observation{}, err
+		return nil, contract.Observation{}, err
 	}
 	var newest *reportBody
 	var newestAt time.Time
 	for _, report := range got.Reports {
 		var body reportBody
 		if err := json.Unmarshal(report.Body, &body); err != nil {
-			return contract.Observation{}, fmt.Errorf("observe: reading the node report received at %s: %w", report.ReceivedAt.Format(time.RFC3339), err)
+			return nil, contract.Observation{}, fmt.Errorf("observe: reading the node report received at %s: %w", report.ReceivedAt.Format(time.RFC3339), err)
 		}
 		at := report.ReceivedAt
 		if body.MadeAt != nil {
@@ -176,28 +223,30 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 		}
 	}
 	if newest == nil {
-		return unknown("resource %q: no node report made since the verb has arrived%s", r.Name, enrolled(cluster, got.Enrolment)), nil
+		return nil, unknown("resource %q: no node report made since the verb has arrived%s", r.Name, enrolled(cluster, got.Enrolment)), nil
 	}
-	if app := r.Identity["argocdApplication"]; app != "" {
-		return appliedBy(r, *newest, app, ids[0], ids[1]), nil
-	}
+	return newest, contract.Observation{}, nil
+}
+
+// labelled reads the object of kind and name from the objects labelled with the observing subscription's id in the newest counting report.
+func labelled(r contract.ResourceRef, newest reportBody, kind, name string) contract.Observation {
 	var listed []reportedObject
 	if json.Unmarshal(newest.SubscriptionResources, &listed) != nil {
-		return unknown("resource %q: the newest node report could not list the subscription's objects", r.Name), nil
+		return unknown("resource %q: the newest node report could not list the subscription's objects", r.Name)
 	}
-	want := reportedObject{Namespace: r.Identity["namespace"], Kind: ids[0], Name: ids[1], Subscription: r.Desired.SubscriptionID}
+	want := reportedObject{Namespace: r.Identity["namespace"], Kind: kind, Name: name, Subscription: r.Desired.SubscriptionID}
 	for _, item := range listed {
 		if item == want {
-			return present(r, nil), nil
+			return present(r, nil)
 		}
 	}
 	if newest.MadeAt == nil {
-		return unknown("resource %q: the newest node report does not list it, but proves no absence: it carries no madeAt", r.Name), nil
+		return unknown("resource %q: the newest node report does not list it, but proves no absence: it carries no madeAt", r.Name)
 	}
 	if !newest.SubscriptionResourcesComplete && !slices.Contains(newest.SubscriptionResourceKinds, want.Kind) {
-		return unknown("resource %q: the newest node report does not list it, but proves no absence: it neither marks its list complete nor read kind %q whole", r.Name, want.Kind), nil
+		return unknown("resource %q: the newest node report does not list it, but proves no absence: it neither marks its list complete nor read kind %q whole", r.Name, want.Kind)
 	}
-	return absent(), nil
+	return absent()
 }
 
 func (o NodeReported) reports(ctx context.Context, d contract.Desired, cluster string) (ClusterReports, error) {
@@ -218,29 +267,29 @@ func enrolled(cluster string, e *Enrolment) string {
 	return fmt.Sprintf(", though cluster subscription %q enrolled a node at %s", cluster, e.SpentAt.UTC().Format(time.RFC3339))
 }
 
-// appliedBy reads the object of kind and name from the list of the Application app in the newest counting report.
-func appliedBy(r contract.ResourceRef, newest reportBody, app, kind, name string) contract.Observation {
+// appliedBy reads the object of kind and name, with Argo CD's health of it, from the list of the Application app in the newest counting report.
+func appliedBy(r contract.ResourceRef, newest reportBody, app, kind, name string) (contract.Observation, Health) {
 	var argo struct {
 		Applications []reportedApplication `json:"applications"`
 	}
 	if json.Unmarshal(newest.ArgoCD, &argo) != nil {
-		return unknown("resource %q: the newest node report could not list Argo CD's Applications", r.Name)
+		return unknown("resource %q: the newest node report could not list Argo CD's Applications", r.Name), unreadHealth
 	}
 	i := slices.IndexFunc(argo.Applications, func(a reportedApplication) bool { return a.Name == app })
 	if i < 0 || argo.Applications[i].Resources == nil {
-		return unknown("resource %q: the newest node report lists no objects the Argo CD Application %q applied", r.Name, app)
+		return unknown("resource %q: the newest node report lists no objects the Argo CD Application %q applied", r.Name, app), unreadHealth
 	}
 	application := argo.Applications[i]
 	for _, o := range *application.Resources {
 		if o.is(kind, r.Identity["namespace"], name) {
-			return present(r, nil)
+			return present(r, nil), o.health()
 		}
 	}
 	if newest.MadeAt == nil {
-		return unknown("resource %q: the Argo CD Application %q does not list it, but the newest node report proves no absence: it carries no madeAt", r.Name, app)
+		return unknown("resource %q: the Argo CD Application %q does not list it, but the newest node report proves no absence: it carries no madeAt", r.Name, app), unreadHealth
 	}
 	if application.Sync != "Synced" {
-		return unknown("resource %q: the Argo CD Application %q does not list it, but proves no absence until it reads Synced, not %q", r.Name, app, application.Sync)
+		return unknown("resource %q: the Argo CD Application %q does not list it, but proves no absence until it reads Synced, not %q", r.Name, app, application.Sync), unreadHealth
 	}
-	return absent()
+	return absent(), unreadHealth
 }

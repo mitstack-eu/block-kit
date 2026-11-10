@@ -164,7 +164,7 @@ block's Hetzner client implements in a few lines.
 | `HetznerFirewall`, `HetznerNetwork` | `hetzner.firewall`, `hetzner.network` | `firewallId`, `networkId` | Whether it exists |
 | `GitHubRepository` | `github.repository` | `repo` | `repo`, the repository's full name |
 | `GitHubCommit` | `github.commit` | `repo`, `sha` | `sourceSha`, and `sourceBranch` when the identity holds a `branch` |
-| `NodeReported` | A resource the platform cannot reach, such as `kubernetes.namespace` | `kind`, `name`, and `argocdApplication` for an object Argo CD applied | Presence from the cluster's node reports, as below |
+| `NodeReported` | A resource the platform cannot reach, such as `kubernetes.namespace` | `kind`, `name`, and `argocdApplication` for an object Argo CD applied | Presence from the cluster's node reports, and Argo CD's health of an object it applied through `ObserveHealth`, as below |
 
 `EC2Container` runs a short probe script on the instance through a
 `HostCommander`, the interface you implement to run a script on an EC2
@@ -378,8 +378,10 @@ under `argocd.applications`, each entry with its `sync` status and
 {
   "madeAt": "2026-10-23T09:00:00Z",
   "argocd": {"applications": [
-    {"name": "repository-credentials", "health": "Healthy", "sync": "Synced", "resources": [
-      {"group": "", "kind": "Secret", "namespace": "argocd", "name": "app-repository-alpha", "sync": "Synced"}
+    {"name": "repository-credentials", "health": "Degraded", "sync": "Synced", "resources": [
+      {"group": "", "kind": "Secret", "namespace": "argocd", "name": "app-repository-alpha", "sync": "Synced", "health": null},
+      {"group": "bitnami.com", "kind": "SealedSecret", "namespace": "argocd", "name": "app-repository-alpha", "sync": "Synced",
+        "health": "Degraded", "message": "no key could decrypt secret (url)"}
     ]}
   ]}
 }
@@ -398,6 +400,20 @@ above:
 - Anything else is unknown, including a report that names no such Application
   or carries no `resources` for it.
 
+Each object in that list also carries Argo CD's `health` of it, with Argo CD's
+`message` beside any health but `Healthy`. `NodeReported.ObserveHealth`
+returns the observation `ObserveResource` gives together with that health, so
+a verdict can judge a block by its own objects. Its `Health.Status` reads:
+
+| The object in the report | `Status` | `Message` |
+|---|---|---|
+| `"health": "Degraded", "message": "..."` | `Degraded` | Argo CD's message |
+| `"health": "Healthy"` | `Healthy` | empty |
+| `"health": null`, a kind Argo CD runs no health check for, such as a Secret | empty | empty |
+| No `health` member, as from a talos-cluster-kit release that carries none | `observe.HealthUnknown` | empty |
+
+Any observation but present reads `observe.HealthUnknown` too.
+
 `observe.NodeReportsClient` reads the reports from the platform the request's
 events callback names, with the callback's token, so a block writes no client
 of its own. Each `NodeReport` keeps in `Verdict`, as raw JSON, the verdict the
@@ -409,9 +425,9 @@ counts any other status as no report:
 observe.NodeReported{API: observe.NodeReportsClient{}}
 ```
 
-`NodeReported` reports presence and identity only, so a block that provides
-such a resource reports the type's other required outputs from an observer of
-its own.
+`NodeReported` reports presence, identity and, through `ObserveHealth`, Argo
+CD's health only, so a block that provides such a resource reports the type's
+other required outputs from an observer of its own.
 
 ### A cluster that has sent no report
 
