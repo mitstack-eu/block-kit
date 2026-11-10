@@ -11,14 +11,6 @@ import (
 )
 
 func TestParseTypeSnapshot_ReadsThePlatformsSnapshot(t *testing.T) {
-	lookup := func(t *testing.T, snap contract.TypeSnapshot, id string) contract.SnapshotType {
-		t.Helper()
-		typ, ok := snap.Lookup(id)
-		if !ok {
-			t.Fatalf("Lookup(%q) found nothing", id)
-		}
-		return typ
-	}
 	cases := []struct {
 		label string
 		check func(t *testing.T, snap contract.TypeSnapshot)
@@ -119,8 +111,34 @@ const iamRoleType = `{"id": "aws.iam-role", "capability": "aws", "kind": "iam-ro
 
 const instanceHead = `{"id": "aws.ec2-instance", "capability": "aws", "kind": "host", "scope": "per-app", "version": 1,`
 
+func bucketType(fields string) string {
+	return `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app", "version": 1, ` + fields + `}]}`
+}
+
+func lookup(t *testing.T, snap contract.TypeSnapshot, id string) contract.SnapshotType {
+	t.Helper()
+	typ, ok := snap.Lookup(id)
+	if !ok {
+		t.Fatalf("Lookup(%q) found nothing", id)
+	}
+	return typ
+}
+
+func bucketOutput(t *testing.T, raw, name string) contract.SnapshotOutput {
+	t.Helper()
+	snap, err := contract.ParseTypeSnapshot([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseTypeSnapshot(%s): %v", raw, err)
+	}
+	out, ok := lookup(t, snap, "aws.s3-bucket").Output(name)
+	if !ok {
+		t.Fatalf("ParseTypeSnapshot(%s): aws.s3-bucket declares no output %q", raw, name)
+	}
+	return out
+}
+
 func bucketSpec(spec string) string {
-	return `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app", "version": 1, "observeSpec": {` + spec + `}}]}`
+	return bucketType(`"observeSpec": {` + spec + `}`)
 }
 
 func repositoryReading(output string) string {
@@ -202,6 +220,58 @@ func TestParseTypeSnapshot_ReadsEachTypesMarkAndParts(t *testing.T) {
 				t.Fatalf("ParseTypeSnapshot(%s): %v", tc.raw, err)
 			}
 			wantField(t, "ParseTypeSnapshot("+tc.raw+")", tc.got(snap), tc.want)
+		})
+	}
+}
+
+func TestParseTypeSnapshot_ReadsEachOutputsSchemaAsCanonicalJSON(t *testing.T) {
+	cases := []struct {
+		label, output string
+		want          contract.SnapshotOutput
+	}{
+		{"a schema reads with its keys sorted and its spacing dropped", `{"name": "bucketName", "required": true, "schema": { "type": "string", "pattern": "^[a-z0-9-]+$" }}`,
+			contract.SnapshotOutput{Name: "bucketName", Required: true, Schema: `{"pattern":"^[a-z0-9-]+$","type":"string"}`}},
+		{"a secret output keeps its flags beside its schema", `{"name": "secretKey", "secret": true, "schema": {"type": "string", "minLength": 40}}`,
+			contract.SnapshotOutput{Name: "secretKey", Secret: true, Schema: `{"minLength":40,"type":"string"}`}},
+		{"an output carrying no schema reads as having none", `{"name": "bucketName", "required": true}`, contract.SnapshotOutput{Name: "bucketName", Required: true}},
+		{"an output whose schema is null reads as having none", `{"name": "bucketName", "required": true, "schema": null}`, contract.SnapshotOutput{Name: "bucketName", Required: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			got := bucketOutput(t, bucketType(`"outputs": [`+tc.output+`]`), tc.want.Name)
+
+			wantField(t, "aws.s3-bucket "+tc.want.Name, got, tc.want)
+		})
+	}
+}
+
+func TestParseTypeSnapshot_RefusesAnOutputSchemaHoldingANumberPastFloat64(t *testing.T) {
+	_, err := contract.ParseTypeSnapshot([]byte(bucketType(`"outputs": [{"name": "bucketName", "schema": {"type": "integer", "maximum": 1e999}}]`)))
+
+	if err == nil || !strings.Contains(err.Error(), "an output's schema cannot be read as JSON") {
+		t.Errorf("ParseTypeSnapshot of a schema holding 1e999 = %v; want a refusal naming the output's schema", err)
+	}
+}
+
+func TestSnapshotOutput_WritesItsSchemaAsTheJSONObjectItRead(t *testing.T) {
+	cases := []struct {
+		label string
+		value any
+		want  string
+	}{
+		{"a schema writes as an object", contract.SnapshotOutput{Name: "bucketName", Required: true, Schema: `{"pattern":"^[a-z0-9-]+$","type":"string"}`},
+			`{"name":"bucketName","secret":false,"required":true,"schema":{"pattern":"^[a-z0-9-]+$","type":"string"}}`},
+		{"no schema writes no schema key", contract.SnapshotOutput{Name: "bucketName", Required: true},
+			`{"name":"bucketName","secret":false,"required":true}`},
+		{"no schema written on its own writes null", contract.OutputSchema(""), `null`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			raw, err := json.Marshal(tc.value)
+
+			if err != nil || string(raw) != tc.want {
+				t.Errorf("json.Marshal(%+v) = %s, %v; want %s", tc.value, raw, err, tc.want)
+			}
 		})
 	}
 }
