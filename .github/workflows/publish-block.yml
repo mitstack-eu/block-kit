@@ -24,6 +24,14 @@
 # `block / conformance`, `block / secrets` and `block / scripts`, the contexts
 # its main requires.
 #
+# The `delivery` job, reported as `block / delivery`, runs on a pull request
+# only when the caller's organisation or repository defines TRACKER_BASE_URL,
+# the address of its board. It runs plain-delivery's pr-delivery, which fails
+# code committed before its tests and a key the board does not hold as
+# claimed, and it reads the board with the TRACKER_API_TOKEN secret the caller
+# passes. A builder's block in an organisation with no board gets the three
+# checks above and this job reported as skipped.
+#
 # `publish` also runs only for a caller that names its image registry in
 # `ecr-repository`. A caller naming none still gets every check and its
 # attestation, and the `no-registry` job runs in place of `publish` to say in
@@ -102,6 +110,8 @@ on:
         required: false
         type: boolean
         default: false
+      # The platform both conformance jobs read the served type snapshot from,
+      # and platform-verdict and attest call.
       api-url:
         required: false
         type: string
@@ -116,6 +126,9 @@ on:
     # which opens that block's manifest, attestations and dry-run apply alone.
     secrets:
       MITSTACK_API_TOKEN:
+        required: false
+      # The board token the delivery job reads issue statuses with.
+      TRACKER_API_TOKEN:
         required: false
 
 # A workflow-level default is a ceiling rather than a floor: each job below
@@ -207,10 +220,13 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: ./commentcheck -base "$BASE_SHA" .
 
+      # blockverify compares the block's type-snapshot.json with the snapshot
+      # the platform serves, which needs no token.
       - name: blockverify (standalone contract check)
         env:
           EVENT_NAME: ${{ github.event_name }}
-        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"
+          API_URL: ${{ inputs.api-url }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP" --api-url "$API_URL"
 
       # A failing run's report is exactly the one that must not be lost.
       - name: Upload blockverify report
@@ -282,12 +298,14 @@ jobs:
           FETCH_TOKEN: ${{ github.token }}
         run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
 
-      # blockverify reads only the tree and runs none of the block's code, so
-      # it judges the block before the job assumes the verify role.
+      # blockverify reads only the tree and the platform's served type
+      # snapshot, and runs none of the block's code, so it judges the block
+      # before the job assumes the verify role.
       - name: blockverify (standalone contract check)
         env:
           EVENT_NAME: ${{ github.event_name }}
-        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only
+          API_URL: ${{ inputs.api-url }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only --api-url "$API_URL"
 
       - name: Upload blockverify report
         if: always()
@@ -392,6 +410,33 @@ jobs:
 
       - name: Lint every tracked shell script with shellcheck
         run: bash block-kit/scripts/lint-scripts.sh block
+
+  delivery:
+    if: github.event_name == 'pull_request' && vars.TRACKER_BASE_URL != ''
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the commit range needs history a shallow checkout has not
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      # The title reaches the shell through the environment, since a pull
+      # request's title is text its author controls.
+      - name: Judge the commit order and the board keys
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}
+          TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
+        run: go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.0 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"
 
   # The platform runs every check a real apply runs on manifest.yaml, the ones
   # that read its own records included, and writes nothing, so a pull request

@@ -28,7 +28,7 @@ reason.
 | `teardown` | A test whose name starts `TestUnsubscribeDeletes` exists and passes. It proves that an unsubscribe deletes what a subscribe made, by checking that your fake provider holds nothing for the subscription afterwards. For a block declaring a file-landing type it also runs `TestDeclaredResources`, whose `kittest.AssertBlock` reads the fake repository's main after unsubscribe, and names the path or branch it reports, as [Testing a block](testing.md#proving-a-block-that-lands-files) describes |
 | `resources` | `TestDeclaredResources` exists, calls `kittest.AssertBlock` and passes, and the pass names the guards that ran |
 | `deliverable` | The block has its own `Dockerfile`, and it copies nothing from `examples/operator-kit`, the folder of the platform's repository where the kit once lived, which a block's own build cannot reach |
-| `manifest` | The manifest parses strictly as `mitstack/v1beta`, and `contract.CheckManifest`, the platform's own checks, accepts it against the block's `type-snapshot.json`, as [Writing the manifest](manifest.md) lists. On a pull request, a `spec.version` that differs from the base branch's manifest needs both `spec.releaseClass` and `spec.releaseNote`. A `spec.version` equal to the base branch's fails when the pull request changes any file other than Markdown, a file under `.github/` or `LICENSE`, and the message names the files and the missing version bump |
+| `manifest` | The manifest parses strictly as `mitstack/v1beta`, and `contract.CheckManifest`, the platform's own checks, accepts it against the block's `type-snapshot.json`, as [Writing the manifest](manifest.md) lists. With `--api-url`, which the shared workflow passes on every pull request and push, the suite also reads the [type snapshot](manifest.md#the-type-snapshot) the platform serves. It fails when `type-snapshot.json` differs from it in a field or an output of a type the manifest requires or declares, leaving out only the type's `version` number. The message names the type and each field and output, and gives the command that refreshes the file. A route that gives no snapshot fails the suite, naming the route and its answer. On a pull request, a `spec.version` that differs from the base branch's manifest needs both `spec.releaseClass` and `spec.releaseNote`. A `spec.version` equal to the base branch's fails when the pull request changes any file other than Markdown, a file under `.github/` or `LICENSE`, and the message names the files and the missing version bump |
 
 An OpenTofu-only block, a module with no Go code of its own, runs
 `blockverify --standalone --opentofu-only .`. The flag changes what
@@ -164,6 +164,16 @@ A failing suite prints its reason on its own line, such as the missing test or
 the manifest key the parser refused. Add `--json` for the machine-readable
 report the attestation binds to.
 
+blockverify takes `--api-url` from kit v0.51.0 on. Run such a release with
+`--api-url https://api.mitstack.dev` to compare the `type-snapshot.json` at
+your block's root with the [type snapshot](manifest.md#the-type-snapshot) the
+platform serves, as CI does. When they differ, refresh the file with the
+platform's copy and commit it:
+
+```sh
+curl -fsS https://api.mitstack.dev/v1/resource-types/snapshots/latest -o type-snapshot.json
+```
+
 ## Where CI runs it
 
 Your block's CI calls the kit's reusable workflow,
@@ -292,6 +302,20 @@ bash ../block-kit/scripts/check-runtime-downloads.sh .
 With the calling job named `block`, as above, the checks to require in your
 repository's branch protection for `main` are `block / conformance`,
 `block / secrets` and `block / scripts`.
+
+A fourth check, `block / delivery`, runs on a pull request only when your
+organisation or repository defines the Actions variable `TRACKER_BASE_URL`,
+the address of a Plain board. It fails a pull request whose code lands before
+its tests, or whose title or commits name a board key that is not
+`In Progress` or `Pull Request`. It reads the board with the
+`TRACKER_API_TOKEN` secret, so pass it with `secrets: inherit` or by name.
+GitHub passes no such secret to a pull request that Dependabot opens, and
+`pr-delivery` asks the board nothing for the GitHub Apps its README lists by
+login, so their pull requests need no token. With no board variable the job
+reports as skipped and reads nothing. The command
+behind it is `pr-delivery`, and the
+[plain-delivery README](https://github.com/mitstack-eu/plain-delivery#how-the-delivery-check-judges-a-pull-request)
+says how it sorts each changed file into test, code or other.
 
 When the platform creates a block's repository from its templates, which it
 calls scaffolding, the repository also carries
@@ -520,6 +544,8 @@ workflow then drops its own `block-verify.yml`. The `attest` job needs the Go
 `conformance` job, so it does not run for an OpenTofu-only block.
 
 Both inputs default to `false`, and `api-url` names the platform, which
-defaults to `https://api.mitstack.dev`. A block whose repository you created
-yourself mints its token on the API Tokens page of the mitstack console and
-stores it in the same secret.
+defaults to `https://api.mitstack.dev`. The two jobs they turn on call the
+platform with the `MITSTACK_API_TOKEN` secret. A block whose repository you
+created yourself mints that token on the API Tokens page of the mitstack
+console and stores it in that secret. Whatever the two inputs say, both
+conformance jobs read the served type snapshot from `api-url`, with no token.

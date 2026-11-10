@@ -1,8 +1,12 @@
 package main
 
-// The manifest suite and the contract rule read a manifest through contract.ParseManifest and judge what it declares.
+// The manifest suite and the contract rule read a manifest through contract.ParseManifest and judge what it declares, and the suite compares the block's type snapshot with the one the platform serves.
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -178,6 +182,95 @@ func TestManifestSuite(t *testing.T) {
 	}
 
 	runSuites(t, []string{"manifest"}, cases)
+}
+
+const servedRoute = "/v1/resource-types/snapshots/latest"
+
+func snapshotType(id string, outputs ...string) string {
+	capability, _, _ := strings.Cut(id, ".")
+	return fmt.Sprintf(`{"id": %q, "capability": %q, "kind": "fixture", "scope": "per-app", "version": 1, "outputs": [%s]}`, id, capability, strings.Join(outputs, ", "))
+}
+
+func snapshotOf(types ...string) string {
+	return `{"version": 84, "types": [` + strings.Join(types, ", ") + `]}`
+}
+
+func serve(snapshot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != servedRoute {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, snapshot)
+	}
+}
+
+// Only the types the manifest names are compared, each field and each output, but for a type's own version, which no check reads, and a route that does not answer fails rather than passes unread.
+func TestManifestSuite_ComparesTheCopyWithTheServedSnapshotInEachTypeTheManifestNames(t *testing.T) {
+	const cnpg = "kubernetes.cloudnativepg-database"
+	host, password := `{"name": "host", "required": true, "schema": {"type": "string"}}`, `{"name": "password", "secret": true, "required": true}`
+	bucket, vpc := snapshotType("aws.s3-bucket"), snapshotType("aws.vpc", `{"name": "vpcId", "required": true}`)
+	served := snapshotOf(bucket, vpc, snapshotType(cnpg, host, password))
+	down := func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "the catalogue is down", http.StatusServiceUnavailable)
+	}
+	cut := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		_, _ = io.WriteString(w, "{")
+	}
+	cnpgWith := func(old, new string) string { return replaced(t, snapshotType(cnpg, host, password), old, new) }
+	cases := []struct {
+		name, copy string
+		answer     http.HandlerFunc
+		status     string
+		detail     []string
+	}{
+		{"a copy adding connectionSecret to a type served without it fails, naming the type, the output and the refresh", snapshotOf(bucket, vpc,
+			snapshotType(cnpg, host, password, `{"name": "connectionSecret", "secret": true}`)), serve(served), "fail",
+			[]string{"type " + cnpg + " output connectionSecret is in type-snapshot.json but not served", "curl -fsS $URL" + servedRoute + " -o type-snapshot.json"}},
+		{"a copy matching the served snapshot in each type the manifest names passes", served, serve(served), "pass",
+			[]string{"type-snapshot.json matches the snapshot version 84 that $URL" + servedRoute + " serves"}},
+		{"a type the manifest does not name may differ", snapshotOf(bucket, snapshotType("aws.vpc"), snapshotType(cnpg, host, password)), serve(served), "pass", nil},
+		{"a copy differing in a type the manifest's resources declare fails, naming it", snapshotOf(snapshotType("aws.s3-bucket", `{"name": "bucketName"}`), vpc,
+			snapshotType(cnpg, host, password)), serve(served), "fail", []string{"type aws.s3-bucket output bucketName is in type-snapshot.json but not served"}},
+		{"an output the platform changed fails, naming both forms", snapshotOf(bucket, vpc, snapshotType(cnpg, `{"name": "host", "required": true}`, password)), serve(served), "fail",
+			[]string{"type " + cnpg + ` output host is secret false, required true, schema none in type-snapshot.json and secret false, required true, schema {"type":"string"} as served`}},
+		{"an output the platform added fails until the copy is refreshed", snapshotOf(bucket, vpc, snapshotType(cnpg, host)), serve(served), "fail",
+			[]string{"type " + cnpg + " output password is served but not in type-snapshot.json"}},
+		{"a type the platform no longer serves fails, naming it", served, serve(snapshotOf(bucket, vpc)), "fail", []string{"type " + cnpg + " is not in the served snapshot"}},
+		{"a route answering an error fails, naming the route and its answer", served, down, "fail", []string{"GET $URL" + servedRoute, "HTTP 503", "the catalogue is down"}},
+		{"a route that does not answer fails, naming the route", served, nil, "fail", []string{"GET $URL" + servedRoute + " did not answer"}},
+		{"a field the platform changed fails, naming the field and both values", snapshotOf(bucket, vpc, cnpgWith(`"kind": "fixture"`, `"kind": "fixture", "providerHoldsNothing": true`)),
+			serve(served), "fail", []string{"type " + cnpg + " field providerHoldsNothing is true in type-snapshot.json and false as served"}},
+		{"a type whose own version alone differs passes", snapshotOf(bucket, vpc, cnpgWith(`"version": 1,`, `"version": 3,`)), serve(served), "pass", nil},
+		{"an empty list and an absent one read the same", snapshotOf(bucket, vpc, cnpgWith(`"kind": "fixture"`, `"kind": "fixture", "languages": []`)), serve(served), "pass", nil},
+		{"a route answering a snapshot the kit cannot read fails, naming the route and the reason", served, serve(`{"version": 84, "types": []}`), "fail",
+			[]string{"GET $URL" + servedRoute + " answered a snapshot the kit cannot read", "holds no type"}},
+		{"a route cutting its answer short fails, naming the route", served, cut, "fail", []string{"GET $URL" + servedRoute + " answered HTTP 200 with a body that could not be read"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(c.answer)
+			t.Cleanup(srv.Close)
+			if c.answer == nil {
+				srv.Close()
+			}
+			dir := fixture(func(*testing.T) map[string]string {
+				return map[string]string{manifestFile: manifestHead + "  requires: [" + cnpg + "]\n", typeSnapshotFile: c.copy}
+			})(t)
+
+			got := manifestSuite(dir, "", "", srv.URL)
+
+			if got.Status != c.status {
+				t.Errorf("manifestSuite with --api-url %s = %q, detail %q; want %q", srv.URL, got.Status, got.Detail, c.status)
+			}
+			for _, want := range c.detail {
+				if want = strings.ReplaceAll(want, "$URL", srv.URL); !strings.Contains(got.Detail, want) {
+					t.Errorf("manifestSuite detail = %q; want it to contain %q", got.Detail, want)
+				}
+			}
+		})
+	}
 }
 
 func TestRequireKitV1Contract(t *testing.T) {

@@ -286,7 +286,7 @@ var suitesByName = map[string]func(target, base, changed string) SuiteResult{
 	"teardown":       func(d, _, _ string) SuiteResult { return teardownSuite(d) },
 	"resources":      func(d, _, _ string) SuiteResult { return resourcesSuite(d) },
 	"deliverable":    func(d, _, _ string) SuiteResult { return deliverableSuite(d) },
-	"manifest":       manifestSuite,
+	"manifest":       func(d, b, c string) SuiteResult { return manifestSuite(d, b, c, "") },
 }
 
 func runSuites(t *testing.T, suites []string, cases []suiteCase) {

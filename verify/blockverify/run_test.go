@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -68,6 +70,8 @@ func TestRun(t *testing.T) {
 		return runCase{name: name, dir: fullBlock(with(manifestFile, manifest)), args: jsonStandalone, exit: exitNotJudged, verdict: "fail",
 			suites: map[string]suiteWant{"manifest": want}}
 	}
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
 	cases := []runCase{
 		{name: "a block with no manifest.yaml fails trust-plumbing, exiting 1", dir: fullBlock(without(manifestFile)), args: jsonStandalone, exit: 1, verdict: "fail",
 			suites: map[string]suiteWant{"trust-plumbing": {"fail", []string{"manifest.yaml"}}}},
@@ -119,6 +123,10 @@ func TestRun(t *testing.T) {
 			args: []string{"--base-manifest", "$BASE", "--json", "--standalone", "$DIR"}, exit: 1, verdict: "fail",
 			suites: map[string]suiteWant{"trust-plumbing": {status: "pass"}, "manifest": {"fail", []string{"spec.releaseClass"}}}},
 		{name: "--changed-files with no path is a usage error", dir: fullBlock(), args: []string{"--json", "--standalone", "$DIR", "--changed-files"}, exit: 2},
+		{name: "--api-url with no address is a usage error", dir: fullBlock(), args: []string{"--json", "--standalone", "$DIR", "--api-url"}, exit: 2},
+		{name: "--api-url with an empty address is a usage error, so an unset input cannot skip the comparison", dir: fullBlock(), args: []string{"--json", "--standalone", "--api-url", "", "$DIR"}, exit: 2},
+		{name: "--api-url names the platform the manifest suite compares the type snapshot with", dir: fullBlock(), args: []string{"--json", "--standalone", "--api-url", closed.URL, "$DIR"},
+			exit: 1, verdict: "fail", suites: map[string]suiteWant{"manifest": {"fail", []string{"GET " + closed.URL + "/v1/resource-types/snapshots/latest did not answer"}}}},
 		{name: "--changed-files names the files a pull request changes, so a kept version fails the manifest suite", dir: fullBlock(), base: baseManifest(full),
 			changed: changedFiles("resource.go"), args: []string{"--json", "--standalone", "--base-manifest", "$BASE", "--changed-files", "$CHANGED", "$DIR"}, exit: 1, verdict: "fail",
 			suites: map[string]suiteWant{"trust-plumbing": {status: "pass"}, "manifest": {"fail", []string{"resource.go", "version bump"}}}},
