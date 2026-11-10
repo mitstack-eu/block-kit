@@ -279,7 +279,7 @@ func TestPublishBlockWorkflow_JudgesDeliveryOnlyForACallerWithABoard(t *testing.
 		{"the board token is optional for a caller with no board", all["on.workflow_call.secrets.TRACKER_API_TOKEN.required"], "false"},
 		{"the job checks out the full history the commit range needs", strconv.FormatBool(stepWith(all, "delivery", "with.fetch-depth", "0")), "true"},
 		{"the job builds the check with the caller's Go", strconv.FormatBool(stepWith(all, "delivery", "with.go-version", "${{ inputs.go-version }}")), "true"},
-		{"the job runs plain-delivery's pr-delivery at the release ci.yml runs", strconv.FormatBool(strings.HasSuffix(run, "\n"+prDeliveryRun)), "true"},
+		{"the job runs plain-delivery's pr-delivery at the release ci.yml runs, leaving a missing token to it", run, prDeliveryRun},
 		{"the job reads the range and the title from the pull request event", env("BASE_SHA") + " " + env("HEAD_SHA") + " " + env("PR_TITLE"),
 			"${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} ${{ github.event.pull_request.title }}"},
 		{"the job reads the author's login from the pull request event", env("PR_AUTHOR"), "${{ github.event.pull_request.user.login }}"},
@@ -289,12 +289,6 @@ func TestPublishBlockWorkflow_JudgesDeliveryOnlyForACallerWithABoard(t *testing.
 		{"the Go conformance job still runs for every Go block", all["jobs.conformance.if"], "${{ !inputs.opentofu-only }}"},
 	}
 	checkFields(t, "publish-block.yml", "", cases)
-
-	out, exit := runNamed(t, "delivery", "Judge the commit order and the board keys", t.TempDir(), "", "TRACKER_API_TOKEN=")
-
-	if exit == 0 || !strings.Contains(out, "needs the TRACKER_API_TOKEN secret") {
-		t.Errorf("a caller with a board and no token: exit %d, output:\n%s\nwant a failure naming the missing TRACKER_API_TOKEN secret", exit, out)
-	}
 }
 
 type platformCall struct{ method, uri, auth, body string }
