@@ -36,7 +36,7 @@ const usageMessage = `blockverify: standalone conformance runner for a mitstack 
 external repository.
 
 Usage:
-  blockverify [--json] --standalone [--opentofu-only] [--base-manifest <path>] [--changed-files <path>] <dir>
+  blockverify [--json] --standalone [--opentofu-only] [--base-manifest <path>] [--changed-files <path>] [--api-url <url>] <dir>
 
 --opentofu-only judges an OpenTofu-only block, a module with no Go code of
 its own whose image serves it through the opentofu-operator binary.
@@ -54,6 +54,11 @@ NUL-separated as git diff -z --name-only prints it. When spec.version equals
 the base's, a changed file other than Markdown, a file under .github/ or
 LICENSE fails the manifest suite, because the image it changes publishes
 only under a new version.
+
+--api-url names the platform, such as https://api.mitstack.dev. The manifest
+suite then reads the type snapshot it serves and fails when the block's
+type-snapshot.json differs from it in a field or an output of a type the
+manifest names, or when the snapshot cannot be read.
 
 This command supports ONLY standalone mode: one block's directory, scanned
 in isolation. It refuses to run without --standalone and a target directory.
@@ -74,7 +79,7 @@ func Run(args []string, stdout io.Writer) int {
 	if a.opentofuOnly {
 		operatorSuites = opentofuOnlySuites
 	}
-	report := runStandalone(a.target, a.baseManifest, a.changedFiles, operatorSuites)
+	report := runStandalone(a, operatorSuites)
 
 	if a.jsonOut {
 		raw, err := json.Marshal(report)
@@ -99,9 +104,10 @@ type cliArgs struct {
 	target              string
 	baseManifest        string
 	changedFiles        string
+	apiURL              string
 }
 
-// parseArgs lets the last non-flag argument win as the target, and reports ok false when --base-manifest or --changed-files has no path.
+// parseArgs lets the last non-flag argument win as the target, and reports ok false when --base-manifest, --changed-files or --api-url has no value, or --api-url an empty one, so an unset input cannot skip the comparison.
 func parseArgs(args []string) (a cliArgs, ok bool) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -123,6 +129,12 @@ func parseArgs(args []string) (a cliArgs, ok bool) {
 			}
 			i++
 			a.changedFiles = args[i]
+		case "--api-url":
+			if i+1 == len(args) || args[i+1] == "" {
+				return a, false
+			}
+			i++
+			a.apiURL = args[i]
 		default:
 			a.target = args[i]
 		}
@@ -143,8 +155,9 @@ func goBlockSuites(target string) []SuiteResult {
 }
 
 // runStandalone runs the suites in the fixed contract order, the first six as operatorSuites answers them.
-func runStandalone(target, baseManifest, changedFiles string, operatorSuites func(target string) []SuiteResult) Report {
-	suites := append(operatorSuites(target), deliverableSuite(target), manifestSuite(target, baseManifest, changedFiles))
+func runStandalone(a cliArgs, operatorSuites func(target string) []SuiteResult) Report {
+	target := a.target
+	suites := append(operatorSuites(target), deliverableSuite(target), manifestSuite(target, a.baseManifest, a.changedFiles, a.apiURL))
 
 	verdict := "pass"
 	for _, s := range suites {

@@ -102,6 +102,8 @@ on:
         required: false
         type: boolean
         default: false
+      # The platform both conformance jobs read the served type snapshot from,
+      # and platform-verdict and attest call.
       api-url:
         required: false
         type: string
@@ -207,10 +209,13 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: ./commentcheck -base "$BASE_SHA" .
 
+      # blockverify compares the block's type-snapshot.json with the snapshot
+      # the platform serves, which needs no token.
       - name: blockverify (standalone contract check)
         env:
           EVENT_NAME: ${{ github.event_name }}
-        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"
+          API_URL: ${{ inputs.api-url }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP" --api-url "$API_URL"
 
       # A failing run's report is exactly the one that must not be lost.
       - name: Upload blockverify report
@@ -282,12 +287,14 @@ jobs:
           FETCH_TOKEN: ${{ github.token }}
         run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
 
-      # blockverify reads only the tree and runs none of the block's code, so
-      # it judges the block before the job assumes the verify role.
+      # blockverify reads only the tree and the platform's served type
+      # snapshot, and runs none of the block's code, so it judges the block
+      # before the job assumes the verify role.
       - name: blockverify (standalone contract check)
         env:
           EVENT_NAME: ${{ github.event_name }}
-        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only
+          API_URL: ${{ inputs.api-url }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only --api-url "$API_URL"
 
       - name: Upload blockverify report
         if: always()

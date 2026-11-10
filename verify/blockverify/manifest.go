@@ -13,8 +13,8 @@ import (
 
 const typeSnapshotFile = "type-snapshot.json"
 
-// manifestSuite fails a manifest the kit's parser refuses, one the platform's checks refuse against the block's type snapshot, a changed spec.version without a release class and note, and a kept spec.version on a pull request changing a file the image is built from.
-func manifestSuite(target, baseManifest, changedFiles string) SuiteResult {
+// manifestSuite fails a manifest the kit's parser refuses, one the platform's checks refuse against the block's type snapshot, a snapshot that differs from the one apiURL serves, a changed spec.version without a release class and note, and a kept spec.version on a pull request changing a file the image is built from.
+func manifestSuite(target, baseManifest, changedFiles, apiURL string) SuiteResult {
 	const name = "manifest"
 
 	path := filepath.Join(target, manifestFile)
@@ -28,7 +28,8 @@ func manifestSuite(target, baseManifest, changedFiles string) SuiteResult {
 	}
 
 	var problems []string
-	if err := checkAgainstSnapshot(m, target); err != nil {
+	compared, err := checkAgainstSnapshot(m, target, apiURL)
+	if err != nil {
 		problems = append(problems, err.Error())
 	}
 	note, problem, err := compareVersion(m, baseManifest, changedFiles)
@@ -41,20 +42,35 @@ func manifestSuite(target, baseManifest, changedFiles string) SuiteResult {
 	if len(problems) > 0 {
 		return SuiteResult{name, "fail", path + ": " + strings.Join(problems, "; ")}
 	}
-	return SuiteResult{name, "pass", "the " + m.APIVersion + " manifest parses and passes the platform's checks against " + typeSnapshotFile + "; " + note}
+	return SuiteResult{name, "pass", "the " + m.APIVersion + " manifest parses and passes the platform's checks against " + typeSnapshotFile + "; " + compared + "; " + note}
 }
 
-// checkAgainstSnapshot runs the checks the platform runs when the block is applied, judging its types by the snapshot the block commits.
-func checkAgainstSnapshot(m contract.Manifest, target string) error {
+// checkAgainstSnapshot runs the checks the platform runs when the block is applied, judging its types by the snapshot the block commits, then compares that copy with the snapshot apiURL serves.
+func checkAgainstSnapshot(m contract.Manifest, target, apiURL string) (note string, err error) {
 	raw, err := os.ReadFile(filepath.Join(target, typeSnapshotFile))
 	if err != nil {
-		return fmt.Errorf("%s could not be read, so the types the manifest names cannot be checked: %v", typeSnapshotFile, err)
+		return "", fmt.Errorf("%s could not be read, so the types the manifest names cannot be checked: %v", typeSnapshotFile, err)
 	}
 	snap, err := contract.ParseTypeSnapshot(raw)
 	if err != nil {
-		return fmt.Errorf("%s: %v", typeSnapshotFile, err)
+		return "", fmt.Errorf("%s: %v", typeSnapshotFile, err)
 	}
-	return contract.CheckManifest(m.Block, snap.Holds, contract.CheckOptions{})
+	if err := contract.CheckManifest(m.Block, snap.Holds, contract.CheckOptions{}); err != nil {
+		return "", err
+	}
+	if apiURL == "" {
+		return "no --api-url given, so " + typeSnapshotFile + " was not compared with the snapshot the platform serves", nil
+	}
+	route := strings.TrimSuffix(apiURL, "/") + servedSnapshotRoute
+	served, err := servedSnapshot(route)
+	if err != nil {
+		return "", err
+	}
+	if diffs := snapshotDiffs(m.Block.Spec, snap, served); len(diffs) > 0 {
+		return "", fmt.Errorf("%s differs from the snapshot version %d that %s serves: %s; refresh it with curl -fsS %s -o %s",
+			typeSnapshotFile, served.Version, route, strings.Join(diffs, "; "), route, typeSnapshotFile)
+	}
+	return fmt.Sprintf("%s matches the snapshot version %d that %s serves in each type the manifest names", typeSnapshotFile, served.Version, route), nil
 }
 
 func readManifest(path string) (contract.Manifest, error) {
