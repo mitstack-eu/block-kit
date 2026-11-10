@@ -126,7 +126,7 @@ and `d.Instances` read the same on every call.
 The platform runs an observer of its own, outside your block, which asks a
 provider whether a resource still exists. When it reads a resource absent, the
 platform records that on an unsubscribe as a `contract.Absence`: `Observer` names
-the platform's observer, `Resource` the resource type it read, `ReadAbsentAt`
+the platform's observer, `Resource` the resource type (such as `hetzner.server`) it read, `ReadAbsentAt`
 when it read it absent, and `ProvesAbsence` is true when the platform stands
 behind the reading. This observer differs from the observers your block
 registers. `d.AttestedAbsent(subscriptionID)` returns `(Absence, bool)` for the
@@ -329,6 +329,18 @@ call's `progress` event repeats, as [Lifecycle events](#lifecycle-events)
 describes. The handler observes nothing on that call. The engine asks again,
 as it does for any pending answer, and the wait counts against the block's
 settle budget.
+
+`handler.WaitForSignal(format, args...)` builds the same wait for a
+`subscribe` or `upgrade` that changed nothing because it waits on what another
+subscription reports, such as a Docker host that has sent no node report yet.
+A node report is the state a host pushes to mitstack on its own. The answer
+carries `redrive:true` beside `pending:true`, as in
+`{"pending": true, "redrive": true, "statusDetail": "the host has sent no node report giving its allocatable capacity yet, so shop waits for that capacity report before it is sized"}`.
+The engine then sends no `validate`, since nothing landed for one to observe.
+It sends the `subscribe` again when the host's next node report wakes the
+subscription, and that wait also counts against the settle budget. Your
+`EnsureResources` therefore runs again from the start, so it must write
+nothing before it returns this wait.
 
 `handler.WaitOnRemoval(format, args...)` builds the same wait for a `Delete`
 whose removal has started and now moves outside the block, such as a pull
@@ -760,8 +772,8 @@ shop-web | GET / 500
 
 When it has no lines, it answers one line saying why: the host has sent no
 report yet, the host's release sends no container output, or no container of
-the subscription runs on the host yet. A block on another kind of platform
-writes its own function that reads its subscription's lines.
+the subscription runs on the host yet. A block whose app runs anywhere other than a
+Docker host writes its own function that reads its subscription's lines.
 
 The platform then sends a signed `POST /logs` whose body is a request with the
 operation `logs`. It carries what a hook carries for that subscription: its
