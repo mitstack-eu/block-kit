@@ -61,7 +61,7 @@ type commitChange struct {
 	paths  []string
 }
 
-// Revision "" holds nothing, and any other must be a full lowercase hex SHA; a request reads each file of a revision once.
+// Revision "" holds nothing, and any other must be a full lowercase hex SHA, which ghapi enforces before any request, so a request reads each file of a revision once.
 func (r *GitHubRepository) ReadFile(ctx context.Context, revision, path string) ([]byte, bool, error) {
 	if revision == "" {
 		return nil, false, nil
