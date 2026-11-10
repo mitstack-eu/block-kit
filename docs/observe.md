@@ -408,11 +408,16 @@ a verdict can judge a block by its own objects. Its `Health.Status` reads:
 | The object in the report | `Status` | `Message` |
 |---|---|---|
 | `"health": "Degraded", "message": "..."` | `Degraded` | Argo CD's message |
-| `"health": "Healthy"` | `Healthy` | empty |
+| `"health": "Healthy"` | `Healthy` | Argo CD's message when the report carries one, and talos-cluster-kit carries none beside `Healthy` |
 | `"health": null`, a kind Argo CD runs no health check for, such as a Secret | empty | empty |
 | No `health` member, as from a talos-cluster-kit release that carries none | `observe.HealthUnknown` | empty |
 
-Any observation but present reads `observe.HealthUnknown` too.
+An absent or unknown observation reads `observe.HealthUnknown` too. A
+verdict reads both from one call:
+
+```go
+obs, health, err := observe.NodeReported{API: observe.NodeReportsClient{}}.ObserveHealth(ctx, ref)
+```
 
 `observe.NodeReportsClient` reads the reports from the platform the request's
 events callback names, with the callback's token, so a block writes no client

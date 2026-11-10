@@ -112,6 +112,19 @@ type NodeReported struct {
 	API NodeReportsAPI
 }
 
+// Health is Argo CD's health of one object an Application applied, as the newest node report carries it.
+type Health struct {
+	// Status is Argo CD's status, as Healthy, Progressing, Degraded or Missing, empty for a kind Argo CD runs no health check for, a Secret among them, and HealthUnknown when the report carries none.
+	Status string
+	// Message is Argo CD's message beside a Status other than Healthy.
+	Message string
+}
+
+// HealthUnknown is the Status of an object whose health the report does not carry, as one from an earlier talos-cluster-kit release.
+const HealthUnknown = "Unknown"
+
+var unreadHealth = Health{Status: HealthUnknown}
+
 type reportedObject struct {
 	Namespace    string `json:"namespace"`
 	Kind         string `json:"kind"`
@@ -144,19 +157,6 @@ type appliedObject struct {
 	Message string          `json:"message"`
 }
 
-// Health is Argo CD's health of one object an Application applied, as the newest node report carries it.
-type Health struct {
-	// Status is Argo CD's word, such as Healthy, Progressing, Degraded or Missing, empty for a kind Argo CD runs no health check for, such as a Secret, and HealthUnknown when the report carries no health.
-	Status string
-	// Message is Argo CD's message beside a Status other than Healthy.
-	Message string
-}
-
-// HealthUnknown is the Status of an object whose health the report does not carry, as one from an earlier talos-cluster-kit release.
-const HealthUnknown = "Unknown"
-
-var unreadHealth = Health{Status: HealthUnknown}
-
 // health is Argo CD's health of o, unknown when the report carries none or a value that names no status.
 func (o appliedObject) health() Health {
 	var status *string
@@ -180,7 +180,7 @@ func (o NodeReported) ObserveResource(ctx context.Context, r contract.ResourceRe
 	return obs, err
 }
 
-// ObserveHealth observes r as ObserveResource does and returns, beside an object the Argo CD Application its identity names lists, Argo CD's health of it; every other observation's health reads HealthUnknown.
+// ObserveHealth observes r as ObserveResource does and also returns Argo CD's health of an object the identity's Argo CD Application lists, and HealthUnknown beside any other observation.
 func (o NodeReported) ObserveHealth(ctx context.Context, r contract.ResourceRef) (contract.Observation, Health, error) {
 	ids, obs, ok := identityKeys(r, "kind", "name")
 	if !ok {
