@@ -117,6 +117,20 @@ func (r *Repository) holds(revision string) bool {
 	return ok
 }
 
+// treeAt is revision and the files it holds, revision "" reading head, and an unknown revision is an error.
+func (r *Repository) treeAt(revision string) (string, map[string][]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if revision == "" {
+		revision = r.head()
+	}
+	tree, ok := r.trees[revision]
+	if !ok && revision != "" {
+		return "", nil, fmt.Errorf("gitopstest: no revision %s", revision)
+	}
+	return revision, tree, nil
+}
+
 // head returns the tip's revision. The caller holds mu.
 func (r *Repository) head() string {
 	if len(r.commits) == 0 {
