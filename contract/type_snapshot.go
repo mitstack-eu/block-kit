@@ -92,9 +92,35 @@ type SnapshotPart struct {
 }
 
 type SnapshotOutput struct {
-	Name     string `json:"name"`
-	Secret   bool   `json:"secret"`
-	Required bool   `json:"required"`
+	Name     string       `json:"name"`
+	Secret   bool         `json:"secret"`
+	Required bool         `json:"required"`
+	Schema   OutputSchema `json:"schema,omitempty"`
+}
+
+// OutputSchema is the JSON Schema an output's type declares, held as JSON text with its keys sorted and its spacing dropped, as the platform holds it, so two copies compare equal and SnapshotOutput stays comparable. It is empty when the type declares none.
+type OutputSchema string
+
+func (s *OutputSchema) UnmarshalJSON(raw []byte) error {
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("contract: an output's schema cannot be read as JSON: %w", err)
+	}
+	if doc == nil {
+		*s = ""
+		return nil
+	}
+	// Marshal cannot fail on a value Unmarshal built, which holds no channel, function or non-finite number.
+	canonical, _ := json.Marshal(doc)
+	*s = OutputSchema(canonical)
+	return nil
+}
+
+func (s OutputSchema) MarshalJSON() ([]byte, error) {
+	if s == "" {
+		return []byte("null"), nil
+	}
+	return []byte(s), nil
 }
 
 // SnapshotPricing says whether a resource of the type costs money and the price list it is costed against.
