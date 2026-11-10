@@ -172,6 +172,10 @@ Your block's CI calls the kit's reusable workflow,
 ```yaml
 jobs:
   block:
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@v0.4.0
     with:
       block-id: hetzner-firewall
@@ -212,6 +216,36 @@ builds the image, scans it and pushes it to the ECR repository you name, so
 no image ships without a pass. The job then runs `blockprov`, which builds a
 provenance record naming your repository, commit and CI run, signs it with
 the run's GitHub Actions identity token and pushes it beside the image.
+
+Once the image and its record are pushed, the `publish` job cuts your block's
+release tag, `v` and the `spec.version` of `manifest.yaml`, such as `v1.2.0`,
+at the commit it built. A tag never moves. So before it pushes anything, the
+job fails when that tag already names another commit, and tells you to raise
+`spec.version`. A later push that keeps the version, such as a change to a
+README, finds the image and its record published, builds nothing and cuts no
+tag.
+
+A block can keep its source repository private and still show each release
+in public. Its public release repository is a second GitHub repository that
+holds one commit for each release of the block and nothing else. A publisher is a workflow in your block's repository
+that copies each release tag to that public release repository. You write a
+publisher only when your block has a public release repository, and a block
+holding none skips this step.
+
+The job pushes the tag with the run's own `GITHUB_TOKEN`, and GitHub starts no
+workflow run for a push made with that token, so the tag alone never starts
+the publisher. The job therefore starts your block's
+`.github/workflows/release-publisher.yml` at the tag itself, when your
+repository holds that file. It passes the tag as the input `tag`. So the
+publisher declares a `workflow_dispatch` trigger, GitHub's trigger for starting
+a workflow by an API call, with a `tag` input. `publisher-workflow` is an
+optional input of `publish-block.yml` that names a different file, and it
+defaults to `release-publisher.yml`.
+
+The job pushes the tag with `contents: write`, starts the publisher with
+`actions: write` and signs the record with `id-token: write`. A called
+workflow gets no more than its caller grants, so the job of yours that calls
+`publish-block.yml`, `block` in the examples, grants all three.
 
 Two scan jobs also run on every event your CI calls the workflow for, and
 `publish` waits for both. The `secrets` job runs `scripts/scan-secrets.sh`,
@@ -352,6 +386,10 @@ the module to `/module`. Your CI sets `opentofu-only: true`:
 ```yaml
 jobs:
   block:
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
     with:
       block-id: opentofu-s3-bucket
@@ -433,6 +471,10 @@ inputs and passes the secret:
 ```yaml
 jobs:
   block:
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
     with:
       block-id: "@acme/billing-db"

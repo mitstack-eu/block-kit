@@ -4,6 +4,7 @@ package main
 
 import (
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -375,7 +376,7 @@ func TestWorkflow_HeaderStatesThePublishEventAndWhatARerunCompletes(t *testing.T
 	}
 }
 
-// imageSteps push the image; recordSteps build and push the provenance record; writeSteps write to the registry or mint a signed record.
+// imageSteps push the image; recordSteps build and push the provenance record; writeSteps write to the registry or mint a signed record; releaseSteps guard, cut and announce the release tag.
 var (
 	imageSteps  = []string{"Build and push image"}
 	recordSteps = []string{
@@ -387,6 +388,7 @@ var (
 	}
 	opentofuRecordSteps = []string{"Determine the kit version the operator image was built with", "block-verify inside the image, for blockprov build's result"}
 	writeSteps          = []string{"Build and push image", "blockprov build", "Fetch ECR password", "blockprov push"}
+	releaseSteps        = []string{"Refuse a version tagged at another commit", "Tag the release at the commit it built", "Start the block's publisher at the release tag"}
 )
 
 func TestWorkflow_WriteStepsGateOnTheProbe(t *testing.T) {
@@ -498,30 +500,32 @@ func TestWorkflow_TheProbe(t *testing.T) {
 		wantStdout, wantInFailure   string
 	}{
 		{"a published tag with no record, built from this commit, is completed for its digest", "1.2.0", "exists", "absent", "match", true,
-			map[string]string{"published": "true", "digest": testDigest, "record": "false"}, testDigest, []string{"v1.2.0", testRecordTag, testSha},
+			map[string]string{"published": "true", "digest": testDigest, "record": "false", "built": "true", "tag": "v1.2.0"}, testDigest, []string{"v1.2.0", testRecordTag, testSha},
 			"already published: v1.2.0 " + testDigest + "\nno provenance record at " + testRecordTag + "; completing it for " + testDigest + "\n", ""},
-		{"a published tag with its record present writes nothing", "1.2.0", "exists", "exists", "match", true,
-			map[string]string{"published": "true", "digest": testDigest, "record": "true"}, testDigest, []string{"v1.2.0", testRecordTag},
+		{"a rerun of the commit that built a tag with its record writes no record and says this commit built it", "1.2.0", "exists", "exists", "match", true,
+			map[string]string{"published": "true", "digest": testDigest, "record": "true", "built": "true", "tag": "v1.2.0"}, testDigest, []string{"v1.2.0", testRecordTag, testSha},
 			"already published: v1.2.0 " + testDigest + "\nprovenance record present at " + testRecordTag + "\n", ""},
-		{"a tag with its record needs no commit check", "1.2.0", "exists", "exists", "fail", true,
-			map[string]string{"published": "true", "digest": testDigest, "record": "true"}, testDigest, []string{"v1.2.0", testRecordTag},
+		{"a later commit finding a tag and its record writes nothing and says another commit built it", "1.2.0", "exists", "exists", "other", true,
+			map[string]string{"published": "true", "digest": testDigest, "record": "true", "built": "false", "tag": "v1.2.0"}, testDigest, []string{"v1.2.0", testRecordTag, testSha},
 			"already published: v1.2.0 " + testDigest + "\nprovenance record present at " + testRecordTag + "\n", ""},
+		{"a tag with its record whose commit check cannot answer fails closed, naming the commit", "1.2.0", "exists", "exists", "fail", false,
+			map[string]string{"published": "true", "digest": testDigest, "tag": "v1.2.0"}, testDigest, []string{"v1.2.0", testRecordTag, testSha}, "", testSha},
 		{"an unpublished tag publishes and is never claimed as already published", "1.2.0", "absent", "absent", "match", true,
-			map[string]string{"published": "false", "record": "false"}, "", []string{"v1.2.0"}, "", ""},
+			map[string]string{"published": "false", "record": "false", "built": "true", "tag": "v1.2.0"}, "", []string{"v1.2.0"}, "", ""},
 		{"an unpublished tag's record is never probed", "1.2.0", "absent", "fail", "match", true,
-			map[string]string{"published": "false", "record": "false"}, "", []string{"v1.2.0"}, "", ""},
+			map[string]string{"published": "false", "record": "false", "built": "true", "tag": "v1.2.0"}, "", []string{"v1.2.0"}, "", ""},
 		{"a version bump probes and publishes its own tag", "1.3.0", "absent", "absent", "match", true,
-			map[string]string{"published": "false", "record": "false"}, "", []string{"v1.3.0"}, "", ""},
+			map[string]string{"published": "false", "record": "false", "built": "true", "tag": "v1.3.0"}, "", []string{"v1.3.0"}, "", ""},
 		{"a version probe that cannot answer fails closed, naming the tag", "1.2.0", "fail", "absent", "match", false,
 			map[string]string{}, "", []string{"v1.2.0"}, "", "v1.2.0"},
 		{"a record probe that cannot answer fails closed, naming the record tag", "1.2.0", "exists", "fail", "match", false,
-			map[string]string{"published": "true", "digest": testDigest}, testDigest, []string{"v1.2.0", testRecordTag}, "", testRecordTag},
+			map[string]string{"published": "true", "digest": testDigest, "tag": "v1.2.0"}, testDigest, []string{"v1.2.0", testRecordTag}, "", testRecordTag},
 		{"a published image another commit built is never given this commit's record", "1.2.0", "exists", "absent", "other", false,
-			map[string]string{"published": "true", "digest": testDigest}, testDigest, []string{"v1.2.0", testRecordTag, testSha}, "", testSha},
+			map[string]string{"published": "true", "digest": testDigest, "built": "false", "tag": "v1.2.0"}, testDigest, []string{"v1.2.0", testRecordTag, testSha}, "", testSha},
 		{"a published image with no sha tag is never given this commit's record", "1.2.0", "exists", "absent", "absent", false,
-			map[string]string{"published": "true", "digest": testDigest}, testDigest, []string{"v1.2.0", testRecordTag, testSha}, "", testSha},
+			map[string]string{"published": "true", "digest": testDigest, "built": "false", "tag": "v1.2.0"}, testDigest, []string{"v1.2.0", testRecordTag, testSha}, "", testSha},
 		{"a commit check that cannot answer gives no record answer", "1.2.0", "exists", "absent", "fail", false,
-			map[string]string{"published": "true", "digest": testDigest}, testDigest, []string{"v1.2.0", testRecordTag, testSha}, "", testSha},
+			map[string]string{"published": "true", "digest": testDigest, "tag": "v1.2.0"}, testDigest, []string{"v1.2.0", testRecordTag, testSha}, "", testSha},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -530,7 +534,7 @@ func TestWorkflow_TheProbe(t *testing.T) {
 			if (res.exitCode == 0) != tc.wantExit {
 				t.Fatalf("exit code = %d, want success %v; output:\n%s", res.exitCode, tc.wantExit, res.combined)
 			}
-			if len(res.outputs) != len(tc.wantOutputs) || !slices.Equal(sortedPairs(res.outputs), sortedPairs(tc.wantOutputs)) {
+			if !maps.Equal(res.outputs, tc.wantOutputs) {
 				t.Errorf("$GITHUB_OUTPUT = %v, want %v", res.outputs, tc.wantOutputs)
 			}
 			if got := res.env["IMAGE_DIGEST"]; got != tc.wantImageDigestEnv {
@@ -557,15 +561,6 @@ func TestWorkflow_TheProbeAsksAWSForTheRepositorysTag(t *testing.T) {
 	}
 }
 
-func sortedPairs(m map[string]string) []string {
-	var out []string
-	for k, v := range m {
-		out = append(out, k+"="+v)
-	}
-	slices.Sort(out)
-	return out
-}
-
 // stepRuns evaluates an if: for a Go block, and fails the test on any form it does not know, so a new gate cannot pass unexamined.
 func stepRuns(t *testing.T, s step, outputs map[string]string) bool {
 	t.Helper()
@@ -587,10 +582,11 @@ func TestWorkflow_TheProbeAnswerDecidesWhichWriteStepsRun(t *testing.T) {
 		probe         []string
 		wantRun, skip []string
 	}{
-		{"a rerun completes the record for a published tag without pushing the image", []string{"1.2.0", "exists", "absent", "match"}, recordSteps, imageSteps},
-		{"a tag with its record writes nothing", []string{"1.2.0", "exists", "exists", "match"}, nil, writeSteps},
-		{"an unpublished version runs the image and record steps", []string{"1.3.0", "absent", "absent", "match"}, append(slices.Clone(imageSteps), recordSteps...), nil},
-		{"a probe that was itself skipped answers nothing, so no write step runs", nil, nil, writeSteps},
+		{"a rerun completes the record for a published tag without pushing the image, and cuts its release tag", []string{"1.2.0", "exists", "absent", "match"}, slices.Concat(recordSteps, releaseSteps), imageSteps},
+		{"a rerun of the commit that built a tag with its record writes no image or record and cuts its release tag", []string{"1.2.0", "exists", "exists", "match"}, releaseSteps, writeSteps},
+		{"a later commit finding a tag and its record writes nothing and cuts no release tag", []string{"1.2.0", "exists", "exists", "other"}, nil, slices.Concat(writeSteps, releaseSteps)},
+		{"an unpublished version runs the image, record and release steps", []string{"1.3.0", "absent", "absent", "match"}, slices.Concat(imageSteps, recordSteps, releaseSteps), nil},
+		{"a probe that was itself skipped answers nothing, so no write or release step runs", nil, nil, slices.Concat(writeSteps, releaseSteps)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -750,9 +746,9 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		{"publish", "write", []string{
 			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Configure AWS credentials", "Checkout block-kit",
 			"Build blockverify and blockprov", "Remove the kit checkout from the block tree", "Log in to ECR", "Probe the version tag and its provenance record",
-			"Build and push image", "Determine the kit version pinned in go.mod", "Determine the kit version the operator image was built with",
+			"Refuse a version tagged at another commit", "Build and push image", "Determine the kit version pinned in go.mod", "Determine the kit version the operator image was built with",
 			"blockverify (standalone, for blockprov build's report)", "block-verify inside the image, for blockprov build's result",
-			"blockprov build", "Fetch ECR password", "blockprov push",
+			"blockprov build", "Fetch ECR password", "blockprov push", "Tag the release at the commit it built", "Start the block's publisher at the release tag",
 		}},
 	} {
 		t.Run(tc.job, func(t *testing.T) {
