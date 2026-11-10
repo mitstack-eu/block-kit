@@ -216,35 +216,23 @@ func otherReservations(ctx context.Context, repo *hostRepo, snap snapshot, own s
 	return SumReservations(files, own)
 }
 
-// checkFits refuses a host that takes no backups, and a database whose reservation does not fit in what the host can
-// give its apps less what the others hold.
+// checkFits waits for a host that has reported no capacity, and refuses a host that takes no backups or a database
+// whose reservation does not fit in what the host can give its apps less what the others hold.
 func (db Database) checkFits(ctx context.Context, d contract.Desired, r request, others Reservation) error {
 	report, found, err := db.readReport(ctx, d, r.hostSub)
 	if err != nil {
 		return err
 	}
-	if !found || report.Allocatable == nil {
-		return fmt.Errorf("the host has sent no node report giving its allocatable capacity yet, so %s's database cannot be sized; the next subscribe retries", r.app)
+	ask := Ask{Part: r.app + "'s database", Kind: "database", Size: r.size}
+	allocatable, err := Capacity(report.Report, found, ask.Part)
+	if err != nil {
+		return err
 	}
 	if reason := report.Host.Backups.Error; reason != nil {
 		return handler.Refuse("host-takes-no-backups",
 			"the host reports %q, so a database on it could never be backed up nor removed after a final backup; give the database a host made with a backup public key", *reason)
 	}
-	free := Free(*report.Allocatable, others)
-	if r.size.Fits(free) {
-		return nil
-	}
-	return handler.Refuse("host-full",
-		"the host has %s free beyond what its other apps reserve, and %s's database asks for %s; give the database less, or remove an app from the host first",
-		describeWithDisk(free), r.app, Describe(r.size))
-}
-
-// describeWithDisk names the free disk even when none is left, since a database always asks for some.
-func describeWithDisk(free Reservation) string {
-	if free.DiskBytes <= 0 {
-		return Describe(Reservation{CPUMillis: free.CPUMillis, MemoryBytes: free.MemoryBytes}) + " and no disk"
-	}
-	return Describe(free)
+	return fitRoom(allocatable, ask, others)
 }
 
 // Delete asks the host for a final backup of a database that holds data, waits for the host to report it uploaded,

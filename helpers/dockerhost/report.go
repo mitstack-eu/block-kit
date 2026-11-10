@@ -19,16 +19,18 @@ const SyncedCommitSince = "0.8.0"
 
 // Report is a Docker host's newest node report, read the same way by every block whose app runs on the host.
 type Report struct {
-	Allocatable *Reservation
-	body        json.RawMessage
-	agent       map[string]json.RawMessage
-	absence     *contract.Absence
+	Allocatable   *Reservation
+	body          json.RawMessage
+	agent         map[string]json.RawMessage
+	absence       *contract.Absence
+	capacityError string
 }
 
 type reportParts struct {
 	Host struct {
 		Capacity struct {
 			Allocatable *Reservation `json:"allocatable"`
+			Error       string       `json:"error"`
 		} `json:"capacity"`
 		Agent map[string]json.RawMessage `json:"agent"`
 	} `json:"host"`
@@ -59,7 +61,7 @@ func NewestReport(ctx context.Context, api observe.NodeReportsAPI, d contract.De
 	if err := json.Unmarshal(newest.Body, &parts); err != nil {
 		return Report{}, false, fmt.Errorf("decoding the host's newest node report: %w", err)
 	}
-	return Report{Allocatable: parts.Host.Capacity.Allocatable, body: newest.Body, agent: parts.Host.Agent}, true, nil
+	return Report{Allocatable: parts.Host.Capacity.Allocatable, body: newest.Body, agent: parts.Host.Agent, capacityError: parts.Host.Capacity.Error}, true, nil
 }
 
 // Decode reads the report's body into v, for the fields only one block reads.
