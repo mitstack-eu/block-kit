@@ -431,7 +431,7 @@ jobs:
       - name: Judge the commit order and the board keys
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}
