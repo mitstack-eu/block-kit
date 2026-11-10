@@ -172,6 +172,10 @@ Your block's CI calls the kit's reusable workflow,
 ```yaml
 jobs:
   block:
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@v0.4.0
     with:
       block-id: hetzner-firewall
@@ -212,6 +216,23 @@ builds the image, scans it and pushes it to the ECR repository you name, so
 no image ships without a pass. The job then runs `blockprov`, which builds a
 provenance record naming your repository, commit and CI run, signs it with
 the run's GitHub Actions identity token and pushes it beside the image.
+
+Once the image and its record are pushed, the `publish` job cuts your block's
+release tag, `v` and the `spec.version` of `manifest.yaml`, such as `v1.2.0`,
+at the commit it built. A tag never moves. So before it pushes anything, the
+job fails when that tag already names another commit, and tells you to raise
+`spec.version`. A later push that keeps the version, such as a change to a
+README, finds the image and its record published, builds nothing and cuts no
+tag.
+
+A tag the job pushes starts no workflow run of its own. So the job then starts
+your block's `.github/workflows/release-publisher.yml` at the tag, when your
+repository holds that file, passing the tag as the input `tag`, which that
+workflow's `workflow_dispatch` trigger declares. The `publisher-workflow` input
+names a different file. The job pushes the tag with `contents: write`, starts
+the publisher with `actions: write` and signs the record with
+`id-token: write`. A called workflow gets no more than its caller grants, so
+the job calling it grants all three, as the examples show.
 
 Two scan jobs also run on every event your CI calls the workflow for, and
 `publish` waits for both. The `secrets` job runs `scripts/scan-secrets.sh`,
@@ -352,6 +373,10 @@ the module to `/module`. Your CI sets `opentofu-only: true`:
 ```yaml
 jobs:
   block:
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
     with:
       block-id: opentofu-s3-bucket
@@ -433,6 +458,10 @@ inputs and passes the secret:
 ```yaml
 jobs:
   block:
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
     with:
       block-id: "@acme/billing-db"

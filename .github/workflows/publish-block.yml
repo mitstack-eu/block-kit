@@ -37,6 +37,14 @@
 # apply of manifest.yaml on a pull request, and `attest` posts blockverify's
 # report on a push to the default branch.
 #
+# A run that builds a version's image, or completes its record from the commit
+# that built it, cuts the release tag v<version> at that commit once both are
+# pushed, refusing up front a version another commit already holds, so a tag
+# never moves. It then starts the block's publisher workflow at the tag where
+# the block holds one. A later push that finds the image and its record
+# published from an earlier commit, such as a change to Markdown alone, which
+# the version rule lets keep spec.version, cuts nothing and stays green.
+#
 # A version tag already in the registry is never pushed over. The probe asks
 # two questions, whether the tag is published and whether its provenance
 # record sits beside it. A rerun that finds the tag published but no
@@ -98,6 +106,12 @@ on:
         required: false
         type: string
         default: https://api.mitstack.dev
+      # The workflow file in the block's own repository that copies each
+      # release tag to its public release repository, started at each tag.
+      publisher-workflow:
+        required: false
+        type: string
+        default: release-publisher.yml
     # The token the platform's scaffold seals into the block's repository,
     # which opens that block's manifest, attestations and dry-run apply alone.
     secrets:
@@ -482,9 +496,12 @@ jobs:
     needs: [conformance, opentofu-conformance, secrets, scripts]
     if: ${{ !cancelled() && !failure() && inputs.ecr-repository != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
+    # contents: write cuts the release tag and actions: write starts the
+    # publisher, so a caller grants both to the job calling this workflow.
     permissions:
-      contents: read
+      contents: write
       id-token: write
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -542,13 +559,16 @@ jobs:
 
       # A version tag already in the registry is never pushed over, and a
       # record already beside it is never written again. This probe is
-      # read-only and answers into $GITHUB_OUTPUT: `published` for the
-      # version tag and `record` for the provenance record tag
-      # sha256-<hex>.prov that `blockprov push` writes for that digest. A
-      # tag that is not published has no digest yet, so its record is
-      # absent by definition and is not probed. A missing record is
-      # completed only for an image this commit built, since the record
-      # signs this commit. `aws ecr batch-get-image`
+      # read-only and answers into $GITHUB_OUTPUT: `tag`, the release tag
+      # v<version>; `published` for that tag; `record` for the provenance
+      # record tag sha256-<hex>.prov that `blockprov push` writes for that
+      # digest; and `built`, whether this commit built the image. A tag
+      # that is not published has no digest yet, so its record is absent
+      # by definition and is not probed, and this run builds it. The build
+      # tags the image with the commit sha, so for a published tag only the
+      # run that built it, or a rerun of that run, answers `built=true`. A
+      # missing record is completed only for an image this commit built,
+      # since the record signs this commit. `aws ecr batch-get-image`
       # exits 0 with `None` when a tag is absent, so `None` and empty are
       # the only signals read as "absent". A non-zero exit from aws means
       # the probe could not answer, and that fails the job rather than
@@ -565,9 +585,11 @@ jobs:
             echo "probe for v${VERSION} failed; refusing to guess whether it is published" >&2
             exit 1
           }
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           if [ -z "$DIGEST" ] || [ "$DIGEST" = "None" ]; then
             echo "published=false" >> "$GITHUB_OUTPUT"
             echo "record=false" >> "$GITHUB_OUTPUT"
+            echo "built=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "already published: v${VERSION} ${DIGEST}"
@@ -580,6 +602,16 @@ jobs:
             echo "probe for ${RECORD_TAG} failed; refusing to guess whether the provenance record exists" >&2
             exit 1
           }
+          BUILT=$(probe "${GITHUB_SHA}") || {
+            echo "probe for ${GITHUB_SHA} failed; refusing to guess whether this commit built v${VERSION}" >&2
+            exit 1
+          }
+          if [ "$BUILT" = "$DIGEST" ]; then
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "built=false" >> "$GITHUB_OUTPUT"
+          fi
+
           if [ -n "$RECORD" ] && [ "$RECORD" != "None" ]; then
             echo "provenance record present at ${RECORD_TAG}"
             echo "record=true" >> "$GITHUB_OUTPUT"
@@ -587,15 +619,20 @@ jobs:
           fi
 
           # The record signs this run's commit, so it is completed only for
-          # an image this commit built. The build tags the image with
-          # the commit sha, so that tag must resolve to the same digest.
-          BUILT=$(probe "${GITHUB_SHA}") || BUILT="unanswered"
+          # an image this commit built.
           if [ "$BUILT" != "$DIGEST" ]; then
             echo "no provenance record at ${RECORD_TAG}, and v${VERSION} (${DIGEST}) was not built from commit ${GITHUB_SHA} (its sha tag answers ${BUILT}); rerun the run that published it to complete the record" >&2
             exit 1
           fi
           echo "no provenance record at ${RECORD_TAG}; completing it for ${DIGEST}"
           echo "record=false" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse a version tagged at another commit
+        if: steps.existing.outputs.built == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.existing.outputs.tag }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/release-tag.sh" check "$TAG"
 
       # Any finding with a fixed version, at any severity, stops the job
       # before the first push, but the one scan-image.sh's exception proves.
@@ -714,6 +751,21 @@ jobs:
             --image-digest "$IMAGE_DIGEST" \
             --username AWS \
             --password-env ECR_PASSWORD
+
+      - name: Tag the release at the commit it built
+        if: steps.existing.outputs.built == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.existing.outputs.tag }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/release-tag.sh" push "$TAG"
+
+      - name: Start the block's publisher at the release tag
+        if: steps.existing.outputs.built == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.existing.outputs.tag }}
+          PUBLISHER_WORKFLOW: ${{ inputs.publisher-workflow }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/release-tag.sh" dispatch "$TAG" "$PUBLISHER_WORKFLOW"
 
   # Runs where publish would, for a caller naming no registry, so a push that
   # publishes nothing says so in the run's summary.
