@@ -308,8 +308,11 @@ organisation or repository defines the Actions variable `TRACKER_BASE_URL`,
 the address of a Plain board. It fails a pull request whose code lands before
 its tests, or whose title or commits name a board key that is not
 `In Progress` or `Pull Request`. It reads the board with the
-`TRACKER_API_TOKEN` secret, so pass it with `secrets: inherit` or by name. With
-no board variable the job reports as skipped and reads nothing. The command
+`TRACKER_API_TOKEN` secret, so pass it with `secrets: inherit` or by name.
+GitHub passes no such secret to a pull request that Dependabot opens, and
+`pr-delivery` asks the board nothing for the GitHub Apps its README lists by
+login, so their pull requests need no token. With no board variable the job
+reports as skipped and reads nothing. The command
 behind it is `pr-delivery`, and the
 [plain-delivery README](https://github.com/mitstack-eu/plain-delivery#how-the-delivery-check-judges-a-pull-request)
 says how it sorts each changed file into test, code or other.
