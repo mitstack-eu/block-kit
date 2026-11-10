@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/helpers/reqcache"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
@@ -344,6 +345,7 @@ func (r *declaredRun) blockers() []string {
 
 // validateObserved never polls, answers redrive when any resource observed Unknown reports its work finished, and an Observe error is classified, never folded into pending, and stops the probe there.
 func (r *declaredRun) validateObserved(ctx context.Context) (int, contract.Response) {
+	ctx = reqcache.Snapshot(ctx)
 	if c, ok := r.h.resource.(Converger); ok {
 		detail, done, err := c.Converging(ctx, r.d)
 		if err != nil {

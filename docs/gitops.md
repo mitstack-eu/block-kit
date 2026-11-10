@@ -422,6 +422,12 @@ nothing differs. `LastChanged` gives you that commit from any revision, such as
 when an observe has no recorded commit and must name the one head still
 holds. The walk is `walkLineage` in `capabilities/github/gitops/repository.go`.
 
+`GitHubRepository` reads each file of a revision, and each revision's changed
+paths, once per request, so the passes a block makes over its files cost one
+GitHub request per distinct path (two for an absent one). It reads the head
+every time. [The optional helpers](helpers.md#reading-each-thing-once-in-a-request)
+say what else is kept.
+
 ## Which notifications a block reads
 
 The platform relays Argo CD's notifications and answers a block only those of

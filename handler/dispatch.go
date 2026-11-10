@@ -10,6 +10,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/events"
+	"github.com/mitstack-eu/block-kit/helpers/reqcache"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
@@ -53,7 +54,7 @@ func requestContext(ctx context.Context, req contract.Request) context.Context {
 	if req.EventsCallback != nil {
 		callback = &events.Callback{URL: req.EventsCallback.URL, Token: req.EventsCallback.Token}
 	}
-	return events.WithEnvelope(ctx, events.Envelope{
+	return events.WithEnvelope(reqcache.With(ctx), events.Envelope{
 		SubscriptionID: req.SubscriptionID,
 		Operation:      req.Operation,
 		IdempotencyKey: req.IdempotencyKey,
