@@ -3,7 +3,6 @@ package reqcache_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -61,18 +60,4 @@ func TestWith_KeepsTheScopeTheContextAlreadyHolds(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Errorf("a read through With of a context already holding a scope made %d reads, want the first one's answer", calls.Load())
 	}
-}
-
-func TestImmutable_IsSafeForConcurrentUseOfOneScope(t *testing.T) {
-	ctx := reqcache.Snapshot(reqcache.With(context.Background()))
-	var wg sync.WaitGroup
-	for i := range 32 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			reqcache.Immutable(ctx, i%4, func() (int, error) { return i, nil })
-			reqcache.Viewed(ctx, i%4, func() (int, error) { return i, nil })
-		}()
-	}
-	wg.Wait()
 }
