@@ -1038,7 +1038,7 @@ func cfnBlock(t *testing.T) kittest.Block {
 	}
 }
 
-// requiringSecretToken returns snap with each type ids names also requiring the secret output token.
+// requiringSecretToken returns snap with each type named in ids also requiring the secret output token.
 func requiringSecretToken(snap contract.TypeSnapshot, ids ...string) contract.TypeSnapshot {
 	snap.Types = slices.Clone(snap.Types)
 	for i, typ := range snap.Types {
@@ -1195,7 +1195,7 @@ func TestCheckBlock(t *testing.T) {
 	github := func(untagged string) func(t *testing.T) kittest.Block {
 		return func(t *testing.T) kittest.Block { return githubBlock(t, untagged) }
 	}
-	// sharingToken is the cfn block with its provided instance and volume both requiring token, which only the resources reporting name.
+	// sharingToken is the cfn block with its provided instance and volume both requiring the secret output token, which only the resources named in reporting report.
 	sharingToken := func(reporting ...string) func(t *testing.T) kittest.Block {
 		return func(t *testing.T) kittest.Block {
 			in := cfnBlock(t)
