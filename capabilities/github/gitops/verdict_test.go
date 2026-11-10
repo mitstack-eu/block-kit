@@ -300,3 +300,31 @@ func TestCheck_ReturnsTheNodeReportsError(t *testing.T) {
 		t.Errorf("Check error = %v, want the node reports' error", err)
 	}
 }
+
+func TestCheck_ANotificationAtAnAncestorOrNoneLeavesTheVerdictToTheNodeReport(t *testing.T) {
+	runVerdicts(t, []verdictCase{
+		{"a Degraded notification at an ancestor, sent before the commit landed, leaves Synced and Healthy objects to succeed, naming it", func(_ *testing.T, h *home) {
+			h.notify(h.sibling, "Succeeded", "Degraded", "successfully synced (all tasks run)")
+			h.healthyAt(h.own)
+		}, gitops.VerdictSucceeded, []string{"sent no notification of " + homeApp + " at @own", "its newest is at @sibling"}},
+		{"the same notification beside the block's Cluster reading Degraded fails, naming the Cluster", func(_ *testing.T, h *home) {
+			h.notify(h.sibling, "Succeeded", "Degraded", "successfully synced (all tasks run)")
+			h.report(h.own, state(dbObj, "Synced", "Degraded", "the storage class local-path is missing"), gitopstest.Healthy(cert), gitopstest.Healthy(api))
+		}, gitops.VerdictFailed, []string{"Cluster.postgresql.cnpg.io app-home-db/postgres reads Degraded: the storage class local-path is missing", "its newest is at @sibling"}},
+		{"the same notification and no report since the verb is pending, naming both", func(_ *testing.T, h *home) {
+			h.notify(h.sibling, "Succeeded", "Degraded", "successfully synced (all tasks run)")
+		}, gitops.VerdictPending, []string{"no node report made since the verb has arrived", "its newest is at @sibling"}},
+		{"a failed sync at an ancestor fails nothing, so an object of the block OutOfSync is pending, naming it", func(_ *testing.T, h *home) {
+			h.notify(h.sibling, "Failed", "Degraded", "one or more objects failed to apply")
+			h.report(h.own, gitopstest.Healthy(dbObj), state(cert, "OutOfSync", "Missing", ""))
+		}, gitops.VerdictPending, []string{"Certificate.cert-manager.io app-home-db/postgres-server reads sync OutOfSync", "its newest is at @sibling"}},
+		{"no notification at all leaves Synced and Healthy objects to succeed, naming that none exists", func(_ *testing.T, h *home) {
+			h.healthyAt(h.own)
+		}, gitops.VerdictSucceeded, []string{"Argo CD has sent no notification of " + homeApp}},
+		{"a failed sync at a later revision holding the block's files still fails beside an object not Synced", func(t *testing.T, h *home) {
+			h.later = h.commit(t, map[string][]byte{apiPath: append(manifest(api), '\n')})
+			h.notify(h.later, "Failed", "Degraded", "one or more objects failed to apply")
+			h.report(h.later, gitopstest.Healthy(dbObj), state(cert, "OutOfSync", "Missing", ""))
+		}, gitops.VerdictFailed, []string{"sync at @later ended in phase Failed", "reads sync OutOfSync"}},
+	})
+}
