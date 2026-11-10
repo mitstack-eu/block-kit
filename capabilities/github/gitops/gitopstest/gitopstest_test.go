@@ -6,10 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops/gitopstest"
 	"github.com/mitstack-eu/block-kit/contract"
@@ -461,5 +466,290 @@ func TestNodeReports_FailWithMakesEveryReadReturnTheError(t *testing.T) {
 
 	if !errors.Is(err, boom) {
 		t.Errorf("NodeReports error = %v, want %v", err, boom)
+	}
+}
+
+const (
+	webManifest     = `{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "web", "namespace": "app-alpha"}}`
+	accountManifest = "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: runtime\n  namespace: app-alpha\n"
+	siblingManifest = `{"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": "migrate", "namespace": "app-alpha"}}`
+)
+
+var (
+	web            = gitops.Object{Group: "apps", Kind: "Deployment", Namespace: "app-alpha", Name: "web"}
+	runtimeAccount = gitops.Object{Kind: "ServiceAccount", Namespace: "app-alpha", Name: "runtime"}
+	siblingJob     = gitops.Object{Group: "batch", Kind: "Job", Namespace: "app-alpha", Name: "migrate"}
+	appPaths       = []string{"app/deployment.json", "app/account.yaml"}
+	verbAt         = time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC)
+)
+
+// webThenRemoved commits the block's Deployment and ServiceAccount, then removes the Deployment beside a sibling's Job, and returns both revisions.
+func webThenRemoved(t *testing.T) (repo *gitopstest.Repository, deployed, removed string) {
+	t.Helper()
+	ctx := context.Background()
+	repo = gitopstest.NewRepository()
+	deployed, err := repo.Commit(ctx, "", map[string][]byte{"app/deployment.json": []byte(webManifest), "app/account.yaml": []byte(accountManifest)}, "deploy web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err = repo.Commit(ctx, deployed, map[string][]byte{"app/deployment.json": nil, "sibling/job.json": []byte(siblingManifest)}, "remove web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, deployed, removed
+}
+
+func appliedAs(o gitops.Object, sync, health string) observe.AppliedObject {
+	return observe.AppliedObject{Group: o.Group, Kind: o.Kind, Namespace: o.Namespace, Name: o.Name, Sync: sync, Health: observe.Health{Status: health}}
+}
+
+func TestNodeReports_AppliesShowsTheApplicationAtItsRevisionListingThePathsObjectsThenEachSetObjectNoFileDeclares(t *testing.T) {
+	repo, deployed, removed := webThenRemoved(t)
+	cases := []struct {
+		name     string
+		applied  gitopstest.Applied
+		revision string
+		objects  []observe.AppliedObject
+	}{
+		{"an empty Revision shows head, each object of the files Paths names Synced and Healthy", gitopstest.Applied{Paths: appPaths},
+			removed, []observe.AppliedObject{appliedAs(runtimeAccount, "Synced", "Healthy")}},
+		{"an earlier Revision lists the objects its files declare, in the order of Paths", gitopstest.Applied{Revision: deployed, Paths: appPaths},
+			deployed, []observe.AppliedObject{appliedAs(web, "Synced", "Healthy"), appliedAs(runtimeAccount, "Synced", "Healthy")}},
+		{"a set object no file declares follows the declared ones, as one Argo CD has yet to prune",
+			gitopstest.Applied{Paths: appPaths, Set: []gitopstest.Object{{Object: web, Sync: "OutOfSync", Health: "Healthy"}}},
+			removed, []observe.AppliedObject{appliedAs(runtimeAccount, "Synced", "Healthy"), appliedAs(web, "OutOfSync", "Healthy")}},
+		{"a set object a file declares takes the state set gives it",
+			gitopstest.Applied{Revision: deployed, Paths: appPaths, Set: []gitopstest.Object{{Object: runtimeAccount, Sync: "OutOfSync", Health: "Missing"}}},
+			deployed, []observe.AppliedObject{appliedAs(web, "Synced", "Healthy"), appliedAs(runtimeAccount, "OutOfSync", "Missing")}},
+		{"no Paths lists the objects of every file in path order, a sibling's among them", gitopstest.Applied{},
+			removed, []observe.AppliedObject{appliedAs(runtimeAccount, "Synced", "Healthy"), appliedAs(siblingJob, "Synced", "Healthy")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reports := gitopstest.NewNodeReports()
+			tc.applied.Name, tc.applied.Repo = "app-alpha", repo
+			reports.Applies("sub-cluster", tc.applied)
+
+			got, why, err := observe.NodeReported{API: reports}.ArgoCDApplication(context.Background(), contract.Desired{VerbAt: verbAt}, "sub-cluster", "app-alpha")
+
+			want := observe.Application{Name: "app-alpha", Sync: "Synced", Revision: tc.revision, Objects: tc.objects}
+			if err != nil || why != "" || !reflect.DeepEqual(got, want) {
+				t.Errorf("ArgoCDApplication = %+v, %q, %v; want %+v", got, why, err, want)
+			}
+		})
+	}
+}
+
+func TestApplied_ApplicationIsTheApplicationAppliesShowsForAReportReportAdds(t *testing.T) {
+	repo, _, _ := webThenRemoved(t)
+	applied := gitopstest.Applied{Name: "app-alpha", Repo: repo, Paths: appPaths, Set: []gitopstest.Object{{Object: web, Sync: "OutOfSync", Health: "Healthy"}}}
+	shown, added := gitopstest.NewNodeReports(), gitopstest.NewNodeReports()
+	shown.Applies("sub-cluster", applied)
+
+	app, err := applied.Application()
+
+	added.Report("sub-cluster", verbAt.Add(time.Minute), app)
+	want, _ := shown.NodeReports(context.Background(), contract.Desired{VerbAt: verbAt}, "sub-cluster")
+	got, _ := added.NodeReports(context.Background(), contract.Desired{}, "sub-cluster")
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("a report of Application() = %q, %v; want the report Applies shows, %q", bodiesOf(got), err, bodiesOf(want))
+	}
+}
+
+func TestNodeReports_AppliesShowsAnApplicationInPlaceOfTheOneOfItsNameAnEarlierCallShowed(t *testing.T) {
+	repo, deployed, removed := webThenRemoved(t)
+	reports := gitopstest.NewNodeReports()
+	reports.AppliesHead("sub-cluster", "app-alpha", repo, gitopstest.Object{Object: runtimeAccount, Sync: "OutOfSync", Health: "Missing"})
+	reports.AppliesHead("sub-cluster", "app-beta", repo)
+	reports.Applies("sub-cluster", gitopstest.Applied{Name: "app-alpha", Repo: repo, Revision: deployed, Paths: appPaths})
+
+	got, err := reports.NodeReports(context.Background(), contract.Desired{VerbAt: verbAt}, "sub-cluster")
+
+	var body struct {
+		ArgoCD struct {
+			Applications []struct{ Name, Revision string }
+		}
+	}
+	want := []struct{ Name, Revision string }{{"app-alpha", deployed}, {"app-beta", removed}}
+	if err != nil || len(got) != 1 || json.Unmarshal(got[0].Body, &body) != nil || !reflect.DeepEqual(body.ArgoCD.Applications, want) {
+		t.Errorf("NodeReports = %q, %v; want one report showing %+v", bodiesOf(got), err, want)
+	}
+}
+
+func TestNodeReports_AReadFailsWhileAppliesNamesARevisionTheRepositoryNeverHeld(t *testing.T) {
+	repo, _, _ := webThenRemoved(t)
+	unknown := strings.Repeat("f", 40)
+	reports := gitopstest.NewNodeReports()
+	reports.Applies("sub-cluster", gitopstest.Applied{Name: "app-alpha", Repo: repo, Revision: unknown})
+
+	_, err := reports.NodeReports(context.Background(), contract.Desired{}, "sub-cluster")
+
+	if err == nil || !strings.Contains(err.Error(), unknown) {
+		t.Errorf("NodeReports error = %v, want one naming the revision %s the repository never held", err, unknown)
+	}
+}
+
+func bodiesOf(reports []observe.NodeReport) []string {
+	bodies := make([]string, 0, len(reports))
+	for _, r := range reports {
+		bodies = append(bodies, string(r.Body))
+	}
+	return bodies
+}
+
+func TestNodeReports_AddToGivesEachReportTheApplicationsOfTheNewestReportItAnswersAndKeepsTheReportsOwnMembers(t *testing.T) {
+	repo, _, removed := webThenRemoved(t)
+	alpha := gitopstest.Applied{Name: "app-alpha", Repo: repo, Paths: appPaths}
+	alphaJSON := fmt.Sprintf(`{"name": "app-alpha", "health": "Healthy", "sync": "Synced", "revision": %q, "resources": [
+		{"group": "", "kind": "ServiceAccount", "namespace": "app-alpha", "name": "runtime", "sync": "Synced", "health": "Healthy"}]}`, removed)
+	own := `"madeAt": "2026-11-09T09:00:30Z", "subscriptionResources": [{"namespace": "app-alpha", "kind": "configmap", "name": "env", "subscription": "sub-1"}]`
+	cases := []struct {
+		name       string
+		arrange    func(r *gitopstest.NodeReports)
+		body, want string
+	}{
+		{"it gets the view Applies shows a minute after the verb, newer than a report Report added", func(r *gitopstest.NodeReports) {
+			r.Report("sub-cluster", verbAt.Add(-time.Hour), gitopstest.Application{Name: "app-earlier"})
+			r.Applies("sub-cluster", alpha)
+		}, "{" + own + "}", "{" + own + `, "argocd": {"applications": [` + alphaJSON + "]}}"},
+		{"it gets a report Report added after that view", func(r *gitopstest.NodeReports) {
+			r.Applies("sub-cluster", alpha)
+			r.Report("sub-cluster", verbAt.Add(time.Hour), gitopstest.Application{Name: "app-later", Objects: []gitopstest.Object{}})
+		}, "{" + own + "}", "{" + own + `, "argocd": {"applications": [{"name": "app-later", "health": "Healthy", "sync": "Synced", "revision": null, "resources": []}]}}`},
+		{"a report carrying Applications of its own keeps them", func(r *gitopstest.NodeReports) { r.Applies("sub-cluster", alpha) },
+			"{" + own + `, "argocd": {"applications": []}}`, "{" + own + `, "argocd": {"applications": []}}`},
+		{"a report stays as it came while no report shows an Application", func(*gitopstest.NodeReports) {}, "{" + own + "}", "{" + own + "}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reports := gitopstest.NewNodeReports()
+			tc.arrange(reports)
+			received := verbAt.Add(2 * time.Minute)
+
+			got, err := reports.AddTo(context.Background(), contract.Desired{VerbAt: verbAt}, "sub-cluster", []observe.NodeReport{{ReceivedAt: received, Body: json.RawMessage(tc.body)}})
+
+			var body, want any
+			if err != nil || len(got) != 1 || !got[0].ReceivedAt.Equal(received) || json.Unmarshal(got[0].Body, &body) != nil || json.Unmarshal([]byte(tc.want), &want) != nil || !reflect.DeepEqual(body, want) {
+				t.Errorf("AddTo = %q, %v; want one report received at %s whose body is %s", bodiesOf(got), err, received, tc.want)
+			}
+		})
+	}
+}
+
+func TestNodeReports_AddToFailsOnAFailedReadAndOnABodyThatIsNoJSONObject(t *testing.T) {
+	boom := errors.New("platform: 503")
+	cases := []struct {
+		name     string
+		failWith error
+		body     string
+	}{
+		{"the read fails", boom, `{}`},
+		{"a body that is a JSON array", nil, `[]`},
+		{"a null body", nil, `null`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reports := gitopstest.NewNodeReports()
+			reports.Report("sub-cluster", verbAt, gitopstest.Application{Name: "app-alpha"})
+			if tc.failWith != nil {
+				reports.FailWith(tc.failWith)
+			}
+
+			got, err := reports.AddTo(context.Background(), contract.Desired{}, "sub-cluster", []observe.NodeReport{{ReceivedAt: verbAt, Body: json.RawMessage(tc.body)}})
+
+			if err == nil || got != nil || (tc.failWith != nil && !errors.Is(err, tc.failWith)) {
+				t.Errorf("AddTo = %q, %v; want no report and an error, wrapping %v when the read failed", bodiesOf(got), err, tc.failWith)
+			}
+		})
+	}
+}
+
+// blockReports is a block's own source of node reports: one report made at madeAt listing what the block reads, carrying the Applications argo shows.
+type blockReports struct {
+	argo   *gitopstest.NodeReports
+	madeAt time.Time
+}
+
+func (b blockReports) NodeReports(ctx context.Context, d contract.Desired, cluster string) ([]observe.NodeReport, error) {
+	body, err := json.Marshal(map[string]any{"madeAt": b.madeAt, "subscriptionResources": []any{}})
+	if err != nil {
+		return nil, err
+	}
+	return b.argo.AddTo(ctx, d, cluster, []observe.NodeReport{{ReceivedAt: b.madeAt, Body: body}})
+}
+
+func TestNodeReports_AddToLetsCheckJudgeTheBlocksObjectsFromAReportTheBlockBuilt(t *testing.T) {
+	cases := []struct {
+		name    string
+		removal bool
+		set     []gitopstest.Object
+		madeAt  time.Duration
+		want    gitops.Verdict
+		detail  string
+	}{
+		{name: "the block's Deployment reads Degraded", set: []gitopstest.Object{{Object: web, Sync: "Synced", Health: "Degraded", Message: "back-off pulling the image"}},
+			madeAt: 30 * time.Second, want: gitops.VerdictFailed, detail: web.String() + " reads Degraded: back-off pulling the image"},
+		{name: "its objects read Synced and Healthy beside a sibling's Degraded Job no file of the block declares", set: []gitopstest.Object{{Object: siblingJob, Sync: "Synced", Health: "Degraded", Message: "deadline exceeded"}},
+			madeAt: 30 * time.Second, want: gitops.VerdictSucceeded, detail: "each of the 2 objects the block's files declare reads Synced"},
+		{name: "the block's own report predates the verb, though the Applications it carries are newer",
+			madeAt: -30 * time.Second, want: gitops.VerdictPending, detail: "no node report made since the verb"},
+		{name: "a removal stays pending while the view lists the Deployment head no longer declares", removal: true, set: []gitopstest.Object{{Object: web, Sync: "OutOfSync", Health: "Healthy"}},
+			madeAt: 30 * time.Second, want: gitops.VerdictPending, detail: web.String() + ", which the commit removed, is still among the objects it applied"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, revision, removed := webThenRemoved(t)
+			if tc.removal {
+				revision = removed
+			}
+			argo := gitopstest.NewNodeReports()
+			argo.Applies("sub-cluster", gitopstest.Applied{Name: "app-alpha", Repo: repo, Revision: revision, Paths: appPaths, Set: tc.set})
+			d := gitops.Deployment{Repository: repo, Notifications: gitopstest.NewNotifications(), NodeReports: blockReports{argo: argo, madeAt: verbAt.Add(tc.madeAt)},
+				Desired: contract.Desired{VerbAt: verbAt}, Application: "app-alpha", Cluster: "sub-cluster", Paths: appPaths}
+
+			out, err := gitops.Check(context.Background(), d, revision)
+
+			if err != nil || out.Verdict != tc.want || !strings.Contains(out.Detail, tc.detail) {
+				t.Errorf("Check(%s) = %s (%s), %v; want %s naming %q", revision, out.Verdict, out.Detail, err, tc.want, tc.detail)
+			}
+		})
+	}
+}
+
+func TestRepository_ServeGitHubCommitAnswersEachCommitAsTheKitsGitHubRepositoryReadsIt(t *testing.T) {
+	repo, deployed, removed := webThenRemoved(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/acme/gitops/commits/{sha}", repo.ServeGitHubCommit)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	github := &gitops.GitHubRepository{Client: ghapi.NewClient(srv.URL, "token", srv.Client()), Repo: "acme/gitops"}
+	cases := []struct {
+		name, revision, parent string
+		paths                  []string
+	}{
+		{"the first commit, which has no parent", deployed, "", []string{"app/account.yaml", "app/deployment.json"}},
+		{"a commit deleting one file and adding another", removed, deployed, []string{"app/deployment.json", "sibling/job.json"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parent, paths, err := github.Changed(context.Background(), tc.revision)
+
+			if err != nil || parent != tc.parent || !reflect.DeepEqual(paths, tc.paths) {
+				t.Errorf("Changed(%s) through GitHub = %q, %q, %v; want %q, %q", tc.revision, parent, paths, err, tc.parent, tc.paths)
+			}
+		})
+	}
+}
+
+func TestRepository_ServeGitHubCommitAnswers422AsGitHubDoesForACommitTheRepositoryNeverHeld(t *testing.T) {
+	repo, _, _ := webThenRemoved(t)
+	unknown := strings.Repeat("f", 40)
+	w := httptest.NewRecorder()
+
+	repo.ServeGitHubCommit(w, httptest.NewRequest(http.MethodGet, "/repos/acme/gitops/commits/"+unknown, nil))
+
+	var body struct{ Message string }
+	if w.Code != http.StatusUnprocessableEntity || json.Unmarshal(w.Body.Bytes(), &body) != nil || body.Message != "No commit found for SHA: "+unknown {
+		t.Errorf("ServeGitHubCommit answered %d %s, want 422 with GitHub's message %q", w.Code, w.Body, "No commit found for SHA: "+unknown)
 	}
 }
