@@ -3,7 +3,8 @@
 This page is for the people who change block-kit itself: how the kit is
 tested, how a release is cut, and the checks every pull request and every push
 to `main` runs. A block author needs none of it, except the comment check,
-which a block's own CI runs too.
+`commentcheck`, and the wait check, `checkpolls`, which a block's own CI runs
+too.
 
 ## Testing the kit
 
@@ -204,3 +205,81 @@ go run github.com/mitstack-eu/block-kit/cmd/commentcheck@v0.4.0 -base "$(git mer
 
 The check reads the working tree as the head, so a file you moved without
 `git mv` is judged as a new file until you stage the move.
+
+## Judging the waits a pull request adds
+
+A wait in a block or in the kit lasts until its upstream, the system it waits
+on, is done. GitHub finishing a CI build is one upstream, and a cluster node
+coming up is another. A fixed sleep or a timer either waits longer than it
+needs or gives up before the upstream is done, so a wait proceeds on the
+signal its upstream sends, such as a webhook GitHub calls or a report a node
+sends to the platform.
+
+Where the upstream sends no signal, the wait still adds no timer of its own:
+
+- An operator verb answers `pending:true`, and the platform's engine asks
+  again with `validate`, leaving a longer gap before each new ask, as [Work
+  that outlasts one call](handler.md#work-that-outlasts-one-call) explains.
+- Other code calls the waiter its upstream's own client provides, a function
+  that returns once the upstream reports the work done, such as
+  `ActionClient.WaitFor` in hcloud-go, Hetzner Cloud's Go client.
+- Where neither exists, the waiter is written once for that upstream, in the
+  kit or in the engine, before the change that needs it.
+
+`cmd/checkpolls` holds a pull request to that. It compares the working tree
+with the pull request's base commit, untracked files included, and fails on
+a line the change adds in one of these forms:
+
+| Language | Files it judges | The form that fails |
+|---|---|---|
+| Go | `.go` and `.go.tmpl` | A `time.Sleep(`, `time.Tick(` or `time.NewTicker(` call |
+| TypeScript and JavaScript | `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs` and `.cjs` | A `setInterval(` call or a `refetchInterval` option |
+| Shell | Every file but prose, such as Markdown and plain text | `sleep` with a number or a variable, run as a command: at the start of a line, after an opening quote, after a workflow's `run:` key, or after a keyword or operator such as `do` or `&&` |
+
+Shell runs from many file types. A `.sh` script holds it, and so does the
+`run:` key of a GitHub Actions workflow, which holds a job's shell commands,
+and so does a workflow template held in a Go string. So the shell form judges
+every file that is not prose. A line that opens with a comment marker, `//` or
+a shell `#`, runs nothing and is not judged. A quoted string that opens with
+`sleep` and a number is judged as a command, since a `.tf` file or a Go call
+can hand that string to the shell, so word a message string another way.
+
+Each failure names the file and line, and the run ends with the advice:
+
+```text
+.github/workflows/ci.yml:8: adds a shell sleep: - run: sleep 10
+checkpolls: found 1 added line holding a fixed sleep or a polling interval. A wait proceeds on the signal its upstream sends. Where it sends none, an operator verb answers pending and the engine asks again later, and other code calls the waiter its upstream's client provides, as block-kit's docs/maintainers.md explains.
+```
+
+The check judges only the lines a change adds, so it takes no flag but
+`-base` and reads no list of paths or lines to skip. A poll the base already
+holds passes until a change rewrites its line.
+
+It cannot see a timer reset inside a loop, a `time.After` in a `select`, or a
+cron schedule. Nor can it see a new loop on `runEvery`, the platform engine's
+function that runs a job on a fixed interval. A reviewer judges those against
+the same standard.
+
+The kit's `test` job in `ci.yml` runs the check on every pull request to the
+kit. In a block's CI, `publish-block.yml` runs it on every pull request in
+both of its conformance jobs: `conformance` for a Go block and
+`opentofu-conformance` for an OpenTofu block. Each builds the check from the
+kit at `kit-ref`, the kit tag a block's CI names, as [Where CI runs
+it](block-checks.md#where-ci-runs-it) explains. The block's own CI workflow
+file, the one that calls `publish-block.yml`, names the kit twice: the tag on
+its `uses:` line picks the version of `publish-block.yml` that runs, and
+`kit-ref` picks the version of the tools it builds. So a block gets the check
+once that file moves both to a kit release whose tree holds `cmd/checkpolls`.
+
+In the kit's repository, run it against the commit your branch started from:
+
+```sh
+go run ./cmd/checkpolls -base "$(git merge-base origin/main HEAD)"
+```
+
+In a block's repository, run the released command at the tag your `kit-ref`
+names, shown as `<tag>`, so your run matches your CI:
+
+```sh
+go run github.com/mitstack-eu/block-kit/cmd/checkpolls@<tag> -base "$(git merge-base origin/main HEAD)"
+```

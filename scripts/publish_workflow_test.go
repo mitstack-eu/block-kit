@@ -194,10 +194,10 @@ func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only`},
 	}
 	for _, j := range jobs {
-		moved, wrote, judged := stepAt(all, j.job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, j.job, "run", writePRBase), stepAt(all, j.job, "run", j.judge)
+		moved, wrote, judged, polled := stepAt(all, j.job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, j.job, "run", writePRBase), stepAt(all, j.job, "run", j.judge), stepAt(all, j.job, "run", `"$RUNNER_TEMP/checkpolls" -base "$BASE_SHA"`)
 		step := func(i int, key string) string { return all["jobs."+j.job+".steps."+strconv.Itoa(i)+"."+key] }
 		cases := []struct{ name, got, want string }{
-			{"the kit reaches RUNNER_TEMP before the write, and the write comes before blockverify", strconv.FormatBool(moved >= 0 && moved < wrote && wrote < judged), "true"},
+			{"the kit reaches RUNNER_TEMP before the write, the write comes before blockverify and checkpolls, and checkpolls, built from the kit checkout, judges a pull request alone against its base", strconv.FormatBool(moved >= 0 && moved < wrote && wrote < judged && wrote < polled && stepWith(all, j.job, "run", `go build -o "$RUNNER_TEMP/checkpolls" ./cmd/checkpolls`)) + " " + step(polled, "if") + " " + step(polled, "env.BASE_SHA"), "true github.event_name == 'pull_request' ${{ github.event.pull_request.base.sha }}"},
 			{"the write runs on a pull request alone, since a push has no base commit", step(wrote, "if"), "github.event_name == 'pull_request'"},
 			{"blockverify learns the event", step(judged, "env.EVENT_NAME"), "${{ github.event_name }}"},
 			{"the fetch takes the job's token, since the checkout keeps none", step(wrote, "env.FETCH_TOKEN"), "${{ github.token }}"},
