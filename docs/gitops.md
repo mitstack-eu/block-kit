@@ -1,12 +1,15 @@
 # Deploying through GitOps with the gitops package
 
-This page is for a block author whose resources run on a Kubernetes cluster
-that Argo CD manages. Argo CD is the controller on the cluster that applies
-whatever a GitOps repository holds, so a block deploys by committing files
-there instead of calling the cluster. The kit's
-`capabilities/github/gitops` package commits the Kubernetes files a block
-renders to that repository on GitHub. It then judges the deploy by the objects
-those files declare, as the cluster's node reports show Argo CD applied them.
+This page is for the author of a
+[block](../README.md#what-a-block-and-its-operator-are), one of mitstack's
+managed services, whose resources run on a Kubernetes cluster that Argo CD
+manages. Argo CD is the controller on the cluster that applies whatever a
+GitOps repository holds, so a block deploys by committing files there instead
+of calling the cluster. block-kit's `capabilities/github/gitops` package
+commits the Kubernetes files a block renders to that repository on GitHub. It
+then judges the deploy by the objects those files declare, as the cluster's
+node reports show Argo CD applied them. That judgement is the verdict, which
+reads succeeded, failed or pending.
 
 ## How a GitOps block judges its deploy
 
@@ -67,6 +70,133 @@ observation as it stands.
 `gitops.Wait` calls `Check` every poll interval until the verdict is no longer
 pending. A failed deploy is an outcome there, and an error means a source
 could not be read.
+
+### How a block tests its verdict
+
+A block's own tests run `Check` against the fakes in
+`capabilities/github/gitops/gitopstest`, so they need no cluster and no
+GitHub. `gitopstest.NewRepository` gives a fake GitOps repository, and a test
+commits the block's files to it with `Commit`. `gitopstest.NewNodeReports`
+gives a fake source of the cluster's node reports.
+
+A node report's body is a JSON object, and each of its top-level fields is a
+section. The `madeAt` section is the time the node made the report, and the
+`argocd` section lists each Application with its objects, which `Check`
+reads. A block can read sections of its own from the same report, such as one
+listing the objects that carry the block's label. A test of such a block needs
+a fake report holding the block's sections beside the `argocd` section. These
+helpers build it:
+
+1. `gitopstest.Applied` describes one Application a report shows. It names
+   the Application in `Name`, the fake repository in `Repo` and the commit
+   shown in `Revision`. It lists the files whose objects the Application
+   shows in `Paths`, and the states a test chooses in `Set`. An empty
+   `Revision` shows the repository's head, its newest commit, each time a
+   report is read. An empty `Paths` lists the objects of every file, and a
+   file the revision does not hold lists nothing, as after a removal deleted
+   it.
+2. Every object the files declare reads `Synced` and `Healthy`, Argo CD's
+   sync status and health for an object applied as its file says, unless
+   `Set` names it. `Set` also lists an object that no file declares, after
+   the declared ones. A test uses that for a sibling's object, or for an
+   object a removal deleted that Argo CD has yet to prune, that is, delete
+   from the cluster.
+3. `NodeReports.Applies` makes every read of a cluster's reports answer a
+   report showing that Application. The fake dates that report a minute after
+   the request's `VerbAt`, the time the platform's call to the block began, so
+   `Check` always counts it. A later call for the same name takes its place,
+   so a test can change the states between two checks. `AppliesHead` is the
+   same call at head, listing the objects of every file.
+4. `NodeReports.AddTo` takes the reports a block's own fake builds and copies
+   the fake's `argocd` section into each one. The section comes from the
+   newest report the fake answers. Each report keeps its own sections and its
+   own `madeAt`, so a report the block dates before the verb still does not
+   count. A report that already carries an `argocd` section keeps it.
+
+`Applied.Application` returns the same Application as a value. A test hands it
+to `NodeReports.Report`, which adds a report made at a time the test chooses,
+or lists it beside an Application read from somewhere else.
+
+A block's own fake source of node reports builds the block's report and ends
+in `AddTo`. In this example the block's own section is `labelled`, an empty
+list standing in for whatever the block reads:
+
+```go
+type world struct{ argo *gitopstest.NodeReports }
+
+func (w world) NodeReports(ctx context.Context, d contract.Desired, cluster string) ([]observe.NodeReport, error) {
+	madeAt := d.VerbAt.Add(30 * time.Second)
+	body, err := json.Marshal(map[string]any{"madeAt": madeAt, "labelled": []any{}})
+	if err != nil {
+		return nil, err
+	}
+	return w.argo.AddTo(ctx, d, cluster, []observe.NodeReport{{ReceivedAt: madeAt, Body: body}})
+}
+```
+
+A test commits the block's file, has the block's Deployment read `Degraded`,
+and hands `world` to `Check` as its `NodeReports`.
+`gitopstest.NewNotifications` gives a fake source of Argo CD's notifications,
+which answers none until a test sets one:
+
+```go
+ctx := context.Background()
+path := "apps/app-alpha/deployment.json"
+manifest := `{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "web", "namespace": "app-alpha"}}`
+repo := gitopstest.NewRepository()
+revision, err := repo.Commit(ctx, "", map[string][]byte{path: []byte(manifest)}, "deploy app-alpha")
+if err != nil {
+	t.Fatal(err)
+}
+argo := gitopstest.NewNodeReports()
+argo.Applies("sub-cluster", gitopstest.Applied{
+	Name:  "app-alpha",
+	Repo:  repo,
+	Paths: []string{path},
+	Set: []gitopstest.Object{{
+		Object: gitops.Object{Group: "apps", Kind: "Deployment", Namespace: "app-alpha", Name: "web"},
+		Sync:   "Synced", Health: "Degraded", Message: "back-off pulling the image",
+	}},
+})
+
+out, err := gitops.Check(ctx, gitops.Deployment{
+	Repository:    repo,
+	Notifications: gitopstest.NewNotifications(),
+	NodeReports:   world{argo: argo},
+	Desired:       contract.Desired{VerbAt: time.Now()},
+	Application:   "app-alpha",
+	Cluster:       "sub-cluster",
+	Paths:         []string{path},
+}, revision)
+```
+
+`out.Verdict` reads `gitops.VerdictFailed`, and `out.Detail` names the
+Deployment and Argo CD's message.
+
+A block that reads its repository through GitHub's API tests against a fake
+GitHub server, which the test starts with `net/http/httptest`. `Check` reads
+what each commit changed through GitHub's
+`GET /repos/{owner}/{repo}/commits/{sha}`, and `Repository.ServeGitHubCommit`
+answers that request from the fake repository. It answers 422 for a commit the
+repository never held, as GitHub does. `gitops.NewGitHubRepository` refuses a
+loopback host, so that a request can never point a block at its own machine,
+and the test therefore builds the `gitops.GitHubRepository` itself. Here
+`ghapi` is the kit's `capabilities/github/ghapi` package:
+
+```go
+mux := http.NewServeMux()
+mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}", repo.ServeGitHubCommit)
+srv := httptest.NewServer(mux)
+t.Cleanup(srv.Close)
+github := &gitops.GitHubRepository{Client: ghapi.NewClient(srv.URL, "token", srv.Client()), Repo: "acme/gitops"}
+```
+
+The test's own handlers on `mux` answer the other requests the block makes,
+such as reading a file.
+
+The code is `NodeReports` in
+`capabilities/github/gitops/gitopstest/nodereports.go` and
+`ServeGitHubCommit` in `capabilities/github/gitops/gitopstest/github.go`.
 
 ### Which node report counts
 
@@ -335,15 +465,9 @@ and `Revert` retry it on a fresh head a bounded number of times.
 
 In tests, `gitopstest.NewRepository` and `gitopstest.NewNotifications` give
 in-memory fakes of the repository and the notification source.
-`gitopstest.NewNodeReports` gives a fake of the cluster's node reports.
-`Report` adds a report of a cluster made at a given time, holding the
-Applications you list. `AppliesHead` makes every read also answer a report
-made a minute after the verb. That report shows the Application at the
-repository's head, with each object head's files declare `Synced` and
-`Healthy`, except the states you set:
-
-```go
-reports := gitopstest.NewNodeReports()
-reports.AppliesHead("sub-cluster", "app-alpha", repo,
-	gitopstest.Object{Object: gitops.Object{Kind: "ServiceAccount", Namespace: "app-alpha", Name: "app-alpha-runtime"}, Sync: "OutOfSync", Health: "Missing"})
-```
+`gitopstest.NewNodeReports` gives a fake of the cluster's node reports, and
+its `Report` adds a report of a cluster made at a given time, holding the
+Applications you list.
+[How a block tests its verdict](#how-a-block-tests-its-verdict) describes the
+rest of that fake, and how `Repository.ServeGitHubCommit` answers a fake
+GitHub's request for what a commit changed.
