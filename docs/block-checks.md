@@ -207,10 +207,18 @@ summary:
 No image registry was named in the ecr-repository input, so nothing was published.
 ```
 
-Its `conformance` job runs on every event your CI calls it for. It runs your
-tests and `blockverify --standalone`, and on a pull request it also runs
+The `conformance` job of `publish-block.yml` runs on every event your CI
+calls it for. It runs your tests and `blockverify --standalone`, which judges
+your block's directory on its own, and on a pull request it also runs
 `commentcheck`, which judges the comments the change adds, as [Maintaining
-the kit](maintainers.md#judging-the-comments-in-a-pull-request) explains. A
+the kit](maintainers.md#judging-the-comments-in-a-pull-request) explains. On
+a pull request it then runs `checkpolls`, which fails a change that adds a
+fixed sleep or a polling interval. To wait on provider work, your
+`EnsureResources` starts it and returns, the subscribe answers `pending:true`,
+and the engine asks again later. Other code calls the waiter that the client of
+the system it waits on provides, a function that returns once that system
+reports the work done, as [Judging the waits a pull request
+adds](maintainers.md#judging-the-waits-a-pull-request-adds) explains. A
 red verdict stops the `publish` job, which on a push to your default branch
 builds the image, scans it and pushes it to the ECR repository you name, so
 no image ships without a pass. The job then runs `blockprov`, which builds a
@@ -417,7 +425,12 @@ your `main` requires. It first runs blockverify, built from the kit at
 passes the base branch's manifest and the changed files as the Go job does, so
 the `manifest` suite holds `spec.version` to the same rule. A pull request
 that changes `main.tf` and keeps the base branch's version fails, naming
-`main.tf`.
+`main.tf`. On a pull request it also runs `checkpolls`, as the Go job does.
+So a `sleep` the change adds fails there too, whether in a script or in a
+shell command a `.tf` file holds, such as the `command` of a `local-exec`
+provisioner. [Judging the waits a pull request
+adds](maintainers.md#judging-the-waits-a-pull-request-adds) lists every form
+the check judges.
 
 With `--opentofu-only`, each suite answers as this table shows:
 
