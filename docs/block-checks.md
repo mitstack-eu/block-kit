@@ -164,7 +164,7 @@ A failing suite prints its reason on its own line, such as the missing test or
 the manifest key the parser refused. Add `--json` for the machine-readable
 report the attestation binds to.
 
-blockverify takes `--api-url` from kit v0.50.0 on. Run such a release with
+blockverify takes `--api-url` from kit v0.51.0 on. Run such a release with
 `--api-url https://api.mitstack.dev` to compare the `type-snapshot.json` at
 your block's root with the [type snapshot](manifest.md#the-type-snapshot) the
 platform serves, as CI does. When they differ, refresh the file with the
