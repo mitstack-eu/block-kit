@@ -402,21 +402,22 @@ above:
 
 Each object in that list also carries Argo CD's `health` of it. The node
 report is written by talos-cluster-kit, the Go module that cluster blocks use
-to set up Kubernetes on Talos Linux. The report also carries Argo CD's
-`message` beside any health but `Healthy`, and reports from earlier
-talos-cluster-kit releases carry neither member.
+to set up Kubernetes on Talos Linux. The talos-cluster-kit report adds Argo
+CD's `message` beside any `health` but `Healthy`. Reports from earlier
+talos-cluster-kit releases carry neither `health` nor `message`.
 
 `NodeReported.ObserveHealth(ctx, ref)` takes the same `ctx` and `ref` as
 `ObserveResource`, where `ref` is the `contract.ResourceRef` naming the
 object. It returns the observation `ObserveResource` gives together with an
-`observe.Health`, so a block's deploy can be judged by its own objects rather
-than by its whole Application. `observe.Health` holds Argo CD's `Status` and
-`Message`. `observe.HealthUnknown`, the string `Unknown`, is the `Status` when
-the report carries no health. Each object decodes as follows:
+`observe.Health`, a struct holding Argo CD's `Status` and `Message` of the
+object, so a block's deploy can be judged by its own objects rather than by
+its whole Application. `Status` reads `observe.HealthUnknown`, the string
+`Unknown`, when the report carries no health. `Message` is whatever message
+the report carries beside the health. Each object decodes as follows:
 
 | The object in the report | `Status` | `Message` |
 |---|---|---|
-| `"health": "Degraded", "message": "..."` | `Degraded` | Argo CD's message |
+| `"health": "Degraded", "message": "..."`, or any other status Argo CD gives, such as `Progressing` | that status, such as `Degraded` | Argo CD's message |
 | `"health": "Healthy"` | `Healthy` | Argo CD's message, if the report carries one |
 | `"health": null`, a kind Argo CD runs no health check for, such as a Secret | empty | empty |
 | No `health` member, as from an earlier talos-cluster-kit release | `observe.HealthUnknown` | empty |
