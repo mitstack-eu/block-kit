@@ -725,7 +725,7 @@ func (c *blockCheck) waitsOnPersonNameAction(resp contract.Response) {
 	}
 }
 
-// requiredOutputs reads a secret output from the answer's secretOutputs, which carry no resource's name.
+// requiredOutputs reads a provided resource's secret outputs from its own entry in the answer's resourceSecretOutputs, and from the merged secretOutputs only for an answer carrying no resourceSecretOutputs, as the platform judges them.
 func (c *blockCheck) requiredOutputs(resp contract.Response, operation string) {
 	c.ran[guardOutputs] = true
 	for _, name := range c.spec.Provides {
