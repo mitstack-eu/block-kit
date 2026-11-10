@@ -1,20 +1,24 @@
 package gitopstest_test
 
-// Repository and Notifications behave as the gitops.Repository and gitops.Notifications a block author tests against, as their doc comments say.
+// Repository, Notifications and NodeReports behave as the gitops.Repository, gitops.Notifications and observe.NodeReportsAPI a block author tests against, as their doc comments say.
 
 import (
 	"context"
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops"
 	"github.com/mitstack-eu/block-kit/capabilities/github/gitops/gitopstest"
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/observe"
 )
 
 var (
-	_ gitops.Repository    = (*gitopstest.Repository)(nil)
-	_ gitops.Notifications = (*gitopstest.Notifications)(nil)
+	_ gitops.Repository      = (*gitopstest.Repository)(nil)
+	_ gitops.Notifications   = (*gitopstest.Notifications)(nil)
+	_ observe.NodeReportsAPI = (*gitopstest.NodeReports)(nil)
 )
 
 func TestRepository_AnEmptyRepositoryHasHeadEmptyAndHoldsNoFile(t *testing.T) {
@@ -374,5 +378,51 @@ func TestNotifications_FailWithMakesEveryReadReturnTheError(t *testing.T) {
 
 	if _, _, err := notes.Latest(ctx, "app-alpha", "rev-1"); !errors.Is(err, boom) {
 		t.Errorf("Latest err = %v, want the FailWith error", err)
+	}
+}
+
+func TestNodeReports_AppliesHeadShowsEachObjectHeadsFilesDeclareSyncedAndHealthyButThoseSet(t *testing.T) {
+	ctx := context.Background()
+	repo := gitopstest.NewRepository()
+	head, _ := repo.Commit(ctx, "", map[string][]byte{"ns.yaml": []byte("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: app-alpha\n"),
+		"sa.json": []byte(`{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "runtime", "namespace": "app-alpha"}}`)}, "deploy")
+	account := gitops.Object{Kind: "ServiceAccount", Namespace: "app-alpha", Name: "runtime"}
+	reports := gitopstest.NewNodeReports()
+	reports.AppliesHead("sub-cluster", "app-alpha", repo, gitopstest.Object{Object: account, Sync: "OutOfSync", Health: "Missing"})
+	d := contract.Desired{VerbAt: time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC)}
+
+	got, why, err := observe.NodeReported{API: reports}.ArgoCDApplication(ctx, d, "sub-cluster", "app-alpha")
+
+	want := observe.Application{Name: "app-alpha", Sync: "Synced", Revision: head, Objects: []observe.AppliedObject{
+		{Kind: "Namespace", Name: "app-alpha", Sync: "Synced", Health: observe.Health{Status: "Healthy"}},
+		{Kind: "ServiceAccount", Namespace: "app-alpha", Name: "runtime", Sync: "OutOfSync", Health: observe.Health{Status: "Missing"}},
+	}}
+	if err != nil || why != "" || !reflect.DeepEqual(got, want) {
+		t.Errorf("ArgoCDApplication = %+v, %q, %v; want %+v", got, why, err, want)
+	}
+}
+
+func TestNodeReports_ReportAnswersOnlyItsClusterAndLeavesOutWhatTheApplicationLeavesOut(t *testing.T) {
+	reports := gitopstest.NewNodeReports()
+	madeAt := time.Date(2026, 11, 9, 9, 1, 0, 0, time.UTC)
+	reports.Report("sub-cluster", madeAt, gitopstest.Application{Name: "app-alpha", RevisionLeftOut: true})
+
+	got, why, err := observe.NodeReported{API: reports}.ArgoCDApplication(context.Background(), contract.Desired{VerbAt: madeAt.Add(-time.Minute)}, "sub-cluster", "app-alpha")
+	other, _ := reports.NodeReports(context.Background(), contract.Desired{}, "sub-other")
+
+	if err != nil || why != "" || !got.RevisionUnread || got.Objects != nil || len(other) != 0 {
+		t.Errorf("ArgoCDApplication = %+v, %q, %v and %d reports of another cluster; want no revision, no list and none", got, why, err, len(other))
+	}
+}
+
+func TestNodeReports_FailWithMakesEveryReadReturnTheError(t *testing.T) {
+	reports := gitopstest.NewNodeReports()
+	boom := errors.New("platform: 503")
+	reports.FailWith(boom)
+
+	_, err := reports.NodeReports(context.Background(), contract.Desired{}, "sub-cluster")
+
+	if !errors.Is(err, boom) {
+		t.Errorf("NodeReports error = %v, want %v", err, boom)
 	}
 }

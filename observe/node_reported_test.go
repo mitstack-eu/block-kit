@@ -1,6 +1,6 @@
 package observe_test
 
-// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, an object that Application lists carries Argo CD's health, unknown from a report carrying none, a cluster that sent none is named enrolled or not as the platform records it, and the client reads the reports and their verdicts with the events callback's token.
+// A report counts only when its madeAt, else its receivedAt, is after the verb, it gives an Argo CD Application with its revision and each object's sync and health, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, an object that Application lists carries Argo CD's health, unknown from a report carrying none, a cluster that sent none is named enrolled or not as the platform records it, and the client reads the reports and their verdicts with the events callback's token.
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -425,6 +426,46 @@ func TestNodeReported_ObserveHealthReadsArgoCDsHealthOfAnAppliedObjectBesideItsP
 			wantObservation(t, ref, got, err, tc.state, nil, "")
 			if health != tc.want {
 				t.Errorf("health = %+v, want %+v", health, tc.want)
+			}
+		})
+	}
+}
+
+func TestNodeReported_ArgoCDApplicationReadsTheApplicationWithItsRevisionAndEachObjectsSyncAndHealth(t *testing.T) {
+	cluster := map[string]any{"group": "postgresql.cnpg.io", "kind": "Cluster", "namespace": "app-pg", "name": "postgres", "sync": "OutOfSync", "health": "Progressing", "message": "Setting up primary"}
+	withRevision := func(revision any, applied ...map[string]any) map[string]any {
+		app := application("app-home", "Synced", applied...)
+		if revision != "left out" {
+			app["revision"] = revision
+		}
+		return app
+	}
+	read := observe.AppliedObject{Group: "postgresql.cnpg.io", Kind: "Cluster", Namespace: "app-pg", Name: "postgres", Sync: "OutOfSync", Health: observe.Health{Status: "Progressing", Message: "Setting up primary"}}
+	cases := []struct {
+		label  string
+		report map[string]any
+		want   observe.Application
+		why    string
+	}{
+		{"an Application at a revision with its objects", argoReport(at(30*time.Second), withRevision("4e1d7a0c", cluster)),
+			observe.Application{Name: "app-home", Sync: "Synced", Revision: "4e1d7a0c", Objects: []observe.AppliedObject{read}}, ""},
+		{"an Application Argo CD compared no revision of", argoReport(at(30*time.Second), withRevision(nil, cluster)),
+			observe.Application{Name: "app-home", Sync: "Synced", Objects: []observe.AppliedObject{read}}, ""},
+		{"a report of an earlier kit release, which carries no revision", argoReport(at(30*time.Second), withRevision("left out", cluster)),
+			observe.Application{Name: "app-home", Sync: "Synced", RevisionUnread: true, Objects: []observe.AppliedObject{read}}, ""},
+		{"a report cut to fit its size, which carries no list", argoReport(at(30*time.Second), withRevision("4e1d7a0c")),
+			observe.Application{Name: "app-home", Sync: "Synced", Revision: "4e1d7a0c"}, ""},
+		{"a report naming no such Application", argoReport(at(30*time.Second), application("cluster-root", "Synced")), observe.Application{}, `names no Argo CD Application "app-home"`},
+		{"a report made before the verb", argoReport(at(-30*time.Second), withRevision("4e1d7a0c", cluster)), observe.Application{}, "no node report made since the verb has arrived"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			d := contract.Desired{VerbAt: verbAt}
+
+			got, why, err := observe.NodeReported{API: received(t, tc.report)}.ArgoCDApplication(context.Background(), d, "sub-cluster", "app-home")
+
+			if err != nil || !reflect.DeepEqual(got, tc.want) || !strings.Contains(why, tc.why) || (tc.why == "") != (why == "") {
+				t.Errorf("ArgoCDApplication = %+v, %q, %v; want %+v, %q", got, why, err, tc.want, tc.why)
 			}
 		})
 	}
