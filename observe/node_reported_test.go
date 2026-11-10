@@ -1,6 +1,6 @@
 package observe_test
 
-// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, a cluster that sent none is named enrolled or not as the platform records it, and the client reads the reports and their verdicts with the events callback's token.
+// A report counts only when its madeAt, else its receivedAt, is after the verb, an object is absent only when a report made after the verb marks its list complete or names the object's kind as read whole, or shows the Argo CD Application its identity names Synced without it, an object that Application lists carries Argo CD's health, unknown from a report carrying none, a cluster that sent none is named enrolled or not as the platform records it, and the client reads the reports and their verdicts with the events callback's token.
 
 import (
 	"context"
@@ -364,20 +364,68 @@ func TestNodeReported_ReadsAnObjectAnArgoCDApplicationAppliedFromThatApplication
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			api := &fakeReports{}
-			for _, body := range tc.reports {
-				raw, err := json.Marshal(body)
-				if err != nil {
-					t.Fatal(err)
-				}
-				api.reports = append(api.reports, observe.NodeReport{ReceivedAt: verbAt.Add(time.Minute), Body: raw})
-			}
-			ref := refFor("kubernetes.secret", map[string]string{"kind": tc.kind, "name": "app-repository-alpha", "namespace": tc.namespace, "clusterSubscription": "sub-cluster", "argocdApplication": "repository-credentials"})
-			ref.Desired.VerbAt = verbAt
+			ref := appliedRef(tc.kind, tc.namespace)
 
-			got, err := observe.NodeReported{API: api}.ObserveResource(context.Background(), ref)
+			got, err := observe.NodeReported{API: received(t, tc.reports...)}.ObserveResource(context.Background(), ref)
 
 			wantObservation(t, ref, got, err, tc.want, nil, tc.detail)
+		})
+	}
+}
+
+func received(t *testing.T, bodies ...map[string]any) *fakeReports {
+	t.Helper()
+	api := &fakeReports{}
+	for _, body := range bodies {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		api.reports = append(api.reports, observe.NodeReport{ReceivedAt: verbAt.Add(time.Minute), Body: raw})
+	}
+	return api
+}
+
+func appliedRef(kind, namespace string) contract.ResourceRef {
+	ref := refFor("kubernetes.secret", map[string]string{"kind": kind, "name": "app-repository-alpha", "namespace": namespace, "clusterSubscription": "sub-cluster", "argocdApplication": "repository-credentials"})
+	ref.Desired.VerbAt = verbAt
+	return ref
+}
+
+func TestNodeReported_ObserveHealthReadsArgoCDsHealthOfAnAppliedObjectBesideItsPresenceAndUnknownFromAReportCarryingNone(t *testing.T) {
+	secret := func(health ...any) map[string]any {
+		o := appliedObject("", "Secret", "argocd")
+		for i, key := range []string{"health", "message"}[:len(health)] {
+			o[key] = health[i]
+		}
+		return o
+	}
+	unread := observe.Health{Status: observe.HealthUnknown}
+	cases := []struct {
+		label  string
+		object map[string]any
+		state  contract.State
+		want   observe.Health
+	}{
+		{"an object Argo CD reads Degraded, with its message", secret("Degraded", "secret app-repository-alpha is missing key url"), contract.Present,
+			observe.Health{Status: "Degraded", Message: "secret app-repository-alpha is missing key url"}},
+		{"a Healthy object", secret("Healthy"), contract.Present, observe.Health{Status: "Healthy"}},
+		{"an object whose kind Argo CD runs no health check for", secret(nil), contract.Present, observe.Health{}},
+		{"an object from a report of an earlier kit release, which carries no health", secret(), contract.Present, unread},
+		{"a health that names no status", secret(map[string]any{"status": "Healthy"}), contract.Present, unread},
+		{"an object the Synced Application does not list", appliedObject("", "ConfigMap", "argocd"), contract.Absent, unread},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			ref := appliedRef("secret", "argocd")
+			reports := received(t, argoReport(at(30*time.Second), application("repository-credentials", "Synced", tc.object)))
+
+			got, health, err := observe.NodeReported{API: reports}.ObserveHealth(context.Background(), ref)
+
+			wantObservation(t, ref, got, err, tc.state, nil, "")
+			if health != tc.want {
+				t.Errorf("health = %+v, want %+v", health, tc.want)
+			}
 		})
 	}
 }
