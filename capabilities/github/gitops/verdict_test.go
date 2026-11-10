@@ -264,6 +264,35 @@ func TestCheck_ARemovalSucceedsOnceTheApplicationNoLongerListsTheObjectsItRemove
 	}
 }
 
+func TestCheck_ACommitWhoseFilesDeclareNoObjectAndRemoveNoneIsPending(t *testing.T) {
+	const workflowPath = ".github/workflows/scan.yml"
+	cases := []struct {
+		name  string
+		files map[string][]byte
+	}{
+		{"a path no commit holds", nil},
+		{"a file declaring no Kubernetes object", map[string][]byte{workflowPath: []byte("name: scan\non: [push]\n")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHome(t)
+			if tc.files != nil {
+				h.own = h.commit(t, tc.files)
+			}
+			h.notify(h.own, "Succeeded", "Healthy", "")
+			h.healthyAt(h.own)
+			d := h.deployment()
+			d.Paths = []string{workflowPath}
+
+			out, err := gitops.Check(context.Background(), d, h.own)
+
+			if err != nil || out.Verdict != gitops.VerdictPending || !strings.Contains(out.Detail, "declare no Kubernetes object") {
+				t.Errorf("Check(%s) = %+v, %v; want pending, naming that the block's files declare no Kubernetes object", h.own, out, err)
+			}
+		})
+	}
+}
+
 func TestCheck_RefusesADeploymentMissingASourceOrItsPathsOrARevision(t *testing.T) {
 	h := newHome(t)
 	noReports, noPaths := h.deployment(), h.deployment()
