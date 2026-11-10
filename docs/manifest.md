@@ -85,9 +85,11 @@ to 240. It refuses a `spec.version` that is not strict semver, such as
 not HTTPS, an operation outside `subscribe`, `unsubscribe`, `upgrade`,
 `validate`, `rotate` and `logs`, an operation listed twice, `subscribe` without
 `unsubscribe`, any `spec.observability`, and a type the platform does not
-serve. blockverify judges the types against the block's `type-snapshot.json`.
-The platform alone runs the checks that need its records, such as whether the
-version is already published, and the dry-run apply reaches them.
+serve. blockverify judges the types against the block's `type-snapshot.json`,
+and compares that copy with the snapshot the platform serves, as
+[the type snapshot](#the-type-snapshot) explains. The platform alone runs the
+checks that need its records, such as whether the version is already
+published, and the dry-run apply reaches them.
 
 blockverify compares `spec.version` with the base branch's manifest on a pull
 request. A changed version needs both `spec.releaseClass` and
@@ -301,14 +303,20 @@ suite refuses an id that `contract.ParseBlockID` refuses.
 ## The type snapshot
 
 Resource types live in mitstack's type catalogue, not in the kit. The type
-snapshot is one numbered version of that catalogue as JSON. It lists each
-type with the outputs it declares, whether it is stateful, and the facts the
-checks need. The platform serves it to any member of your org at
-`GET https://api.mitstack.dev/v1/resource-types/snapshots/latest`, with an org
-API token sent as `Authorization: Bearer <token>`. You mint that token on the
-API Tokens page of the mitstack console. A block embeds the entries for the
-types its manifest names, as the example's `type-snapshot.json` does, so a
-first block can start from that file and add its own types' entries.
+snapshot is one numbered version of that catalogue as JSON. It lists each type
+with the outputs it declares, whether it is stateful, and the other facts the
+kit's checks read, such as how an observer finds a resource of the type. The
+platform serves the newest version to anyone, with no token, at
+`GET https://api.mitstack.dev/v1/resource-types/snapshots/latest`. A block
+keeps a copy in its `type-snapshot.json`. blockverify compares that copy with
+the served snapshot in each type the manifest requires or declares. It
+compares every field of the type's entry and each of its outputs, and leaves
+out only the entry's `version`. So a copy needs those types' entries and may
+hold the whole snapshot. One command writes the whole snapshot:
+
+```sh
+curl -fsS https://api.mitstack.dev/v1/resource-types/snapshots/latest -o type-snapshot.json
+```
 
 `contract.ParseTypeSnapshot` reads a snapshot, and
 `contract.CheckManifestTypes` refuses a manifest entry listing a type the
@@ -317,7 +325,9 @@ snapshot does not hold. A block passes the snapshot to `handler.New` as
 
 | Snapshot field | What it means |
 |---|---|
-| `outputs` | Each output a resource of the type reports, with `required` when every such resource must report it and `secret` when its value is secret, such as a role's ARN or a cluster's credential. `outputs` is a list, and one entry reads `{"name": "bucketName", "secret": false, "required": true, "schema": {"type": "string", "pattern": "^[a-z0-9-]+$"}}`. An output's `schema` holds the JSON Schema its type declares for the value, and is absent when the type declares none. The kit reads `schema` from v0.48.0 on and holds it in `contract.SnapshotOutput`, and no check of the kit judges a value against it yet. An earlier kit reads the snapshot and ignores the field |
+| `id` | The type's id, such as `aws.s3-bucket`, which a manifest names |
+| `version` | The number of this version of the type in the platform's store. blockverify leaves it out when it compares a block's copy with the served snapshot |
+| `outputs` | Each output a resource of the type reports, with `required` when every such resource must report it and `secret` when its value is secret, such as a role's ARN or a cluster's credential. `outputs` is a list, and one entry reads `{"name": "bucketName", "secret": false, "required": true, "schema": {"type": "string", "pattern": "^[a-z0-9-]+$"}}`. An output's `schema` holds the JSON Schema its type declares for the value, and is absent when the type declares none. The kit reads `schema` from v0.48.0 on and holds it in `contract.SnapshotOutput`. blockverify compares it between a block's copy and the served snapshot, and no check of the kit judges a value against it yet. An earlier kit reads the snapshot and ignores the field |
 | `stateful` | A resource of the type can hold data, so replacing it loses the data |
 | `parts` | The objects that exist only to serve one resource of the type, such as the push role of an ECR repository, each with its `type` and `count`, the most one resource holds |
 | `endsWithSubscription` | The resource's absence cannot be observed, so it ends when the block's unsubscribe succeeds |
