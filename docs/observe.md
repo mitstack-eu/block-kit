@@ -400,20 +400,25 @@ above:
 - Anything else is unknown, including a report that names no such Application
   or carries no `resources` for it.
 
-Each object in that list also carries Argo CD's `health` of it, with Argo CD's
-`message` beside any health but `Healthy`. `NodeReported.ObserveHealth`
-returns the observation `ObserveResource` gives together with that health, so
-a verdict can judge a block by its own objects. Its `Health.Status` reads:
+Each object in that list also carries Argo CD's `health` of it. The report
+comes from talos-cluster-kit, the kit that sets up the Talos clusters whose
+nodes send these reports. It adds Argo CD's `message` beside any health but
+`Healthy`, and its earlier releases carry neither.
+
+`NodeReported.ObserveHealth` returns the observation `ObserveResource` gives
+together with that health, so a block's deploy can be judged by its own
+objects rather than by its whole Application. It takes the same `ctx` and
+`ref` as `ObserveResource`, and its `Health.Status` reads:
 
 | The object in the report | `Status` | `Message` |
 |---|---|---|
 | `"health": "Degraded", "message": "..."` | `Degraded` | Argo CD's message |
-| `"health": "Healthy"` | `Healthy` | Argo CD's message when the report carries one, and talos-cluster-kit carries none beside `Healthy` |
+| `"health": "Healthy"` | `Healthy` | Argo CD's message, if the report carries one |
 | `"health": null`, a kind Argo CD runs no health check for, such as a Secret | empty | empty |
-| No `health` member, as from a talos-cluster-kit release that carries none | `observe.HealthUnknown` | empty |
+| No `health` member, as from an earlier talos-cluster-kit release | `observe.HealthUnknown` | empty |
 
-An absent or unknown observation reads `observe.HealthUnknown` too. A
-verdict reads both from one call:
+An absent or unknown observation reads `observe.HealthUnknown` too. A block
+reads both from one call:
 
 ```go
 obs, health, err := observe.NodeReported{API: observe.NodeReportsClient{}}.ObserveHealth(ctx, ref)
