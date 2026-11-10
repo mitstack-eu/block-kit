@@ -1,8 +1,9 @@
 package scripts_test
 
-// publish-block.yml keeps no token in any checkout, runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, and asks the platform for its verdict and its attestation where a starter turns them on.
+// publish-block.yml keeps no token in any checkout, runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, asks the platform for its verdict and its attestation where a starter turns them on, and tags each release it builds at the commit that built it.
 
 import (
+	"encoding/json"
 	"io"
 	"maps"
 	"net/http"
@@ -402,4 +403,186 @@ func TestPublishBlockWorkflow_TheAttestationJobFailsOnARefusalNamingIt(t *testin
 			}
 		})
 	}
+}
+
+// releaseSteps are the publish job's steps that guard, cut and announce a release tag, in the order they run.
+var releaseSteps = []string{"Refuse a version tagged at another commit", "Tag the release at the commit it built", "Start the block's publisher at the release tag"}
+
+// A release tag is cut only by a run that built its image or completes its record from this commit, after both are pushed, so a tag never names a commit that built nothing.
+func TestPublishBlockWorkflow_TagsAReleaseOnlyFromTheCommitThatBuiltItsImage(t *testing.T) {
+	all := publishWorkflow(t)
+	at := func(name string) int { return stepAt(all, "publish", "name", name) }
+	step := func(name, key string) string { return all[stepOf(all, "publish", "name", name)+key] }
+	probe, built, recorded := at("Probe the version tag and its provenance record"), at("Build and push image"), at("blockprov push")
+	refused, tagged, started := at(releaseSteps[0]), at(releaseSteps[1]), at(releaseSteps[2])
+	cases := []struct{ name, got, want string }{
+		{"the publish job may push the tag", all["jobs.publish.permissions.contents"], "write"},
+		{"the publish job may start the publisher", all["jobs.publish.permissions.actions"], "write"},
+		{"the publish job still takes its identity token", all["jobs.publish.permissions.id-token"], "write"},
+		{"the publisher a caller names is optional", all["on.workflow_call.inputs.publisher-workflow.required"], "false"},
+		{"the publisher defaults to release-publisher.yml", all["on.workflow_call.inputs.publisher-workflow.default"], "release-publisher.yml"},
+		{"the refusal runs after the probe and before the image push", strconv.FormatBool(probe >= 0 && probe < refused && refused < built), "true"},
+		{"the tag is cut after the image and its record are pushed", strconv.FormatBool(built < recorded && recorded < tagged), "true"},
+		{"the publisher starts after the tag exists", strconv.FormatBool(tagged >= 0 && tagged < started), "true"},
+		{"the publisher learns the workflow the caller names", step(releaseSteps[2], "env.PUBLISHER_WORKFLOW"), "${{ inputs.publisher-workflow }}"},
+	}
+	for _, name := range releaseSteps {
+		cases = append(cases,
+			struct{ name, got, want string }{name + " runs only where this commit built the image", step(name, "if"), "steps.existing.outputs.built == 'true'"},
+			struct{ name, got, want string }{name + " reads the tag the probe named", step(name, "env.TAG"), "${{ steps.existing.outputs.tag }}"},
+			struct{ name, got, want string }{name + " calls GitHub with the job's token, never a checkout's", step(name, "env.GITHUB_TOKEN"), "${{ github.token }}"})
+	}
+	checkFields(t, "publish-block.yml", "", cases)
+
+	for _, job := range []string{"conformance", "opentofu-conformance", "secrets", "scripts", "platform-verdict", "attest"} {
+		if got := all["jobs."+job+".permissions.contents"]; got != "read" {
+			t.Errorf("publish-block.yml jobs.%s.permissions.contents = %q, want read, since only publish pushes a tag", job, got)
+		}
+	}
+}
+
+// githubAPI stands in for the GitHub REST API the release steps call, holding each tag's commit and logging every call.
+type githubAPI struct {
+	url   string
+	tags  map[string]string
+	calls []string
+}
+
+const (
+	jobToken     = "ghs_job"
+	annotatedTag = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+)
+
+// fakeGitHub serves the tags in tags, a tag object at annotatedTag naming the commit tags holds under "annotated", and refuses every call with refuse when it is set.
+func fakeGitHub(t *testing.T, tags map[string]string, refuse int) *githubAPI {
+	t.Helper()
+	g := &githubAPI{tags: map[string]string{}}
+	maps.Copy(g.tags, tags)
+	const repo = "/repos/acme/billing-db/"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		g.calls = append(g.calls, strings.TrimSpace(r.Method+" "+r.URL.Path+" "+string(body)))
+		path, inRepo := strings.CutPrefix(r.URL.Path, repo)
+		tag, isRef := strings.CutPrefix(path, "git/ref/tags/")
+		switch {
+		case r.Header.Get("Authorization") != "Bearer "+jobToken || !inRepo:
+			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+		case refuse != 0:
+			http.Error(w, `{"message":"Server Error"}`, refuse)
+		case r.Method == http.MethodGet && isRef && tag == "annotated":
+			_, _ = io.WriteString(w, `{"object":{"type":"tag","sha":"`+annotatedTag+`"}}`)
+		case r.Method == http.MethodGet && isRef && g.tags[tag] != "":
+			_, _ = io.WriteString(w, `{"object":{"type":"commit","sha":"`+g.tags[tag]+`"}}`)
+		case r.Method == http.MethodGet && isRef:
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+		case r.Method == http.MethodGet && path == "git/tags/"+annotatedTag:
+			_, _ = io.WriteString(w, `{"object":{"type":"commit","sha":"`+g.tags["annotated"]+`"}}`)
+		case r.Method == http.MethodPost && path == "git/refs":
+			var ref struct{ Ref, Sha string }
+			if err := json.Unmarshal(body, &ref); err != nil {
+				http.Error(w, `{"message":"Problems parsing JSON"}`, http.StatusBadRequest)
+				return
+			}
+			g.tags[strings.TrimPrefix(ref.Ref, "refs/tags/")] = ref.Sha
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && path == "actions/workflows/release-publisher.yml/dispatches":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, `{"message":"the stand-in does not answer this call"}`, http.StatusTeapot)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	g.url = srv.URL
+	return g
+}
+
+const (
+	builtCommit = "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff"
+	laterCommit = "decafdecafdecafdecafdecafdecafdecafdecaf"
+)
+
+// Each release step runs the kit's own script from RUNNER_TEMP, so the cases copy it there and answer GitHub through the stand-in.
+func TestPublishBlockWorkflow_TheReleaseStepsCutOneTagThatNeverMoves(t *testing.T) {
+	const tag = "v1.2.0"
+	read := "GET /repos/acme/billing-db/git/ref/tags/" + tag
+	cut := "POST /repos/acme/billing-db/git/refs " + `{"ref":"refs/tags/` + tag + `","sha":"` + builtCommit + `"}`
+	start := "POST /repos/acme/billing-db/actions/workflows/release-publisher.yml/dispatches " + `{"ref":"` + tag + `","inputs":{"tag":"` + tag + `"}}`
+	cases := []struct {
+		name, step string
+		tags       map[string]string
+		publisher  bool
+		refuse     int
+		wantFail   string
+		wantCalls  []string
+		wantTagAt  string
+	}{
+		{"the refusal passes a version with no tag yet", releaseSteps[0], nil, false, 0, "", []string{read}, ""},
+		{"the refusal passes a version already tagged at this commit", releaseSteps[0], map[string]string{tag: builtCommit}, false, 0, "", []string{read}, builtCommit},
+		{"the refusal fails a version tagged at another commit, naming the tag and both commits", releaseSteps[0], map[string]string{tag: laterCommit}, false, 0,
+			tag + " already names commit " + laterCommit + ", and this run built commit " + builtCommit, []string{read}, laterCommit},
+		{"the refusal fails when GitHub cannot say whether the tag exists, naming its answer", releaseSteps[0], nil, false, http.StatusBadGateway,
+			"GitHub answered HTTP 502", []string{read}, ""},
+		{"the tag step cuts the tag at this commit", releaseSteps[1], nil, false, 0, "", []string{read, cut}, builtCommit},
+		{"the tag step on a rerun finds the tag at this commit and pushes nothing", releaseSteps[1], map[string]string{tag: builtCommit}, false, 0, "", []string{read}, builtCommit},
+		{"the tag step never moves a tag another commit holds", releaseSteps[1], map[string]string{tag: laterCommit}, false, 0,
+			tag + " already names commit " + laterCommit, []string{read}, laterCommit},
+		{"a block holding the publisher starts it at the tag", releaseSteps[2], map[string]string{tag: builtCommit}, true, 0, "", []string{start}, builtCommit},
+		{"a publisher GitHub refuses to start fails the step, naming its answer", releaseSteps[2], map[string]string{tag: builtCommit}, true, http.StatusInternalServerError,
+			"could not start release-publisher.yml at " + tag + ": GitHub answered HTTP 500", []string{start}, builtCommit},
+		{"a block holding no publisher starts nothing and passes", releaseSteps[2], map[string]string{tag: builtCommit}, false, 0, "", nil, builtCommit},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, exit, github := runReleaseStep(t, tc.step, tag, tc.tags, tc.publisher, tc.refuse)
+			if (exit != 0) != (tc.wantFail != "") || !strings.Contains(out, tc.wantFail) {
+				t.Errorf("%q exit %d, output:\n%s\nwant failing=%v naming %q", tc.step, exit, out, tc.wantFail != "", tc.wantFail)
+			}
+			if !slices.Equal(github.calls, tc.wantCalls) {
+				t.Errorf("GitHub calls = %q, want %q", github.calls, tc.wantCalls)
+			}
+			if got := github.tags[tag]; got != tc.wantTagAt {
+				t.Errorf("%s names commit %q after the step, want %q", tag, got, tc.wantTagAt)
+			}
+		})
+	}
+}
+
+// A tag someone cut by hand as an annotated tag names a tag object, so the refusal reads the commit that object names.
+func TestPublishBlockWorkflow_TheRefusalReadsTheCommitAnAnnotatedTagNames(t *testing.T) {
+	for _, tc := range []struct {
+		name, commit string
+		wantExit     int
+	}{
+		{"an annotated tag at this commit passes", builtCommit, 0},
+		{"an annotated tag at another commit fails", laterCommit, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, exit, github := runReleaseStep(t, releaseSteps[0], "annotated", map[string]string{"annotated": tc.commit}, false, 0)
+			if exit != tc.wantExit || (exit != 0 && !strings.Contains(out, "already names commit "+tc.commit)) {
+				t.Errorf("exit %d, output:\n%s\nwant exit %d naming commit %s", exit, out, tc.wantExit, tc.commit)
+			}
+			want := []string{"GET /repos/acme/billing-db/git/ref/tags/annotated", "GET /repos/acme/billing-db/git/tags/" + annotatedTag}
+			if !slices.Equal(github.calls, want) {
+				t.Errorf("GitHub calls = %q, want %q", github.calls, want)
+			}
+		})
+	}
+}
+
+// runReleaseStep runs the publish step named step for tag against a GitHub holding tags, with the kit's release-tag.sh copied where the job keeps the kit.
+func runReleaseStep(t *testing.T, step, tag string, tags map[string]string, publisher bool, refuse int) (string, int, *githubAPI) {
+	t.Helper()
+	dir, temp := t.TempDir(), t.TempDir()
+	script, err := os.ReadFile("release-tag.sh")
+	if err != nil {
+		t.Fatalf("reading the kit's release-tag.sh: %v", err)
+	}
+	writeFile(t, filepath.Join(temp, "block-kit", "scripts", "release-tag.sh"), string(script))
+	if publisher {
+		writeFile(t, filepath.Join(dir, ".github", "workflows", "release-publisher.yml"), "name: release-publisher\n")
+	}
+	github := fakeGitHub(t, tags, refuse)
+	out, exit := runNamed(t, "publish", step, dir, "", "RUNNER_TEMP="+temp, "TAG="+tag, "GITHUB_SHA="+builtCommit, "GITHUB_API_URL="+github.url,
+		"GITHUB_REPOSITORY=acme/billing-db", "GITHUB_TOKEN="+jobToken, "PUBLISHER_WORKFLOW=release-publisher.yml")
+	return out, exit, github
 }
