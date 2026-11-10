@@ -163,9 +163,12 @@ bash scripts/release-block-kit.sh --dry-run --base origin/main --head HEAD
 
 ## Gating and recording a pull request's board keys
 
-The `pr key gate` and `record delivery` jobs run `pr-keys` and
-`board-delivery` from mitstack-eu/plain-delivery at the release tag that
+The `block / delivery` and `record delivery` jobs run `pr-delivery` and
+`board-delivery` from mitstack-eu/plain-delivery at the release tags that
 `ci.yml` pins, and that repository's README says what each command does.
+`pr-delivery` fails a pull request whose code lands before its tests, or
+whose keys are not issues claimed on the board. `publish-block.yml` runs the
+same release of it for a block, so a change to that pin edits both workflows.
 
 ## Judging the comments in a pull request
 

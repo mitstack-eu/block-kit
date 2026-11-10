@@ -85,34 +85,33 @@ jobs:
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}"
 
-  # A pull request's own delivery intent has to reach the board somehow: a
-  # merge commit or a rebase carries it in the commits, a squash carries it
-  # only in the title, so this gates on both. pull_request only — a push to
-  # main has already merged, and record-delivery below is what reads it
-  # then.
-  pr-key-gate:
-    name: pr key gate
+  # A merge or a rebase lands the commits and a squash lands the title, so
+  # the check reads both, and it fails code committed before its tests.
+  # pull_request only, since record-delivery below reads a push to main. It
+  # reports under the name every block's main requires for the same check.
+  delivery:
+    name: block / delivery
     if: github.event_name == 'pull_request'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the base..head range needs history a shallow checkout has not
+          fetch-depth: 0 # the commit range needs history a shallow checkout has not
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.10'
-      - name: Gate the pull request on a board key
-        # PR_TITLE carries the title through the environment rather than
-        # interpolated straight into the shell below: a pull request's title
-        # is attacker-controlled text, and inline interpolation into run:
-        # would be a script-injection hole.
+      - name: Judge the commit order and the board keys
+        # The title reaches the shell through the environment, since a pull
+        # request's title is text its author controls.
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          go run github.com/mitstack-eu/plain-delivery/cmd/pr-keys@v0.1.0 \
-            --repo . \
-            --base "${{ github.event.pull_request.base.sha }}" \
-            --head "${{ github.event.pull_request.head.sha }}"
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}
+          TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
+        run: go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.0 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"
 
   comment-check:
     name: comment check
