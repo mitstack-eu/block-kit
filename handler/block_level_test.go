@@ -804,26 +804,23 @@ func TestBlockLevel_AValidateNamingAResourceHandsItsObserverTheUnsubscribingMark
 func TestTypeObservers_ServeOnlyAValidateNamingAResourceTheManifestNoLongerDeclares(t *testing.T) {
 	byRecordedType := map[string]any{"resource": "b", "resourceType": "aws.vpc", "resourceIdentity": map[string]any{"vpcId": "vpc-0abc"}}
 	cases := []struct {
-		label, op string
-		fields    map[string]any
-		state     contract.State
-		refused   bool
-		names     []string
-		secrets   map[string]string
+		label, op     string
+		fields        map[string]any
+		observed      contract.Observation
+		refusedNaming []string
 	}{
-		{"a validate observed absent", "validate", byRecordedType, contract.Absent, false, nil, nil},
-		{"a validate observed present", "validate", byRecordedType, contract.Present, false, nil, nil},
-		{"a validate observed present keys its observer's secret outputs under the requested name", "validate", byRecordedType, contract.Present, false, nil, map[string]string{"vpcToken": "token-of-b"}},
-		{"a subscribe is refused", "subscribe", map[string]any{"resource": "b", "resourceType": "aws.vpc"}, contract.Present, true, nil, nil},
-		{"an upgrade is refused", "upgrade", map[string]any{"resource": "b", "resourceType": "aws.vpc"}, contract.Present, true, nil, nil},
-		{"an unsubscribe is refused", "unsubscribe", map[string]any{"resource": "b", "resourceType": "aws.vpc"}, contract.Present, true, nil, nil},
-		{"a validate with no type is refused naming the resource", "validate", map[string]any{"resource": "b"}, contract.Present, true, []string{`"b"`}, nil},
-		{"a validate of a type no observer holds is refused naming resource and type", "validate",
-			map[string]any{"resource": "b", "resourceType": "aws.subnet"}, contract.Present, true, []string{`"b"`, "aws.subnet"}, nil},
+		{"a validate observed absent", "validate", byRecordedType, contract.Observation{State: contract.Absent}, nil},
+		{"a validate observed present", "validate", byRecordedType, contract.Observation{State: contract.Present}, nil},
+		{"a validate observed present keys its observer's secret outputs under b", "validate", byRecordedType, contract.Observation{State: contract.Present, SecretOutputs: map[string]string{"vpcToken": "token-of-b"}}, nil},
+		{"a subscribe is refused naming the resource", "subscribe", map[string]any{"resource": "b", "resourceType": "aws.vpc"}, contract.Observation{}, []string{`"b"`}},
+		{"an upgrade is refused naming the resource", "upgrade", map[string]any{"resource": "b", "resourceType": "aws.vpc"}, contract.Observation{}, []string{`"b"`}},
+		{"an unsubscribe is refused naming the resource", "unsubscribe", map[string]any{"resource": "b", "resourceType": "aws.vpc"}, contract.Observation{}, []string{`"b"`}},
+		{"a validate with no type is refused naming the resource", "validate", map[string]any{"resource": "b"}, contract.Observation{}, []string{`"b"`}},
+		{"a validate of a type no observer holds is refused naming resource and type", "validate", map[string]any{"resource": "b", "resourceType": "aws.subnet"}, contract.Observation{}, []string{`"b"`, "aws.subnet"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			block, vpc := &blockResource{cloud: newFakeCloud()}, fixed(contract.Observation{State: tc.state, SecretOutputs: tc.secrets})
+			block, vpc := &blockResource{cloud: newFakeCloud()}, fixed(tc.observed)
 
 			status, resp := serveBlock(t, blockCall{r: block, obs: map[string]handler.Observer{"a": &observer{name: "a", cloud: newFakeCloud()}}, op: tc.op, fields: tc.fields, config: []func(*handler.Config){
 				withManifest(onlyAManifest), func(c *handler.Config) { c.TypeObservers = map[string]handler.Observer{"aws.vpc": vpc} }}})
@@ -831,22 +828,21 @@ func TestTypeObservers_ServeOnlyAValidateNamingAResourceTheManifestNoLongerDecla
 			if got := block.calls(); got != [2]int{} {
 				t.Errorf("block-level handler ran Ensure, Delete %v times; want none", got)
 			}
-			if tc.refused {
-				wantRefusal(t, status, resp, "undeclared-resource", tc.names...)
+			if tc.refusedNaming != nil {
+				wantRefusal(t, status, resp, "undeclared-resource", tc.refusedNaming...)
 				if n := len(vpc.calls()); n != 0 {
 					t.Errorf("aws.vpc observer called %d times, want none", n)
 				}
 				return
 			}
 			wantOK(t, status, resp)
-			refs := vpc.calls()
-			if len(refs) != 1 || refs[0].Name != "b" || refs[0].Type != "aws.vpc" || !reflect.DeepEqual(refs[0].Identity, map[string]string{"vpcId": "vpc-0abc"}) {
+			if refs := vpc.calls(); len(refs) != 1 || refs[0].Name != "b" || refs[0].Type != "aws.vpc" || !reflect.DeepEqual(refs[0].Identity, map[string]string{"vpcId": "vpc-0abc"}) {
 				t.Errorf("aws.vpc observer handed %+v, want one ref to b as aws.vpc with identity vpcId vpc-0abc", refs)
 			}
-			if o := resp.Resources["b"].Observe; len(resp.Resources) != 1 || o == nil || o.State != tc.state {
-				t.Errorf("resources = %+v, want b's entry alone with state %s", resp.Resources, tc.state)
+			if o := resp.Resources["b"].Observe; len(resp.Resources) != 1 || o == nil || o.State != tc.observed.State {
+				t.Errorf("resources = %+v, want b's entry alone with state %s", resp.Resources, tc.observed.State)
 			}
-			if want := map[string]map[string]string{"b": tc.secrets}; tc.secrets != nil && !reflect.DeepEqual(resp.ResourceSecretOutputs, want) {
+			if want := map[string]map[string]string{"b": tc.observed.SecretOutputs}; tc.observed.SecretOutputs != nil && !reflect.DeepEqual(resp.ResourceSecretOutputs, want) {
 				t.Errorf("ResourceSecretOutputs = %v, want %v: the type observer's secret outputs under the requested name", resp.ResourceSecretOutputs, want)
 			}
 		})
