@@ -282,7 +282,7 @@ func TestPublishBlockWorkflow_JudgesDeliveryOnlyForACallerWithABoard(t *testing.
 		{"the job runs plain-delivery's pr-delivery at the release ci.yml runs", strconv.FormatBool(strings.HasSuffix(run, "\n"+prDeliveryRun)), "true"},
 		{"the job reads the range and the title from the pull request event", env("BASE_SHA") + " " + env("HEAD_SHA") + " " + env("PR_TITLE"),
 			"${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} ${{ github.event.pull_request.title }}"},
-		{"the job reads the author's account type from the pull request event", env("PR_AUTHOR_TYPE"), "${{ github.event.pull_request.user.type }}"},
+		{"the job reads the author's login from the pull request event", env("PR_AUTHOR"), "${{ github.event.pull_request.user.login }}"},
 		{"the job reads the board with the caller's address and token", env("TRACKER_BASE_URL") + " " + env("TRACKER_API_TOKEN"), "${{ vars.TRACKER_BASE_URL }} ${{ secrets.TRACKER_API_TOKEN }}"},
 		{"the secrets job still runs on every event", all["jobs.secrets.if"], ""},
 		{"the scripts job still runs on every event", all["jobs.scripts.if"], ""},
