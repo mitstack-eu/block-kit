@@ -317,7 +317,7 @@ snapshot does not hold. A block passes the snapshot to `handler.New` as
 
 | Snapshot field | What it means |
 |---|---|
-| `outputs` | Each output a resource of the type reports, with `required` when every such resource must report it and `secret` when its value is secret, such as a role's ARN or a cluster's credential |
+| `outputs` | Each output a resource of the type reports, with `required` when every such resource must report it and `secret` when its value is secret, such as a role's ARN or a cluster's credential. `outputs` is a list, and one entry reads `{"name": "bucketName", "secret": false, "required": true, "schema": {"type": "string", "pattern": "^[a-z0-9-]+$"}}`. An output's `schema` holds the JSON Schema its type declares for the value, and is absent when the type declares none. The kit reads `schema` from v0.48.0 on and holds it in `contract.SnapshotOutput`, and no check of the kit judges a value against it yet. An earlier kit reads the snapshot and ignores the field |
 | `stateful` | A resource of the type can hold data, so replacing it loses the data |
 | `parts` | The objects that exist only to serve one resource of the type, such as the push role of an ECR repository, each with its `type` and `count`, the most one resource holds |
 | `endsWithSubscription` | The resource's absence cannot be observed, so it ends when the block's unsubscribe succeeds |
