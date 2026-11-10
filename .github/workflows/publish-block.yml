@@ -39,11 +39,11 @@
 #
 # A run that builds a version's image, or completes its record from the commit
 # that built it, cuts the release tag v<version> at that commit once both are
-# pushed, refusing up front a version another commit already holds, so a tag
-# never moves. It then starts the block's publisher workflow at the tag where
-# the block holds one. A later push that finds the image and its record
-# published from an earlier commit, such as a change to Markdown alone, which
-# the version rule lets keep spec.version, cuts nothing and stays green.
+# pushed, and then starts the block's publisher workflow at the tag where the
+# block holds one. Before it pushes anything, the run fails when the tag
+# already names another commit, so a tag never moves. A later push that keeps
+# spec.version, as a change to Markdown alone may, finds the image and its
+# record published, builds nothing and cuts no tag.
 #
 # A version tag already in the registry is never pushed over. The probe asks
 # two questions, whether the tag is published and whether its provenance

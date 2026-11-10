@@ -225,14 +225,27 @@ job fails when that tag already names another commit, and tells you to raise
 README, finds the image and its record published, builds nothing and cuts no
 tag.
 
-A tag the job pushes starts no workflow run of its own. So the job then starts
-your block's `.github/workflows/release-publisher.yml` at the tag, when your
-repository holds that file, passing the tag as the input `tag`, which that
-workflow's `workflow_dispatch` trigger declares. The `publisher-workflow` input
-names a different file. The job pushes the tag with `contents: write`, starts
-the publisher with `actions: write` and signs the record with
-`id-token: write`. A called workflow gets no more than its caller grants, so
-the job calling it grants all three, as the examples show.
+A block can keep its source repository private and still show each release
+in public. Its public release repository is a second GitHub repository that
+holds one commit for each release of the block and nothing else. A publisher is a workflow in your block's repository
+that copies each release tag to that public release repository. You write a
+publisher only when your block has a public release repository, and a block
+holding none skips this step.
+
+The job pushes the tag with the run's own `GITHUB_TOKEN`, and GitHub starts no
+workflow run for a push made with that token, so the tag alone never starts
+the publisher. The job therefore starts your block's
+`.github/workflows/release-publisher.yml` at the tag itself, when your
+repository holds that file. It passes the tag as the input `tag`. So the
+publisher declares a `workflow_dispatch` trigger, GitHub's trigger for starting
+a workflow by an API call, with a `tag` input. `publisher-workflow` is an
+optional input of `publish-block.yml` that names a different file, and it
+defaults to `release-publisher.yml`.
+
+The job pushes the tag with `contents: write`, starts the publisher with
+`actions: write` and signs the record with `id-token: write`. A called
+workflow gets no more than its caller grants, so the job of yours that calls
+`publish-block.yml`, `block` in the examples, grants all three.
 
 Two scan jobs also run on every event your CI calls the workflow for, and
 `publish` waits for both. The `secrets` job runs `scripts/scan-secrets.sh`,
