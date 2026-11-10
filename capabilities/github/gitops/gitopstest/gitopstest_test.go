@@ -4,6 +4,7 @@ package gitopstest_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -412,6 +413,42 @@ func TestNodeReports_ReportAnswersOnlyItsClusterAndLeavesOutWhatTheApplicationLe
 
 	if err != nil || why != "" || !got.RevisionUnread || got.Objects != nil || len(other) != 0 {
 		t.Errorf("ArgoCDApplication = %+v, %q, %v and %d reports of another cluster; want no revision, no list and none", got, why, err, len(other))
+	}
+}
+
+func TestNodeReports_ReportWritesEachApplicationAsTalosClusterKitsNodeReportDoes(t *testing.T) {
+	reports := gitopstest.NewNodeReports()
+	reports.Report("sub-cluster", time.Date(2026, 11, 9, 9, 1, 0, 0, time.UTC),
+		gitopstest.Application{Name: "app-alpha", Revision: "9b2c4e7a1f3d5c8e0a6b4d2f9e7c5a3b1d8f6e4c", Objects: []gitopstest.Object{
+			gitopstest.Healthy(gitops.Object{Kind: "Namespace", Name: "app-alpha"}),
+			{Object: gitops.Object{Kind: "ServiceAccount", Namespace: "app-alpha", Name: "runtime"}, Sync: "Synced"},
+			{Object: gitops.Object{Group: "postgresql.cnpg.io", Kind: "Cluster", Namespace: "app-pg", Name: "shared"}, Sync: "OutOfSync", Health: "Degraded", Message: "the storage class local-path is missing"},
+			{Object: gitops.Object{Group: "apps", Kind: "Deployment", Namespace: "app-alpha", Name: "web"}, Sync: "Synced", Health: "Progressing"},
+			{Object: gitops.Object{Kind: "Secret", Namespace: "app-alpha", Name: "env"}, Sync: "Synced", HealthLeftOut: true},
+		}},
+		gitopstest.Application{Name: "app-beta", Objects: []gitopstest.Object{}},
+		gitopstest.Application{Name: "app-gamma", Revision: "4e1d7a0c3b6f9e2d5a8c1b4e7f0a3d6c9b2e5f8a"},
+		gitopstest.Application{Name: "app-delta", RevisionLeftOut: true})
+	want := `{"madeAt": "2026-11-09T09:01:00Z", "argocd": {"applications": [
+		{"name": "app-alpha", "health": "Healthy", "sync": "Synced", "revision": "9b2c4e7a1f3d5c8e0a6b4d2f9e7c5a3b1d8f6e4c", "resources": [
+			{"group": "", "kind": "Namespace", "namespace": null, "name": "app-alpha", "sync": "Synced", "health": "Healthy"},
+			{"group": "", "kind": "ServiceAccount", "namespace": "app-alpha", "name": "runtime", "sync": "Synced", "health": null},
+			{"group": "postgresql.cnpg.io", "kind": "Cluster", "namespace": "app-pg", "name": "shared", "sync": "OutOfSync", "health": "Degraded", "message": "the storage class local-path is missing"},
+			{"group": "apps", "kind": "Deployment", "namespace": "app-alpha", "name": "web", "sync": "Synced", "health": "Progressing", "message": null},
+			{"group": "", "kind": "Secret", "namespace": "app-alpha", "name": "env", "sync": "Synced"}]},
+		{"name": "app-beta", "health": "Healthy", "sync": "Synced", "revision": null, "resources": []},
+		{"name": "app-gamma", "health": "Healthy", "sync": "Synced", "revision": "4e1d7a0c3b6f9e2d5a8c1b4e7f0a3d6c9b2e5f8a"},
+		{"name": "app-delta", "health": "Healthy", "sync": "Synced"}]}}`
+
+	got, err := reports.NodeReports(context.Background(), contract.Desired{}, "sub-cluster")
+
+	var body, wantBody any
+	if err != nil || len(got) != 1 || json.Unmarshal(got[0].Body, &body) != nil || json.Unmarshal([]byte(want), &wantBody) != nil || !reflect.DeepEqual(body, wantBody) {
+		bodies := make([]string, 0, len(got))
+		for _, r := range got {
+			bodies = append(bodies, string(r.Body))
+		}
+		t.Errorf("NodeReports = %q, %v; want one report whose body is %s", bodies, err, want)
 	}
 }
 

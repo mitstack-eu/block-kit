@@ -201,10 +201,10 @@ func TestCheck_CountsOnlyAReportMadeSinceTheVerbShowingARevisionThatHoldsTheComm
 			h.notify(h.own, "Succeeded", "Healthy", "")
 			h.reports.Report(homeCluster, verbAt.Add(time.Minute), gitopstest.Application{Name: homeApp, RevisionLeftOut: true, Objects: []gitopstest.Object{gitopstest.Healthy(dbObj), gitopstest.Healthy(cert)}})
 		}, gitops.VerdictPending, []string{"carries no revision of Argo CD Application " + homeApp}},
-		{"a report whose Argo CD compared no revision is pending, naming that", func(_ *testing.T, h *home) {
+		{"a report holding a null revision, as before Argo CD's first comparison or for an Application with several sources, is pending, naming no revision to judge", func(_ *testing.T, h *home) {
 			h.notify(h.own, "Succeeded", "Healthy", "")
 			h.report("", gitopstest.Healthy(dbObj), gitopstest.Healthy(cert))
-		}, gitops.VerdictPending, []string{"compared no revision of Application " + homeApp}},
+		}, gitops.VerdictPending, []string{"gives Argo CD Application " + homeApp + " no revision to judge", "first comparison", "several sources"}},
 		{"a report at an earlier revision is pending, naming that revision", func(_ *testing.T, h *home) {
 			h.notify(h.own, "Succeeded", "Healthy", "")
 			h.report(h.sibling, state(api, "Synced", "Healthy", ""))

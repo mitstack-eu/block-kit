@@ -449,7 +449,7 @@ func TestNodeReported_ArgoCDApplicationReadsTheApplicationWithItsRevisionAndEach
 	}{
 		{"an Application at a revision with its objects", argoReport(at(30*time.Second), withRevision("4e1d7a0c", cluster)),
 			observe.Application{Name: "app-home", Sync: "Synced", Revision: "4e1d7a0c", Objects: []observe.AppliedObject{read}}, ""},
-		{"an Application Argo CD compared no revision of", argoReport(at(30*time.Second), withRevision(nil, cluster)),
+		{"an Application whose revision is null, as before Argo CD's first comparison or with several sources", argoReport(at(30*time.Second), withRevision(nil, cluster)),
 			observe.Application{Name: "app-home", Sync: "Synced", Objects: []observe.AppliedObject{read}}, ""},
 		{"a report of an earlier kit release, which carries no revision", argoReport(at(30*time.Second), withRevision("left out", cluster)),
 			observe.Application{Name: "app-home", Sync: "Synced", RevisionUnread: true, Objects: []observe.AppliedObject{read}}, ""},
