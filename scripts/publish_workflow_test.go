@@ -186,12 +186,12 @@ func stepAt(all map[string]string, job, key, value string) int {
 	return n
 }
 
-// Both conformance jobs hand blockverify a pull request's base manifest and changed files through the kit's two scripts, so the version rule reads one implementation.
-func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
+// Both conformance jobs hand blockverify a pull request's base manifest and changed files through the kit's two scripts, so the version rule reads one implementation, and the platform's address, so the type snapshot is compared on every event.
+func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFilesAndThePlatformsAddress(t *testing.T) {
 	all := publishWorkflow(t)
 	jobs := []struct{ job, judge string }{
-		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP"`},
-		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only`},
+		{"conformance", kitScript + `run-blockverify.sh" ./blockverify blockverify-report.json "$EVENT_NAME" "$RUNNER_TEMP" --api-url "$API_URL"`},
+		{"opentofu-conformance", kitScript + `run-blockverify.sh" "$RUNNER_TEMP/blockverify" "$RUNNER_TEMP/blockverify-report.json" "$EVENT_NAME" "$RUNNER_TEMP" --opentofu-only --api-url "$API_URL"`},
 	}
 	for _, j := range jobs {
 		moved, wrote, judged, polled := stepAt(all, j.job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, j.job, "run", writePRBase), stepAt(all, j.job, "run", j.judge), stepAt(all, j.job, "run", `"$RUNNER_TEMP/checkpolls" -base "$BASE_SHA"`)
@@ -199,7 +199,7 @@ func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFiles(t *testing.T) {
 		cases := []struct{ name, got, want string }{
 			{"the kit reaches RUNNER_TEMP before the write, the write comes before blockverify and checkpolls, and checkpolls, built from the kit checkout, judges a pull request alone against its base", strconv.FormatBool(moved >= 0 && moved < wrote && wrote < judged && wrote < polled && stepWith(all, j.job, "run", `go build -o "$RUNNER_TEMP/checkpolls" ./cmd/checkpolls`)) + " " + step(polled, "if") + " " + step(polled, "env.BASE_SHA"), "true github.event_name == 'pull_request' ${{ github.event.pull_request.base.sha }}"},
 			{"the write runs on a pull request alone, since a push has no base commit", step(wrote, "if"), "github.event_name == 'pull_request'"},
-			{"blockverify learns the event", step(judged, "env.EVENT_NAME"), "${{ github.event_name }}"},
+			{"blockverify learns the event and the platform's address", step(judged, "env.EVENT_NAME") + " " + step(judged, "env.API_URL"), "${{ github.event_name }} ${{ inputs.api-url }}"},
 			{"the fetch takes the job's token, since the checkout keeps none", step(wrote, "env.FETCH_TOKEN"), "${{ github.token }}"},
 		}
 		checkFields(t, "publish-block.yml", j.job+": ", cases)
