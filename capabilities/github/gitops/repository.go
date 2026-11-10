@@ -181,6 +181,7 @@ func findBaseline(ctx context.Context, repo Repository, src Notifications, b Blo
 	return baseline{}, fmt.Errorf("gitops: Argo CD judged none of the %d commits before %s healthy, and none of them is the block's first", maxRevertWalk, b.Failed)
 }
 
+// judgedHealthy reads whether Argo CD notified a sync of revision that succeeded with the whole Application Healthy, the one sign of a healthy earlier revision the platform keeps.
 func judgedHealthy(ctx context.Context, src Notifications, app, revision string) (bool, error) {
 	if revision == "" {
 		return false, nil
@@ -189,7 +190,7 @@ func judgedHealthy(ctx context.Context, src Notifications, app, revision string)
 	if err != nil {
 		return false, fmt.Errorf("gitops: reading the notification for %s at %s: %w", app, revision, err)
 	}
-	return ok && Judge(n, revision) == VerdictSucceeded, nil
+	return ok && n.Revision == revision && n.Phase == "Succeeded" && n.Health == "Healthy", nil
 }
 
 // beforeFirstCommit removes the block's files only when the failed revision is its first commit, since the platform answers only a revision's newest notification and keeps only an app's newest, so an earlier revision may have run healthy unseen.
@@ -376,6 +377,21 @@ func (l lineage) at(revision string) int {
 		return -1
 	}
 	return slices.Index(l.commits[:l.own+1], revision)
+}
+
+// holding says why revision does not hold the block's files as its own commit own does, "" when it is that commit or a later one in which no commit changed them.
+func (l lineage) holding(revision, own string) string {
+	if revision == own {
+		return ""
+	}
+	i := l.at(revision)
+	if i < 0 {
+		return fmt.Sprintf("which does not hold the block's commit %s", own)
+	}
+	if moved, path := l.changedAfterOwn(i); moved != "" {
+		return fmt.Sprintf("but commit %s after the block's own %s changed %s", moved, own, path)
+	}
+	return ""
 }
 
 // changedAfterOwn names the oldest commit after the block's own, up to the one at index i, that changed one of its paths, and the first such path.

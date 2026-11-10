@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
+// BlockDeploy is the files a deploy commits, under its message, refusing any of Secrets, with Wait's poll interval.
 type BlockDeploy struct {
-	App     string
 	Files   map[string][]byte
 	Message string
 	Secrets []string
@@ -19,13 +19,14 @@ type Deployed struct {
 	Outcome  Outcome
 }
 
-// Deploy commits b and waits for Argo CD's verdict on the block's own commit, returning a failed verdict in Outcome rather than as an error.
-func Deploy(ctx context.Context, repo Repository, src Notifications, b BlockDeploy) (Deployed, error) {
-	revision, changed, err := CommitManifests(ctx, repo, b.Files, b.Message, b.Secrets)
+// Deploy commits b and waits for the verdict on the block's own commit over the paths b.Files names, returning a failed verdict in Outcome rather than as an error.
+func Deploy(ctx context.Context, d Deployment, b BlockDeploy) (Deployed, error) {
+	revision, changed, err := CommitManifests(ctx, d.Repository, b.Files, b.Message, b.Secrets)
 	if err != nil {
 		return Deployed{}, err
 	}
 	out := Deployed{Revision: revision, Changed: changed}
-	out.Outcome, err = Wait(ctx, src, repo, b.App, revision, sortedPaths(b.Files), b.Poll)
+	d.Paths = sortedPaths(b.Files)
+	out.Outcome, err = Wait(ctx, d, revision, b.Poll)
 	return out, err
 }
