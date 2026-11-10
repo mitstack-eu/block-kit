@@ -159,7 +159,7 @@ func (j judgement) counts(app observe.Application) string {
 	case app.RevisionUnread:
 		return fmt.Sprintf("the newest node report carries no revision of Argo CD Application %s, as a report of an earlier talos-cluster-kit release does", j.d.Application)
 	case app.Revision == "":
-		return fmt.Sprintf("Argo CD has compared no revision of Application %s", j.d.Application)
+		return fmt.Sprintf("the newest node report gives Argo CD Application %s no revision to judge, as it does before Argo CD's first comparison and for an Application with several sources", j.d.Application)
 	}
 	if why := j.line.holding(app.Revision, j.own); why != "" {
 		return fmt.Sprintf("the newest node report shows Argo CD Application %s at %s, %s", j.d.Application, app.Revision, why)

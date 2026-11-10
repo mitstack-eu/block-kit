@@ -13,7 +13,7 @@ import (
 	"github.com/mitstack-eu/block-kit/observe"
 )
 
-// Application is one Argo CD Application a node report holds, its Revision "" read as null, a revision Argo CD compared none at.
+// Application is one Argo CD Application a node report holds, its Revision "" written as null, as the report holds before Argo CD's first comparison and for an Application with several sources.
 type Application struct {
 	Name     string
 	Revision string
@@ -23,7 +23,7 @@ type Application struct {
 	Objects []Object
 }
 
-// Object is one object an Application applied, its Health "" read as null, the health of a kind Argo CD runs no health check for.
+// Object is one object an Application applied, its Health "" written as null, the health of a kind Argo CD runs no health check for, and its Message written only beside a health neither Healthy nor null, as the report writes it.
 type Object struct {
 	gitops.Object
 	Sync    string
@@ -152,7 +152,10 @@ func (a Application) body() map[string]any {
 	for _, o := range a.Objects {
 		resource := map[string]any{"group": o.Group, "kind": o.Kind, "namespace": nullable(o.Namespace), "name": o.Name, "sync": o.Sync}
 		if !o.HealthLeftOut {
-			resource["health"], resource["message"] = nullable(o.Health), nullable(o.Message)
+			resource["health"] = nullable(o.Health)
+		}
+		if !o.HealthLeftOut && o.Health != "" && o.Health != "Healthy" {
+			resource["message"] = nullable(o.Message)
 		}
 		resources = append(resources, resource)
 	}

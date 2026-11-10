@@ -143,7 +143,7 @@ type reportBody struct {
 type Application struct {
 	Name string
 	Sync string
-	// Revision is the revision Argo CD last compared the Application against, "" when it compared none, and RevisionUnread marks a report from an earlier talos-cluster-kit release, which carries none.
+	// Revision is the revision Argo CD last compared the Application against, "" when the report holds null, as before Argo CD's first comparison and for an Application with several sources, and RevisionUnread marks a report from an earlier talos-cluster-kit release, which carries none.
 	Revision       string
 	RevisionUnread bool
 	Objects        []AppliedObject
@@ -163,7 +163,7 @@ type AppliedObject struct {
 type reportedApplication struct {
 	Name string `json:"name"`
 	Sync string `json:"sync"`
-	// Revision stays raw, since a report from an earlier kit release leaves it out and one whose Argo CD compared none holds null.
+	// Revision stays raw, since a report from an earlier kit release leaves it out and one with no revision to judge holds null.
 	Revision  json.RawMessage  `json:"revision"`
 	Resources *[]appliedObject `json:"resources"`
 }
