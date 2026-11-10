@@ -13,6 +13,7 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/events"
+	"github.com/mitstack-eu/block-kit/helpers/reqcache"
 )
 
 // NodeReport is one report as GET /v1/subscriptions/{id}/node-reports serves it, with the verdict the platform stored.
@@ -252,7 +253,26 @@ func (o NodeReported) newest(ctx context.Context, r contract.ResourceRef) (*repo
 	return newest, contract.Observation{}, nil
 }
 
+type newestReport struct {
+	body *reportBody
+	why  string
+}
+
+type newestKey struct {
+	cluster string
+	verbAt  time.Time
+}
+
+// newestOf reads the cluster's reports once for a validate, which judges one view of them, and on every call otherwise, since a wait polls for a report that has not arrived.
 func (o NodeReported) newestOf(ctx context.Context, d contract.Desired, cluster string) (*reportBody, string, error) {
+	got, err := reqcache.Viewed(ctx, newestKey{cluster, d.VerbAt}, func() (newestReport, error) {
+		body, why, err := o.readNewest(ctx, d, cluster)
+		return newestReport{body, why}, err
+	})
+	return got.body, got.why, err
+}
+
+func (o NodeReported) readNewest(ctx context.Context, d contract.Desired, cluster string) (*reportBody, string, error) {
 	got, err := o.reports(ctx, d, cluster)
 	if err != nil {
 		return nil, "", err

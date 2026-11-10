@@ -13,6 +13,7 @@ package has [a page of its own](gitops.md).
 | `helpers/bounded` | Calls an API with its own HTTP client and reads the answer |
 | `helpers/guardedhttp` | Is a capability operator that calls its vendor with an org's credential |
 | `helpers/events` | Reports progress during long work, or reads a platform route |
+| `helpers/reqcache` | Wants a read repeated within one request to cost one call, for a source of its own that cannot change under the request |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
 | `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, sizes and observes an app on one, or runs an app's database on one |
@@ -123,6 +124,29 @@ helper builds and posts a body like this one for a progress event:
 without its `/v1/webhooks/operator-events` path, and the callback's token. A
 block calls another platform route with that base URL and token, acting for
 the call it serves, as `observe.NodeReportsClient` does to read node reports.
+
+## Reading each thing once in a request
+
+The handler gives every request a cache, so a block's passes over the same
+data cost one read each. A block that reads through `gitops.GitHubRepository`
+and `observe.NodeReported` gets this with no code of its own.
+
+| What is read | Kept for |
+|---|---|
+| A file of a commit, present or absent, and the files a commit changed | The request, since a commit never changes |
+| The newest node report of a cluster | One `validate`, which judges one view of the reports |
+
+Three reads are never kept. The repository's head is read on every call,
+because a branch moves, so a read after your own commit sees the new head.
+The node reports are read afresh in every other verb, so a `Wait` that polls
+still sees a report that arrives during the call. A read that failed is not
+remembered, so the next ask tries again. Nothing is shared between two
+requests.
+
+A block with a source of its own calls `reqcache.Immutable(ctx, key, read)` for
+data that cannot change, and `reqcache.Viewed` for data that changes but may
+be read once in a `validate`. Both read every time when the context carries no
+cache.
 
 ## Holding a short-lived credential
 
