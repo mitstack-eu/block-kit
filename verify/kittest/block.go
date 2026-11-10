@@ -737,12 +737,16 @@ func (c *blockCheck) requiredOutputs(resp contract.Response, operation string) {
 		if !ok {
 			continue
 		}
+		secrets := resp.ResourceSecretOutputs[name]
+		if len(resp.ResourceSecretOutputs) == 0 {
+			secrets = resp.SecretOutputs
+		}
 		for _, out := range t.Outputs {
 			if !out.Required {
 				continue
 			}
 			_, plain := o.Outputs[out.Name]
-			_, secret := resp.SecretOutputs[out.Name]
+			_, secret := secrets[out.Name]
 			if !plain && !(out.Secret && secret) {
 				c.resourceProblem(name, "observed present after %s without output %q, which its type %s marks required", operation, out.Name, o.Type)
 			}
