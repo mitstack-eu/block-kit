@@ -89,9 +89,11 @@ func (a api) reviewWait(ctx context.Context, pr openPull) (string, error) {
 	if err != nil || approvals >= required && !changesRequested {
 		return "", err
 	}
-	waitsOn := fmt.Sprintf("removal pull request #%d of %s, which waits on an approving review", pr.number, a.repo)
+	waitsOn := a.named(pr) + ", which waits on an approving review"
+	ending := "an approving review is given"
 	if changesRequested {
 		waitsOn += ", and a reviewer requested changes"
+		ending = "an approving review leaves no reviewer requesting changes"
 	}
-	return waitsOn, nil
+	return waitsOn + ". " + waitEndsOnce(ending), nil
 }

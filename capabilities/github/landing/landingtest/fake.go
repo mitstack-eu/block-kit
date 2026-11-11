@@ -57,8 +57,10 @@ type Fake struct {
 	checks         map[string]string
 	running        map[string]string
 	// runs numbers each check's latest run, so a report on a check starts a new run with its own URL.
-	runs      map[string]int
-	lastRun   int
+	runs    map[string]int
+	lastRun int
+	// pages is what every html_url the fake answers starts with.
+	pages     string
 	statuses  []any
 	selection string
 	deleted   bool
@@ -78,6 +80,7 @@ func New(t testing.TB, repo string) *Fake {
 		checks:    map[string]string{},
 		running:   map[string]string{},
 		runs:      map[string]int{},
+		pages:     "https://github.com",
 		selection: "all",
 		answers:   map[string]int{},
 	}
@@ -245,7 +248,25 @@ func (f *Fake) RunURL(name string) string {
 }
 
 func (f *Fake) runURL(name string) string {
-	return fmt.Sprintf("https://github.com/%s/runs/%d", f.Repo, f.runs[name])
+	return fmt.Sprintf("%s/%s/runs/%d", f.pages, f.Repo, f.runs[name])
+}
+
+// PullURL is the html_url of pull request number, the page a reader opens to see it.
+func (f *Fake) PullURL(number int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pullURL(number)
+}
+
+func (f *Fake) pullURL(number int) string {
+	return fmt.Sprintf("%s/%s/pull/%d", f.pages, f.Repo, number)
+}
+
+// ServePagesUnder makes every html_url the fake answers start with base, as a GitHub served on a host of its own does.
+func (f *Fake) ServePagesUnder(base string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pages = base
 }
 
 // DeleteRepository makes every route under the repository answer 404, as GitHub does for a deleted repository.
@@ -669,7 +690,7 @@ func (f *Fake) checkRuns() (int, any) {
 }
 
 func (f *Fake) pullBody(p *Pull) map[string]any {
-	return map[string]any{"number": p.Number, "state": map[bool]string{true: "open", false: "closed"}[p.Open], "head": map[string]any{"ref": p.Branch, "sha": f.refs["heads/"+p.Branch]}}
+	return map[string]any{"number": p.Number, "state": map[bool]string{true: "open", false: "closed"}[p.Open], "html_url": f.pullURL(p.Number), "head": map[string]any{"ref": p.Branch, "sha": f.refs["heads/"+p.Branch]}}
 }
 
 func (f *Fake) storeTree(tree map[string]string) string {

@@ -53,6 +53,7 @@ func TestGoldens_ARemovalOpensItsPullRequestThenMergesItOnTheRequiredCheck(t *te
 	replay(t, "remove-open", func(c *ghapi.Client) {
 		_, err := remove(c, goldenRecord)
 		waiting(t, err, "managed-ci")
+		waiting(t, err, "(https://github.com/acme/weather/pull/7)")
 	})
 	replay(t, "remove-merge", func(c *ghapi.Client) {
 		got, err := remove(c, goldenRecord)

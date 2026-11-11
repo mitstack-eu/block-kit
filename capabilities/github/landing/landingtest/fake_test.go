@@ -1,13 +1,15 @@
 package landingtest_test
 
-// The fake lists main's tree, names its head, removes files from it, and lets a test act before each write.
+// The fake lists main's tree, names its head, removes files from it, lets a test act before each write, and answers a pull request's page under the host a test names.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
@@ -98,5 +100,26 @@ func TestFake_BeforeWriteMayMoveMainSoTheCommitIsNotAFastForward(t *testing.T) {
 	}
 	if _, landed := f.Main()["blog/compose.yaml"]; !landed {
 		t.Errorf("main = %v; want the change BeforeWrite landed", f.Main())
+	}
+}
+
+func TestFake_AnswersAPullRequestWithItsPageUnderTheHostItServesPagesOn(t *testing.T) {
+	f := landingtest.New(t, repo)
+	f.Seed(map[string]string{"README.md": "host\n"})
+	f.Branch("mitstack/sub_1/remove")
+	f.ServePagesUnder("https://code.acme.example")
+
+	resp, err := f.Client().Post(f.URL+"/repos/"+repo+"/pulls", "application/json", strings.NewReader(`{"title":"remove","head":"mitstack/sub_1/remove","base":"main"}`))
+	if err != nil {
+		t.Fatalf("POST /pulls: %v", err)
+	}
+	defer resp.Body.Close()
+	var opened struct {
+		HTMLURL string `json:"html_url"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&opened)
+
+	if want := "https://code.acme.example/" + repo + "/pull/1"; err != nil || opened.HTMLURL != want || f.PullURL(1) != want {
+		t.Errorf("the opened pull request's html_url = %q, %v, and PullURL(1) = %q; want both %q", opened.HTMLURL, err, f.PullURL(1), want)
 	}
 }
