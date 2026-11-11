@@ -487,14 +487,16 @@ three values: the `dockerhost.Report`, a `found` flag that is `false` while
 the host has sent no report, and an error. An empty `hostSubscription` is
 refused through `handler.Refuse` with the class `host-binding`, so the
 platform shows the subscriber why. A platform that does not answer or a
-report that is not JSON returns a plain error. The report gives you four
-things:
+report that is not JSON returns a plain error. A reader that already holds a
+report's body, such as the platform, reads it with
+`dockerhost.ReadReport(body)` instead. The report gives you five things:
 
 | Field or method | What it gives |
 |---|---|
 | `report.Allocatable` | The host's allocatable capacity, or `nil` when the report gives none |
 | `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
 | `report.AppRelease(app, subscription)` | The app's newest release command as a `dockerhost.AppRelease`, described below |
+| `report.ReleaseAgainst(app, subscription, asked)` | The same release command judged against the image the app's newest deploy asked for, described below |
 | `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as each app's containers |
 
 `SyncedCommit` never reads the agent's log. The report carries only the log's
@@ -565,6 +567,95 @@ if release.Failed {
 	}
 	obs.Unhealthy = &contract.Unhealthy{Cause: releaseFailed,
 		Detail: "the release command failed on " + release.FailedDigest + ", and " + serving}
+}
+```
+
+### Judging a release against the image a deploy asked for
+
+A deploy is mitstack writing a new image for an app into the host's
+repository, after the builder, the person who owns the app, pushes a commit.
+When the new image's release command fails, or its container never turns
+healthy, mitstack rolls back: it writes the earlier image into the file again,
+and the host returns to it.
+
+The host keeps a failed run in its report until the next release command runs,
+and it runs none for an image whose release already passed. So when a builder
+reverts a bad commit and the deploy asks for the earlier image again, the
+report still names the failed run on the newer image.
+`report.ReleaseAgainst(app, subscription, asked)` judges that newest run
+against `asked`, the image the app's newest deploy asked for. A failure on an
+older image then stops counting once the asked image serves, meaning a running
+container of the app runs it. The platform calls the same function when it
+judges whether a deploy turned healthy, and every block calls it for the app's
+health, so both read one record by one rule.
+
+The asked image comes from the app's image file, `image.env` in the host's
+repository, which `dockerhost.ImageFile` reads and writes. A deploy writes one
+line, `APP_IMAGE=`, naming the image it asks for. A rollback writes two lines.
+The first, `APP_IMAGE=`, names the earlier image the host returns to, and is
+the only line the host's agent reads. The second, `APP_ROLLED_BACK_FROM=`,
+names the image the failed deploy asked for. After image `bbbb` fails and
+mitstack returns the app to image `aaaa`, the file reads:
+
+```text
+APP_IMAGE=ghcr.io/acme/shop@sha256:aaaa
+APP_ROLLED_BACK_FROM=ghcr.io/acme/shop@sha256:bbbb
+```
+
+The asked image is then `bbbb`, so the app reads failed until the next deploy
+rewrites the file with one line, even a deploy of `aaaa` again.
+
+`dockerhost.ParseImageFile(text)` reads the file, skipping any line it does
+not define, as the host's agent does. `.Asked()` gives the asked image: the
+`APP_ROLLED_BACK_FROM=` image when the file names one, and the `APP_IMAGE=`
+image otherwise. `ImageFile.String()` writes the file back. A file that names
+`APP_IMAGE=` twice, which mitstack never writes, reads by its last line.
+
+Read the file at the commit the host's agent synced, the commit
+`report.SyncedCommit()` names, so the asked image is the one the report
+describes. Read it with your block's GitHub client, from the host's repository,
+at `<app>/image.env`, where `app` is the app's directory in that repository. A
+file the commit does not hold reads as empty.
+
+`ReleaseAgainst` returns a `dockerhost.AskedRelease`, which carries the
+`AppRelease` fields and two more. `AskedDigest` is the digest the asked image
+pins, empty when `asked` is. `ExitCode` is the newest release command's exit
+code, 0 when it passed or none ran, for a message that names it:
+
+| Method | When it holds |
+|---|---|
+| `FailedOnAsked()` | The newest release command failed on the asked image, or failed at all when `asked` is empty |
+| `AskedAbsent()` | A release failed on an older image and no container of your subscription runs the asked one |
+
+A block that calls `ReleaseAgainst` checks these two methods in place of
+`Failed`, which still holds for a failure on any image.
+
+1. While `FailedOnAsked` holds, the block reports the release failed, with the
+   cause and detail `AppRelease` describes above.
+2. While `AskedAbsent` holds, no release failed on the asked image. The block
+   reports that no container runs the asked image, under a cause of its own,
+   and never that a release failed.
+3. Once the asked image serves, neither holds, and the block reports the app
+   healthy whatever the older failure was.
+
+In this sample, `client` is your block's GitHub client, `repository` the
+host's repository, `commit` the synced commit and `app` the app's directory:
+
+```go
+text, _, err := client.ReadFileAt(ctx, repository, commit, app+"/image.env")
+if err != nil {
+	return contract.Observation{}, err
+}
+file := dockerhost.ParseImageFile(string(text))
+release, err := report.ReleaseAgainst(app, d.SubscriptionID, file.Asked())
+if err != nil {
+	return contract.Observation{}, err
+}
+switch {
+case release.FailedOnAsked():
+	// the release command failed on release.FailedDigest
+case release.AskedAbsent():
+	// no container runs release.AskedDigest
 }
 ```
 
