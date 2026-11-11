@@ -293,7 +293,9 @@ func editSettledReadsAfterAWrite(edit func(fw map[string]any)) func(*http.Respon
 }
 
 func TestWriteFirewall_FailsNamingEachFieldRobotReadsBackOtherThanWritten(t *testing.T) {
-	rules := func(fw map[string]any, direction string) []any { return fw["rules"].(map[string]any)[direction].([]any) }
+	rules := func(fw map[string]any, direction string) []any {
+		return fw["rules"].(map[string]any)[direction].([]any)
+	}
 	setRules := func(fw map[string]any, direction string, r []any) { fw["rules"].(map[string]any)[direction] = r }
 	otherStatus := func(fw map[string]any) { fw["status"] = "disabled" }
 	ipv6Unfiltered := func(fw map[string]any) { fw["filter_ipv6"] = false }
