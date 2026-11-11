@@ -21,6 +21,7 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/observe"
+	"github.com/mitstack-eu/block-kit/verify/internal/kitbinding"
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
@@ -188,7 +189,7 @@ func newBlockServer(cfg handler.Config) (*blockServer, error) {
 	cfg.PublicKey = func(string) (ed25519.PublicKey, error) { return pub, nil }
 	h, err := handler.New(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("the block cannot be served: %v", err)
+		return nil, fmt.Errorf("%s%v", kitbinding.UnservableBlock, err)
 	}
 	m, _ := contract.ParseManifest(cfg.Manifest)
 	return &blockServer{h: h, signer: &Signer{Kid: "kittest-block", Public: pub, Private: priv}, audience: m.ID()}, nil
