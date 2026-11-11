@@ -124,6 +124,7 @@ func TestLease_RefusesALeaseThatIsNoLeaseWithoutRevealingASecret(t *testing.T) {
 		{"a credential that is an empty object", leaseManifest, newLeasingBlock("{}", soon), leaseFields(nil), http.StatusInternalServerError, "JSON object"},
 		{"a credential that is a string", leaseManifest, newLeasingBlock(`"abc"`, soon), leaseFields(nil), http.StatusInternalServerError, "JSON object"},
 		{"a credential repeating a secret the request carried", leaseManifest, newLeasingBlock(`{"nested":{"key":"scw-secret-4d1"}}`, soon), withSecret, http.StatusInternalServerError, "repeats a secret"},
+		{"a credential repeating a secret inside a list", leaseManifest, newLeasingBlock(`{"links":["https://store.example/o","scw-secret-4d1"]}`, soon), withSecret, http.StatusInternalServerError, "repeats a secret"},
 		{"a credential whose only string is empty", leaseManifest, newLeasingBlock(`{"token":""}`, soon), leaseFields(nil), http.StatusInternalServerError, "no value"},
 		{"a credential of empty shells", leaseManifest, newLeasingBlock(`{"a":{},"b":null,"c":[]}`, soon), leaseFields(nil), http.StatusInternalServerError, "no value"},
 		{"a handle repeating a secret the request carried", leaseManifest, &leasingBlock{blockResource: &blockResource{cloud: newFakeCloud()},
@@ -155,6 +156,7 @@ func TestLease_RetiresACredentialItRefusesSoNoneIsLeftLiveAtTheProvider(t *testi
 		{"a credential with no expiry", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ID: "tok_9"}, nil, "no expiry"},
 		{"a credential that outlives a day", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ExpiresAt: time.Now().Add(48 * time.Hour), ID: "tok_9"}, nil, "ahead"},
 		{"a refused credential whose retire also fails", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ID: "tok_9"}, errors.New("the provider is down"), "the provider is down"},
+		{"a refused credential whose retire the block refuses by name", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ID: "tok_9"}, handler.Refuse("already-gone", "the token is gone"), "no expiry"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -183,5 +185,35 @@ func TestLease_RetiresTheCredentialsItNamesAndAnswersNoLease(t *testing.T) {
 	}
 	if len(block.requests) != 1 || block.requests[0].ID != "" || !reflect.DeepEqual(block.requests[0].Retire, []string{"tok_old_1", "tok_old_2"}) {
 		t.Errorf("the block saw %+v, want one request with no lease id and the two credentials to retire", block.requests)
+	}
+}
+
+func TestLease_AsksNoCodeOfABlockWhoseManifestDoesNotListIt(t *testing.T) {
+	block := newLeasingBlock(`{"token":"t"}`, time.Now().Add(time.Hour))
+
+	serveLease(t, block, blockLevelManifest, leaseFields(nil))
+
+	if len(block.requests) != 0 {
+		t.Errorf("the block saw %+v, want no call, since its manifest does not list lease", block.requests)
+	}
+}
+
+func TestLease_RetiresNothingForARefusedCredentialThatHasNoHandle(t *testing.T) {
+	block := &leasingBlock{blockResource: &blockResource{cloud: newFakeCloud()}, lease: contract.Lease{Credential: json.RawMessage(`{"token":"t"}`)}}
+
+	status, resp := serveLease(t, block, leaseManifest, leaseFields(nil))
+
+	if status != http.StatusInternalServerError || resp.Lease != nil || len(block.requests) != 1 {
+		t.Errorf("status = %d, lease = %+v, requests = %+v; want 500, no lease and the one mint, since a credential with no handle expires on its own", status, resp.Lease, block.requests)
+	}
+}
+
+func TestLease_AcceptsACredentialWhoseOnlyValueIsInsideAList(t *testing.T) {
+	block := newLeasingBlock(`{"links":[{"url":"https://store.example/o"}]}`, time.Now().Add(time.Hour))
+
+	status, resp := serveLease(t, block, leaseManifest, leaseFields(nil))
+
+	if status != http.StatusOK || resp.Lease == nil {
+		t.Errorf("status = %d, lease = %+v; want 200 and the lease, since a value inside a list is a value", status, resp.Lease)
 	}
 }
