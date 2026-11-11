@@ -125,18 +125,19 @@ func (a api) removeThroughPullRequest(ctx context.Context, st mainState, subscri
 	if err != nil {
 		return err
 	}
-	number, err := a.pullRequest(ctx, branch, title, removalBody(st.unchanged, kept))
+	pr, err := a.pullRequest(ctx, branch, title, removalBody(st.unchanged, kept))
 	if err != nil {
 		return err
 	}
-	wait, err := a.requiredCheckWait(ctx, openPull{number: number, head: commit})
+	pr.head = commit
+	wait, err := a.requiredCheckWait(ctx, pr)
 	switch {
 	case err != nil:
-		return handler.Wait("removal pull request #%d of %s waits, since %v", number, a.repo, err)
+		return handler.Wait("%s waits until its checks can be read or it is merged or closed, since %v", a.named(pr), err)
 	case wait.waitsOn != "":
 		return handler.WaitOnRemoval("%s", wait.waitsOn)
 	}
-	return a.merge(ctx, number, commit, title, trailer)
+	return a.merge(ctx, pr, title, trailer)
 }
 
 // removalCommit returns the branch's commit when it already deletes from main's head, and otherwise builds one onto the head and points the branch at it.
@@ -210,34 +211,52 @@ func (a api) branchCommit(ctx context.Context, branch string) (string, error) {
 type openPull struct {
 	number int
 	head   string
+	// address is the html_url GitHub answered, so a wait names the page on whichever host serves the repository.
+	address string
+}
+
+// pullAnswer is what a removal reads of a pull request GitHub answers.
+type pullAnswer struct {
+	Number  int    `json:"number"`
+	HTMLURL string `json:"html_url"`
+	Head    struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+}
+
+func (p pullAnswer) open() openPull {
+	return openPull{number: p.Number, head: p.Head.SHA, address: p.HTMLURL}
+}
+
+// named is how a wait names pr: by its number and repository, then by its address.
+func (a api) named(pr openPull) string {
+	return fmt.Sprintf("removal pull request #%d of %s (%s)", pr.number, a.repo, pr.address)
+}
+
+// waitEndsOnce closes a wait on a removal pull request with what ends it, beside the pull request merging or closing.
+func waitEndsOnce(ending string) string {
+	return "The wait ends once " + ending + ", or once the pull request is merged or closed"
 }
 
 func (a api) openPullRequest(ctx context.Context, branch string) (openPull, bool, error) {
 	owner, _, _ := strings.Cut(a.repo, "/")
 	query := url.Values{"head": {owner + ":" + branch}, "state": {"open"}}.Encode()
-	var open []struct {
-		Number int `json:"number"`
-		Head   struct {
-			SHA string `json:"sha"`
-		} `json:"head"`
-	}
+	var open []pullAnswer
 	if err := a.repos(ctx, http.MethodGet, "/pulls?"+query, nil, &open); err != nil || len(open) == 0 {
 		return openPull{}, false, err
 	}
-	return openPull{number: open[0].Number, head: open[0].Head.SHA}, true, nil
+	return open[0].open(), true, nil
 }
 
 // pullRequest returns the open pull request from branch, opening one when none is.
-func (a api) pullRequest(ctx context.Context, branch, title, body string) (int, error) {
+func (a api) pullRequest(ctx context.Context, branch, title, body string) (openPull, error) {
 	pr, found, err := a.openPullRequest(ctx, branch)
 	if err != nil || found {
-		return pr.number, err
+		return pr, err
 	}
-	var opened struct {
-		Number int `json:"number"`
-	}
+	var opened pullAnswer
 	err = a.repos(ctx, http.MethodPost, "/pulls", map[string]any{"title": title, "head": branch, "base": "main", "body": body}, &opened)
-	return opened.Number, err
+	return opened.open(), err
 }
 
 func removalBody(removed []string, kept []Kept) string {
@@ -255,11 +274,11 @@ func removalBody(removed []string, kept []Kept) string {
 	return b.String()
 }
 
-// merge squashes the pull request at commit under title and message, which a repository's squash default would otherwise replace, and answers a merge GitHub refuses for now, 405 or 409, as waiting.
-func (a api) merge(ctx context.Context, number int, commit, title, message string) error {
-	err := a.repos(ctx, http.MethodPut, fmt.Sprintf("/pulls/%d/merge", number), map[string]any{"merge_method": "squash", "sha": commit, "commit_title": title, "commit_message": message}, nil)
+// merge squashes pr at its head under title and message, which a repository's squash default would otherwise replace, and answers a merge GitHub refuses for now, 405 or 409, as waiting.
+func (a api) merge(ctx context.Context, pr openPull, title, message string) error {
+	err := a.repos(ctx, http.MethodPut, fmt.Sprintf("/pulls/%d/merge", pr.number), map[string]any{"merge_method": "squash", "sha": pr.head, "commit_title": title, "commit_message": message}, nil)
 	if s := statusOf(err); s == http.StatusMethodNotAllowed || s == http.StatusConflict {
-		return handler.Wait("GitHub has not merged removal pull request #%d of %s yet: %v", number, a.repo, err)
+		return handler.Wait("GitHub has not merged %s yet, and the wait ends once it is merged or closed: %v", a.named(pr), err)
 	}
 	return err
 }

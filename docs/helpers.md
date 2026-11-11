@@ -1252,12 +1252,23 @@ such as a 403, a 5xx, a rate limit or a missing token, reads unknown, and
 During an unsubscribe, a present answer also reads the subscription's open
 removal pull request. While a check main requires is queued, running or failed
 on it, the answer carries `Removing`, whose `WaitsOn` names the pull request,
-that check and its run, such as
-`removal pull request #4 of acme/weather, whose required check "managed-ci"
-failed (run https://github.com/acme/weather/runs/812)`. The platform then
-waits on the removal without spending one of the unsubscribe's attempts. A
-new result for that check moves the removal on, and so does the pull request
-merging or closing.
+that check and its run, and says what ends the wait, such as
+`removal pull request #4 of acme/weather
+(https://github.com/acme/weather/pull/4), whose required check "managed-ci"
+failed (run https://github.com/acme/weather/runs/812). The wait ends once
+"managed-ci" passes, or once the pull request is merged or closed`.
+The platform then waits on the removal without spending one of the
+unsubscribe's attempts. A new result for that check moves the removal on, and
+so does the pull request merging or closing.
+
+Every wait on an open removal pull request names it by its number, its
+repository and its web address. The address is the `html_url` GitHub answered
+for the pull request, which `openPullRequest` and `pullRequest` in
+`capabilities/github/landing/remove.go` read, so it carries the host that
+serves the repository. Each wait also says what ends it. A wait on a required
+check ends once that check passes, and a wait on a review main requires ends
+once an approving review is given. Every wait ends once the pull request is
+merged or closed.
 
 `Remove` and the observer read one judgement of the required checks,
 `requiredCheckWait` in `capabilities/github/landing/checks.go`. While a

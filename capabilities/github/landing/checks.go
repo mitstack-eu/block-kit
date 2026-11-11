@@ -67,10 +67,11 @@ func (a api) requiredCheckWait(ctx context.Context, pr openPull) (checkWait, err
 		return checkWait{}, nil
 	}
 	report := reports[check]
-	waitsOn := fmt.Sprintf("removal pull request #%d of %s, whose required check %q %s", pr.number, a.repo, check, report.state.reads())
+	waitsOn := fmt.Sprintf("%s, whose required check %q %s", a.named(pr), check, report.state.reads())
 	if report.run != "" {
 		waitsOn += fmt.Sprintf(" (run %s)", report.run)
 	}
+	waitsOn += ". " + waitEndsOnce(fmt.Sprintf("%q passes", check))
 	return checkWait{waitsOn: waitsOn, underWay: report.state != checkMissing}, nil
 }
 
