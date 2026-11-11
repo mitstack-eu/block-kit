@@ -82,6 +82,10 @@ func TestNew(t *testing.T) {
 			config: then(withBlockLevelObservers(unchanged), withManifest(leaseManifest)), refused: true, naming: []string{"lease", "handler.Leaser"}},
 		{name: "a manifest listing lease for a Resource that leases is accepted",
 			config: then(withBlockLevelObservers(unchanged), withManifest(leaseManifest), func(c *handler.Config) { c.Resource = newLeasingBlock(`{"a":"b"}`, time.Now()) })},
+		{name: "a manifest listing snapshot for a Resource that cannot snapshot is refused naming handler.Snapshotter",
+			config: then(withBlockLevelObservers(unchanged), withManifest(snapshotManifest)), refused: true, naming: []string{"snapshot", "handler.Snapshotter"}},
+		{name: "a manifest listing snapshot for a Resource that snapshots is accepted",
+			config: then(withBlockLevelObservers(unchanged), withManifest(snapshotManifest), func(c *handler.Config) { c.Resource = newSnapshottingBlock("hnd_0001") })},
 		{name: "an entry marked many for a Resource reporting its members is accepted",
 			config: then(pool, func(c *handler.Config) {
 				c.Resource = reportingBlock{blockResource: &blockResource{cloud: newFakeCloud()}}

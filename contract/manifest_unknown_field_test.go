@@ -45,7 +45,6 @@ func v1betaUnknownFields(t *testing.T) map[string][]byte {
 		"spec.layer":                    beta("  version: 1.0.0\n", "  version: 1.0.0\n  layer: backend\n"),
 		"spec.providedContracts": beta("  version: 1.0.0\n",
 			"  version: 1.0.0\n  providedContracts:\n    - capability: app-host\n      kind: http\n"),
-		"spec.continuity":          beta("  version: 1.0.0\n", "  version: 1.0.0\n  continuity:\n    - name: app-data\n      kind: postgres\n"),
 		"spec.requires[1].kind":    retired(hostType, "      kind: host\n"),
 		"spec.requires[1].in":      retired(hostType, "      in: aws\n"),
 		"spec.requires[1].on":      retired(hostType, "      on: requires.github.repository\n"),
