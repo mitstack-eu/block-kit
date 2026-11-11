@@ -328,6 +328,9 @@ func TestReport_ReleaseAgainstJudgesTheNewestReleaseByTheImageAskedFor(t *testin
 		{"a release that passed on the asked B while A still serves leaves the container's health to its own check",
 			shopReport(imageA, imageB, 0), "APP_IMAGE=" + imageA + "\nAPP_ROLLED_BACK_FROM=" + imageB + "\n",
 			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{ServingDigest: "sha256:aaaa"}, AskedDigest: "sha256:bbbb"}, false, false},
+		{"after B's rolled-back failure a new commit's image C passes its release and serves, so the app reads healthy on C",
+			shopReport(imageC, imageC, 0), "APP_IMAGE=" + imageC + "\n",
+			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{ServingDigest: "sha256:cccc"}, AskedDigest: "sha256:cccc"}, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asked := dockerhost.ParseImageFile(tc.imageFile).Asked()
