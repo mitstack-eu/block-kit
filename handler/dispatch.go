@@ -16,7 +16,7 @@ import (
 
 // dispatchRequest runs the verb through the idempotency cache, storing only a settled answer.
 //
-// A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue skips it because a replayed credential may have expired.
+// A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue or a lease skips it because a replayed credential may have expired.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := h.secretsFor(req)
 	ctx := requestContext(r.Context(), req)
@@ -36,7 +36,7 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 
 	var status int
 	var raw []byte
-	if req.IdempotencyKey != "" && req.Operation != "validate" && req.Operation != contract.OperationIssue && req.Operation != contract.OperationVerifyConnection {
+	if req.IdempotencyKey != "" && !answersFresh(req.Operation) {
 		key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey, resource: req.Resource}
 		status, raw = h.idempotency.do(h.now(), key, run)
 	} else {
@@ -46,6 +46,15 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(raw)
+}
+
+// answersFresh is true of the verbs whose answer is never replayed from the idempotency cache and which emit no event: a validate probes what the resource is now, and an issue, a verify-connection and a lease answer a credential or verdict that may have lapsed.
+func answersFresh(operation string) bool {
+	switch operation {
+	case "validate", contract.OperationIssue, contract.OperationVerifyConnection, contract.OperationLease:
+		return true
+	}
+	return false
 }
 
 // requestContext carries req's events envelope, through which the block emits events and reads platform routes as the request it serves.
@@ -102,7 +111,7 @@ func panicValueForLog(p any, secrets []string) string {
 //
 // It emits no start event because the event log's partial unique index on (subscriptionId, idempotencyKey) would drop the terminal event under a start event that took its slot.
 func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status int, resp contract.Response, settled bool) {
-	if operation == "validate" || operation == contract.OperationIssue || operation == contract.OperationVerifyConnection {
+	if answersFresh(operation) {
 		return
 	}
 	if status >= 200 && status < 300 {
@@ -128,6 +137,8 @@ func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secret
 		return h.errorResponse(Refuse(classUndeclaredVerb, "this operator answers %s alone, not %s", contract.OperationVerifyConnection, req.Operation), secrets)
 	case req.Operation == contract.OperationIssue:
 		return h.issue(ctx, req, secrets)
+	case req.Operation == contract.OperationLease:
+		return h.lease(ctx, req, secrets)
 	}
 	return h.dispatchDeclared(ctx, req.Operation, req.Desired(), secrets)
 }

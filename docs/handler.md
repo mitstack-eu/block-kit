@@ -4,7 +4,9 @@ This page is for a block author wiring an operator with the kit's `handler`
 package. It shows how you build a handler, what the handler checks before your
 code runs, what it calls for each lifecycle call, how it answers errors and
 retries, and what its answer carries. The README's diagram shows one call's
-path in brief, and this page fills in each part.
+path in brief, and this page fills in each part. House terms such as resource
+type and kind are defined in
+[the workspace glossary](https://github.com/mitstack-eu/mitstack-workspace/blob/main/docs/glossary.md).
 
 ## Building a handler
 
@@ -595,6 +597,66 @@ status, and returns an error only for a fault in the operator itself.
 The handler never replays a `verify-connection` from the idempotency cache,
 because the credential may have been revoked since. The vendor call goes
 through [`guardedhttp`](helpers.md#calling-a-vendor-with-an-orgs-credential).
+
+## Leasing a short-lived credential
+
+A block or a host sometimes needs a credential that only another resource's
+provider can mint, such as an upload link for a bucket or a write-only token
+for a telemetry backend. The platform serves one route for every such case and
+asks the provider's operator for the credential with the `lease` operation, so
+no provider's key shape lives in platform code. A block that provides a
+resource and mints these credentials lists `lease` under
+`spec.lifecycle.operations` and implements `handler.Leaser`:
+
+```yaml
+lifecycle:
+  endpoint: https://hcloud-docker-host.example.com/hook
+  operations: [subscribe, unsubscribe, upgrade, validate, lease]
+  contract: kit/v1
+```
+
+```go
+type Leaser interface {
+	Lease(ctx context.Context, d contract.Desired, l contract.LeaseRequest) (contract.Lease, error)
+}
+```
+
+`handler.New` refuses a manifest that lists `lease` when `Config.Resource` is
+not a `Leaser`, so a lease never reaches a block that cannot answer it. The
+request is a signed call to `/hook`, and `Desired` carries the provider's own
+connection secrets, which the block signs with. `contract.LeaseRequest` holds
+what the caller asked:
+
+| Field | Meaning |
+|---|---|
+| `ID` | The lease id, the same on every attempt of one lease, and empty on a request that only retires |
+| `Resource` | The resource the credential is leased from, as the caller's manifest names it |
+| `Want` | An object the platform forwards and never reads, such as `{"signals":"metrics,logs"}` |
+| `Retire` | The handles of earlier credentials to delete, which the block answered as `id` |
+| `Caller` | The calling subscription, and `Placed`, the apps and blocks the platform records as bound to it |
+
+A block mints only for what `Caller.Placed` lists. A caller cannot name an app
+in `Want`, which keeps a host to its own apps.
+
+The handler answers 200 with the credential under `lease`, as in
+`{"outputs":null,"lease":{"credential":{"token":"..."},"expiresAt":"2026-10-14T13:00:00Z","id":"tok_1"}}`.
+The platform passes `credential` on unread and records only `id` and
+`expiresAt`, and it records nothing when `id` is left out, as for a link that
+expires on its own. A request with no lease id only retires: the block deletes
+what `Retire` lists, and the handler answers 200 with no `lease`.
+
+| Case | Answer |
+|---|---|
+| The manifest does not list `lease` | 400, refusal class `lease-not-listed` |
+| The request names no resource, or mints without a caller, or neither mints nor retires | 400 |
+| The lease holds no credential, or a credential that is not a non-empty JSON object | 500 |
+| The lease has no expiry, an expiry already passed, or one more than `contract.MaxLeaseLife` ahead | 500 |
+| A string in the credential equals a secret the request carried | 500, naming the path and never the value |
+
+The last row compares whole values only, so a signed link that names the key
+id that signed it passes. The handler never replays a lease from the
+idempotency cache, because a replayed credential may have expired, and it
+sends no lifecycle event for one.
 
 ## Serving a subscription's logs
 

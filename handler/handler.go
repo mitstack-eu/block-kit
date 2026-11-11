@@ -65,6 +65,11 @@ type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)
 }
 
+// Leaser, which a block-level Resource implements exactly when its manifest lists lease, mints a short-lived credential of one resource the block provides for the lease's caller, and deletes the credentials a request lists in Retire. A request with no ID only retires, and the credential it returns is dropped.
+type Leaser interface {
+	Lease(ctx context.Context, d contract.Desired, l contract.LeaseRequest) (contract.Lease, error)
+}
+
 // Config wires a Handler; Resource, Manifest and JWKSURL are required, a nil Logs answers GET /logs with 404, and SubscriptionLogs, required exactly when the manifest lists the operation logs, answers a signed POST /logs with the lines of the subscription its request names.
 type Config struct {
 	Resource Resource
@@ -114,6 +119,9 @@ type Handler struct {
 	fullReadChecker FullReadChecker
 	kitReadAmender  KitReadAmender
 
+	// leaser is set exactly when the manifest lists lease.
+	leaser Leaser
+
 	audience  string
 	jwksURL   string
 	publicKey func(kid string) (ed25519.PublicKey, error)
@@ -157,8 +165,13 @@ func New(cfg Config) (*Handler, error) {
 	if err := checkSubscriptionLogs(cfg, declared); err != nil {
 		return nil, err
 	}
+	leaser, err := checkLeaser(cfg, declared)
+	if err != nil {
+		return nil, err
+	}
 
 	h := &Handler{
+		leaser:           leaser,
 		resource:         cfg.Resource,
 		declared:         resources,
 		typeObservers:    cfg.TypeObservers,

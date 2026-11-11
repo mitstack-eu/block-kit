@@ -25,6 +25,7 @@ type manifestDeclarations struct {
 	provided   map[string]bool
 	capability bool
 	logs       bool
+	leases     bool
 	verifies   bool
 	// verifyOnly is a manifest whose one operation is verify-connection, which needs no Resource.
 	verifyOnly bool
@@ -45,6 +46,7 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 		provided:   provided,
 		capability: m.Block.Type == contract.ManifestTypeCapability,
 		logs:       slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs),
+		leases:     slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLease),
 		verifies:   slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationVerifyConnection),
 		verifyOnly: slices.Equal(m.Block.Spec.Lifecycle.Operations, []string{contract.OperationVerifyConnection}),
 	}, nil
@@ -61,6 +63,18 @@ func checkVerifier(cfg Config, declared manifestDeclarations) error {
 		return fmt.Errorf("handler: the manifest lists %s, which only a capability manifest may", contract.OperationVerifyConnection)
 	}
 	return nil
+}
+
+// checkLeaser answers the Resource's Leaser when the manifest lists lease, and refuses a Resource that cannot lease, which a lease would otherwise reach only at run time.
+func checkLeaser(cfg Config, declared manifestDeclarations) (Leaser, error) {
+	if !declared.leases {
+		return nil, nil
+	}
+	leaser, ok := cfg.Resource.(Leaser)
+	if !ok {
+		return nil, fmt.Errorf("handler: the manifest lists %s, but Config.Resource is not a handler.Leaser, so nothing could answer it", contract.OperationLease)
+	}
+	return leaser, nil
 }
 
 type namedResource struct {
