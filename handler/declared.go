@@ -464,11 +464,11 @@ func (r *declaredRun) observe(ctx context.Context, nr namedResource) (contract.O
 	if !r.healthCheck || !r.h.fullReads.due(key, now) {
 		obs, err := r.h.kit.Probe(ctx, t, ref)
 		r.logRead(nr.name, ref.Type, "probe", obs.State, err)
-		return obs, err
+		return r.amendKitRead(ctx, nr.name, t, ref, obs, err)
 	}
 	obs, err := r.fullRead(ctx, nr.name, t, ref, key, now)
 	r.logRead(nr.name, ref.Type, "full read", obs.State, err)
-	return obs, err
+	return r.amendKitRead(ctx, nr.name, t, ref, obs, err)
 }
 
 // logRead writes one line per kit observer read, naming no output or identity value.

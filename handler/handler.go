@@ -112,6 +112,7 @@ type Handler struct {
 	kit             observe.KitObserver
 	fullReads       *fullReadClock
 	fullReadChecker FullReadChecker
+	kitReadAmender  KitReadAmender
 
 	audience  string
 	jwksURL   string
@@ -177,6 +178,7 @@ func New(cfg Config) (*Handler, error) {
 		fullReads:        newFullReadClock(),
 	}
 	h.fullReadChecker, _ = cfg.Resource.(FullReadChecker)
+	h.kitReadAmender, _ = cfg.Resource.(KitReadAmender)
 
 	if h.now == nil {
 		h.now = time.Now
