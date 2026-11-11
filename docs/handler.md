@@ -637,7 +637,7 @@ what the caller asked:
 | `Resource` | The resource the credential is leased from, as the caller's manifest names it, such as `hetzner.backup-bucket` |
 | `Want` | An object the platform forwards and never reads, such as `{"signals":"metrics,logs"}` |
 | `Retire` | The handles of earlier credentials to delete, which the block answered as `id` |
-| `Caller` | The calling subscription, and `Placed`, the apps and blocks the platform records as bound to it |
+| `Caller` | The calling subscription, and `Placed`, the apps and blocks the platform records as running on the caller |
 
 `Placed` lists entries such as
 `{"app":"shop","blockId":"docker-mariadb","subscriptionId":"sub_db"}`, one for
