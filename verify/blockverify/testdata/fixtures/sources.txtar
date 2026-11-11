@@ -17,27 +17,14 @@ func githubEndpoint(c githubCreds) string { return c.Instances["github"]["endpoi
 -- github-owner-only.go --
 package main
 
+import (
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/contract"
+)
+
 func repoOwner(c githubCreds) string { return c.Secrets["github"]["owner"] }
--- github-owner-through-helper-token-unguarded.go --
-package main
 
-import (
-	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
-	"github.com/mitstack-eu/block-kit/contract"
-)
-
-func repoOwner(d contract.Desired) string { return ghapi.Owner(d) }
-
-func githubToken(c githubCreds) string { return c.Secrets["github"]["token"] }
--- github-owner-through-helper.go --
-package main
-
-import (
-	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
-	"github.com/mitstack-eu/block-kit/contract"
-)
-
-func repoOwner(d contract.Desired) string { return ghapi.Owner(d) }
+func ownerThroughHelper(d contract.Desired) string { return ghapi.Owner(d) }
 
 func bypassActor(d contract.Desired) string { return ghapi.AppID(d) }
 -- github-raw-apibase-concatenated.go --
@@ -87,6 +74,13 @@ func TestGitHubTokenIsRead(t *testing.T) {
 }
 -- github-token-unguarded.go --
 package main
+
+import (
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/contract"
+)
+
+func repoOwner(d contract.Desired) string { return ghapi.Owner(d) }
 
 func githubToken(c githubCreds) string { return c.Secrets["github"]["token"] }
 -- handler-imported-only-in-a-test.go --
