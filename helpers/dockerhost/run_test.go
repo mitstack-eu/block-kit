@@ -212,6 +212,38 @@ func TestRunner_StaysPendingAfterItsCommitWhileTheHostHasSentNoReport(t *testing
 	}
 }
 
+func TestRunner_CommitsTheRequestOnceAfterMainMovedUnderItsFirstCommit(t *testing.T) {
+	e := newRunEnv(t)
+	moved := false
+	e.host.BeforeWrite(func(method, _ string) error {
+		if method == "PATCH" && !moved {
+			moved = true
+			e.host.Set(map[string]string{"other/compose.yaml": "services: {}\n"})
+		}
+		return nil
+	})
+
+	_, err := e.run(t, asked(runID))
+
+	wantPending(t, err)
+	if got := e.committedRequest(t)["runId"]; !moved || got != runID {
+		t.Errorf("after main moved under the commit, the request names %v, want %s committed on the newest main", got, runID)
+	}
+}
+
+func TestRunner_RefusesARunOnAHostThePlatformAttestsAbsentAndCommitsNothing(t *testing.T) {
+	e := newRunEnv(t)
+	d := runDesired(nil)
+	d.Absences = map[string]contract.Absence{"host": {Observer: "hcloud-docker-host", Resource: "server", ReadAbsentAt: runPressed, ProvesAbsence: true}}
+
+	_, err := e.runner.Run(context.Background(), d, asked(runID))
+
+	wantRefused(t, err, "host-absent", "absent")
+	if writes := e.host.Writes(); len(writes) != 0 {
+		t.Errorf("Run wrote %v, want nothing written for a host the platform attests absent", writes)
+	}
+}
+
 func TestRunner_StaysPendingWhileTheNewestReportLacksTheRunId(t *testing.T) {
 	e := newRunEnv(t)
 	e.host.Runs = goldenRuns(t)
