@@ -59,6 +59,7 @@ type Fake struct {
 	// runs numbers each check's latest run, so a report on a check starts a new run with its own URL.
 	runs      map[string]int
 	lastRun   int
+	statuses  []any
 	selection string
 	deleted   bool
 	answers   map[string]int
@@ -268,6 +269,13 @@ func (f *Fake) CoverSelectedRepositories() {
 	f.selection = "selected"
 }
 
+// ReportStatus reports a commit status for context on every commit, in state with targetURL, as a CI that posts statuses rather than check runs does.
+func (f *Fake) ReportStatus(context, state, targetURL string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statuses = append(f.statuses, map[string]any{"context": context, "state": state, "target_url": targetURL})
+}
+
 // RefuseCommitStatus makes every commit-status read answer 403 naming the statuses=read permission, as an installation without that permission is answered.
 func (f *Fake) RefuseCommitStatus() {
 	f.mu.Lock()
@@ -378,7 +386,7 @@ func (f *Fake) route(method, rest string, r *http.Request, body map[string]any) 
 	case method == http.MethodGet && strings.HasPrefix(rest, "/commits/") && strings.HasSuffix(rest, "/check-runs"):
 		return f.checkRuns()
 	case method == http.MethodGet && strings.HasPrefix(rest, "/commits/") && strings.HasSuffix(rest, "/status"):
-		return http.StatusOK, map[string]any{"state": "pending", "statuses": []any{}}
+		return http.StatusOK, map[string]any{"state": "pending", "statuses": append([]any{}, f.statuses...)}
 	}
 	return http.StatusTeapot, map[string]any{"message": "landingtest serves no " + method + " " + rest}
 }
