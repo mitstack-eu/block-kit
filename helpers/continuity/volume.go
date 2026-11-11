@@ -105,7 +105,7 @@ func writeManifest(tw *tar.Writer, manifest volumeManifest) error {
 	if err != nil {
 		return err
 	}
-	if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: volumeManifestName, Mode: 0o600, Size: int64(len(raw))}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: volumeManifestName, Mode: ownerRW, Size: int64(len(raw))}); err != nil {
 		return err
 	}
 	_, err = tw.Write(raw)

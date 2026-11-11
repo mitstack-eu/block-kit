@@ -94,22 +94,18 @@ type Request struct {
 	EnteredCredential map[string]string `json:"enteredCredential,omitempty"`
 }
 
-// OperationSnapshot asks a block to snapshot one declared state, check the snapshot by a scratch restore and publish its handover only when the check passes, and OperationRestore asks it to put that state back from the handover.
-const (
-	OperationSnapshot = "snapshot"
-	OperationRestore  = "restore"
-)
-
 // HandoverOutputKey is the output a snapshot publishes the handover of unit under, and the key of the prior output a restore reads it from.
 func HandoverOutputKey(unit string) string { return "handover." + unit }
 
-// OperationIssue asks a capability for one app's credential, OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook, OperationVerifyConnection asks a capability's operator whether the credential an org entered works, before any subscription exists, OperationLease asks a block for a short-lived credential of a resource it provides, or to retire the ones it minted, and OperationRun asks a block to run a builder's one-off command in a fresh container of the app.
+// OperationIssue asks a capability for one app's credential, OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook, OperationVerifyConnection asks a capability's operator whether the credential an org entered works, before any subscription exists, OperationLease asks a block for a short-lived credential of a resource it provides, or to retire the ones it minted, OperationRun asks a block to run a builder's one-off command in a fresh container of the app, OperationSnapshot asks a block to snapshot one declared state and publish its handover only once a scratch restore of the snapshot passes, and OperationRestore asks it to put that state back from the handover.
 const (
 	OperationIssue            = "issue"
 	OperationLogs             = "logs"
 	OperationVerifyConnection = "verify-connection"
 	OperationLease            = "lease"
 	OperationRun              = "run"
+	OperationSnapshot         = "snapshot"
+	OperationRestore          = "restore"
 )
 
 // MaxRunCommandLength is the longest command a run carries, in printable ASCII characters.

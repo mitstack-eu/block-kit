@@ -305,7 +305,7 @@ publishes under `contract.HandoverOutputKey`, calls `Data.Replace`, loses each
 stateful resource from the provider, and sends an `upgrade` so the block
 creates them again. It then sends a `restore` carrying the handover and
 validates every declared resource until it reads present and healthy. Every
-request after the snapshot carries `replacing: true`, the marker that tells
+request from the snapshot on carries `replacing: true`, the marker that tells
 the block to send no install retry. The drill reads the data back through
 `Data.Read` and fails with one message per problem, as in these two:
 

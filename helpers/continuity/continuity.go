@@ -173,26 +173,26 @@ func (h Hook) encryptToSpool(ctx context.Context, recipient *age.Recipient) (*os
 		return nil, "", err
 	}
 	digest := sha256.New()
-	w, err := age.Encrypt(io.MultiWriter(spool, digest), recipient)
-	if err == nil {
-		err = h.State.Export(ctx, w)
-	}
-	if err == nil {
-		err = w.Close()
-	}
-	if err != nil {
+	if err := h.exportEncrypted(ctx, io.MultiWriter(spool, digest), recipient); err != nil {
 		discard(spool)
 		return nil, "", err
 	}
 	return spool, hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-func (h Hook) scratchCheck(ctx context.Context, unit string, ho Handover, identity *age.Identity) error {
-	link, err := h.Links.Download(ctx, unit, ho.Ref)
+func (h Hook) exportEncrypted(ctx context.Context, dst io.Writer, recipient *age.Recipient) error {
+	w, err := age.Encrypt(dst, recipient)
 	if err != nil {
-		return fmt.Errorf("getting a download link: %w", err)
+		return err
 	}
-	plain, closeStored, err := h.openStoredAt(ctx, link, ho, identity)
+	if err := h.State.Export(ctx, w); err != nil {
+		return err
+	}
+	return w.Close()
+}
+
+func (h Hook) scratchCheck(ctx context.Context, unit string, ho Handover, identity *age.Identity) error {
+	plain, closeStored, err := h.openStored(ctx, unit, ho, identity)
 	if err != nil {
 		return err
 	}
@@ -206,16 +206,12 @@ func (h Hook) scratchCheck(ctx context.Context, unit string, ho Handover, identi
 	return nil
 }
 
+// openStored downloads the object ho names into a spool, checks it against ho before any byte is decrypted, and returns its plaintext.
 func (h Hook) openStored(ctx context.Context, unit string, ho Handover, identity *age.Identity) (io.Reader, func(), error) {
 	link, err := h.Links.Download(ctx, unit, ho.Ref)
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting a download link: %w", err)
 	}
-	return h.openStoredAt(ctx, link, ho, identity)
-}
-
-// openStoredAt downloads the object into a spool, checks it against ho before any byte is decrypted, and returns its plaintext.
-func (h Hook) openStoredAt(ctx context.Context, link Link, ho Handover, identity *age.Identity) (io.Reader, func(), error) {
 	stored, sum, err := fetch(ctx, h.client(), link.URL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("downloading: %w", err)

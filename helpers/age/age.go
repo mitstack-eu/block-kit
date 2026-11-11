@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -168,13 +169,13 @@ func Encrypt(dst io.Writer, r *Recipient) (io.WriteCloser, error) {
 	return &streamWriter{dst: dst, aead: payload, buf: make([]byte, 0, chunkSize)}, nil
 }
 
+// chunkNonce is the chunk's counter in big-endian order followed by one byte that marks the final chunk.
 func chunkNonce(counter uint64, final bool) []byte {
 	n := make([]byte, nonceSize)
-	for i := 0; i < 8; i++ {
-		n[10-i] = byte(counter >> (8 * uint(i)))
-	}
+	flag := nonceSize - 1
+	binary.BigEndian.PutUint64(n[flag-8:flag], counter)
 	if final {
-		n[11] = finalChunkFlag
+		n[flag] = finalChunkFlag
 	}
 	return n
 }
