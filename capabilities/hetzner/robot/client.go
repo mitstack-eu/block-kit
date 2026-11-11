@@ -192,7 +192,11 @@ func (c *Client) wait(ctx context.Context, what string, done func() (bool, error
 			return nil
 		}
 		if ctx.Err() != nil {
-			return fmt.Errorf("waiting for %s: %w", what, context.Cause(ctx))
+			waited := fmt.Errorf("waiting for %s: %w", what, context.Cause(ctx))
+			if err != nil && !errors.Is(err, ctx.Err()) {
+				return errors.Join(waited, err)
+			}
+			return waited
 		}
 		if err != nil {
 			return err
