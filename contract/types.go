@@ -426,7 +426,7 @@ func DecodeRequest(raw []byte) (Request, error) {
 	return req, nil
 }
 
-// checkLease holds the rules envelope.schema.json states for a lease, for a caller that decodes without the schema.
+// checkLease enforces the rules for a lease that envelope.schema.json documents, since DecodeRequest never validates a request against the schema, so a change to either needs the other.
 func checkLease(req Request) error {
 	if slices.Contains(req.Retire, "") {
 		return fmt.Errorf("contract: envelope field %q must not hold an empty handle", "retire")

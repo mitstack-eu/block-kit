@@ -600,13 +600,17 @@ through [`guardedhttp`](helpers.md#calling-a-vendor-with-an-orgs-credential).
 
 ## Leasing a short-lived credential
 
-A block or a host sometimes needs a credential that only another resource's
-provider can mint, such as an upload link for a bucket or a write-only token
-for a telemetry backend. The platform serves one route for every such case and
-asks the provider's operator for the credential with the `lease` operation, so
-no provider's key shape lives in platform code. A block that provides a
-resource and mints these credentials lists `lease` under
-`spec.lifecycle.operations` and implements `handler.Leaser`:
+A block, or a Docker host (the server an `hcloud-docker-host` subscription
+runs), sometimes needs a credential that only the provider of a resource can
+mint, such as a signed upload link for a backup bucket or a write-only token
+for a telemetry backend. The provider is the subscription whose operator
+manages that resource. The caller asks the platform, and the platform asks the
+provider's operator for the credential with the `lease` operation, a signed
+call to the operator's `/hook` like any other lifecycle call. No provider's key
+shape then lives in platform code. A block that provides a resource and mints
+these credentials lists `lease` under `spec.lifecycle.operations`, as a
+lifecycle operation the platform sends only to a block that lists it, and
+implements `handler.Leaser`:
 
 ```yaml
 lifecycle:
@@ -630,13 +634,18 @@ what the caller asked:
 | Field | Meaning |
 |---|---|
 | `ID` | The lease id, the same on every attempt of one lease, and empty on a request that only retires |
-| `Resource` | The resource the credential is leased from, as the caller's manifest names it |
+| `Resource` | The resource the credential is leased from, as the caller's manifest names it, such as `hetzner.backup-bucket` |
 | `Want` | An object the platform forwards and never reads, such as `{"signals":"metrics,logs"}` |
 | `Retire` | The handles of earlier credentials to delete, which the block answered as `id` |
 | `Caller` | The calling subscription, and `Placed`, the apps and blocks the platform records as bound to it |
 
-A block mints only for what `Caller.Placed` lists. A caller cannot name an app
-in `Want`, which keeps a host to its own apps.
+`Placed` lists entries such as
+`{"app":"shop","blockId":"docker-mariadb","subscriptionId":"sub_db"}`, one for
+each block of an app that the platform records as running on the caller. A
+block mints only for what `Caller.Placed` lists, and a caller cannot name an
+app in `Want`, which keeps a host to its own apps. A block reads `Want` for the
+shape of what it mints, such as the signals of a token, and never for which
+apps.
 
 The handler answers 200 with the credential under `lease`, as in
 `{"outputs":null,"lease":{"credential":{"token":"..."},"expiresAt":"2026-10-14T13:00:00Z","id":"tok_1"}}`.
@@ -650,8 +659,8 @@ what `Retire` lists, and the handler answers 200 with no `lease`.
 | The manifest does not list `lease` | 400, refusal class `lease-not-listed` |
 | The request names no resource, or mints without a caller, or neither mints nor retires | 400 |
 | The lease holds no credential, a credential that is not a non-empty JSON object, or one whose strings are all empty | 500 |
-| The lease has no expiry, an expiry already passed, or one more than `contract.MaxLeaseLife` ahead | 500 |
-| A string in the credential, or the `id`, equals a secret the request carried | 500, naming the path and never the value |
+| The lease has no expiry, an expiry already passed, or one more than `contract.MaxLeaseLife`, 24 hours, ahead | 500 |
+| A string in the credential, or the `id`, equals a secret the request carried | 500, naming where in the credential it sits, such as `credential.nested.key`, and never the value |
 
 When the handler refuses a lease that came with an `id`, it calls the block
 once more to retire that `id`, since the platform records only what a 200

@@ -68,7 +68,7 @@ without it, naming the key's path.
 | `spec.receivesAppSecrets` | No | `true` sends the block every secret the app holds, under `Desired.AppSecrets`, for a block that hands them to the app's own runtime |
 | `spec.observability` | No | Refused by the platform, which takes the metric series of each resource from its type |
 | `spec.lifecycle.endpoint` | Yes | The HTTPS address of the operator's `/hook` route |
-| `spec.lifecycle.operations` | Yes | The lifecycle calls the operator answers, usually all four, plus `logs` for a block that serves each subscription's own lines, as [Serving a subscription's logs](handler.md#serving-a-subscriptions-logs) explains, and `lease` for a block that mints a short-lived credential of a resource it provides, as [Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential) explains |
+| `spec.lifecycle.operations` | Yes | The lifecycle calls the operator answers, usually all four, plus `logs` for a block that serves each subscription's own lines, as [Serving a subscription's logs](handler.md#serving-a-subscriptions-logs) explains, and `lease`, an operation the platform sends only to a block that lists it, for a block that mints a short-lived credential of a resource it provides, as [Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential) explains |
 | `spec.lifecycle.contract` | Yes | `kit/v1`, the lifecycle contract this kit serves and blockverify judges |
 | `spec.lifecycle.needsCredentialRefresh` | No | `true` asks the platform for a periodic `validate`, as [The lifecycle keys](#the-lifecycle-keys) explains |
 | `spec.lifecycle.settleBudget` | No | How long the platform waits for the block's resources to settle (reach the state a call asked for) |
