@@ -37,8 +37,6 @@ type inflightCall struct {
 }
 
 // idempotencyCache is single-flight and stores only a settled answer, since a stored pending or absent:false answer would replay "not yet" for the whole TTL instead of observing the resource.
-//
-// An empty idempotencyKey and a validate never reach it, since a probe must observe the current state.
 type idempotencyCache struct {
 	mu      sync.Mutex
 	entries map[idempotencyKey]idempotencyEntry
