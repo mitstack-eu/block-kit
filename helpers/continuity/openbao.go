@@ -24,7 +24,7 @@ type Endpoint struct {
 	Client *http.Client
 }
 
-// do names only the fixed path in its errors, since the token and address are not worth echoing.
+// do drops the URL net/http puts in its errors and names the fixed path, so the token never appears in one.
 func (e Endpoint) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(e.Addr, "/")+path, body)
 	if err != nil {

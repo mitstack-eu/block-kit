@@ -33,7 +33,7 @@ type CNPGCluster interface {
 	Recover(ctx context.Context, into Recovery, archive io.Reader) (Recovered, error)
 }
 
-// CloudNativePG snapshots through CloudNativePG's backup and checks a snapshot by recovering it into a scratch cluster and running Check, SELECT 1 when Check is nil. No concrete kube client ships with it, so it is unproven against a live cluster.
+// CloudNativePG snapshots through CloudNativePG's backup and checks a snapshot by recovering it into a scratch cluster and running Check, SELECT 1 when Check is nil.
 type CloudNativePG struct {
 	Cluster CNPGCluster
 	Check   func(ctx context.Context, q Querier) error

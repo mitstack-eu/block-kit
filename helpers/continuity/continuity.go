@@ -185,10 +185,28 @@ func (h Hook) exportEncrypted(ctx context.Context, dst io.Writer, recipient *age
 	if err != nil {
 		return err
 	}
-	if err := h.State.Export(ctx, w); err != nil {
+	plain := &countingWriter{dst: w}
+	if err := h.State.Export(ctx, plain); err != nil {
 		return err
 	}
+	if plain.written == 0 {
+		return errExportedNothing
+	}
 	return w.Close()
+}
+
+// errExportedNothing exists because age seals an empty export into a well-formed file, which the digest and size checks would pass.
+var errExportedNothing = errors.New("the state exported nothing, and a snapshot of nothing restores nothing")
+
+type countingWriter struct {
+	dst     io.Writer
+	written int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.dst.Write(p)
+	c.written += int64(n)
+	return n, err
 }
 
 func (h Hook) scratchCheck(ctx context.Context, unit string, ho Handover, identity *age.Identity) error {
@@ -272,7 +290,7 @@ func putObject(ctx context.Context, client *http.Client, link string, body *os.F
 	return doOK(client, req)
 }
 
-// fetch downloads link into a spool positioned at its start, and returns the spool with the hex SHA-256 of what it holds.
+// fetch leaves the spool positioned at its start, and returns the hex SHA-256 of what it holds.
 func fetch(ctx context.Context, client *http.Client, link string) (*os.File, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {

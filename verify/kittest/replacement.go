@@ -3,6 +3,7 @@ package kittest
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -81,7 +82,7 @@ func (d *drill) run(ctx context.Context) {
 		return
 	}
 	d.stage("subscribe")
-	if err := d.in.Data.Write(ctx, drillDatum); err != nil {
+	if err := d.in.Data.Write(ctx, maps.Clone(drillDatum)); err != nil {
 		d.problem("writing the known data into the block's state failed: %v", err)
 		return
 	}
@@ -95,6 +96,9 @@ func (d *drill) run(ctx context.Context) {
 		d.problem("replacing the block's state failed: %v", err)
 		return
 	}
+	if !d.emptied(ctx) {
+		return
+	}
 	d.stage("replace")
 	if !d.recreate(ctx) || !d.restore(handover) {
 		return
@@ -104,6 +108,23 @@ func (d *drill) run(ctx context.Context) {
 		d.stage("observe")
 	}
 	d.readBack(ctx)
+}
+
+// emptied fails each datum Data.Replace left behind, since a datum that was never lost reads back whatever the restore did.
+func (d *drill) emptied(ctx context.Context) bool {
+	held, err := d.in.Data.Read(ctx)
+	if err != nil {
+		d.problem("reading the block's state after Data.Replace failed: %v", err)
+		return false
+	}
+	gone := true
+	for _, key := range sortedKeys(drillDatum) {
+		if _, left := held[key]; left {
+			d.problem("Data.Replace left datum %q in the block's state, so the drill cannot tell a restore from data that was never lost", key)
+			gone = false
+		}
+	}
+	return gone
 }
 
 // snapshot sends the snapshot of the unit and returns the handover its answer publishes.

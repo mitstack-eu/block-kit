@@ -54,7 +54,7 @@ func replacementSuite(target string) SuiteResult {
 	}
 	_, ran, logged := strings.Cut(output, drillRanMarker)
 	if !logged {
-		return SuiteResult{name, "pass", "TestReplacementDrill passed, but kittest.AssertReplacement logged no stages, so which ran is unknown"}
+		return SuiteResult{name, "fail", "TestReplacementDrill passed without kittest.AssertReplacement logging its stages, so the drill ran no stage, as when the test skips before it"}
 	}
 	ran, _, _ = strings.Cut(ran, "\n")
 	return SuiteResult{name, "pass", fmt.Sprintf("TestReplacementDrill replaces the server and restores every datum; stages that ran: %s", strings.TrimSpace(ran))}

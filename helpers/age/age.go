@@ -169,7 +169,6 @@ func Encrypt(dst io.Writer, r *Recipient) (io.WriteCloser, error) {
 	return &streamWriter{dst: dst, aead: payload, buf: make([]byte, 0, chunkSize)}, nil
 }
 
-// chunkNonce is the chunk's counter in big-endian order followed by one byte that marks the final chunk.
 func chunkNonce(counter uint64, final bool) []byte {
 	n := make([]byte, nonceSize)
 	flag := nonceSize - 1

@@ -297,7 +297,7 @@ func TestReplacementDrill(t *testing.T) {
 |---|---|
 | `Block` | The same `kittest.Block` `AssertBlock` takes, so the drill serves your block through `handler.New` as the engine reaches it |
 | `Unit` | The name of a `spec.continuity` entry whose handover is `snapshot` |
-| `Data` | Your view of the data the unit keeps, a `kittest.DrillData` with `Write`, `Read` and `Replace`. `Replace` destroys the live state as a lost server would and leaves it empty |
+| `Data` | Your view of the data the unit keeps, a `kittest.DrillData` with `Write`, `Read` and `Replace`. `Replace` destroys the live state as a lost server would and leaves it empty. The drill reads the state after `Replace` and fails when a known value is still there, since a value that was never lost proves no restore |
 
 The drill subscribes the block and writes three known values through
 `Data.Write`. It sends a `snapshot` and keeps the handover the answer

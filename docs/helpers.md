@@ -1107,7 +1107,8 @@ handover, err := hook.Snapshot(ctx, "app-data")
 hold:
 
 1. It reads the unit's data out of the `State` and encrypts it with age, using
-   only the public key, into a temporary file that holds ciphertext alone.
+   only the public key, into a temporary file that holds ciphertext alone. It
+   refuses a `State` that exports nothing, before anything is uploaded.
 2. It uploads the file to the upload link with a `Content-Length`, since a
    presigned upload refuses a chunked body.
 3. It downloads the stored object through a download link, decrypts it with

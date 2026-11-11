@@ -11,7 +11,9 @@ too.
 The kit's module is stdlib-only, with one exception. Its `go.mod` requires
 `golang.org/x/crypto`, whose ChaCha20-Poly1305 `helpers/age` seals a snapshot
 with, because hand-written cryptography is a security risk and this library is
-the Go team's own. No other third-party dependency is ever added. The Robot
+the Go team's own. That module builds on `golang.org/x/sys`, which `go.mod`
+lists as an indirect requirement. No other third-party dependency is ever
+added. The Robot
 rescue system's SSH session sits in a Go module of its own,
 `capabilities/hetzner/robot/rescuessh`, with its own `golang.org/x/crypto`
 requirement. From the repository's root:
