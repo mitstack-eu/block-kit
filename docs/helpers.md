@@ -1143,10 +1143,11 @@ request carries them changes.
 repo := ghapi.Owner(d) + "/" + d.Params["appName"]
 ```
 
-Neither value is a credential. The handler scrubs every value a request's
-secret groups hold from each answer and each log line it writes. A message
-naming the owner therefore reads `[REDACTED]` in its place for as long as the
-request carries the owner in the `github` secret group.
+Neither value is a credential. The handler scrubs every value of four or more
+characters that a request's secret groups hold, from each answer and each log
+line it writes. A message naming such an owner therefore reads `[REDACTED]` in
+its place for as long as the request carries the owner in the `github` secret
+group.
 
 `EnsureRepo(ctx, org, name, appID)` creates a private repository, or finds one,
 and keeps a ruleset on its main branch. The ruleset refuses every update,
