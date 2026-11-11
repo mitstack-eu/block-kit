@@ -127,7 +127,7 @@ func TestDecodeRequest_CarriesEveryGoldenFieldOntoTheRequest(t *testing.T) {
 func TestDecodeRequest_EveryRequestGoldenDecodesOrIsRefusedExactlyAsPinned(t *testing.T) {
 	refusals := map[string]string{
 		"invalid-missing-nonce": `contract: envelope field "nonce" is required`,
-		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, got "reticulate"`,
+		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, got "reticulate"`,
 	}
 	pinned, err := os.ReadFile("testdata/request-golden-encodings.json")
 	if err != nil {
@@ -563,6 +563,36 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 		{"ownSecrets", func(t *testing.T, prop map[string]any) {
 			objectOfStrings(t, doc, prop, "properties.ownSecrets")
 		}},
+		{"leaseId", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "string") {
+				t.Errorf("properties.leaseId type = %v, want string", schemaTypes(prop))
+			}
+		}},
+		{"want", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "object") {
+				t.Errorf("properties.want type = %v, want object", schemaTypes(prop))
+			}
+		}},
+		{"retire", func(t *testing.T, prop map[string]any) {
+			if items := schemaAt(t, doc, prop, "items"); !hasType(prop, "array") || !hasType(items, "string") {
+				t.Errorf("properties.retire = %v, want an array of strings", prop)
+			}
+		}},
+		{"caller", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "object") {
+				t.Fatalf("properties.caller type = %v, want object", schemaTypes(prop))
+			}
+			if sub := schemaAt(t, doc, prop, "properties", "subscriptionId"); !hasType(sub, "string") {
+				t.Errorf("properties.caller.subscriptionId type = %v, want string", schemaTypes(sub))
+			}
+			placed := schemaAt(t, doc, prop, "properties", "placed")
+			entry := schemaAt(t, doc, placed, "items", "properties")
+			for _, field := range []string{"app", "blockId", "subscriptionId"} {
+				if f := schemaAt(t, doc, entry, field); !hasType(f, "string") {
+					t.Errorf("properties.caller.placed[].%s type = %v, want string", field, schemaTypes(f))
+				}
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
@@ -576,11 +606,20 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_13_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_14_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.13.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.13.0: it adds the operation verify-connection, a minor change from 1.12.0, which added absences", doc["version"])
+	if doc["version"] != "1.14.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.14.0: it adds the operation lease, a minor change from 1.13.0, which added verify-connection", doc["version"])
+	}
+}
+
+func TestEnvelopeSchema_ListsTheLeaseOperation(t *testing.T) {
+	doc := jsonObject(t, contract.EnvelopeSchema)
+	operation, _ := doc["properties"].(map[string]any)["operation"].(map[string]any)
+
+	if enum, _ := operation["enum"].([]any); !slices.Contains(enum, any("lease")) {
+		t.Errorf("envelope.schema.json operation enum = %v, want it to list \"lease\"", operation["enum"])
 	}
 }
 
@@ -616,5 +655,93 @@ func TestDesired_AttestedAbsentCountsOnlyAWholeAttestationOfThatBindingsSubscrip
 				t.Errorf("AttestedAbsent(%q) = %v, %v; want found %v", tc.sub, got, ok, want)
 			}
 		})
+	}
+}
+
+func leaseBody(t *testing.T, mutate func(m map[string]any)) []byte {
+	t.Helper()
+	m := map[string]any{
+		"operation": "lease", "subscriptionId": "sub_provider", "blockId": "hcloud-docker-host", "orgId": "org_acme",
+		"nonce": "n0nce-lease-0001", "createdAt": "2026-07-15T21:15:06Z",
+		"resource": "hetzner.backup-bucket", "leaseId": "lease_0001",
+		"want":   map[string]any{"signals": "metrics,logs"},
+		"retire": []string{"tok_old_1", "tok_old_2"},
+		"caller": map[string]any{"subscriptionId": "sub_host", "placed": []map[string]any{
+			{"app": "shop", "blockId": "docker-mariadb", "subscriptionId": "sub_db"},
+			{"app": "shop", "blockId": "docker-app-slice", "subscriptionId": "sub_slice"},
+		}},
+	}
+	if mutate != nil {
+		mutate(m)
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("json.Marshal(lease body): %v", err)
+	}
+	return raw
+}
+
+func TestDecodeRequest_ReadsALeaseNamingItsResourceItsCallerAndWhatItWants(t *testing.T) {
+	raw := leaseBody(t, nil)
+
+	req, err := contract.DecodeRequest(raw)
+
+	if err != nil {
+		t.Fatalf("DecodeRequest(lease): %v", err)
+	}
+	want := contract.LeaseRequest{
+		ID: "lease_0001", Resource: "hetzner.backup-bucket", Want: json.RawMessage(`{"signals":"metrics,logs"}`), Retire: []string{"tok_old_1", "tok_old_2"},
+		Caller: contract.LeaseCaller{SubscriptionID: "sub_host", Placed: []contract.Placed{
+			{App: "shop", BlockID: "docker-mariadb", SubscriptionID: "sub_db"},
+			{App: "shop", BlockID: "docker-app-slice", SubscriptionID: "sub_slice"},
+		}},
+	}
+	if got := req.Lease(); !reflect.DeepEqual(got, want) {
+		t.Errorf("DecodeRequest(lease).Lease() =\n%+v\nwant\n%+v", got, want)
+	}
+	if req.Operation != contract.OperationLease || contract.OperationLease != "lease" {
+		t.Errorf("operation = %q, OperationLease = %q, want both lease", req.Operation, contract.OperationLease)
+	}
+}
+
+func TestDecodeRequest_AcceptsALeaseThatOnlyRetiresCredentials(t *testing.T) {
+	raw := leaseBody(t, func(m map[string]any) { delete(m, "leaseId"); delete(m, "want"); delete(m, "caller") })
+
+	req, err := contract.DecodeRequest(raw)
+
+	if err != nil {
+		t.Fatalf("DecodeRequest(a lease with retire alone): %v", err)
+	}
+	if got := req.Lease(); got.ID != "" || !slices.Equal(got.Retire, []string{"tok_old_1", "tok_old_2"}) {
+		t.Errorf("Lease() = %+v, want no id and the two credentials to retire", got)
+	}
+}
+
+func TestDecodeRequest_RefusesALeaseMissingWhatItNeeds(t *testing.T) {
+	cases := []struct {
+		label  string
+		mutate func(m map[string]any)
+		wants  []string
+	}{
+		{"no resource", func(m map[string]any) { delete(m, "resource") }, []string{`"resource"`}},
+		{"an empty resource", func(m map[string]any) { m["resource"] = "" }, []string{`"resource"`}},
+		{"neither a lease id nor credentials to retire", func(m map[string]any) { delete(m, "leaseId"); delete(m, "retire") }, []string{`"leaseId"`, `"retire"`}},
+		{"a lease id and no caller", func(m map[string]any) { delete(m, "caller") }, []string{`"caller.subscriptionId"`}},
+		{"a caller naming no subscription", func(m map[string]any) { m["caller"] = map[string]any{"placed": []any{}} }, []string{`"caller.subscriptionId"`}},
+		{"want that is not an object", func(m map[string]any) { m["want"] = "metrics" }, []string{`"want"`}},
+		{"retire that is not a list", func(m map[string]any) { m["retire"] = "tok_old_1" }, []string{`"retire"`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			_, err := contract.DecodeRequest(leaseBody(t, tc.mutate))
+
+			requireErrorNaming(t, "DecodeRequest(lease)", err, tc.wants...)
+		})
+	}
+}
+
+func TestMaxLeaseLife_IsOneDay(t *testing.T) {
+	if contract.MaxLeaseLife != 24*time.Hour {
+		t.Errorf("contract.MaxLeaseLife = %v, want 24h: a credential that lives longer is no lease", contract.MaxLeaseLife)
 	}
 }

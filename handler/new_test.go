@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
@@ -77,6 +78,10 @@ func TestNew(t *testing.T) {
 			refused: true, naming: []string{`"Not A Type"`, "Config.TypeObservers"}},
 		{name: "a nil type observer is refused", config: withTypeObservers(func(o map[string]handler.Observer) { o["aws.vpc"] = nil }),
 			refused: true, naming: []string{`"aws.vpc"`, "Config.TypeObservers"}},
+		{name: "a manifest listing lease for a Resource that cannot lease is refused naming handler.Leaser",
+			config: then(withBlockLevelObservers(unchanged), withManifest(leaseManifest)), refused: true, naming: []string{"lease", "handler.Leaser"}},
+		{name: "a manifest listing lease for a Resource that leases is accepted",
+			config: then(withBlockLevelObservers(unchanged), withManifest(leaseManifest), func(c *handler.Config) { c.Resource = newLeasingBlock(`{"a":"b"}`, time.Now()) })},
 		{name: "an entry marked many for a Resource reporting its members is accepted",
 			config: then(pool, func(c *handler.Config) {
 				c.Resource = reportingBlock{blockResource: &blockResource{cloud: newFakeCloud()}}
