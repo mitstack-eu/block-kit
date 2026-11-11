@@ -192,7 +192,7 @@ func (j *install) rescueAddress() string {
 func readHardware(ctx context.Context, rescue RescueShell) (Hardware, error) {
 	out, err := rescue.Run(ctx, "read")
 	if err != nil {
-		return Hardware{}, fmt.Errorf("%w; its output ended: %s", err, out)
+		return Hardware{}, withOutput(err, out)
 	}
 	var hw Hardware
 	var serials []string
@@ -229,7 +229,14 @@ func write(ctx context.Context, rescue RescueShell, vlan int, address netip.Pref
 	}
 	out, err := rescue.Run(ctx, "write", strconv.Itoa(vlan), address.String(), gateway.String(), server.String(), strconv.Itoa(offer.Port), offer.Pin, serial)
 	if err != nil {
-		return fmt.Errorf("%w; its output ended: %s", err, out)
+		return withOutput(err, out)
 	}
 	return nil
+}
+
+func withOutput(err error, out string) error {
+	if out == "" {
+		return err
+	}
+	return fmt.Errorf("%w; its output ended: %s", err, out)
 }

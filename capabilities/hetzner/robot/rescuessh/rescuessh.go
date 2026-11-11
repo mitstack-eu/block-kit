@@ -7,6 +7,7 @@ import (
 	"crypto"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"slices"
@@ -104,13 +105,18 @@ func dial(ctx context.Context, addr string, config *ssh.ClientConfig) (*ssh.Clie
 
 // Run runs the script with args and returns the end of its output beside any error, which quotes none of the output.
 func (s *Session) Run(ctx context.Context, args ...string) (string, error) {
+	var out output
+	err := s.run(ctx, &out, args)
+	return out.String(), err
+}
+
+func (s *Session) run(ctx context.Context, out io.Writer, args []string) error {
 	session, err := s.client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("opening a rescue session: %w", err)
+		return fmt.Errorf("opening a rescue session: %w", err)
 	}
 	defer session.Close()
-	var out output
-	session.Stdin, session.Stdout, session.Stderr = bytes.NewReader(s.script), &out, &out
+	session.Stdin, session.Stdout, session.Stderr = bytes.NewReader(s.script), out, out
 	done := make(chan error, 1)
 	go func() { done <- session.Run(strings.Join(append([]string{"bash", "-s", "--"}, args...), " ")) }()
 	name := "the rescue script"
@@ -120,11 +126,11 @@ func (s *Session) Run(ctx context.Context, args ...string) (string, error) {
 	select {
 	case err = <-done:
 		if err != nil {
-			return out.String(), fmt.Errorf("%s failed: %w", name, err)
+			return fmt.Errorf("%s failed: %w", name, err)
 		}
-		return out.String(), nil
+		return nil
 	case <-ctx.Done():
-		return out.String(), fmt.Errorf("%s did not finish: %w", name, ctx.Err())
+		return fmt.Errorf("%s did not finish: %w", name, ctx.Err())
 	}
 }
 
