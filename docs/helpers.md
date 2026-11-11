@@ -1408,7 +1408,8 @@ Cloud client that asks Hetzner until the actions end, such as
 asking, so the kit adds no timer of its own, as [the kit's wait
 standard](maintainers.md#judging-the-waits-a-pull-request-adds) requires.
 hcloud-go's waiter at v2.49.0 skips a nil action, so a call that may start
-none, such as creating a primary IP, needs no check of its own.
+none needs no check of its own. Creating a primary IP is such a call, since
+Hetzner may create an unassigned address with no action.
 
 Here is how a block built on hcloud-go creates a server and waits on it, with
 `client` the block's `*hcloud.Client`:
@@ -1418,7 +1419,7 @@ res, _, err := client.Server.Create(ctx, opts)
 if err != nil {
 	return fmt.Errorf("creating server %s: %w", opts.Name, err)
 }
-err = cloud.WaitForActions(ctx, client.Action.WaitFor, "server "+opts.Name+" to be created", res.Action)
+return cloud.WaitForActions(ctx, client.Action.WaitFor, "server "+opts.Name+" to be created", res.Action)
 ```
 
 The table gives what the call returns in each case.
@@ -1426,8 +1427,10 @@ The table gives what the call returns in each case.
 | When | What `WaitForActions` returns |
 |---|---|
 | Every action succeeds | `nil` |
-| Hetzner marks an action an error | `waiting for server web-1 to be created: server limit exceeded (server_limit_exceeded, 42)`, wrapping the client's error, so `errors.As` still reaches Hetzner's code |
+| Hetzner marks an action an error | `waiting for server web-1 to be created: server limit exceeded (server_limit_exceeded, 42)`, wrapping the client's error, so `errors.As` still reaches hcloud-go's `hcloud.ActionError` and its `Code` |
 | The context ends while an action runs | `waiting for server web-1 to be created: context deadline exceeded: remaining running actions: [42]`, for which `errors.Is(err, context.DeadlineExceeded)` holds |
+
+In both errors, 42 is the id Hetzner gave the action.
 
 The context bounds the wait, so it lasts no longer than the call it serves.
 When the call's time runs out first, the call fails with that error, and the
