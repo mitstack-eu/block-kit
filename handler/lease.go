@@ -43,7 +43,8 @@ func (h *Handler) retireRefused(ctx context.Context, req contract.Request, refus
 	retire := req.Lease()
 	retire.ID, retire.Want, retire.Retire = "", nil, []string{refused.ID}
 	if _, err := h.leaser.Lease(ctx, req.Desired(), retire); err != nil {
-		return fmt.Errorf("handler: retiring the refused credential %q: %w", refused.ID, err)
+		// %v keeps a Refused the retire returns from deciding the status of the refusal being answered.
+		return fmt.Errorf("handler: retiring the refused credential %q: %v", refused.ID, err)
 	}
 	return nil
 }
