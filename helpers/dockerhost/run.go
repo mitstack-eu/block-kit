@@ -24,6 +24,7 @@ const (
 	classRunProcess  = "run-process"
 	classRunRefused  = "run-refused"
 	classHostBinding = "host-binding"
+	classHostAbsent  = "host-absent"
 )
 
 // RunRequestFile is what <block>.run-request in an app's directory of the host's repository holds for the host's agent to start one run.
@@ -94,7 +95,7 @@ func (r Runner) request(d contract.Desired, req contract.RunRequest) (RunRequest
 		return RunRequestFile{}, target{}, err
 	}
 	if absence, ok := d.AttestedAbsent(t.hostSub); ok {
-		return RunRequestFile{}, target{}, handler.Refuse("host-absent", "the platform's %s read the host's %s absent, so run %s has no host to run on; give the app a running host",
+		return RunRequestFile{}, target{}, handler.Refuse(classHostAbsent, "the platform's %s read the host's %s absent, so run %s has no host to run on; give the app a running host",
 			absence.Observer, absence.Resource, req.ID)
 	}
 	host := d.Bindings[reqHost]
