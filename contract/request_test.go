@@ -726,6 +726,7 @@ func TestDecodeRequest_RefusesALeaseMissingWhatItNeeds(t *testing.T) {
 		{"no resource", func(m map[string]any) { delete(m, "resource") }, []string{`"resource"`}},
 		{"an empty resource", func(m map[string]any) { m["resource"] = "" }, []string{`"resource"`}},
 		{"neither a lease id nor credentials to retire", func(m map[string]any) { delete(m, "leaseId"); delete(m, "retire") }, []string{`"leaseId"`, `"retire"`}},
+		{"a credential to retire named by an empty handle", func(m map[string]any) { m["retire"] = []string{"tok_old_1", ""} }, []string{`"retire"`}},
 		{"a lease id and no caller", func(m map[string]any) { delete(m, "caller") }, []string{`"caller.subscriptionId"`}},
 		{"a caller naming no subscription", func(m map[string]any) { m["caller"] = map[string]any{"placed": []any{}} }, []string{`"caller.subscriptionId"`}},
 		{"want that is not an object", func(m map[string]any) { m["want"] = "metrics" }, []string{`"want"`}},

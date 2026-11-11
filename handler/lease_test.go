@@ -19,15 +19,20 @@ var leaseManifest = strings.Replace(blockLevelManifest, "operations: [subscribe,
 
 type leasingBlock struct {
 	*blockResource
-	lease    contract.Lease
-	err      error
-	requests []contract.LeaseRequest
-	desired  []contract.Desired
+	lease contract.Lease
+	err   error
+	// retireErr fails a request that only retires.
+	retireErr error
+	requests  []contract.LeaseRequest
+	desired   []contract.Desired
 }
 
 func (b *leasingBlock) Lease(ctx context.Context, d contract.Desired, l contract.LeaseRequest) (contract.Lease, error) {
 	b.requests = append(b.requests, l)
 	b.desired = append(b.desired, d)
+	if l.ID == "" && b.retireErr != nil {
+		return contract.Lease{}, b.retireErr
+	}
 	return b.lease, b.err
 }
 
@@ -119,6 +124,10 @@ func TestLease_RefusesALeaseThatIsNoLeaseWithoutRevealingASecret(t *testing.T) {
 		{"a credential that is an empty object", leaseManifest, newLeasingBlock("{}", soon), leaseFields(nil), http.StatusInternalServerError, "JSON object"},
 		{"a credential that is a string", leaseManifest, newLeasingBlock(`"abc"`, soon), leaseFields(nil), http.StatusInternalServerError, "JSON object"},
 		{"a credential repeating a secret the request carried", leaseManifest, newLeasingBlock(`{"nested":{"key":"scw-secret-4d1"}}`, soon), withSecret, http.StatusInternalServerError, "repeats a secret"},
+		{"a credential whose only string is empty", leaseManifest, newLeasingBlock(`{"token":""}`, soon), leaseFields(nil), http.StatusInternalServerError, "no value"},
+		{"a credential of empty shells", leaseManifest, newLeasingBlock(`{"a":{},"b":null,"c":[]}`, soon), leaseFields(nil), http.StatusInternalServerError, "no value"},
+		{"a handle repeating a secret the request carried", leaseManifest, &leasingBlock{blockResource: &blockResource{cloud: newFakeCloud()},
+			lease: contract.Lease{Credential: json.RawMessage(token), ExpiresAt: soon, ID: "scw-secret-4d1"}}, withSecret, http.StatusInternalServerError, "repeats a secret"},
 		{"a lease the block fails to mint", leaseManifest, failing(errors.New("the store refused scw-secret-4d1")), withSecret, http.StatusInternalServerError, "the store refused"},
 		{"a lease the block refuses", leaseManifest, failing(handler.Refuse("no-bucket", "the host keeps no bucket")), leaseFields(nil), http.StatusBadRequest, "refused:no-bucket"},
 	}
@@ -131,6 +140,33 @@ func TestLease_RefusesALeaseThatIsNoLeaseWithoutRevealingASecret(t *testing.T) {
 			}
 			if got := resp.Error + " " + resp.StatusDetail; !strings.Contains(got, tc.want) || strings.Contains(got, "scw-secret-4d1") {
 				t.Errorf("error and statusDetail = %q, want them to carry %q and no secret", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLease_RetiresACredentialItRefusesSoNoneIsLeftLiveAtTheProvider(t *testing.T) {
+	cases := []struct {
+		name      string
+		lease     contract.Lease
+		retireErr error
+		want      string
+	}{
+		{"a credential with no expiry", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ID: "tok_9"}, nil, "no expiry"},
+		{"a credential that outlives a day", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ExpiresAt: time.Now().Add(48 * time.Hour), ID: "tok_9"}, nil, "ahead"},
+		{"a refused credential whose retire also fails", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ID: "tok_9"}, errors.New("the provider is down"), "the provider is down"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			block := &leasingBlock{blockResource: &blockResource{cloud: newFakeCloud()}, lease: tc.lease, retireErr: tc.retireErr}
+
+			status, resp := serveLease(t, block, leaseManifest, leaseFields(nil))
+
+			if status != http.StatusInternalServerError || resp.Lease != nil || !strings.Contains(resp.Error, tc.want) {
+				t.Fatalf("status = %d, lease = %+v, error = %q; want 500, no lease and an error carrying %q", status, resp.Lease, resp.Error, tc.want)
+			}
+			if len(block.requests) != 2 || block.requests[1].ID != "" || !reflect.DeepEqual(block.requests[1].Retire, []string{"tok_9"}) {
+				t.Errorf("the block saw %+v, want the mint and then one request with no lease id retiring tok_9", block.requests)
 			}
 		})
 	}
