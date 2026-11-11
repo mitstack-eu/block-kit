@@ -578,8 +578,12 @@ commit and the deploy asks for the earlier image again, the report still names
 the failed run on the newer image. `report.ReleaseAgainst(app, subscription,
 asked)` judges the record against `asked`, the image the app's newest deploy
 asked for, so a failure on an older image stops counting once the asked image
-serves. The platform's deploy verdict and every block call it, so both read
-one record by one rule.
+serves. The asked image is the one mitstack's deploy wrote for the app, or,
+after a rollback, the one that deploy wrote before mitstack put the earlier
+image back. The serving image is the one the app's running container runs.
+The platform calls the same function when it judges whether a deploy turned
+healthy, and every block calls it for the app's health, so both read one
+record by one rule.
 
 The asked image comes from the app's image file, `image.env` in the host's
 repository, which `dockerhost.ImageFile` reads and writes. A deploy writes one
@@ -595,11 +599,16 @@ APP_ROLLED_BACK_FROM=ghcr.io/acme/shop@sha256:bbbb
 `dockerhost.ParseImageFile(text)` reads the file, skipping any line it does
 not define, as the host's agent does, and `.Asked()` gives the asked image:
 the rolled-back-from image when the file names one, and the image otherwise.
-`ImageFile.String()` writes the file back. Read the file at the commit the
-host's agent synced, so the asked image is the one the report describes.
+`ImageFile.String()` writes the file back. A file that names `APP_IMAGE=`
+twice, which mitstack never writes, reads by its last line. Read the file at
+the commit the host's agent synced, the commit `report.SyncedCommit()` names,
+with your GitHub client's read of a file at a commit, so the asked image is the
+one the report describes. A file the commit does not hold reads as empty.
 
 `ReleaseAgainst` returns a `dockerhost.AskedRelease`, which carries the
-`AppRelease` fields, the asked image's `AskedDigest` and the run's `ExitCode`:
+`AppRelease` fields and two more. `AskedDigest` is the digest the asked image
+pins, empty when `asked` is. `ExitCode` is the newest release command's exit
+code, 0 when it passed or none ran, for a message that names it:
 
 | Method | When it holds |
 |---|---|
@@ -612,7 +621,11 @@ that no container runs it and never that a release failed. Once the asked
 image serves, neither holds and the older failure reads as nothing:
 
 ```go
-file := dockerhost.ParseImageFile(imageEnvAtSyncedCommit)
+text, _, err := client.ReadFileAt(ctx, repository, commit, app+"/image.env")
+if err != nil {
+	return contract.Observation{}, err
+}
+file := dockerhost.ParseImageFile(string(text))
 release, err := report.ReleaseAgainst(app, d.SubscriptionID, file.Asked())
 if err != nil {
 	return contract.Observation{}, err
