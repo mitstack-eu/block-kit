@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
@@ -243,6 +244,14 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 		{"a response reporting no resources encodes as before", contract.Response{Pending: true}, `{"outputs":null,"pending":true}`, false},
 		{"a response returning own secrets encodes them under ownSecrets", contract.Response{OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}},
 			`{"outputs":null,"ownSecrets":{"gatewayCaKey":"own-secret-not-a-real-key"}}`, true},
+		{"a lease answer encodes the credential as the operator wrote it, its expiry and the handle to delete it by", contract.Response{Lease: &contract.Lease{
+			Credential: json.RawMessage(`{"uploads":{"shop":{"url":"https://store.example/shop/a.age?sig=1","object":"shop/a.age"}}}`),
+			ExpiresAt:  time.Date(2026, 7, 15, 23, 15, 6, 0, time.UTC), ID: "tok_1"}},
+			`{"outputs":null,"lease":{"credential":{"uploads":{"shop":{"url":"https://store.example/shop/a.age?sig=1","object":"shop/a.age"}}},"expiresAt":"2026-07-15T23:15:06Z","id":"tok_1"}}`, true},
+		{"a lease answer for a credential that expires on its own leaves the handle out", contract.Response{Lease: &contract.Lease{
+			Credential: json.RawMessage(`{"links":{}}`), ExpiresAt: time.Date(2026, 7, 15, 23, 15, 6, 0, time.UTC)}},
+			`{"outputs":null,"lease":{"credential":{"links":{}},"expiresAt":"2026-07-15T23:15:06Z"}}`, true},
+		{"a response that leases nothing encodes as before", contract.Response{Lease: nil}, `{"outputs":null}`, true},
 		{"an ensure reporting an identity", contract.CallOutcome{Identity: map[string]string{"groupId": "sg-0abc"}}, `{"identity":{"groupId":"sg-0abc"}}`, false},
 		{"an ensure reporting no identity encodes as before", contract.CallOutcome{}, `{}`, false},
 		{"an observe naming the failure its type lists encodes it beside present", contract.Response{Resources: map[string]contract.ResourceOutcome{
@@ -297,6 +306,16 @@ func TestResponse_RoundTripsThroughJSONUnderItsWireNames(t *testing.T) {
 		}, func(t *testing.T, m map[string]any) {
 			if _, ok := m["ownSecrets"]; !ok {
 				t.Errorf("encoded response %v has no ownSecrets key", m)
+			}
+		}},
+		{"a lease", contract.Response{Lease: &contract.Lease{
+			Credential: json.RawMessage(`{"token":"lease-not-a-real-token"}`), ExpiresAt: time.Date(2026, 7, 15, 23, 15, 6, 0, time.UTC), ID: "tok_1"},
+		}, func(t *testing.T, m map[string]any) {
+			lease, _ := m["lease"].(map[string]any)
+			for _, key := range []string{"credential", "expiresAt", "id"} {
+				if _, ok := lease[key]; !ok {
+					t.Errorf("encoded response %v has no lease.%s key", m, key)
+				}
 			}
 		}},
 		{"resources by name", contract.Response{
@@ -365,6 +384,25 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 			objectOfStrings(t, doc, node, "properties.ownSecrets")
 			if !hasType(node, "null") {
 				t.Errorf("properties.ownSecrets type = %v, want null allowed, as the engine and kittest read null as none", schemaTypes(node))
+			}
+		}},
+		{"lease is an optional object requiring a credential object and an expiry", func(t *testing.T) {
+			if slices.Contains(sortedStrings(doc["required"]), "lease") {
+				t.Error(`response.schema.json requires "lease", but a response that leases nothing must stay valid`)
+			}
+			lease := schemaAt(t, doc, props, "lease")
+			if !hasType(lease, "object") || !slices.Equal(sortedStrings(lease["required"]), []string{"credential", "expiresAt"}) {
+				t.Errorf("properties.lease = %v, want an object requiring credential and expiresAt", lease)
+			}
+			leaseProps := schemaAt(t, doc, lease, "properties")
+			if f := schemaAt(t, doc, leaseProps, "credential"); !hasType(f, "object") {
+				t.Errorf("properties.lease.credential type = %v, want object", schemaTypes(f))
+			}
+			if f := schemaAt(t, doc, leaseProps, "expiresAt"); !hasType(f, "string") || f["format"] != "date-time" {
+				t.Errorf("properties.lease.expiresAt = %v, want a string of format date-time", f)
+			}
+			if f := schemaAt(t, doc, leaseProps, "id"); !hasType(f, "string") {
+				t.Errorf("properties.lease.id type = %v, want string", schemaTypes(f))
 			}
 		}},
 		{"redrive is a boolean", func(t *testing.T) {

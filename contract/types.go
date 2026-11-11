@@ -73,18 +73,56 @@ type Request struct {
 
 	IssueAppID string `json:"issueAppId,omitempty"`
 
+	// LeaseID, Want, Retire and Caller are read on a lease alone, and Resource then names the resource the credential is leased from.
+	LeaseID string          `json:"leaseId,omitempty"`
+	Want    json.RawMessage `json:"want,omitempty"`
+	Retire  []string        `json:"retire,omitempty"`
+	Caller  *LeaseCaller    `json:"caller,omitempty"`
+
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 
 	CapabilitySlug    string            `json:"capabilitySlug,omitempty"`
 	EnteredCredential map[string]string `json:"enteredCredential,omitempty"`
 }
 
-// OperationIssue asks a capability for one app's credential, OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook, and OperationVerifyConnection asks a capability's operator whether the credential an org entered works, before any subscription exists.
+// OperationIssue asks a capability for one app's credential, OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook, OperationVerifyConnection asks a capability's operator whether the credential an org entered works, before any subscription exists, and OperationLease asks a block for a short-lived credential of a resource it provides, or to retire the ones it minted.
 const (
 	OperationIssue            = "issue"
 	OperationLogs             = "logs"
 	OperationVerifyConnection = "verify-connection"
+	OperationLease            = "lease"
 )
+
+// MaxLeaseLife is the longest a leased credential may live, since a credential that lives longer is no lease.
+const MaxLeaseLife = 24 * time.Hour
+
+// LeaseCaller is the subscription that asked for a lease and the blocks the platform records as placed on it, which bound what a provider may mint for it.
+type LeaseCaller struct {
+	SubscriptionID string   `json:"subscriptionId"`
+	Placed         []Placed `json:"placed,omitempty"`
+}
+
+type Placed struct {
+	App            string `json:"app"`
+	BlockID        string `json:"blockId"`
+	SubscriptionID string `json:"subscriptionId"`
+}
+
+// LeaseRequest is what a lease asks of a provider: with ID set, a credential of Resource shaped by Want for Caller, and Retire the credential ids to delete; with ID empty, only to delete Retire.
+type LeaseRequest struct {
+	ID       string
+	Resource string
+	Want     json.RawMessage
+	Retire   []string
+	Caller   LeaseCaller
+}
+
+// Lease is the credential a provider minted, which the platform passes on unread and never stores. ID is the provider's handle for deleting it and is left out for one that expires on its own.
+type Lease struct {
+	Credential json.RawMessage `json:"credential"`
+	ExpiresAt  time.Time       `json:"expiresAt"`
+	ID         string          `json:"id,omitempty"`
+}
 
 // The three answers to a verify-connection: the vendor accepted the credential, refused it, or said nothing about it.
 const (
@@ -160,6 +198,7 @@ type Response struct {
 	// Credential answers an issue alone.
 	Credential *Credential       `json:"credential,omitempty"`
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
+	Lease      *Lease            `json:"lease,omitempty"`
 	Verdict    string            `json:"verdict,omitempty"`
 }
 
@@ -331,6 +370,7 @@ var validOperations = map[string]bool{
 	OperationLogs:  true,
 
 	OperationVerifyConnection: true,
+	OperationLease:            true,
 }
 
 // DecodeRequest decodes raw into a Request validated against envelope.schema.json, naming the JSON field in every error.
@@ -362,8 +402,14 @@ func DecodeRequest(raw []byte) (Request, error) {
 
 	if !validOperations[req.Operation] {
 		return Request{}, fmt.Errorf(
-			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, got %q",
+			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, got %q",
 			"operation", req.Operation)
+	}
+
+	if req.Operation == OperationLease {
+		if err := checkLease(req); err != nil {
+			return Request{}, err
+		}
 	}
 
 	if len(req.ResourceIdentity) > 0 && req.Resource == "" {
@@ -376,6 +422,37 @@ func DecodeRequest(raw []byte) (Request, error) {
 	}
 
 	return req, nil
+}
+
+// checkLease enforces the rules for a lease that envelope.schema.json documents, since DecodeRequest never validates a request against the schema, so a change to either needs the other.
+func checkLease(req Request) error {
+	if slices.Contains(req.Retire, "") {
+		return fmt.Errorf("contract: envelope field %q must not hold an empty handle", "retire")
+	}
+	if req.Resource == "" {
+		return fmt.Errorf("contract: envelope field %q is required on a lease", "resource")
+	}
+	if req.LeaseID == "" && len(req.Retire) == 0 {
+		return fmt.Errorf("contract: a lease needs envelope field %q to mint a credential or %q to retire some", "leaseId", "retire")
+	}
+	if req.LeaseID != "" && (req.Caller == nil || req.Caller.SubscriptionID == "") {
+		return fmt.Errorf("contract: envelope field %q is required on a lease that mints", "caller.subscriptionId")
+	}
+	if want := bytes.TrimSpace(req.Want); len(want) > 0 && !bytes.Equal(want, []byte("null")) && want[0] != '{' {
+		return fmt.Errorf("contract: envelope field %q must be a JSON object", "want")
+	}
+	return nil
+}
+
+func (r Request) Lease() LeaseRequest {
+	l := LeaseRequest{ID: r.LeaseID, Resource: r.Resource, Retire: r.Retire}
+	if want := bytes.TrimSpace(r.Want); len(want) > 0 && !bytes.Equal(want, []byte("null")) {
+		l.Want = r.Want
+	}
+	if r.Caller != nil {
+		l.Caller = *r.Caller
+	}
+	return l
 }
 
 // DecodeResponse decodes raw into a Response, naming the JSON field of any type mismatch.

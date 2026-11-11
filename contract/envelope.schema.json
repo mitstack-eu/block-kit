@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
   "title": "mitstack lifecycle webhook envelope",
   "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -24,9 +24,55 @@
       "if": {"properties": {"operation": {"const": "verify-connection"}}, "required": ["operation"]},
       "then": {"required": ["orgId", "capabilitySlug", "enteredCredential"], "properties": {"capabilitySlug": {"minLength": 1}, "enteredCredential": {"minProperties": 1}}},
       "else": {"required": ["subscriptionId", "blockId", "orgId"]}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "lease"}}, "required": ["operation"]},
+      "then": {
+        "required": ["resource"],
+        "properties": {"resource": {"minLength": 1}},
+        "anyOf": [{"required": ["leaseId"]}, {"required": ["retire"], "properties": {"retire": {"minItems": 1}}}]
+      }
+    },
+    {
+      "if": {"properties": {"operation": {"const": "lease"}}, "required": ["operation", "leaseId"]},
+      "then": {"required": ["caller"], "properties": {"caller": {"required": ["subscriptionId"], "properties": {"subscriptionId": {"minLength": 1}}}}}
     }
   ],
   "properties": {
+    "leaseId": {
+      "type": "string",
+      "description": "The id a lease keeps on every attempt, so the provider can tell a retry from a new lease. A lease carries it to mint a credential and leaves it out to only retire some."
+    },
+    "want": {
+      "type": "object",
+      "description": "What the caller asks of a lease, an object the platform forwards and never reads and the provider reads for the signals or links it should mint for.",
+      "additionalProperties": true
+    },
+    "retire": {
+      "type": "array",
+      "description": "The provider's handles of the credentials a lease asks it to delete, which it answered on earlier leases and which have lapsed.",
+      "items": {"type": "string"}
+    },
+    "caller": {
+      "type": "object",
+      "description": "The subscription that asked for a lease and the blocks the platform records as bound to it, which bound what the provider may mint. Required on a lease that mints.",
+      "additionalProperties": true,
+      "properties": {
+        "subscriptionId": {"type": "string"},
+        "placed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "app": {"type": "string"},
+              "blockId": {"type": "string"},
+              "subscriptionId": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
     "capabilitySlug": {
       "type": "string",
       "description": "The slug of the capability a verify-connection asks its operator to check a credential for. Required on a verify-connection, which carries no subscription, block or app."
@@ -108,8 +154,8 @@
     },
     "operation": {
       "type": "string",
-      "description": "The lifecycle verb being dispatched, issue, which asks a capability for one app's credential, logs, which asks a block for the subscription's recent lines on /logs, or verify-connection, which asks a capability's operator whether the credential an org entered works.",
-      "enum": ["subscribe", "unsubscribe", "upgrade", "validate", "issue", "logs", "verify-connection"]
+      "description": "The lifecycle verb being dispatched, issue, which asks a capability for one app's credential, logs, which asks a block for the subscription's recent lines on /logs, verify-connection, which asks a capability's operator whether the credential an org entered works, or lease, which asks a block for a short-lived credential of a resource it provides or to retire the ones it minted.",
+      "enum": ["subscribe", "unsubscribe", "upgrade", "validate", "issue", "logs", "verify-connection", "lease"]
     },
     "subscriptionId": {
       "type": "string",
