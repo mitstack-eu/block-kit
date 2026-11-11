@@ -47,6 +47,11 @@ func (b *snapshottingBlock) Restore(_ context.Context, d contract.Desired, unit,
 	return b.err
 }
 
+func (b *snapshottingBlock) Ensure(ctx context.Context, d contract.Desired) error {
+	b.desired = append(b.desired, d)
+	return b.blockResource.Ensure(ctx, d)
+}
+
 func newSnapshottingBlock(handover string) *snapshottingBlock {
 	return &snapshottingBlock{blockResource: &blockResource{cloud: newFakeCloud()}, handover: handover}
 }
@@ -147,5 +152,44 @@ func TestRestore_ReachesTheBlockForEachUnitSentUnderOneIdempotencyKey(t *testing
 	}
 	if want := []string{"hnd_app-data", "hnd_gateway"}; !slices.Equal(block.handed, want) {
 		t.Errorf("the block was handed %v, want %v", block.handed, want)
+	}
+}
+
+func TestUpgrade_HandsTheBlockTheReplacementMarkerOnlyOnARequestThatCarriesIt(t *testing.T) {
+	cases := []struct {
+		label  string
+		fields map[string]any
+		want   bool
+	}{
+		{"an upgrade sent during a replacement", map[string]any{"replacing": true}, true},
+		{"an upgrade sent outside a replacement", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			block := newSnapshottingBlock("hnd_0001")
+
+			status, resp := serveContinuity(t, block, snapshotManifest, "upgrade", tc.fields)
+
+			if len(block.desired) != 1 || block.desired[0].Replacing != tc.want {
+				t.Errorf("%s (status %d, error %q) reached Ensure with %d calls and replacing %v; want one call with replacing %v, so the block knows whether to send an install retry",
+					tc.label, status, resp.Error, len(block.desired), len(block.desired) == 1 && block.desired[0].Replacing, tc.want)
+			}
+		})
+	}
+}
+
+func TestSnapshotAndRestore_AnswerABlocksOwnRefusalAs400WithNoHandover(t *testing.T) {
+	for _, op := range []string{"snapshot", "restore"} {
+		t.Run(op, func(t *testing.T) {
+			block := newSnapshottingBlock("hnd_0001")
+			block.err = handler.Refuse("volume-detached", "the volume of %q is not attached", "app-data")
+
+			status, resp := serveContinuity(t, block, snapshotManifest, op,
+				map[string]any{"unit": "app-data", "priorOutputs": map[string]string{handoverKey: "hnd_0001"}})
+
+			if status != http.StatusBadRequest || !strings.Contains(resp.Error, "refused:volume-detached") || resp.Outputs[handoverKey] != "" {
+				t.Errorf("a %s the block refuses: status %d, error %q, outputs %v; want 400 naming refused:volume-detached and no handover", op, status, resp.Error, resp.Outputs)
+			}
+		})
 	}
 }
