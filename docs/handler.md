@@ -649,9 +649,14 @@ what `Retire` lists, and the handler answers 200 with no `lease`.
 |---|---|
 | The manifest does not list `lease` | 400, refusal class `lease-not-listed` |
 | The request names no resource, or mints without a caller, or neither mints nor retires | 400 |
-| The lease holds no credential, or a credential that is not a non-empty JSON object | 500 |
+| The lease holds no credential, a credential that is not a non-empty JSON object, or one whose strings are all empty | 500 |
 | The lease has no expiry, an expiry already passed, or one more than `contract.MaxLeaseLife` ahead | 500 |
-| A string in the credential equals a secret the request carried | 500, naming the path and never the value |
+| A string in the credential, or the `id`, equals a secret the request carried | 500, naming the path and never the value |
+
+When the handler refuses a lease that came with an `id`, it calls the block
+once more to retire that `id`, since the platform records only what a 200
+carries and could never find the credential. A retire that fails joins its
+error to the refusal.
 
 The last row compares whole values only, so a signed link that names the key
 id that signed it passes. The handler never replays a lease from the

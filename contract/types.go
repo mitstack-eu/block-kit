@@ -73,7 +73,7 @@ type Request struct {
 
 	IssueAppID string `json:"issueAppId,omitempty"`
 
-	// LeaseID, Want, Retire and Caller belong to a lease alone, and Resource then names the resource the credential is leased from.
+	// LeaseID, Want, Retire and Caller are read on a lease alone, and Resource then names the resource the credential is leased from.
 	LeaseID string          `json:"leaseId,omitempty"`
 	Want    json.RawMessage `json:"want,omitempty"`
 	Retire  []string        `json:"retire,omitempty"`
@@ -426,8 +426,11 @@ func DecodeRequest(raw []byte) (Request, error) {
 	return req, nil
 }
 
-// checkLease refuses a lease that names no resource, neither mints nor retires, mints for no caller, or wants something other than an object.
+// checkLease holds the rules envelope.schema.json states for a lease, for a caller that decodes without the schema.
 func checkLease(req Request) error {
+	if slices.Contains(req.Retire, "") {
+		return fmt.Errorf("contract: envelope field %q must not hold an empty handle", "retire")
+	}
 	if req.Resource == "" {
 		return fmt.Errorf("contract: envelope field %q is required on a lease", "resource")
 	}
@@ -443,7 +446,7 @@ func checkLease(req Request) error {
 	return nil
 }
 
-// Lease is the request of a lease, and the zero value for any other verb.
+// Lease reads the lease fields of the envelope, and checkLease alone ties them to the lease verb.
 func (r Request) Lease() LeaseRequest {
 	l := LeaseRequest{ID: r.LeaseID, Resource: r.Resource, Retire: r.Retire}
 	if want := bytes.TrimSpace(r.Want); len(want) > 0 && !bytes.Equal(want, []byte("null")) {

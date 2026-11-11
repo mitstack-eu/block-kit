@@ -65,7 +65,7 @@ type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)
 }
 
-// Leaser, which a block-level Resource implements exactly when its manifest lists lease, mints a short-lived credential of one resource the block provides for the lease's caller, and deletes the credentials a request lists in Retire. A request with no ID only retires, and the credential it returns is dropped.
+// Leaser, which a block-level Resource implements to serve a manifest that lists lease, mints a short-lived credential of one resource the block provides for the lease's caller and deletes the credentials a request lists in Retire.
 type Leaser interface {
 	Lease(ctx context.Context, d contract.Desired, l contract.LeaseRequest) (contract.Lease, error)
 }

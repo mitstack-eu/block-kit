@@ -107,7 +107,7 @@ func panicValueForLog(p any, secrets []string) string {
 	}
 }
 
-// emitVerbEvent emits none for validate, since ProbeHealth dispatches validate in answer to a terminal event and a completed one would loop, and none for an issue, which changes nothing the subscription's events record.
+// emitVerbEvent emits none for validate, since ProbeHealth dispatches validate in answer to a terminal event and a completed one would loop, nor for an issue, verify-connection or lease, which change nothing the subscription's events record.
 //
 // It emits no start event because the event log's partial unique index on (subscriptionId, idempotencyKey) would drop the terminal event under a start event that took its slot.
 func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status int, resp contract.Response, settled bool) {

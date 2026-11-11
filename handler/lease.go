@@ -14,7 +14,6 @@ import (
 
 const classLeaseNotListed = "lease-not-listed"
 
-// lease serves a block whose manifest lists the operation, and refuses every other block. A request with no lease id only retires, so the credential the block returns for it is dropped.
 func (h *Handler) lease(ctx context.Context, req contract.Request, secrets []string) (int, contract.Response) {
 	if h.leaser == nil {
 		return h.errorResponse(Refuse(classLeaseNotListed,
@@ -25,16 +24,31 @@ func (h *Handler) lease(ctx context.Context, req contract.Request, secrets []str
 	if err != nil {
 		return h.errorResponse(err, secrets)
 	}
+	// A retire-only request has no lease to return, so whatever the block answers for it is dropped.
 	if asked.ID == "" {
 		return http.StatusOK, contract.Response{}
 	}
 	if err := checkLeased(minted, h.now(), secrets); err != nil {
-		return h.errorResponse(fmt.Errorf("handler: the block's lease %q of %q: %w", asked.ID, asked.Resource, err), secrets)
+		err = fmt.Errorf("handler: the block's lease %q of %q: %w", asked.ID, asked.Resource, err)
+		return h.errorResponse(errors.Join(err, h.retireRefused(ctx, req, minted)), secrets)
 	}
 	return http.StatusOK, contract.Response{Lease: &minted}
 }
 
-// checkLeased refuses a lease the caller could not use or that lives past contract.MaxLeaseLife, and one repeating a secret the request carried: a value equal to a secret is that secret, while a signed link that merely names the key id that signed it is not.
+// retireRefused deletes a credential the kit refuses to pass on, since the platform records only what a 200 carries and could otherwise never find it.
+func (h *Handler) retireRefused(ctx context.Context, req contract.Request, refused contract.Lease) error {
+	if refused.ID == "" {
+		return nil
+	}
+	retire := req.Lease()
+	retire.ID, retire.Want, retire.Retire = "", nil, []string{refused.ID}
+	if _, err := h.leaser.Lease(ctx, req.Desired(), retire); err != nil {
+		return fmt.Errorf("handler: retiring the refused credential %q: %w", refused.ID, err)
+	}
+	return nil
+}
+
+// checkLeased matches a secret by exact value, because a signed link that merely names the key id that signed it is not that key.
 func checkLeased(l contract.Lease, now time.Time, secrets []string) error {
 	if len(l.Credential) == 0 {
 		return errors.New("it holds no credential")
@@ -51,13 +65,40 @@ func checkLeased(l contract.Lease, now time.Time, secrets []string) error {
 	case l.ExpiresAt.After(now.Add(contract.MaxLeaseLife)):
 		return fmt.Errorf("its expiry %s is more than %s ahead", l.ExpiresAt.Format(time.RFC3339), contract.MaxLeaseLife)
 	}
+	if !holdsAValue(credential) {
+		return errors.New("its credential holds no value")
+	}
 	if path, repeated := secretValueIn(credential, "credential", secrets); repeated {
 		return fmt.Errorf("its value at %s repeats a secret the request carried", path)
+	}
+	if l.ID != "" && slices.Contains(secrets, l.ID) {
+		return errors.New("its id repeats a secret the request carried")
 	}
 	return nil
 }
 
-// secretValueIn walks a decoded JSON value and names the path of the first string equal to one of secrets, skipping the empty secret of an unset optional input.
+// holdsAValue is true when a decoded JSON value has a string that is not empty somewhere inside it.
+func holdsAValue(value any) bool {
+	switch v := value.(type) {
+	case string:
+		return v != ""
+	case map[string]any:
+		for _, child := range v {
+			if holdsAValue(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if holdsAValue(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// secretValueIn skips an empty string because an unset optional input leaves an empty secret.
 func secretValueIn(value any, path string, secrets []string) (string, bool) {
 	switch v := value.(type) {
 	case string:

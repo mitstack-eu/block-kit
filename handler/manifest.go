@@ -65,7 +65,7 @@ func checkVerifier(cfg Config, declared manifestDeclarations) error {
 	return nil
 }
 
-// checkLeaser answers the Resource's Leaser when the manifest lists lease, and refuses a Resource that cannot lease, which a lease would otherwise reach only at run time.
+// checkLeaser exists because a manifest that lists lease over a Resource that cannot lease would fail only when a lease arrives, so New refuses it.
 func checkLeaser(cfg Config, declared manifestDeclarations) (Leaser, error) {
 	if !declared.leases {
 		return nil, nil
