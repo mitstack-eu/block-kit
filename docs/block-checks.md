@@ -200,8 +200,12 @@ workflow when one of its jobs asks for more, with an error such as `The nested
 job 'conformance' is requesting 'packages: read', but is only allowed
 'packages: none'`. So grant all four lines, even when your block needs none of
 what one of them opens. `packages: read` lets the three jobs that build your
-image log in to ghcr.io with the job's own token, so your `Dockerfile` may
-copy from a private package your repository publishes.
+image, `conformance`, `opentofu-conformance` and `publish`, log in to ghcr.io,
+GitHub's container registry, with the job's own token. Your `Dockerfile` may
+then copy from a private package your repository publishes. In `conformance`
+the login comes before your block's own tests, which may build the image, so
+those tests can read that token, which holds `contents: read` and
+`packages: read`.
 
 `ecr-repository` names the repository in Amazon Elastic Container Registry
 (ECR), AWS's image registry, that receives the image, and `kit-ref` the
@@ -273,7 +277,8 @@ defaults to `release-publisher.yml`.
 The job pushes the tag with `contents: write`, starts the publisher with
 `actions: write` and signs the record with `id-token: write`. A called
 workflow gets no more than its caller grants, so the job of yours that calls
-`publish-block.yml`, `block` in the examples, grants all three.
+`publish-block.yml`, `block` in the examples, grants all three, beside the
+`packages: read` the image build needs.
 
 Two scan jobs also run on every event your CI calls the workflow for, and
 `publish` waits for both. The `secrets` job runs `scripts/scan-secrets.sh`,

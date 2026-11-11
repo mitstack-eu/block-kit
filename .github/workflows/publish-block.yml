@@ -40,12 +40,8 @@
 # The scan jobs run the kit's own scripts at kit-ref, so a scanner pin
 # changes in one place for every block.
 #
-# The three jobs that build the block's image, conformance,
-# opentofu-conformance and publish, log in to ghcr.io with the job's own
-# token and read packages, so the image may build on a private package the
-# block's repository publishes. A called job gets no more than its caller
-# grants, and GitHub refuses to start this workflow for a caller whose job
-# grants no packages: read, so every caller grants it.
+# Every caller grants packages: read, since GitHub refuses to start a called
+# job that asks for more than its caller grants.
 #
 # Two more jobs call the platform with the MITSTACK_API_TOKEN secret, each
 # only when the caller sets its input. `platform-verdict` asks for a dry-run
@@ -155,7 +151,7 @@ jobs:
       contents: read
       packages: read
     steps:
-      # The block's own tests run in this tree, so it keeps no token.
+      # The block's own tests run in this tree, so the checkout keeps no token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
