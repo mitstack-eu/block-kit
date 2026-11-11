@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -342,6 +343,40 @@ func TestWriteFirewall_FailsNamingEachFieldRobotReadsBackOtherThanWritten(t *tes
 				if err != nil && strings.Contains(err.Error(), field) != slices.Contains(tc.named, field) {
 					t.Errorf("WriteFirewall = %v; naming %s is %v, want %v", err, field, !slices.Contains(tc.named, field), slices.Contains(tc.named, field))
 				}
+			}
+		})
+	}
+}
+
+func TestWait_KeepsTheErrorARobotReadReturnedAsTheContextEnded(t *testing.T) {
+	refusal := &robot.Error{Status: http.StatusForbidden, Code: "UNAUTHORIZED", Message: "Unauthorized"}
+	cases := []struct {
+		name        string
+		read        func(ctx context.Context) error
+		wantRefusal bool
+	}{
+		{"Robot refused the read as the context ended, so the refusal is kept beside the wait's cause",
+			func(context.Context) error { return refusal }, true},
+		{"the read failed only because the context ended, so the wait names that once",
+			func(ctx context.Context) error { return fmt.Errorf("reading the firewall: %w", ctx.Err()) }, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, c := newFake(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			err := c.Wait(ctx, "the firewall to settle", func() (bool, error) {
+				cancel()
+				return false, tc.read(ctx)
+			})
+
+			var got *robot.Error
+			if !errors.Is(err, context.Canceled) || errors.As(err, &got) != tc.wantRefusal {
+				t.Errorf("wait = %v; want it to match context.Canceled and to carry Robot's refusal: %v", err, tc.wantRefusal)
+			}
+			if n := strings.Count(err.Error(), context.Canceled.Error()); n != 1 {
+				t.Errorf("wait = %q names %q %d times; want once", err, context.Canceled, n)
 			}
 		})
 	}
