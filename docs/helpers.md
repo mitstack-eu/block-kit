@@ -29,7 +29,7 @@ package has [a page of its own](gitops.md).
 | `capabilities/aws/awsnames` | Names an app's account-unique AWS resources under the caller's prefix, such as its ECR repository and IAM roles |
 | `capabilities/aws/handover` | Hands an app's data volume to a replacement host through an EBS snapshot marked under the caller's tag prefix |
 | `helpers/tftpl` | Renders in Go an OpenTofu template its module also renders with `templatefile` |
-| `capabilities/github/ghapi` | Calls the GitHub REST API |
+| `capabilities/github/ghapi` | Calls the GitHub REST API, or reads the GitHub account or App id a request carries |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
 | `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, reads a server's `serverType` input, or waits on the Cloud actions its calls start |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
@@ -1130,14 +1130,30 @@ refuses a private, loopback, bare-IP or metadata host even when you listed it.
 `ghapi.NewClient(base.String(), token, httpClient)` then creates repositories,
 commits files and sets Actions variables, each idempotently.
 
+A request names the account the org's GitHub connection is installed on, and
+the id of the mitstack GitHub App whose installation minted its token.
+`ghapi.Owner(d)` and `ghapi.AppID(d)` read them from the `contract.Desired`
+your block already holds, and answer `""` when the request carries none. Each
+reads the `github` instance's config first, and the `github` secret group only
+when the config lacks the value. Read both through these two helpers and never
+from the request yourself, so your block keeps working when the place a
+request carries them changes.
+
+```go
+repo := ghapi.Owner(d) + "/" + d.Params["appName"]
+```
+
+Neither value is a credential. The handler scrubs every value a request's
+secret groups hold from each answer and each log line it writes. A message
+naming the owner therefore reads `[REDACTED]` in its place for as long as the
+request carries the owner in the `github` secret group.
+
 `EnsureRepo(ctx, org, name, appID)` creates a private repository, or finds one,
 and keeps a ruleset on its main branch. The ruleset refuses every update,
 force-push and deletion of main, except those of the GitHub App that `appID`
-names. Pass the request's `secrets.github.appId`, which is the id of the
-mitstack App whose installation minted the token, so the block's own commits
-still land. Each call repairs the ruleset: it creates a missing one, puts back
-one whose rules, branch or bypass list changed, and leaves a matching one
-alone. An empty `appID` fails with `ghapi.ErrNoAppID` before any request. An
+names. Pass `ghapi.AppID(d)`, so the block's own commits still land. Each call
+repairs the ruleset: it creates a missing one, puts back one whose rules,
+branch or bypass list changed, and leaves a matching one alone. An empty `appID` fails with `ghapi.ErrNoAppID` before any request. An
 org owner can still delete the ruleset, and the next call restores it.
 
 A block that reads a repository at one commit takes main's head with

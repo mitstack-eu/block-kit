@@ -12,7 +12,7 @@ import (
 )
 
 // ErrNoAppID is returned by EnsureRepo given no GitHub App id, before it sends any request.
-var ErrNoAppID = errors.New("ghapi: no GitHub App id was given, so the ruleset on main cannot name mitstack's GitHub App as its one bypass actor; pass the request's secrets.github.appId")
+var ErrNoAppID = errors.New("ghapi: no GitHub App id was given, so the ruleset on main cannot name mitstack's GitHub App as its one bypass actor; pass the request's App id, which AppID reads")
 
 // rulesetName is how EnsureRepo finds its ruleset, so a renamed one is left behind beside a new one.
 const rulesetName = "mitstack: main takes pushes from mitstack's GitHub App alone"
