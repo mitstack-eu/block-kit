@@ -18,7 +18,7 @@ type CheckOptions struct {
 }
 
 // LifecycleOperations are the verbs a manifest's lifecycle may declare.
-var LifecycleOperations = []string{"subscribe", "unsubscribe", "upgrade", "validate", "rotate", OperationLogs, OperationVerifyConnection, OperationLease, OperationRun}
+var LifecycleOperations = []string{"subscribe", "unsubscribe", "upgrade", "validate", "rotate", OperationLogs, OperationVerifyConnection, OperationLease, OperationRun, OperationSnapshot, OperationRestore}
 
 // ReleaseClasses are the kinds of change a release may declare.
 var ReleaseClasses = []string{"breaking", "correctness-fix", "feature"}
@@ -43,6 +43,9 @@ func CheckManifest(b *BlockManifest, serves func(typeID string) bool, opts Check
 		return err
 	}
 	if err := checkLifecycle(b.Spec.Lifecycle, opts); err != nil {
+		return err
+	}
+	if err := checkSnapshotOperations(b.Spec); err != nil {
 		return err
 	}
 	if err := checkCapabilitySections(b); err != nil {
@@ -111,6 +114,36 @@ func checkLifecycle(l ManifestLifecycle, opts CheckOptions) error {
 	// Dispatch refuses an undeclared verb, so a block that can subscribe but not unsubscribe could never be torn down.
 	if slices.Contains(l.Operations, "subscribe") && !slices.Contains(l.Operations, "unsubscribe") {
 		return errors.New(`spec.lifecycle.operations: declaring "subscribe" requires declaring "unsubscribe", so that what the block provisions can be torn down`)
+	}
+	return nil
+}
+
+// checkSnapshotOperations holds snapshot and restore to the state the manifest declares: a snapshot handover needs both operations, and either operation needs a snapshot handover.
+func checkSnapshotOperations(s ManifestSpec) error {
+	listed := func(op string) bool { return slices.Contains(s.Lifecycle.Operations, op) }
+	snapshotted := -1
+	for i, u := range s.Continuity {
+		if u.Handover == HandoverSnapshot {
+			snapshotted = i
+			break
+		}
+	}
+	if snapshotted >= 0 {
+		var missing []string
+		for _, op := range []string{OperationSnapshot, OperationRestore} {
+			if !listed(op) {
+				missing = append(missing, op)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("spec.continuity[%d]: handover %s needs spec.lifecycle.operations to list %s", snapshotted, HandoverSnapshot, strings.Join(missing, " and "))
+		}
+		return nil
+	}
+	for _, op := range []string{OperationSnapshot, OperationRestore} {
+		if listed(op) {
+			return fmt.Errorf("spec.lifecycle.operations: %q is listed, but no spec.continuity entry has handover %s", op, HandoverSnapshot)
+		}
 	}
 	return nil
 }
