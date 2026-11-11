@@ -1428,9 +1428,9 @@ The table gives what the call returns in each case.
 |---|---|
 | Every action succeeds | `nil` |
 | Hetzner marks an action an error | `waiting for server web-1 to be created: server limit exceeded (server_limit_exceeded, 42)`, wrapping the client's error, so `errors.As` still reaches hcloud-go's `hcloud.ActionError` and its `Code` |
-| The context ends while an action runs | `waiting for server web-1 to be created: context deadline exceeded: remaining running actions: [42]`, for which `errors.Is(err, context.DeadlineExceeded)` holds |
+| The context ends while an action runs | An error that names what it waited for and wraps the context's error, so `errors.Is(err, context.DeadlineExceeded)` holds. hcloud-go words it `waiting for server web-1 to be created: context deadline exceeded: remaining running actions: [42]` when the context ends between asks, or with the error of the ask in flight, as `waiting for server web-1 to be created: Get "https://api.hetzner.cloud/v1/actions?id=42...": context deadline exceeded` |
 
-In both errors, 42 is the id Hetzner gave the action.
+In these errors, 42 is the id Hetzner gave the action. Test the context's end with `errors.Is`, since the wording depends on when the context ends.
 
 The context bounds the wait, so it lasts no longer than the call it serves.
 When the call's time runs out first, the call fails with that error, and the
