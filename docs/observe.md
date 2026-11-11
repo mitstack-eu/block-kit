@@ -323,6 +323,70 @@ so they cost no extra request. `KitObserver.Serves` refuses an AWS spec that
 names outputs but whose probe has no `existence` entry. A Hetzner probe already
 reads the whole object with its one `Get`.
 
+### Adding what the spec cannot read
+
+Some blocks make a second object beside a kit-observed resource, which the
+spec does not read. aws-app-infra, the block that provisions an app's AWS
+runtime, makes an IAM role that pushes
+images to its `aws.ecr-repository`, and hands the role on as `pushRoleArn`, a
+secret output the type's catalogue entry declares. The spec reads the
+repository alone. It can neither report the role, nor see that the role is
+missing while the repository stands, nor see that the role still stands once
+the repository is gone.
+
+For such a block, give the `Resource` you pass as `Config.Resource` a method
+`AmendKitRead(ctx, ref, obs)`, which makes it a `handler.KitReadAmender`. Its
+`ref` is the `contract.ResourceRef` the kit observer read, and `obs` is the
+`contract.Observation` it answered. The handler calls the method for every
+kit-observed resource the block declares, so the method tells them apart by
+`ref.Name` or `ref.Type`. It runs after each probe and each full read, but not
+after a read that returned an error.
+
+The method reads the linked object itself and returns a
+`handler.KitReadAmendment` and an `error`. The amendment's `Outputs` and
+`SecretOutputs` are each a `map[string]string` from output name to value, and
+its `Hold` is one phrase saying why the resource is not yet settled. The
+handler hands the method a copy of the answer, so writing into `obs` changes
+nothing.
+
+The fields you set depend on the kit observer's answer:
+
+| The kit observer's answer | Field you set | What the resource answers |
+|---|---|---|
+| Present | `Outputs` or `SecretOutputs`, each holding outputs the type declares | Present, with those outputs beside the ones the spec read |
+| Present or absent | `Hold` | Unknown, with the detail `resource "<name>" reads <answer>, but <Hold>` |
+| Unknown | `Hold` | Unknown, with `resource "<name>" is held: <Hold>` joined to the kit observer's own detail |
+
+A full read that a full read checker judges unhealthy reaches the method as an
+unknown answer, already carrying the checker's detail.
+
+aws-app-infra returns `pushRoleArn` in `SecretOutputs` when the repository
+reads present and its role stands. When the role is missing, it returns
+`Hold: "its push role does not stand, so it has no pushRoleArn yet"`, so the
+blocks that push images wait until the role is made. When the repository reads
+absent while its role still stands, it returns
+`Hold: "its push role still stands"`. An unsubscribe then keeps waiting until
+the role is gone, as it waits on an object that carries the subscription's tag
+but that no recorded identity names. A method that returns an error fails the
+call, so an unsubscribe cannot end on a failed read of the linked object.
+
+An unsubscribe does not observe a resource that the engine already recorded
+absent, or one whose type carries the `endsWithSubscription` mark that
+[the type snapshot](manifest.md#the-type-snapshot) describes, so the method is
+not called for either.
+
+An amendment can only add to an answer or hold it, and it can never make one
+absent. The handler fails the call, naming the resource, when an amendment
+does any of these:
+
+- adds an output the type does not declare;
+- adds a secret output as plain, or a plain one as secret;
+- adds an output the spec already reads;
+- adds outputs beside an answer that is not present, or beside a hold.
+
+An empty amendment leaves the answer as the kit observer gave it, and a block
+whose `Resource` has no such method gets the kit observer's answer unchanged.
+
 ## Observing a resource the platform cannot reach
 
 `NodeReported` serves a resource that lives inside a cluster the platform has

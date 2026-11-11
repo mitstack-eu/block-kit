@@ -182,34 +182,42 @@ const s3Snapshot = `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability
 
 var s3Manifest = v1betaManifest("s3-block", []string{"{ name: data, type: aws.s3-bucket }"})
 
+// recordingAWS holds one tagged bucket, acme-data, unless missing, and its document carries props beside its name and tags.
 type recordingAWS struct {
-	t     *testing.T
-	tags  map[string]string
-	reads []string
-	err   error
+	t       *testing.T
+	tags    map[string]string
+	reads   []string
+	err     error
+	missing bool
+	props   map[string]any
 }
 
 func (a *recordingAWS) Exists(context.Context, contract.Desired, string, string) (bool, error) {
 	a.reads = append(a.reads, "Exists")
-	return true, nil
+	return !a.missing, nil
 }
 
 func (a *recordingAWS) Tags(context.Context, contract.Desired, string, string) (map[string]string, bool, error) {
 	a.reads = append(a.reads, "Tags")
-	return a.tags, true, nil
+	return a.tags, !a.missing, nil
 }
 
 func (a *recordingAWS) GetResource(_ context.Context, _ contract.Desired, _, id string) ([]byte, bool, error) {
 	a.reads = append(a.reads, "GetResource")
-	if a.err != nil {
+	if a.err != nil || a.missing {
 		return nil, false, a.err
 	}
-	raw, err := json.Marshal(map[string]any{"BucketName": id, "Tags": []map[string]string{{"Key": "mitstack:subscription", "Value": a.tags["mitstack:subscription"]}}})
+	doc := map[string]any{"BucketName": id, "Tags": []map[string]string{{"Key": "mitstack:subscription", "Value": a.tags["mitstack:subscription"]}}}
+	maps.Copy(doc, a.props)
+	raw, err := json.Marshal(doc)
 	return raw, true, err
 }
 
 func (a *recordingAWS) ResourceARNs(context.Context, contract.Desired, string, string) ([]string, error) {
 	a.reads = append(a.reads, "ResourceARNs")
+	if a.missing {
+		return nil, nil
+	}
 	return []string{"arn:aws:s3:::acme-data"}, nil
 }
 
@@ -223,10 +231,15 @@ func (a *recordingAWS) probed(maxReads int) []string {
 	return reads
 }
 
+// checkingBlock checks each full read with problem, and amends each kit observer answer with amendment or amendErr, after writing scribble into the outputs it was handed.
 type checkingBlock struct {
 	*blockResource
-	problem string
-	checked []observe.FullRead
+	problem   string
+	checked   []observe.FullRead
+	amendment handler.KitReadAmendment
+	amendErr  error
+	scribble  map[string]string
+	handed    []contract.State
 }
 
 func (b *checkingBlock) CheckFullRead(_ context.Context, r contract.ResourceRef, read observe.FullRead) (string, error) {
@@ -234,22 +247,36 @@ func (b *checkingBlock) CheckFullRead(_ context.Context, r contract.ResourceRef,
 	return b.problem, nil
 }
 
+func (b *checkingBlock) AmendKitRead(_ context.Context, _ contract.ResourceRef, obs contract.Observation) (handler.KitReadAmendment, error) {
+	b.handed = append(b.handed, obs.State)
+	if obs.Outputs != nil {
+		maps.Copy(obs.Outputs, b.scribble)
+	}
+	return b.amendment, b.amendErr
+}
+
 func kitObserved(t *testing.T, problem string) (*harness, *recordingAWS, *checkingBlock, *tickingClock) {
 	t.Helper()
-	snap, err := contract.ParseTypeSnapshot([]byte(s3Snapshot))
+	aws := &recordingAWS{t: t, tags: map[string]string{"mitstack:subscription": "sub-1"}}
+	block := &checkingBlock{blockResource: &blockResource{}, problem: problem}
+	x, clock := kitObservedBy(t, s3Snapshot, s3Manifest, aws, block)
+	return x, aws, block, clock
+}
+
+func kitObservedBy(t *testing.T, snapshot, manifest string, aws *recordingAWS, block *checkingBlock) (*harness, *tickingClock) {
+	t.Helper()
+	snap, err := contract.ParseTypeSnapshot([]byte(snapshot))
 	if err != nil {
 		t.Fatalf("ParseTypeSnapshot: %v", err)
 	}
-	aws := &recordingAWS{t: t, tags: map[string]string{"mitstack:subscription": "sub-1"}}
-	block := &checkingBlock{blockResource: &blockResource{}, problem: problem}
 	clock := &tickingClock{now: time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)}
-	x := newHarness(t, block, withManifest(s3Manifest), func(c *handler.Config) {
+	x := newHarness(t, block, withManifest(manifest), func(c *handler.Config) {
 		c.Observers = nil
 		c.Types = snap
 		c.KitObserver = observe.KitObserver{AWS: aws}
 		c.Now = clock.Now
 	})
-	return x, aws, block, clock
+	return x, clock
 }
 
 func (c *tickingClock) set(at time.Time) {
