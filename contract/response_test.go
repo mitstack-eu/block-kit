@@ -252,6 +252,12 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 			Credential: json.RawMessage(`{"links":{}}`), ExpiresAt: time.Date(2026, 7, 15, 23, 15, 6, 0, time.UTC)}},
 			`{"outputs":null,"lease":{"credential":{"links":{}},"expiresAt":"2026-07-15T23:15:06Z"}}`, true},
 		{"a response that leases nothing encodes as before", contract.Response{Lease: nil}, `{"outputs":null}`, true},
+		{"a finished run encodes its exit code, output, digest, start and end", contract.Response{Run: &contract.RunResult{
+			ExitCode: 0, Output: "added alice@example.com\n", Digest: "sha256:5f1c",
+			StartedAt: time.Date(2026, 11, 11, 14, 0, 9, 0, time.UTC), EndedAt: time.Date(2026, 11, 11, 14, 0, 10, 0, time.UTC)}},
+			`{"outputs":null,"run":{"exitCode":0,"output":"added alice@example.com\n","digest":"sha256:5f1c","startedAt":"2026-11-11T14:00:09Z","endedAt":"2026-11-11T14:00:10Z"}}`, true},
+		{"a run that failed with no output keeps its exit code and an empty output", contract.Response{Run: &contract.RunResult{ExitCode: 3}},
+			`{"outputs":null,"run":{"exitCode":3,"output":""}}`, true},
 		{"an ensure reporting an identity", contract.CallOutcome{Identity: map[string]string{"groupId": "sg-0abc"}}, `{"identity":{"groupId":"sg-0abc"}}`, false},
 		{"an ensure reporting no identity encodes as before", contract.CallOutcome{}, `{}`, false},
 		{"an observe naming the failure its type lists encodes it beside present", contract.Response{Resources: map[string]contract.ResourceOutcome{
@@ -403,6 +409,26 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 			}
 			if f := schemaAt(t, doc, leaseProps, "id"); !hasType(f, "string") {
 				t.Errorf("properties.lease.id type = %v, want string", schemaTypes(f))
+			}
+		}},
+		{"run is an optional object requiring an exit code and the output", func(t *testing.T) {
+			if slices.Contains(sortedStrings(doc["required"]), "run") {
+				t.Error(`response.schema.json requires "run", but a response that ran nothing must stay valid`)
+			}
+			run := schemaAt(t, doc, props, "run")
+			if !hasType(run, "object") || !slices.Equal(sortedStrings(run["required"]), []string{"exitCode", "output"}) {
+				t.Errorf("properties.run = %v, want an object requiring exitCode and output", run)
+			}
+			runProps := schemaAt(t, doc, run, "properties")
+			for field, ty := range map[string]string{"exitCode": "integer", "output": "string", "digest": "string"} {
+				if f := schemaAt(t, doc, runProps, field); !hasType(f, ty) {
+					t.Errorf("properties.run.%s type = %v, want %s", field, schemaTypes(f), ty)
+				}
+			}
+			for _, field := range []string{"startedAt", "endedAt"} {
+				if f := schemaAt(t, doc, runProps, field); !hasType(f, "string") || f["format"] != "date-time" {
+					t.Errorf("properties.run.%s = %v, want a string of format date-time", field, f)
+				}
 			}
 		}},
 		{"redrive is a boolean", func(t *testing.T) {

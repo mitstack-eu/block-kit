@@ -54,6 +54,14 @@ func TestVerbSeamsOverHandler_ServesABlockWhoseManifestListsLogs(t *testing.T) {
 	wantProblem(t, problems, "")
 }
 
+func TestVerbSeamsOverHandler_ServesABlockWhoseManifestListsRun(t *testing.T) {
+	listsRun := strings.Replace(verbSeamManifest, "validate]", "validate, run]", 1)
+
+	problems := kittest.CheckVerbSemantics(kittest.VerbSeamsOverHandler(t, []byte(listsRun), &kittest.FakeResource{}))
+
+	wantProblem(t, problems, "")
+}
+
 func wantProblem(t *testing.T, problems []string, wantNamed string) {
 	t.Helper()
 	found := false

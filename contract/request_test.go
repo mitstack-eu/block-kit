@@ -56,6 +56,7 @@ func requestFromGolden(m map[string]any) contract.Request {
 		Operation: strOf(m, "operation"), SubscriptionID: strOf(m, "subscriptionId"), IdempotencyKey: strOf(m, "idempotencyKey"),
 		BlockID: strOf(m, "blockId"), BlockVersion: strOf(m, "blockVersion"), OrgID: strOf(m, "orgId"), AppID: strOf(m, "appId"),
 		OBO: strOf(m, "obo"), Nonce: strOf(m, "nonce"),
+		RunID: strOf(m, "runId"), Command: strOf(m, "command"), Process: strOf(m, "process"),
 		Params: strMap(m["params"]), SecretInputs: strMap(m["secretInputs"]), AppSecrets: strMap(m["appSecrets"]),
 		PriorOutputs: strMap(m["priorOutputs"]), Secrets: strMaps(m["secrets"]), Bindings: strMaps(m["bindings"]),
 	}
@@ -127,7 +128,7 @@ func TestDecodeRequest_CarriesEveryGoldenFieldOntoTheRequest(t *testing.T) {
 func TestDecodeRequest_EveryRequestGoldenDecodesOrIsRefusedExactlyAsPinned(t *testing.T) {
 	refusals := map[string]string{
 		"invalid-missing-nonce": `contract: envelope field "nonce" is required`,
-		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, got "reticulate"`,
+		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, run, got "reticulate"`,
 	}
 	pinned, err := os.ReadFile("testdata/request-golden-encodings.json")
 	if err != nil {
@@ -578,6 +579,21 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 				t.Errorf("properties.retire = %v, want an array of strings", prop)
 			}
 		}},
+		{"runId", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "string") || prop["pattern"] != "^run_[0-9a-f]{12}$" {
+				t.Errorf("properties.runId = %v, want a string of pattern ^run_[0-9a-f]{12}$", prop)
+			}
+		}},
+		{"command", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "string") || prop["maxLength"] != float64(contract.MaxRunCommandLength) || prop["pattern"] != "^[ -~]+$" {
+				t.Errorf("properties.command = %v, want a string of at most %d printable ASCII characters", prop, contract.MaxRunCommandLength)
+			}
+		}},
+		{"process", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "string") {
+				t.Errorf("properties.process type = %v, want string", schemaTypes(prop))
+			}
+		}},
 		{"caller", func(t *testing.T, prop map[string]any) {
 			if !hasType(prop, "object") {
 				t.Fatalf("properties.caller type = %v, want object", schemaTypes(prop))
@@ -606,11 +622,20 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_14_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_15_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.14.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.14.0: it adds the operation lease, a minor change from 1.13.0, which added verify-connection", doc["version"])
+	if doc["version"] != "1.15.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.15.0: it adds the operation run, a minor change from 1.14.0, which added lease", doc["version"])
+	}
+}
+
+func TestEnvelopeSchema_ListsTheRunOperation(t *testing.T) {
+	doc := jsonObject(t, contract.EnvelopeSchema)
+	operation, _ := doc["properties"].(map[string]any)["operation"].(map[string]any)
+
+	if enum, _ := operation["enum"].([]any); !slices.Contains(enum, any("run")) {
+		t.Errorf("envelope.schema.json operation enum = %v, want it to list \"run\"", operation["enum"])
 	}
 }
 
@@ -737,6 +762,86 @@ func TestDecodeRequest_RefusesALeaseMissingWhatItNeeds(t *testing.T) {
 			_, err := contract.DecodeRequest(leaseBody(t, tc.mutate))
 
 			requireErrorNaming(t, "DecodeRequest(lease)", err, tc.wants...)
+		})
+	}
+}
+
+// runBody is the run golden with mutate applied, so each refusal starts from the shape the platform sends.
+func runBody(t *testing.T, mutate func(m map[string]any)) []byte {
+	t.Helper()
+	m := jsonObject(t, kittest.Golden(t, "run"))
+	if mutate != nil {
+		mutate(m)
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("json.Marshal(run body): %v", err)
+	}
+	return raw
+}
+
+func TestDecodeRequest_ReadsTheRunGoldenNamingItsIdItsCommandAndItsProcess(t *testing.T) {
+	raw := runBody(t, nil)
+
+	req, err := contract.DecodeRequest(raw)
+
+	if err != nil {
+		t.Fatalf("DecodeRequest(run): %v", err)
+	}
+	want := contract.RunRequest{ID: "run_4c1e9a7f2b3d", Command: "php bin/add-user.php alice@example.com", Process: "web"}
+	if got := req.Run(); got != want {
+		t.Errorf("DecodeRequest(run).Run() = %+v, want %+v", got, want)
+	}
+	if req.Operation != contract.OperationRun {
+		t.Errorf("operation = %q, want %q", req.Operation, contract.OperationRun)
+	}
+}
+
+func TestDecodeRequest_AcceptsARunNamingNoProcessAndACommandOfTheLongestLength(t *testing.T) {
+	longest := strings.Repeat("a", contract.MaxRunCommandLength)
+	raw := runBody(t, func(m map[string]any) { delete(m, "process"); m["command"] = longest })
+
+	req, err := contract.DecodeRequest(raw)
+
+	if err != nil {
+		t.Fatalf("DecodeRequest(a run of %d characters naming no process): %v", contract.MaxRunCommandLength, err)
+	}
+	if got := req.Run(); got.Process != "" || got.Command != longest {
+		t.Errorf("Run() = process %q and a command of %d characters, want no process and %d characters", got.Process, len(got.Command), contract.MaxRunCommandLength)
+	}
+}
+
+func TestDecodeRequest_RefusesARunWhoseIdCommandOrProcessIsOutOfForm(t *testing.T) {
+	const oneLine = "one line of at most 1000 printable ASCII characters"
+	set := func(field string, value any) func(m map[string]any) {
+		return func(m map[string]any) { m[field] = value }
+	}
+	cases := []struct {
+		label  string
+		mutate func(m map[string]any)
+		wants  []string
+	}{
+		{"no run id", func(m map[string]any) { delete(m, "runId") }, []string{`"runId"`}},
+		{"a run id of eleven hex characters", set("runId", "run_4c1e9a7f2b3"), []string{`"runId"`, "run_ and twelve"}},
+		{"a run id of thirteen hex characters", set("runId", "run_4c1e9a7f2b3d0"), []string{`"runId"`, "run_ and twelve"}},
+		{"a run id in capitals", set("runId", "run_4C1E9A7F2B3D"), []string{`"runId"`, "run_ and twelve"}},
+		{"a run id of another prefix", set("runId", "job_4c1e9a7f2b3d"), []string{`"runId"`, "run_ and twelve"}},
+		{"no command", func(m map[string]any) { delete(m, "command") }, []string{`"command"`}},
+		{"an empty command", set("command", ""), []string{`"command"`}},
+		{"a command of 1,001 characters", set("command", strings.Repeat("a", contract.MaxRunCommandLength+1)), []string{`"command"`, oneLine}},
+		{"a command of a second line", set("command", "php bin/add-user.php alice@example.com\nrm -rf /"), []string{`"command"`, oneLine}},
+		{"a command ending in a carriage return", set("command", "php bin/add-user.php alice@example.com\r"), []string{`"command"`, oneLine}},
+		{"a command holding a tab", set("command", "php\tbin/add-user.php"), []string{`"command"`, oneLine}},
+		{"a command holding a NUL", set("command", "php bin/add-user.php\x00"), []string{`"command"`, oneLine}},
+		{"a command holding a letter outside ASCII", set("command", "php bin/add-user.php josé@example.com"), []string{`"command"`, oneLine}},
+		{"a process with a space", set("process", "web app"), []string{`"process"`}},
+		{"a process in capitals", set("process", "Web"), []string{`"process"`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			_, err := contract.DecodeRequest(runBody(t, tc.mutate))
+
+			requireErrorNaming(t, "DecodeRequest(run)", err, tc.wants...)
 		})
 	}
 }
