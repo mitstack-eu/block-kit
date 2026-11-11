@@ -97,7 +97,7 @@ type Waiting struct {
 	Detail string
 	// Removal, on an unsubscribe, has the absent:false answer carry each standing resource's observe, so the engine reads a removal an observer reports under way.
 	Removal bool
-	// Redrive, on a subscribe or upgrade, answers redrive beside pending, so the engine sends the subscribe again on the next signal about the subscription rather than settling it through validate.
+	// Redrive answers redrive beside pending, which the engine reads on a subscribe alone and answers by sending the subscribe again on the next signal about the subscription rather than settling it through validate.
 	Redrive bool
 }
 
