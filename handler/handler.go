@@ -119,7 +119,6 @@ type Handler struct {
 	fullReadChecker FullReadChecker
 	kitReadAmender  KitReadAmender
 
-	// leaser is set exactly when the manifest lists lease.
 	leaser Leaser
 
 	audience  string

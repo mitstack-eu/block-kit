@@ -102,7 +102,6 @@ type LeaseCaller struct {
 	Placed         []Placed `json:"placed,omitempty"`
 }
 
-// Placed is one block of an app that the platform records as bound to a lease's caller.
 type Placed struct {
 	App            string `json:"app"`
 	BlockID        string `json:"blockId"`
@@ -199,9 +198,8 @@ type Response struct {
 	// Credential answers an issue alone.
 	Credential *Credential       `json:"credential,omitempty"`
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
-	// Lease answers a lease that minted a credential, and no other verb.
-	Lease   *Lease `json:"lease,omitempty"`
-	Verdict string `json:"verdict,omitempty"`
+	Lease      *Lease            `json:"lease,omitempty"`
+	Verdict    string            `json:"verdict,omitempty"`
 }
 
 // ResourceOutcome is what a verb's calls did to one declared resource; a nil call did not run.
@@ -446,7 +444,6 @@ func checkLease(req Request) error {
 	return nil
 }
 
-// Lease reads the lease fields of the envelope, and checkLease alone ties them to the lease verb.
 func (r Request) Lease() LeaseRequest {
 	l := LeaseRequest{ID: r.LeaseID, Resource: r.Resource, Retire: r.Retire}
 	if want := bytes.TrimSpace(r.Want); len(want) > 0 && !bytes.Equal(want, []byte("null")) {
