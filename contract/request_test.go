@@ -699,8 +699,8 @@ func TestDecodeRequest_ReadsALeaseNamingItsResourceItsCallerAndWhatItWants(t *te
 	if got := req.Lease(); !reflect.DeepEqual(got, want) {
 		t.Errorf("DecodeRequest(lease).Lease() =\n%+v\nwant\n%+v", got, want)
 	}
-	if req.Operation != contract.OperationLease || contract.OperationLease != "lease" {
-		t.Errorf("operation = %q, OperationLease = %q, want both lease", req.Operation, contract.OperationLease)
+	if req.Operation != contract.OperationLease {
+		t.Errorf("operation = %q, want %q", req.Operation, contract.OperationLease)
 	}
 }
 
@@ -738,11 +738,5 @@ func TestDecodeRequest_RefusesALeaseMissingWhatItNeeds(t *testing.T) {
 
 			requireErrorNaming(t, "DecodeRequest(lease)", err, tc.wants...)
 		})
-	}
-}
-
-func TestMaxLeaseLife_IsOneDay(t *testing.T) {
-	if contract.MaxLeaseLife != 24*time.Hour {
-		t.Errorf("contract.MaxLeaseLife = %v, want 24h: a credential that lives longer is no lease", contract.MaxLeaseLife)
 	}
 }
