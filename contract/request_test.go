@@ -929,22 +929,3 @@ func TestHandoverOutputKey_NamesTheUnitItHandsOver(t *testing.T) {
 		}
 	}
 }
-
-func mutateGolden(t *testing.T, name string, mutate func(m map[string]any)) []byte {
-	t.Helper()
-	valid, err := contract.ValidGoldens()
-	if err != nil {
-		t.Fatalf("contract.ValidGoldens(): %v", err)
-	}
-	raw, ok := valid[name]
-	if !ok {
-		t.Fatalf("contract.ValidGoldens() has no %q entry", name)
-	}
-	m := jsonObject(t, raw)
-	mutate(m)
-	out, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("re-marshal mutated %s golden: %v", name, err)
-	}
-	return out
-}

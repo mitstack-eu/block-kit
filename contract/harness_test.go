@@ -99,17 +99,26 @@ func decodeGolden(t *testing.T, name string) contract.Request {
 
 func mutateSubscribeGolden(t *testing.T, mutate func(m map[string]any)) []byte {
 	t.Helper()
+	return mutateGolden(t, "subscribe", mutate)
+}
+
+func mutateGolden(t *testing.T, name string, mutate func(m map[string]any)) []byte {
+	t.Helper()
 	valid, err := contract.ValidGoldens()
 	if err != nil {
 		t.Fatalf("contract.ValidGoldens(): %v", err)
 	}
-	m := jsonObject(t, valid["subscribe"])
-	mutate(m)
-	raw, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("re-marshal mutated subscribe golden: %v", err)
+	raw, ok := valid[name]
+	if !ok {
+		t.Fatalf("contract.ValidGoldens() has no %q entry", name)
 	}
-	return raw
+	m := jsonObject(t, raw)
+	mutate(m)
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("re-marshal mutated %s golden: %v", name, err)
+	}
+	return out
 }
 
 func jsonObject(t *testing.T, raw []byte) map[string]any {

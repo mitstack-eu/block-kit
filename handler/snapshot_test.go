@@ -71,7 +71,7 @@ func TestSnapshot_AnswersTheHandoverTheBlockPublishesUnderTheUnitsOutputKey(t *t
 		t.Errorf("snapshot of app-data: status %d, outputs %v; want 200 and the handover under %q", status, resp.Outputs, handoverKey)
 	}
 	if len(block.taken) != 1 || block.taken[0] != "app-data" || !block.desired[0].Replacing {
-		t.Errorf("the block saw snapshots %v with replacing %v; want one for app-data sent during a replacement", block.taken, block.desired[0].Replacing)
+		t.Errorf("the block saw snapshots %v with desired %+v; want one for app-data sent during a replacement", block.taken, block.desired)
 	}
 	if block.ensureCalls+block.deleteCalls != 0 {
 		t.Errorf("a snapshot ran %d Ensure and %d Delete calls, want neither verb", block.ensureCalls, block.deleteCalls)
