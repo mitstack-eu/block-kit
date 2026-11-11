@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
   "title": "mitstack lifecycle webhook envelope",
   "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -36,9 +36,29 @@
     {
       "if": {"properties": {"operation": {"const": "lease"}}, "required": ["operation", "leaseId"]},
       "then": {"required": ["caller"], "properties": {"caller": {"required": ["subscriptionId"], "properties": {"subscriptionId": {"minLength": 1}}}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "run"}}, "required": ["operation"]},
+      "then": {"required": ["runId", "command"]}
     }
   ],
   "properties": {
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[0-9a-f]{12}$",
+      "description": "The id the platform mints when it accepts a run and keeps on every send of it, so the block commits one request per run. Required on a run."
+    },
+    "command": {
+      "type": "string",
+      "maxLength": 1000,
+      "pattern": "^[ -~]+$",
+      "description": "The one line of printable ASCII a run runs in a fresh container of the app's image. Required on a run."
+    },
+    "process": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+      "description": "The process of the part a run runs in, such as web. A run that names none runs in the block's entry, the process that serves the app's address."
+    },
     "leaseId": {
       "type": "string",
       "description": "The id a lease keeps on every attempt, so the provider can tell a retry from a new lease. A lease carries it to mint a credential and leaves it out to only retire some."
@@ -154,8 +174,8 @@
     },
     "operation": {
       "type": "string",
-      "description": "The lifecycle verb being dispatched, issue, which asks a capability for one app's credential, logs, which asks a block for the subscription's recent lines on /logs, verify-connection, which asks a capability's operator whether the credential an org entered works, or lease, which asks a block for a short-lived credential of a resource it provides or to retire the ones it minted.",
-      "enum": ["subscribe", "unsubscribe", "upgrade", "validate", "issue", "logs", "verify-connection", "lease"]
+      "description": "The lifecycle verb being dispatched, issue, which asks a capability for one app's credential, logs, which asks a block for the subscription's recent lines on /logs, verify-connection, which asks a capability's operator whether the credential an org entered works, lease, which asks a block for a short-lived credential of a resource it provides or to retire the ones it minted, or run, which asks a block to run a builder's one-off command in a fresh container of the app.",
+      "enum": ["subscribe", "unsubscribe", "upgrade", "validate", "issue", "logs", "verify-connection", "lease", "run"]
     },
     "subscriptionId": {
       "type": "string",

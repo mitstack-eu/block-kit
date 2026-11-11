@@ -21,6 +21,7 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/observe"
+	"github.com/mitstack-eu/block-kit/verify/internal/kitbinding"
 	"github.com/mitstack-eu/block-kit/webhook"
 )
 
@@ -159,12 +160,21 @@ type blockServer struct {
 	audience string
 }
 
-// sendsNoLogs gives a check built from the manifest alone, which never sends a logs request, the logs function handler.New requires of a manifest listing logs.
-func sendsNoLogs(cfg handler.Config) handler.Config {
+// sendsNoLogsOrRun gives a check built from the manifest alone, which never sends a logs or a run request, the functions handler.New requires of a manifest listing either.
+func sendsNoLogsOrRun(cfg handler.Config) handler.Config {
 	m, err := contract.ParseManifest(cfg.Manifest)
-	if err == nil && cfg.SubscriptionLogs == nil && slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs) {
+	if err != nil {
+		return cfg
+	}
+	operations := m.Block.Spec.Lifecycle.Operations
+	if cfg.SubscriptionLogs == nil && slices.Contains(operations, contract.OperationLogs) {
 		cfg.SubscriptionLogs = func(context.Context, contract.Desired) ([]string, error) {
 			return nil, errors.New("kittest: this check sends no logs request")
+		}
+	}
+	if cfg.Run == nil && slices.Contains(operations, contract.OperationRun) {
+		cfg.Run = func(context.Context, contract.Desired, contract.RunRequest) (contract.RunResult, error) {
+			return contract.RunResult{}, errors.New("kittest: this check sends no run request")
 		}
 	}
 	return cfg
@@ -179,7 +189,7 @@ func newBlockServer(cfg handler.Config) (*blockServer, error) {
 	cfg.PublicKey = func(string) (ed25519.PublicKey, error) { return pub, nil }
 	h, err := handler.New(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("the block cannot be served: %v", err)
+		return nil, fmt.Errorf("%s%v", kitbinding.UnservableBlock, err)
 	}
 	m, _ := contract.ParseManifest(cfg.Manifest)
 	return &blockServer{h: h, signer: &Signer{Kid: "kittest-block", Public: pub, Private: priv}, audience: m.ID()}, nil

@@ -33,6 +33,8 @@ type Host struct {
 	BackupResult string
 	// Containers replaces an app's running container with the fields it holds, such as state, health and logs.
 	Containers map[string]map[string]any
+	// Runs is what the report lists under host.runs, each entry shaped as dockerhost.ReportedRun.
+	Runs []map[string]any
 }
 
 // New is a host with room for a few small apps whose repository holds a README alone.
@@ -121,6 +123,7 @@ func (h *Host) NodeReports(_ context.Context, _ contract.Desired, subID string) 
 		"agent":    agent,
 		"apps":     apps, "volumes": volumes,
 		"backups": map[string]any{"runs": runs, "error": backupErr},
+		"runs":    h.Runs,
 	}})
 	return []observe.NodeReport{{ReceivedAt: time.Now(), Body: body}}, err
 }

@@ -127,7 +127,7 @@ func (in BrokenSetup) breakAt(n, of int) string {
 
 func (in BrokenSetup) send(provider FaultProvider, operation string, d contract.Desired) (int, contract.Response, error) {
 	resource, observers := provider.Process()
-	server, err := newBlockServer(sendsNoLogs(handler.Config{Resource: resource, Manifest: in.Manifest, Observers: observers, Types: in.Types}))
+	server, err := newBlockServer(sendsNoLogsOrRun(handler.Config{Resource: resource, Manifest: in.Manifest, Observers: observers, Types: in.Types}))
 	if err != nil {
 		return 0, contract.Response{}, err
 	}

@@ -568,6 +568,99 @@ if release.Failed {
 }
 ```
 
+### Running a command in an app's container
+
+A builder can run one command, such as `php bin/add-user.php alice@example.com`,
+in a fresh container of their app's image, through the `run` operation that
+[Running a one-off command](handler.md#running-a-one-off-command) describes.
+On a Docker host the block cannot reach the server, so it asks through the
+host's repository and reads the answer from the host's node report.
+`dockerhost.Runner` holds both halves, so each block answers a run with one
+line of wiring:
+
+```go
+cfg.Run = dockerhost.Runner{Block: "docker-app-slice", Processes: []string{"web"}, Reports: observe.NodeReportsClient{}}.Run
+```
+
+| Field | Meaning |
+|---|---|
+| `Block` | The block's id, which names the request file `<block>.run-request` beside the block's compose file |
+| `Processes` | The compose services the block runs, its entry first. A run naming no process runs the entry |
+| `Reports` | The node reports API, `observe.NodeReportsClient{}`, or a fake in your tests |
+| `GitHub` | Makes the client of the host's repository, `nil` for one that waits 30 seconds at most |
+| `Now` | The clock the deadline is counted from, `time.Now` when `nil` |
+
+`Run` reads the host from the requirement named `host`: its `subscriptionId`,
+its repository from `clusterRepoUrl`, its `execKind` and its `execTarget`. An
+hcloud-docker-host subscription gives `execKind` `git-pull`, since its agent
+pulls the repository, and gives its Hetzner server id as `execTarget`. The
+request must carry the GitHub connection's token and owner, as a subscribe
+does, because the request file is committed with them.
+
+Each call takes these steps:
+
+1. It refuses a process the block does not run, listing those it runs, with
+   the class `run-process`, before it reads or writes anything.
+2. It refuses a host binding whose `execKind` is not `git-pull`, or that names
+   no `execTarget`, with the class `host-binding`, and a host the platform
+   attests absent with the class `host-absent`.
+3. It reads the host's newest node report. When the report lists the run id,
+   it answers from that entry and commits nothing.
+4. Otherwise it reads `<app>/<block>.run-request` on main. When the file names
+   the same run id, an earlier call committed it, so nothing is committed
+   again, even after the block restarted between its commit and its answer.
+5. Otherwise it commits the request, replacing the request of an earlier run,
+   and answers pending. When another block's commit moved main first, it
+   takes steps 4 and 5 again on the newest main, in three attempts at most.
+
+`Run` never removes the request file after its run ends, and the next run
+replaces it. Its run id, server id and deadline keep the host from running it
+twice.
+
+The request file is one JSON object, which
+`helpers/dockerhost/testdata/run-request.json` holds as the golden the host
+reads, and `dockerhost.RunRequestFile` types:
+
+```json
+{
+  "runId": "run_4c1e9a7f2b3d",
+  "serverId": "61432178",
+  "deadline": "2026-11-11T14:15:00Z",
+  "service": "web",
+  "command": "php bin/add-user.php alice@example.com"
+}
+```
+
+`serverId` is the host's `execTarget`, so a host that finds the request on
+another server refuses it. `deadline` is `dockerhost.RunDeadline`, 15
+minutes, after the commit, in UTC to the second, and a host that finds the
+request later refuses it. `service` is the process the run names, or the
+entry.
+
+The host lists each run under `host.runs` of its node report, which
+`helpers/dockerhost/testdata/node-report-runs.json` holds as the golden, and
+`dockerhost.ReportedRun` types. A run that ended carries `exitCode` and
+`output`, beside the image's `digest` and the `startedAt` and `endedAt` times.
+A run the host refused carries `refusal` and no exit code, and one still
+running carries neither:
+
+```json
+{"host": {"runs": [
+  {"runId": "run_4c1e9a7f2b3d", "digest": "sha256:5f1c", "startedAt": "2026-11-11T14:00:09Z", "endedAt": "2026-11-11T14:00:10Z", "exitCode": 0, "output": "added alice@example.com\n"},
+  {"runId": "run_9d2b7e4a1c0f", "exitCode": null, "refusal": "the request names server 61432178, and this host is server 70011223"}
+]}}
+```
+
+| The newest report | `Run` answers |
+|---|---|
+| Lists the run with an exit code | The exit code, the output whole, the digest and the times, whatever the exit code |
+| Lists the run with a refusal | A refusal of class `run-refused` naming the run id and the host's words |
+| Lists the run with neither | Pending, since the command is still running |
+| Does not list the run, or the host has sent no report | Pending, once main holds the request, by step 4 or step 5 |
+
+`Run` keeps whatever output the report carries, so the host alone decides how
+much of it to keep.
+
 ### How a block waits for its final backup
 
 A per-app block that keeps data on the host takes a last backup before it

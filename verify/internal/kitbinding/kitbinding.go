@@ -16,6 +16,9 @@ import (
 // HandlerPackage is the import path of the kit's handler package.
 const HandlerPackage = "github.com/mitstack-eu/block-kit/handler"
 
+// UnservableBlock opens the error kittest reports when the kit's handler refuses a block's Config, so blockverify can quote it.
+const UnservableBlock = "the block cannot be served: "
+
 // HandlerImportFiles returns the sorted, slash-separated paths under dir of non-test files a default build compiles that import HandlerPackage, and fails the scan on any file it cannot judge.
 func HandlerImportFiles(dir string) ([]string, error) {
 	fset := token.NewFileSet()

@@ -1,0 +1,7 @@
+{
+  "runId": "run_4c1e9a7f2b3d",
+  "serverId": "61432178",
+  "deadline": "2026-11-11T14:15:00Z",
+  "service": "web",
+  "command": "php bin/add-user.php alice@example.com"
+}

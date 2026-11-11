@@ -1,0 +1,32 @@
+{
+  "host": {
+    "runs": [
+      {
+        "runId": "run_4c1e9a7f2b3d",
+        "digest": "sha256:5f1c",
+        "startedAt": "2026-11-11T14:00:09Z",
+        "endedAt": "2026-11-11T14:00:10Z",
+        "exitCode": 0,
+        "output": "added alice@example.com\n"
+      },
+      {
+        "runId": "run_7b0c2d9e4f13",
+        "digest": "sha256:5f1c",
+        "startedAt": "2026-11-11T13:40:02Z",
+        "endedAt": "2026-11-11T13:40:03Z",
+        "exitCode": 1,
+        "output": "no such table: users\n"
+      },
+      {
+        "runId": "run_9d2b7e4a1c0f",
+        "exitCode": null,
+        "refusal": "the request names server 61432178, and this host is server 70011223"
+      },
+      {
+        "runId": "run_e3a8c5f10b27",
+        "digest": "sha256:5f1c",
+        "startedAt": "2026-11-11T14:00:30Z"
+      }
+    ]
+  }
+}

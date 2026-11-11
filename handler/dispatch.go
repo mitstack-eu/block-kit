@@ -16,7 +16,7 @@ import (
 
 // dispatchRequest runs the verb through the idempotency cache, storing only a settled answer.
 //
-// A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue or a lease skips it because a replayed credential may have expired.
+// A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue or a lease skips it because a replayed credential may have expired, and a run skips it because each send reads the host's newest report.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := h.secretsFor(req)
 	ctx := requestContext(r.Context(), req)
@@ -48,10 +48,10 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	_, _ = w.Write(raw)
 }
 
-// answersFresh is true of the verbs whose answer is never replayed from the idempotency cache and which emit no event: a validate probes what the resource is now, and an issue, a verify-connection and a lease answer a credential or verdict that may have lapsed.
+// answersFresh is true of the verbs whose answer is never replayed from the idempotency cache and which emit no event: a validate probes what the resource is now, an issue, a verify-connection and a lease answer a credential or verdict that may have lapsed, and a run answers what the host last reported, which the platform records itself.
 func answersFresh(operation string) bool {
 	switch operation {
-	case "validate", contract.OperationIssue, contract.OperationVerifyConnection, contract.OperationLease:
+	case "validate", contract.OperationIssue, contract.OperationVerifyConnection, contract.OperationLease, contract.OperationRun:
 		return true
 	}
 	return false
@@ -107,7 +107,7 @@ func panicValueForLog(p any, secrets []string) string {
 	}
 }
 
-// emitVerbEvent emits none for validate, since ProbeHealth dispatches validate in answer to a terminal event and a completed one would loop, nor for an issue, verify-connection or lease, which change nothing the subscription's events record.
+// emitVerbEvent emits none for validate, since ProbeHealth dispatches validate in answer to a terminal event and a completed one would loop, nor for an issue, verify-connection, lease or run, which change nothing the subscription's events record.
 //
 // It emits no start event because the event log's partial unique index on (subscriptionId, idempotencyKey) would drop the terminal event under a start event that took its slot.
 func (h *Handler) emitVerbEvent(ctx context.Context, operation string, status int, resp contract.Response, settled bool) {
@@ -139,6 +139,8 @@ func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secret
 		return h.issue(ctx, req, secrets)
 	case req.Operation == contract.OperationLease:
 		return h.lease(ctx, req, secrets)
+	case req.Operation == contract.OperationRun:
+		return h.run(ctx, req, secrets)
 	}
 	return h.dispatchDeclared(ctx, req.Operation, req.Desired(), secrets)
 }

@@ -80,7 +80,7 @@ type Ask struct {
 func Capacity(report Report, found bool, part string) (Reservation, error) {
 	switch {
 	case report.absence != nil:
-		return Reservation{}, handler.Refuse("host-absent", "the platform's %s read the host's %s absent, so %s cannot be placed on it; give the app a running host",
+		return Reservation{}, handler.Refuse(classHostAbsent, "the platform's %s read the host's %s absent, so %s cannot be placed on it; give the app a running host",
 			report.absence.Observer, report.absence.Resource, part)
 	case found && report.Allocatable == nil && report.capacityError != "":
 		return Reservation{}, handler.WaitForSignal("the host's newest node report gives no allocatable capacity but the error %q, so %s waits for a report that gives it before it is sized",

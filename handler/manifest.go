@@ -26,6 +26,7 @@ type manifestDeclarations struct {
 	capability bool
 	logs       bool
 	leases     bool
+	runs       bool
 	verifies   bool
 	// verifyOnly is a manifest whose one operation is verify-connection, which needs no Resource.
 	verifyOnly bool
@@ -47,6 +48,7 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 		capability: m.Block.Type == contract.ManifestTypeCapability,
 		logs:       slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs),
 		leases:     slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLease),
+		runs:       slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationRun),
 		verifies:   slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationVerifyConnection),
 		verifyOnly: slices.Equal(m.Block.Spec.Lifecycle.Operations, []string{contract.OperationVerifyConnection}),
 	}, nil
