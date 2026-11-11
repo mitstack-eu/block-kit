@@ -611,3 +611,54 @@ func runReleaseStep(t *testing.T, step, tag string, tags map[string]string, publ
 		"GITHUB_REPOSITORY=acme/billing-db", "GITHUB_TOKEN="+jobToken, "PUBLISHER_WORKFLOW=release-publisher.yml")
 	return out, exit, github
 }
+
+// Each job that builds the block's image reads packages and logs in to ghcr.io with its own token before its first build, the conformance job before the block's tests, and no other job reads packages.
+func TestPublishBlockWorkflow_OnlyTheJobsThatBuildTheImageReadTheBlocksOwnPackages(t *testing.T) {
+	all := publishWorkflow(t)
+	builders := map[string]string{"conformance": "go test", "opentofu-conformance": "Build the block image", "publish": "Build and push image"}
+
+	for _, job := range slices.Sorted(maps.Keys(all)) {
+		job, isJob := strings.CutPrefix(job, "jobs.")
+		if !isJob || strings.Contains(job, ".") {
+			continue
+		}
+		firstBuild, builds := builders[job]
+		if !builds {
+			if got, ok := all["jobs."+job+".permissions.packages"]; ok {
+				t.Errorf("publish-block.yml jobs.%s.permissions.packages = %q, want it absent", job, got)
+			}
+			continue
+		}
+		login := stepAt(all, job, "run", `printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin`)
+		step := func(key string) string { return all["jobs."+job+".steps."+strconv.Itoa(login)+"."+key] }
+		checkFields(t, "publish-block.yml", job+": ", []struct{ name, got, want string }{
+			{"the job may read packages", all["jobs."+job+".permissions.packages"], "read"},
+			{"the login takes the job's own token and actor", step("env.GHCR_TOKEN") + " " + step("env.GHCR_USER"), "${{ github.token }} ${{ github.actor }}"},
+			{"the login comes before the job's first build", strconv.FormatBool(login >= 0 && login < stepAt(all, job, "name", firstBuild)), "true"},
+		})
+	}
+}
+
+// GitHub refuses to start a called job that asks for more than its caller grants, so every caller the docs show grants packages: read.
+func TestBlockChecksDoc_EveryCallerExampleGrantsPackagesRead(t *testing.T) {
+	raw, err := os.ReadFile("../docs/block-checks.md")
+	if err != nil {
+		t.Fatalf("reading docs/block-checks.md: %v", err)
+	}
+	callers := 0
+
+	for _, fence := range strings.Split(string(raw), "```yaml")[1:] {
+		example, _, _ := strings.Cut(fence, "```")
+		all := workflowFields(example)
+		if strings.HasPrefix(all["jobs.block.uses"], "mitstack-eu/block-kit/.github/workflows/publish-block.yml@") {
+			callers++
+			if got := all["jobs.block.permissions.packages"]; got != "read" {
+				t.Errorf("the caller example using %s grants packages %q, want read", all["jobs.block.uses"], got)
+			}
+		}
+	}
+
+	if callers == 0 {
+		t.Fatal("docs/block-checks.md shows no caller of publish-block.yml, so the check read nothing")
+	}
+}

@@ -186,12 +186,33 @@ jobs:
       contents: write
       actions: write
       id-token: write
+      packages: read
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@v0.4.0
     with:
       block-id: hetzner-firewall
       ecr-repository: mitstack-hetzner-firewall
       kit-ref: v0.4.0
 ```
+
+The `permissions` block grants the most the workflow's jobs may use, because
+a called job gets no more than its caller grants. GitHub refuses to start the
+workflow when one of its jobs asks for more, with an error such as `The nested
+job 'conformance' is requesting 'packages: read', but is only allowed
+'packages: none'`. So grant all four lines, even when your block needs none of
+what one of them opens.
+
+`packages: read` lets each job that builds your image log in to ghcr.io,
+GitHub's container registry, with the job's own token. A Go block builds it in
+`conformance` on a pull request and in `publish` on main, and an OpenTofu-only
+block in `opentofu-conformance` and `publish`. Because the runner is logged in,
+a `FROM` line or a `COPY --from` line in your `Dockerfile` may name a private
+package your repository publishes, with nothing in the `Dockerfile` itself.
+
+In `conformance` the login comes before your block's own tests, which may build
+the image. The token sits in the runner's `~/.docker/config.json` while they
+run and holds `contents: read` and `packages: read`. So never print, upload or
+send that file from a test. On a self-hosted runner the file outlives the job,
+although the token expires when the job ends.
 
 `ecr-repository` names the repository in Amazon Elastic Container Registry
 (ECR), AWS's image registry, that receives the image, and `kit-ref` the
@@ -263,7 +284,8 @@ defaults to `release-publisher.yml`.
 The job pushes the tag with `contents: write`, starts the publisher with
 `actions: write` and signs the record with `id-token: write`. A called
 workflow gets no more than its caller grants, so the job of yours that calls
-`publish-block.yml`, `block` in the examples, grants all three.
+`publish-block.yml`, `block` in the examples, grants all four lines, these
+three and the `packages: read` the image build needs.
 
 Two scan jobs also run on every event your CI calls the workflow for, and
 `publish` waits for both. The `secrets` job runs `scripts/scan-secrets.sh`,
@@ -422,6 +444,7 @@ jobs:
       contents: write
       actions: write
       id-token: write
+      packages: read
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
     with:
       block-id: opentofu-s3-bucket
@@ -512,6 +535,7 @@ jobs:
       contents: write
       actions: write
       id-token: write
+      packages: read
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
     with:
       block-id: "@acme/billing-db"

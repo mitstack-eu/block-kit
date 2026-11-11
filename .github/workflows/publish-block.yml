@@ -40,6 +40,9 @@
 # The scan jobs run the kit's own scripts at kit-ref, so a scanner pin
 # changes in one place for every block.
 #
+# Every caller grants packages: read, since GitHub refuses to start a called
+# job that asks for more than its caller grants.
+#
 # Two more jobs call the platform with the MITSTACK_API_TOKEN secret, each
 # only when the caller sets its input. `platform-verdict` asks for a dry-run
 # apply of manifest.yaml on a pull request, and `attest` posts blockverify's
@@ -146,8 +149,9 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:
       contents: read
+      packages: read
     steps:
-      # The block's own tests run in this tree, so it keeps no token.
+      # The block's own tests run in this tree, so the checkout keeps no token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -158,6 +162,14 @@ jobs:
 
       - name: go vet
         run: go vet ./...
+
+      # The block's own tests may build its image, which may build on a
+      # private package its own repository publishes.
+      - name: Log in to ghcr.io with the job's token
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
 
       # This is where the block's own kittest goldens and verb-semantics
       # suite run — the block's go.mod, not the kit's.
@@ -255,6 +267,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -333,6 +346,14 @@ jobs:
           set -euo pipefail
           REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ inputs.aws-region }}.amazonaws.com"
           aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
+
+      # The block's image may build on a private package its own repository
+      # publishes.
+      - name: Log in to ghcr.io with the job's token
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
 
       - name: Build the block image
         id: image
@@ -570,6 +591,7 @@ jobs:
       contents: write
       id-token: write
       actions: write
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -624,6 +646,14 @@ jobs:
           REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ inputs.aws-region }}.amazonaws.com"
           echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
           aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
+
+      # The block's image may build on a private package its own repository
+      # publishes.
+      - name: Log in to ghcr.io with the job's token
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
 
       # A version tag already in the registry is never pushed over, and a
       # record already beside it is never written again. This probe is
