@@ -218,7 +218,7 @@ replacement is an upgrade the user confirms that creates the block's server
 again with the same identity, and a handover is the output a snapshot
 publishes for the restore to read. A block that keeps no state leaves the key
 out, and its manifest parses as it always did. An empty list, `continuity: []`,
-says the block keeps nothing on purpose.
+parses the same way as no key.
 
 ```yaml
 spec:
@@ -243,7 +243,7 @@ out, naming its path, as in `spec.continuity[0].handover is required`.
 | `name` | The unit a snapshot and a restore name, unique in the block |
 | `kind` | What the state is, such as `postgres`, `openbao` or `volume` |
 | `stateful` | `true` when the user would miss the contents, `false` for state that can be rebuilt |
-| `handover` | `snapshot` when the snapshot and restore operations carry the state across, or `none` when nothing does, stated even then |
+| `handover` | `snapshot` when the snapshot and restore operations carry the state across, or `none` when nothing does. The key is required either way, so a block says which it is |
 
 The parser also refuses a `handover` other than `none` and `snapshot`, and a
 `name` used twice. `contract.CheckManifest` refuses an entry whose handover is

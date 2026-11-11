@@ -20,15 +20,14 @@ var errNoManifest = fmt.Errorf("handler: Config.Manifest is required: pass the b
 var errEmptyJWKSURL = errors.New("handler: Config.JWKSURL is required")
 
 type manifestDeclarations struct {
-	id         string
-	resources  []contract.ManifestResource
-	provided   map[string]bool
-	capability bool
-	logs       bool
-	leases     bool
-	runs       bool
-	snapshots  bool
-	// snapshotUnits are the spec.continuity entries handed over by snapshot.
+	id            string
+	resources     []contract.ManifestResource
+	provided      map[string]bool
+	capability    bool
+	logs          bool
+	leases        bool
+	runs          bool
+	snapshots     bool
 	snapshotUnits []string
 	verifies      bool
 	// verifyOnly is a manifest whose one operation is verify-connection, which needs no Resource.
@@ -46,7 +45,6 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 			snapshotUnits = append(snapshotUnits, u.Name)
 		}
 	}
-	operations := m.Block.Spec.Lifecycle.Operations
 	provided := make(map[string]bool, len(m.Block.Spec.Provides))
 	for _, name := range m.Block.Spec.Provides {
 		provided[name] = true
@@ -60,7 +58,7 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 		logs:          slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs),
 		leases:        slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLease),
 		runs:          slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationRun),
-		snapshots:     slices.Contains(operations, contract.OperationSnapshot) || slices.Contains(operations, contract.OperationRestore),
+		snapshots:     slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationSnapshot) || slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationRestore),
 		verifies:      slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationVerifyConnection),
 		verifyOnly:    slices.Equal(m.Block.Spec.Lifecycle.Operations, []string{contract.OperationVerifyConnection}),
 	}, nil

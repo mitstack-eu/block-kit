@@ -122,7 +122,7 @@ and `d.Instances` read the same on every call.
 | `PriorOutputs`, `CloudIdentity` | The outputs the last call recorded, and the short-lived AWS web identity of the org's cloud account, nil when it has none |
 | `VerbAt` | The time an observer reads after, which the next section explains |
 | `NeverActive` | `true` only when the engine has proved the subscription holds no user data |
-| `Replacing` | `true` on every request sent during a replacement, which tells the block to send no install retry, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
+| `Replacing` | `true` on a request that carries `"replacing": true`, the marker of a replacement of the block's server, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
 
 The platform runs an observer of its own, outside your block, which asks a
 provider whether a resource still exists. When it reads a resource absent, the
@@ -848,10 +848,13 @@ section is for a block writer whose manifest declares state under
 explains. A unit is one entry of that declaration, and a handover is the output
 a snapshot publishes for the restore to read.
 
-The engine sends the operations in stages. A `snapshot` takes the data out of
-the old server before it goes, a reinstall creates the new server, a `restore`
-puts the data back, and the engine then observes each replaced resource until
-it reads present and healthy. A block lists both operations under
+The two operations serve the replacement that
+[ADR 0125](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0125-a-confirmed-upgrade-replaces-a-stateful-server-through-a-recorded-handover-with-keys-from-a-per-subscription-escrow-and-two-drills-that-keep-it-working.md)
+sets out in four stages. A `snapshot` takes the data out of the old server
+before it goes. The reinstall is an ordinary `upgrade`, which reaches your
+`Ensure` as any upgrade does and creates the new server. A `restore` puts the
+data back, and the platform then observes each replaced resource until it
+reads present and healthy. A block lists both operations under
 `spec.lifecycle.operations` and implements `handler.Snapshotter`, and
 `handler.New` refuses a manifest that lists them over a `Resource` that does
 not:
@@ -874,14 +877,21 @@ with that error and no handover. It publishes the handover as the answer's outpu
 name. A restore reads the handover from the request's `priorOutputs` under the
 same key.
 
+The handover is a string your block chooses, and the platform stores it and
+hands it back without reading it. It names where the snapshot is, such as an
+object's reference with its digest, so that your `Restore` alone can find the
+data again. It holds no secret, since it travels as an output, and the handler
+refuses one that repeats a secret the request carried.
+
 This request asks for a snapshot of the unit `app-data`:
 
 ```json
 {"operation": "snapshot", "subscriptionId": "sub_a1b2c3d4e5", "unit": "app-data", "replacing": true}
 ```
 
-Every request sent during a replacement carries `"replacing": true`, which the
-block reads as `d.Replacing`. A block that retries its server's install when
+A request that is part of a replacement carries `"replacing": true`, on the
+snapshot, the upgrade that reinstalls and the restore alike, and the block
+reads it as `d.Replacing`. A block that retries its server's install when
 the first attempt looks stuck must not do so while `d.Replacing` is true, since
 a second install over a server that holds the data being restored would
 destroy it.
@@ -891,7 +901,8 @@ destroy it.
 | The manifest does not list `snapshot` and `restore` | 400, `refused:snapshot-not-listed` |
 | The unit is not a `spec.continuity` entry handed over by snapshot | 400, `refused:unknown-unit` |
 | A restore carries no handover under the unit's output key | 400, `refused:no-handover` |
-| The block returns an error, or a handover that is empty or repeats a secret the request carried | 500, with no handover |
+| The block returns a `handler.Refuse` | 400, with the block's own refusal class and no handover |
+| The block returns any other error, or a handover that is empty or repeats a secret the request carried | 500, with no handover |
 
 ## Serving a subscription's logs
 

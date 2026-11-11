@@ -16,7 +16,7 @@ import (
 
 // dispatchRequest runs the verb through the idempotency cache, storing only a settled answer.
 //
-// A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue or a lease skips it because a replayed credential may have expired, and a run skips it because each send reads the host's newest report.
+// A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource and unit, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue or a lease skips it because a replayed credential may have expired, and a run skips it because each send reads the host's newest report.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := h.secretsFor(req)
 	ctx := requestContext(r.Context(), req)
