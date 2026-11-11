@@ -1397,21 +1397,21 @@ Hetzner Cloud answers a call that changes a resource, such as creating a
 server, with an action: Hetzner's record of that work, which runs until Hetzner
 marks it a success or an error. Hetzner refuses a call on a resource with
 `locked` while an action on it still runs, so a block waits for each action it
-starts before its next call. Hetzner sends no signal when an action ends, so the wait asks
-Hetzner again until it does.
+starts before its next call. Hetzner sends no signal when an action ends, so
+the wait asks Hetzner again until it does.
 
 `cloud.WaitForActions` is that wait for every Hetzner Cloud block. It takes the
 request's context, your client's waiter, a few words naming what the actions
 do, and the actions. The waiter is the function in your block's own Hetzner
 Cloud client that asks Hetzner until the actions end, such as
-`Client.Action.WaitFor` in hcloud-go, Hetzner's Go client. The kit holds no
-Hetzner client of its own that asks, so it adds no timer, as [the kit's wait
+`Client.Action.WaitFor` in hcloud-go, Hetzner's Go client. The waiter does the
+asking, so the kit adds no timer of its own, as [the kit's wait
 standard](maintainers.md#judging-the-waits-a-pull-request-adds) requires.
-hcloud-go's waiter skips a nil action, so a call that may start none, such as
-creating a primary IP, needs no check of its own.
+hcloud-go's waiter at v2.49.0 skips a nil action, so a call that may start
+none, such as creating a primary IP, needs no check of its own.
 
-Here is how a block built on hcloud-go creates a server and waits on it. Here
-`client` is the block's `*hcloud.Client`:
+Here is how a block built on hcloud-go creates a server and waits on it, with
+`client` the block's `*hcloud.Client`:
 
 ```go
 res, _, err := client.Server.Create(ctx, opts)
