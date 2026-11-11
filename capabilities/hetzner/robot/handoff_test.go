@@ -43,20 +43,24 @@ func (c *fakeCloud) DeleteServer(_ context.Context, id int64) error {
 	return nil
 }
 
-// fakeRescue answers read with hardware and write with writeErr, as the block's rescue script would.
+// fakeRescue answers read with hardware or readErr and write with writeErr, and a failed step with failOutput, as the block's rescue script would.
 type fakeRescue struct {
-	hardware string
-	writeErr error
-	runs     [][]string
-	closed   bool
+	hardware          string
+	readErr, writeErr error
+	failOutput        string
+	runs              [][]string
+	closed            bool
 }
 
 func (r *fakeRescue) Run(_ context.Context, args ...string) (string, error) {
 	r.runs = append(r.runs, args)
-	if args[0] == "read" {
+	if args[0] == "read" && r.readErr == nil {
 		return r.hardware, nil
 	}
-	return "", r.writeErr
+	if args[0] == "read" {
+		return r.failOutput, r.readErr
+	}
+	return r.failOutput, r.writeErr
 }
 
 func (r *fakeRescue) Close() error {
@@ -224,6 +228,29 @@ func TestInstall_DeletesTheShortLivedServerWhenTheHandOffFails(t *testing.T) {
 			}
 			if !slices.Equal(h.cloud.deleted, []int64{1}) {
 				t.Errorf("the Cloud deleted %v, want the short-lived server 1 deleted", h.cloud.deleted)
+			}
+			assertCleanedUp(t, h)
+		})
+	}
+}
+
+// The hand-off sends the rescue session no secret, so its scripts' output may stand in the error.
+func TestInstall_AFailedRescueStepNamesTheScriptsOutput(t *testing.T) {
+	for _, step := range []string{"read", "write"} {
+		t.Run(step, func(t *testing.T) {
+			h := newHandOff(t, "FSN1-DC14")
+			failed := errors.New("the rescue script " + step + " failed: Process exited with status 3")
+			if step == "read" {
+				h.rescue.readErr = failed
+			} else {
+				h.rescue.writeErr = failed
+			}
+			h.rescue.failOutput = "mkfs: /dev/nvme0n1 is apparently in use by the system\n"
+
+			err := h.install(t)
+
+			if !errors.Is(err, failed) || !strings.Contains(err.Error(), h.rescue.failOutput) {
+				t.Fatalf("Install = %v, want the %s step's failure and the script's output", err, step)
 			}
 			assertCleanedUp(t, h)
 		})
