@@ -1261,13 +1261,19 @@ The platform then waits on the removal without spending one of the
 unsubscribe's attempts. A new result for that check moves the removal on, and
 so does the pull request merging or closing.
 
-Every wait on an open removal pull request names it by its number, its
-repository and its web address. The address is the `html_url` GitHub answered
-for the pull request, which `openPullRequest` and `pullRequest` in
-`capabilities/github/landing/remove.go` read, so it carries the host that
-serves the repository. Each wait also says what ends it. A wait on a required
-check ends once that check passes, and a wait on a review main requires ends
-once an approving review is given. Every wait ends once the pull request is
+Every wait the kit reports on an open removal pull request names it by its
+number, its repository and its web address. That holds for the wait `Remove`
+returns and for the observer's `WaitsOn` alike. The address is the `html_url`
+GitHub answered for the pull request, which `openPullRequest` and
+`pullRequest` in `capabilities/github/landing/remove.go` read, so it carries
+the host that serves the repository.
+
+Each wait also says what ends it. A wait on a required check ends once that
+check passes. While no required check is queued, running or failed on the
+pull request, a review main requires holds it when an approving review is
+missing or a reviewer requested changes. The observer's answer carries
+`Removing` then as well, and that wait ends once an approving review is given
+and no reviewer requests changes. Every wait ends once the pull request is
 merged or closed.
 
 `Remove` and the observer read one judgement of the required checks,

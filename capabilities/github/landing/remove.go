@@ -228,7 +228,7 @@ func (p pullAnswer) open() openPull {
 	return openPull{number: p.Number, head: p.Head.SHA, address: p.HTMLURL}
 }
 
-// named is how a wait names pr: by its number and repository, then by its address.
+// named is the one name every wait gives pr, so the unsubscribe and the observer name it alike.
 func (a api) named(pr openPull) string {
 	return fmt.Sprintf("removal pull request #%d of %s (%s)", pr.number, a.repo, pr.address)
 }
