@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -182,12 +183,12 @@ func TestCloudNativePGVerify_DiscardsTheScratchClusterWhateverTheCheckFound(t *t
 }
 
 func TestCloudNativePGVerify_NamesTheRecoveryThatFailed(t *testing.T) {
-	cluster := &fakeCluster{}
+	cluster := &fakeCluster{live: []string{datum}, scratchErr: errors.New("the archive holds no base backup")}
 	hook, _ := newHook(t, continuity.CloudNativePG{Cluster: cluster})
 
 	handover, err := hook.Snapshot(context.Background(), "app-data")
 
-	if handover != "" || err == nil || !strings.Contains(err.Error(), "recovering the scratch cluster") {
-		t.Errorf("Snapshot of an empty backup = %q, %v; want no handover and an error naming the recovery", handover, err)
+	if handover != "" || err == nil || !strings.Contains(err.Error(), "recovering the scratch cluster") || !strings.Contains(err.Error(), "no base backup") {
+		t.Errorf("Snapshot of a backup that does not recover = %q, %v; want no handover and an error naming the recovery and its cause", handover, err)
 	}
 }

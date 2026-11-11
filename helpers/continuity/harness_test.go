@@ -191,6 +191,8 @@ type fakeCluster struct {
 	live      []string
 	scratch   *fakeRecovered
 	recovered []continuity.Recovery
+	// scratchErr fails every recovery into a scratch cluster.
+	scratchErr error
 }
 
 type fakeRecovered struct {
@@ -222,8 +224,8 @@ func (c *fakeCluster) Recover(_ context.Context, into continuity.Recovery, archi
 		c.live = rows
 		return &fakeRecovered{rows: rows}, nil
 	}
-	if len(raw) == 0 {
-		return nil, errors.New("the archive is empty")
+	if c.scratchErr != nil {
+		return nil, c.scratchErr
 	}
 	c.scratch = &fakeRecovered{rows: rows}
 	return c.scratch, nil
