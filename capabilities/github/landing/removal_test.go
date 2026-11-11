@@ -310,21 +310,126 @@ func TestObserver_ReadsTheRemovalUnderWayWhileItsPullRequestsRequiredCheckIsQueu
 	}
 }
 
+// The unsubscribe and the observer read one judgement of the required checks, so the wait the unsubscribe answers is the one the observer names.
+func TestUnsubscribeAndObserver_NameTheSameWaitWhileARequiredCheckIsQueuedRunningOrFailed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(f *landingtest.Fake)
+		check   string
+		naming  string
+		// run is the page the wait names when a commit status, not a check run, reports the check.
+		run string
+	}{
+		{"its required check is queued", func(f *landingtest.Fake) { f.RunCheck("managed-ci", "queued") }, "managed-ci", "is queued", ""},
+		{"its required check is running", func(f *landingtest.Fake) { f.RunCheck("managed-ci", "in_progress") }, "managed-ci", "is running", ""},
+		{"its required check failed", func(f *landingtest.Fake) { f.ReportCheck("managed-ci", "failure") }, "managed-ci", "failed", ""},
+		{"its required check failed while a review is also required", func(f *landingtest.Fake) {
+			f.RequireReviews(1)
+			f.ReportCheck("managed-ci", "failure")
+		}, "managed-ci", "failed", ""},
+		{"one required check failed while another runs", func(f *landingtest.Fake) {
+			f.RunCheck("managed-ci", "in_progress")
+			f.RequireCheck("lint")
+			f.ReportCheck("lint", "failure")
+		}, "lint", "failed", ""},
+		{"its required check reports a failed commit status", func(f *landingtest.Fake) {
+			f.ReportStatus("managed-ci", "failure", "https://ci.example/builds/7")
+		}, "managed-ci", "failed", "https://ci.example/builds/7"},
+		{"its check run failed and a commit status of that check is pending, which is further along", func(f *landingtest.Fake) {
+			f.ReportCheck("managed-ci", "failure")
+			f.ReportStatus("managed-ci", "pending", "https://ci.example/builds/8")
+		}, "managed-ci", "is queued", "https://ci.example/builds/8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := waitingRemoval(t)
+			tc.arrange(f)
+			run := tc.run
+			if run == "" {
+				run = f.RunURL(tc.check)
+			}
+
+			_, err := remove(client(f), rec)
+			obs := observeRemoval(t, f, rec, true)
+
+			var w *handler.Waiting
+			if !errors.As(err, &w) || !w.Removal {
+				t.Fatalf("Remove once %s = %#v, want a handler.Waiting with Removal set", tc.name, err)
+			}
+			if obs.State != contract.Present || obs.Removing == nil {
+				t.Fatalf("observe once %s = %s with removing %+v (%s), want present with removing", tc.name, obs.State, obs.Removing, obs.StatusDetail)
+			}
+			if w.Detail != obs.Removing.WaitsOn {
+				t.Errorf("once %s the unsubscribe waits on %q and the observer on %q, want one wait", tc.name, w.Detail, obs.Removing.WaitsOn)
+			}
+			for _, naming := range []string{"#1", repo, `"` + tc.check + `"`, tc.naming, run} {
+				if !strings.Contains(obs.Removing.WaitsOn, naming) {
+					t.Errorf("waitsOn = %q, want it to name %q", obs.Removing.WaitsOn, naming)
+				}
+			}
+		})
+	}
+}
+
+// Any CI may post a status, and some carry a token in its target_url, so the wait names the page alone.
+func TestUnsubscribeAndObserver_NameACommitStatusPageWithoutItsCredentialsQueryOrFragment(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ReportStatus("managed-ci", "failure", "https://bot:hunter2@ci.example/builds/9?token=abc123#log")
+
+	_, err := remove(client(f), rec)
+	obs := observeRemoval(t, f, rec, true)
+
+	var w *handler.Waiting
+	if !errors.As(err, &w) || obs.Removing == nil {
+		t.Fatalf("Remove = %#v and observe removing = %+v once the status failed, want a wait from both", err, obs.Removing)
+	}
+	for name, wait := range map[string]string{"the unsubscribe": w.Detail, "the observer": obs.Removing.WaitsOn} {
+		if !strings.Contains(wait, "(run https://ci.example/builds/9)") {
+			t.Errorf("%s waits on %q, want it to name the run page https://ci.example/builds/9", name, wait)
+		}
+		for _, leaked := range []string{"bot", "hunter2", "token", "abc123", "#log"} {
+			if strings.Contains(wait, leaked) {
+				t.Errorf("%s waits on %q, want no %q from the status's target_url", name, wait, leaked)
+			}
+		}
+	}
+}
+
+func TestObserver_NamesNoRunPageForAStatusTargetThatIsNoWebAddress(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ReportStatus("managed-ci", "failure", "javascript:alert(1)")
+
+	obs := observeRemoval(t, f, rec, true)
+
+	if obs.Removing == nil || strings.Contains(obs.Removing.WaitsOn, "run ") {
+		t.Errorf("observe removing = %+v, want a wait naming the failed check and no run page for a target that is no http or https address", obs.Removing)
+	}
+}
+
+func TestUnsubscribe_MergesOnceAFailedRequiredCheckPassesOnANewRun(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ReportCheck("managed-ci", "failure")
+	_, err := remove(client(f), rec)
+	waiting(t, err, "managed-ci")
+
+	f.ReportCheck("managed-ci", "success")
+	_, err = remove(client(f), rec)
+
+	if err != nil {
+		t.Fatalf("Remove once the failed check passed on a new run: %v", err)
+	}
+	if pulls := f.Pulls(); len(pulls) != 1 || !pulls[0].Merged {
+		t.Errorf("pull requests = %+v, want the one removal merged", pulls)
+	}
+	if len(f.Main()) != 0 {
+		t.Errorf("main = %v, want every landed file removed", f.Main())
+	}
+}
+
 func TestObserver_ReadsNoRemovalUnderWayOnceNothingMovesIt(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		arrange func(f *landingtest.Fake)
 	}{
-		{"its required check failed", func(f *landingtest.Fake) { f.ReportCheck("managed-ci", "failure") }},
-		{"its required check failed while a review is also required", func(f *landingtest.Fake) {
-			f.RequireReviews(1)
-			f.ReportCheck("managed-ci", "failure")
-		}},
-		{"one required check failed while another runs", func(f *landingtest.Fake) {
-			f.RunCheck("managed-ci", "in_progress")
-			f.RequireCheck("lint")
-			f.ReportCheck("lint", "failure")
-		}},
 		{"it closed unmerged while its check runs", func(f *landingtest.Fake) {
 			f.RunCheck("managed-ci", "in_progress")
 			f.ClosePull(1)

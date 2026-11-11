@@ -1250,17 +1250,27 @@ such as a 403, a 5xx, a rate limit or a missing token, reads unknown, and
 `Remove` then waits with no write sent.
 
 During an unsubscribe, a present answer also reads the subscription's open
-removal pull request. While a check main requires is queued or running on it
-and none has failed, the answer carries `Removing`, whose `WaitsOn` names the
-pull request and that check, such as
-`removal pull request #4 of acme/weather, whose required check "managed-ci" is
-running`. The platform then waits on the removal without spending one of the
-unsubscribe's attempts. A pending commit status, and a check run that GitHub
-has queued but not started, count as queued. Once a required check fails, the
-pull request closes unmerged, or no required check is queued or running, the
-answer carries no `Removing`, and the attempts count again. A check that stays
-queued or running keeps the removal reading under way for as long as it does.
-A read of the pull request or its checks that fails reads unknown. Outside an
+removal pull request. While a check main requires is queued, running or failed
+on it, the answer carries `Removing`, whose `WaitsOn` names the pull request,
+that check and its run, such as
+`removal pull request #4 of acme/weather, whose required check "managed-ci"
+failed (run https://github.com/acme/weather/runs/812)`. The platform then
+waits on the removal without spending one of the unsubscribe's attempts. A
+new result for that check moves the removal on, and so does the pull request
+merging or closing.
+
+`Remove` and the observer read one judgement of the required checks,
+`requiredCheckWait` in `capabilities/github/landing/checks.go`. While a
+required check is queued, running or failed, the wait `Remove` answers for
+one repository is word for word the one the observer names. When several
+required checks hold the pull request, the wait names a failed one before a
+queued or running one. A pending commit status, and a check run that GitHub has
+queued but not started, count as queued. For a check that a commit status
+reports, the run is the status's `target_url` without its credentials, query or
+fragment, and the wait names no run when that address is not http or https. Once the pull request closes
+unmerged, or every required check has passed or not yet reported, the answer
+carries no `Removing` for the checks, and the attempts count again. A read of
+the pull request or its checks that fails reads unknown. Outside an
 unsubscribe the observer reads no pull request.
 
 A scaffold contribution is a resource of type `github.scaffold-contribution`.
