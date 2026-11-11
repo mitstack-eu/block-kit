@@ -41,7 +41,7 @@ type Cloud interface {
 	DeleteServer(ctx context.Context, id int64) error
 }
 
-// RescueShell runs the block's fixed rescue script on the rescue system with args, and returns its output.
+// RescueShell runs the block's fixed rescue script on the rescue system with args, and returns its output beside any error.
 type RescueShell interface {
 	Run(ctx context.Context, args ...string) (string, error)
 	Close() error
@@ -192,7 +192,7 @@ func (j *install) rescueAddress() string {
 func readHardware(ctx context.Context, rescue RescueShell) (Hardware, error) {
 	out, err := rescue.Run(ctx, "read")
 	if err != nil {
-		return Hardware{}, err
+		return Hardware{}, withOutput(err, out)
 	}
 	var hw Hardware
 	var serials []string
@@ -227,6 +227,16 @@ func write(ctx context.Context, rescue RescueShell, vlan int, address netip.Pref
 		return fmt.Errorf("refusing to send the rescue system the serial %q, the pin %q, the port %d or the addresses %s and %s, which match no pattern",
 			serial, offer.Pin, offer.Port, server, address)
 	}
-	_, err := rescue.Run(ctx, "write", strconv.Itoa(vlan), address.String(), gateway.String(), server.String(), strconv.Itoa(offer.Port), offer.Pin, serial)
-	return err
+	out, err := rescue.Run(ctx, "write", strconv.Itoa(vlan), address.String(), gateway.String(), server.String(), strconv.Itoa(offer.Port), offer.Pin, serial)
+	if err != nil {
+		return withOutput(err, out)
+	}
+	return nil
+}
+
+func withOutput(err error, out string) error {
+	if out == "" {
+		return err
+	}
+	return fmt.Errorf("%w; its output ended: %s", err, out)
 }

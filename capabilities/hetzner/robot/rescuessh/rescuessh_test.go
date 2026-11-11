@@ -7,14 +7,20 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/rescuessh"
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/rescuessh/rescuesshtest"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -160,39 +166,126 @@ func TestRun_SendsTheFixedScriptAsStdinWithItsArguments(t *testing.T) {
 	}
 }
 
-func TestRun_KeepsTheFirst64KiBOfOutputAndQuotesItWhenTheScriptFails(t *testing.T) {
+// A script names its failure at its end, and a caller may log the error before it scrubs the output.
+func TestRun_ReturnsTheLastWholeLinesThatFitAndTheExitErrorWhenTheScriptFails(t *testing.T) {
 	h := rescuesshtest.New(t, admitAll)
-	config := rescuessh.Config{Script: []byte("head -c 100000 /dev/zero | tr '\\0' x; exit 3\n")}
+	for _, lineLength := range []int{64, 100} {
+		t.Run(fmt.Sprintf("%d-byte lines", lineLength), func(t *testing.T) {
+			pad := strings.Repeat("x", lineLength-len("line 00001 \n"))
+			var lines []string
+			for i := 1; i <= 2000; i++ {
+				lines = append(lines, fmt.Sprintf("line %05d %s\n", i, pad))
+			}
+			config := rescuessh.Config{Script: []byte("for i in $(seq 1 2000); do printf 'line %05d %s\\n' \"$i\" " + pad + "; done; exit 3\n")}
+			s, err := config.Dial(context.Background(), h.Addr, newKey(t), server, nil)
+			if err != nil {
+				t.Fatalf("Dial: %v", err)
+			}
+			defer s.Close()
+
+			out, err := s.Run(context.Background(), "write")
+
+			var exit *ssh.ExitError
+			if !errors.As(err, &exit) || !strings.Contains(err.Error(), "the rescue script write failed") || strings.Contains(err.Error(), "line ") {
+				t.Fatalf("Run error = %v, want the script's exit error, naming the script and quoting none of its output", err)
+			}
+			if want := strings.Join(lines[len(lines)-rescuessh.MaxOutput/lineLength:], ""); out != want {
+				t.Errorf("Run returned %d bytes starting %.20q, want the last %d whole lines, %d bytes starting %.20q", len(out), out, rescuessh.MaxOutput/lineLength, len(want), want)
+			}
+		})
+	}
+}
+
+// A line cut short could end inside a secret and slip past the block's scrub, so a line too long to keep whole is dropped.
+func TestRun_ReturnsNoOutputWhenItsLastLineIsLongerThanMaxOutput(t *testing.T) {
+	h := rescuesshtest.New(t, admitAll)
+	config := rescuessh.Config{Script: []byte("echo first; head -c 100000 /dev/zero | tr '\\0' x; echo; exit 3\n")}
 	s, err := config.Dial(context.Background(), h.Addr, newKey(t), server, nil)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
 	defer s.Close()
 
-	_, err = s.Run(context.Background(), "write")
+	out, err := s.Run(context.Background(), "write")
 
-	if err == nil || !strings.Contains(err.Error(), "the rescue script write failed") {
-		t.Fatalf("Run = %v, want the script's failure", err)
-	}
-	if _, quoted, _ := strings.Cut(err.Error(), "its output: "); quoted != strings.Repeat("x", rescuessh.MaxOutput) {
-		t.Errorf("the error quotes %d bytes of output, want the first %d", len(quoted), rescuessh.MaxOutput)
+	var exit *ssh.ExitError
+	if out != "" || !errors.As(err, &exit) {
+		t.Errorf("Run returned %d bytes starting %.20q and %v, want no output and the script's exit error", len(out), out, err)
 	}
 }
 
-func TestRun_StopsWhenTheContextEnds(t *testing.T) {
+func TestRun_RunsTheScriptWithNoArguments(t *testing.T) {
 	h := rescuesshtest.New(t, admitAll)
-	s, err := rescuessh.Config{Script: []byte("sleep 30\n")}.Dial(context.Background(), h.Addr, newKey(t), server, nil)
+	s, err := rescuessh.Config{Script: []byte("echo read the logs; exit 4\n")}.Dial(context.Background(), h.Addr, newKey(t), server, nil)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
 	defer s.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+
+	out, err := s.Run(context.Background())
+
+	var exit *ssh.ExitError
+	if out != "read the logs\n" || !errors.As(err, &exit) || !strings.Contains(err.Error(), "the rescue script failed") {
+		t.Errorf("Run() = %q, %v, want the script's output and its exit error", out, err)
+	}
+	if sent := h.Sent(); len(sent) != 1 || sent[0].Line != "bash -s --" {
+		t.Errorf("the host ran %+v, want the script alone under bash -s --", sent)
+	}
+}
+
+// cancelOnOutput ends a run's context once the output reaching the session holds want, so the end never races the output.
+type cancelOnOutput struct {
+	mu     sync.Mutex
+	got    strings.Builder
+	want   string
+	cancel context.CancelFunc
+}
+
+func (w *cancelOnOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.got.Write(p)
+	if strings.Contains(w.got.String(), w.want) {
+		w.cancel()
+	}
+	return len(p), nil
+}
+
+func (w *cancelOnOutput) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.got.String()
+}
+
+func TestRun_StopsWhenTheContextEndsWhileTheScriptStillRuns(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	if err := syscall.Mkfifo(hold, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The script opens the hold before it prints, so this write always finds it reading and lets it exit.
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(hold, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_, _ = f.WriteString("\n")
+			f.Close()
+		}
+	})
+	h := rescuesshtest.New(t, admitAll)
+	config := rescuessh.Config{Script: []byte("exec 3<> '" + hold + "'; echo started; read -r _ <&3\n")}
+	s, err := config.Dial(context.Background(), h.Addr, newKey(t), server, nil)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer s.Close()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	start := time.Now()
+	out := &cancelOnOutput{want: "started\n", cancel: cancel}
 
-	_, err = s.Run(ctx, "write")
+	err = s.RunTo(ctx, out, "write")
 
-	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 10*time.Second {
-		t.Errorf("Run = %v after %s, want the deadline at once", err, time.Since(start))
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "the rescue script write did not finish") {
+		t.Errorf("Run = %v, want the context's end, naming the script", err)
+	}
+	if got := out.String(); got != "started\n" {
+		t.Errorf("the script printed %q before the context ended, want %q", got, "started\n")
 	}
 }

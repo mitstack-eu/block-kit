@@ -1484,18 +1484,34 @@ an impersonator on the path to it. A block therefore sends that session no
 secret, and its secrets reach the disk by a channel an on-path attacker cannot
 impersonate.
 
-`Installer.Install(ctx, target, handOff)` runs that whole install once, from
-adoption to the reset that boots the written disk. It refuses a server outside
-`robot.Locations`, fsn1, nbg1 and hel1, where a vSwitch reaches a Cloud
-network. It then adopts the server, couples its vSwitch, writes the target's
-firewall and boots the rescue system. Over the rescue session it runs the
-block's own rescue script with `read`, which reports the hardware. `handOff`
-then renders the short-lived Cloud server for that hardware, and the block's
-`Cloud` creates it on the vSwitch. The script's `write` receives only the
-VLAN, the addresses, the port, the pin of the server's TLS key and the disk's
-serial, each matched against a pattern, then fetches the secret over the
-vSwitch and checks the pin. Whether the hand-off succeeds or fails, the
-install deletes the short-lived server and the rescue key, restores the
+`Installer.Install(ctx, target, handOff)` runs the whole install of one
+dedicated server, from adoption to the reset that boots the written disk. It
+refuses a server outside `robot.Locations`, fsn1, nbg1 and hel1, where a
+vSwitch reaches a Cloud network. It then adopts the server, couples its
+vSwitch, writes the target's firewall and boots the rescue system.
+
+Over the rescue session the install runs the block's own rescue script twice,
+each time as `bash -s -- <step> <arguments>` with the script on its standard
+input. The first argument names the step, and the script handles two:
+
+- `read` takes no other argument and prints the hardware, one fact a line:
+  `efi yes` or `efi no`, `mac <address>` for the network card the default
+  route leaves by, and `disk <name> <serial> <size>` for each disk. The
+  install chooses the disk whose serial sorts first, and refuses a server
+  where no disk has a serial.
+- `write` takes, in this order, the VLAN, the server's vSwitch address with
+  its prefix, the vSwitch gateway, the short-lived server's address, its port,
+  the `sha256//` hash of its TLS key and the chosen disk's serial. The
+  install matches each against a pattern before it sends them. The script
+  fetches the secret from the short-lived server over the vSwitch, checks
+  the hash and writes the disk.
+
+Either step fails by exiting non-zero. The install's error then ends with the
+end of what the step printed, if it printed anything. Between the two steps,
+`handOff` renders the short-lived Cloud server for the hardware `read`
+reported, and the installer's `Cloud`, the Hetzner Cloud calls the block
+supplies, creates it on the vSwitch. Whether the hand-off succeeds or fails,
+the install deletes the short-lived server and the rescue key, restores the
 firewall and resets the server into its disk.
 
 The kit's module holds no SSH client, since it takes no dependency beyond the
@@ -1503,8 +1519,14 @@ standard library. `Installer.Dial` opens the session, and the module
 `github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/rescuessh`
 provides one: `rescuessh.Config{Script: script}.Dial` accepts only a host key
 Robot named, and any key when Robot named none, and it runs nothing but the
-script. `rescuesshtest.New(t, admit)` is a fake rescue system for a block's
-tests, which runs each command with bash.
+script. The session's `Run` returns the end of the script's output, the last
+whole lines that fit 64 KiB, even when the script fails or the context ends
+first. `Run`'s error quotes none of that output, so scrub the output before
+you report it if your script can print a secret. A last line longer than
+64 KiB leaves no output at all, since a line cut at its start could lose the
+words your scrub looks for. `rescuesshtest.New(t, admit)` is a fake rescue
+system for a block's tests, which runs each command with bash and admits a
+client key while `admit` returns true for it.
 
 Robot's documentation at
 [robot.hetzner.com/doc/webservice](https://robot.hetzner.com/doc/webservice/en.html)

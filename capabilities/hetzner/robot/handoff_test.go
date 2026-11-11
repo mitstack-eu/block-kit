@@ -5,6 +5,7 @@ package robot_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"slices"
@@ -43,20 +44,24 @@ func (c *fakeCloud) DeleteServer(_ context.Context, id int64) error {
 	return nil
 }
 
-// fakeRescue answers read with hardware and write with writeErr, as the block's rescue script would.
+// fakeRescue answers read with hardware or readErr and write with writeErr, and a failed step with failOutput, as the block's rescue script would.
 type fakeRescue struct {
-	hardware string
-	writeErr error
-	runs     [][]string
-	closed   bool
+	hardware          string
+	readErr, writeErr error
+	failOutput        string
+	runs              [][]string
+	closed            bool
 }
 
 func (r *fakeRescue) Run(_ context.Context, args ...string) (string, error) {
 	r.runs = append(r.runs, args)
-	if args[0] == "read" {
+	if args[0] == "read" && r.readErr == nil {
 		return r.hardware, nil
 	}
-	return "", r.writeErr
+	if args[0] == "read" {
+		return r.failOutput, r.readErr
+	}
+	return r.failOutput, r.writeErr
 }
 
 func (r *fakeRescue) Close() error {
@@ -227,6 +232,35 @@ func TestInstall_DeletesTheShortLivedServerWhenTheHandOffFails(t *testing.T) {
 			}
 			assertCleanedUp(t, h)
 		})
+	}
+}
+
+// The hand-off sends the rescue session no secret, so its scripts' output may stand in the error.
+func TestInstall_AFailedRescueStepNamesTheScriptsOutputWhenItPrintedAny(t *testing.T) {
+	for _, step := range []string{"read", "write"} {
+		for _, output := range []string{"mkfs: /dev/nvme0n1 is apparently in use by the system\n", ""} {
+			t.Run(fmt.Sprintf("%s printing %q", step, output), func(t *testing.T) {
+				h := newHandOff(t, "FSN1-DC14")
+				failed := errors.New("the rescue script " + step + " failed: Process exited with status 3")
+				if step == "read" {
+					h.rescue.readErr = failed
+				} else {
+					h.rescue.writeErr = failed
+				}
+				h.rescue.failOutput = output
+
+				err := h.install(t)
+
+				want := failed.Error()
+				if output != "" {
+					want += "; its output ended: " + output
+				}
+				if !errors.Is(err, failed) || !strings.HasSuffix(err.Error(), want) {
+					t.Fatalf("Install = %v, want it to end with %q", err, want)
+				}
+				assertCleanedUp(t, h)
+			})
+		}
 	}
 }
 
