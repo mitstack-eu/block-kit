@@ -47,14 +47,14 @@ jobs:
           go -C examples/hetzner-firewall vet ./...
           go -C examples/hetzner-firewall test ./...
           go run ./verify/blockverify --standalone examples/hetzner-firewall
-      # The rescue SSH session is a module of its own, so that the kit's
-      # module stays stdlib-only, and ./... leaves it out as well.
+      # The rescue SSH session is a module of its own, which ./... leaves out
+      # as well.
       - name: Test the rescuessh module
         run: |
           go -C capabilities/hetzner/robot/rescuessh vet ./...
           go -C capabilities/hetzner/robot/rescuessh test ./...
-      # The rescuessh module alone requires a third-party module, so only its
-      # dependencies need a scan.
+      # This scan covers the packages the rescuessh module imports, and not
+      # the kit's own module.
       - name: Scan the rescuessh module's dependencies for known vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C capabilities/hetzner/robot/rescuessh -scan package ./...
       # The health handler is a module of its own, so an operator on any kit

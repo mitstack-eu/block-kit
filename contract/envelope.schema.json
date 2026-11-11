@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
   "title": "mitstack lifecycle webhook envelope",
   "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -34,6 +34,10 @@
       }
     },
     {
+      "if": {"properties": {"operation": {"enum": ["snapshot", "restore"]}}, "required": ["operation"]},
+      "then": {"required": ["unit"], "properties": {"unit": {"minLength": 1}}}
+    },
+    {
       "if": {"properties": {"operation": {"const": "lease"}}, "required": ["operation", "leaseId"]},
       "then": {"required": ["caller"], "properties": {"caller": {"required": ["subscriptionId"], "properties": {"subscriptionId": {"minLength": 1}}}}}
     },
@@ -58,6 +62,14 @@
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
       "description": "The process of the part a run runs in, such as web. A run that names none runs in the block's entry, the process that serves the app's address."
+    },
+    "unit": {
+      "type": "string",
+      "description": "The name of the spec.continuity entry a snapshot or a restore is for. Required on both."
+    },
+    "replacing": {
+      "type": "boolean",
+      "description": "True on every request sent during a replacement, which tells the block to send no install retry."
     },
     "leaseId": {
       "type": "string",
@@ -174,8 +186,8 @@
     },
     "operation": {
       "type": "string",
-      "description": "The lifecycle verb being dispatched, issue, which asks a capability for one app's credential, logs, which asks a block for the subscription's recent lines on /logs, verify-connection, which asks a capability's operator whether the credential an org entered works, lease, which asks a block for a short-lived credential of a resource it provides or to retire the ones it minted, or run, which asks a block to run a builder's one-off command in a fresh container of the app.",
-      "enum": ["subscribe", "unsubscribe", "upgrade", "validate", "issue", "logs", "verify-connection", "lease", "run"]
+      "description": "The lifecycle verb being dispatched, issue, which asks a capability for one app's credential, logs, which asks a block for the subscription's recent lines on /logs, verify-connection, which asks a capability's operator whether the credential an org entered works, lease, which asks a block for a short-lived credential of a resource it provides or to retire the ones it minted, run, which asks a block to run a builder's one-off command in a fresh container of the app, snapshot, which asks a block to snapshot one declared state and publish its handover once a scratch restore of it passes, or restore, which asks it to put that state back from the handover.",
+      "enum": ["subscribe", "unsubscribe", "upgrade", "validate", "issue", "logs", "verify-connection", "lease", "run", "snapshot", "restore"]
     },
     "subscriptionId": {
       "type": "string",

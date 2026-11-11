@@ -27,7 +27,10 @@ type manifestDeclarations struct {
 	logs       bool
 	leases     bool
 	runs       bool
-	verifies   bool
+	snapshots  bool
+	// snapshotUnits are the spec.continuity entries handed over by snapshot.
+	snapshotUnits []string
+	verifies      bool
 	// verifyOnly is a manifest whose one operation is verify-connection, which needs no Resource.
 	verifyOnly bool
 }
@@ -37,20 +40,29 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 	if err != nil {
 		return manifestDeclarations{}, fmt.Errorf("handler: Config.Manifest is not a manifest the kit's parser accepts: %w", err)
 	}
+	var snapshotUnits []string
+	for _, u := range m.Block.Spec.Continuity {
+		if u.Handover == contract.HandoverSnapshot {
+			snapshotUnits = append(snapshotUnits, u.Name)
+		}
+	}
+	operations := m.Block.Spec.Lifecycle.Operations
 	provided := make(map[string]bool, len(m.Block.Spec.Provides))
 	for _, name := range m.Block.Spec.Provides {
 		provided[name] = true
 	}
 	return manifestDeclarations{
-		id:         m.ID(),
-		resources:  m.Block.Spec.Resources,
-		provided:   provided,
-		capability: m.Block.Type == contract.ManifestTypeCapability,
-		logs:       slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs),
-		leases:     slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLease),
-		runs:       slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationRun),
-		verifies:   slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationVerifyConnection),
-		verifyOnly: slices.Equal(m.Block.Spec.Lifecycle.Operations, []string{contract.OperationVerifyConnection}),
+		id:            m.ID(),
+		resources:     m.Block.Spec.Resources,
+		provided:      provided,
+		snapshotUnits: snapshotUnits,
+		capability:    m.Block.Type == contract.ManifestTypeCapability,
+		logs:          slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs),
+		leases:        slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLease),
+		runs:          slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationRun),
+		snapshots:     slices.Contains(operations, contract.OperationSnapshot) || slices.Contains(operations, contract.OperationRestore),
+		verifies:      slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationVerifyConnection),
+		verifyOnly:    slices.Equal(m.Block.Spec.Lifecycle.Operations, []string{contract.OperationVerifyConnection}),
 	}, nil
 }
 
@@ -77,6 +89,18 @@ func checkLeaser(cfg Config, declared manifestDeclarations) (Leaser, error) {
 		return nil, fmt.Errorf("handler: the manifest lists %s, but Config.Resource is not a handler.Leaser, so nothing could answer it", contract.OperationLease)
 	}
 	return leaser, nil
+}
+
+// checkSnapshotter exists because a manifest that lists snapshot over a Resource that cannot snapshot would fail only when a snapshot arrives, so New refuses it.
+func checkSnapshotter(cfg Config, declared manifestDeclarations) (Snapshotter, error) {
+	if !declared.snapshots {
+		return nil, nil
+	}
+	snapshotter, ok := cfg.Resource.(Snapshotter)
+	if !ok {
+		return nil, fmt.Errorf("handler: the manifest lists %s and %s, but Config.Resource is not a handler.Snapshotter, so nothing could answer them", contract.OperationSnapshot, contract.OperationRestore)
+	}
+	return snapshotter, nil
 }
 
 type namedResource struct {

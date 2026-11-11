@@ -9,7 +9,7 @@ import (
 )
 
 // goOperatorSuiteNames are the suites after trust-plumbing that goBlockSuites runs, in run order.
-var goOperatorSuiteNames = []string{"contract", "secret-safety", "guarded-client", "teardown", "resources"}
+var goOperatorSuiteNames = []string{"contract", "secret-safety", "guarded-client", "teardown", "resources", "replacement"}
 
 // opentofuOnlySuites answers trust-plumbing and each Go operator suite for a block whose image serves an OpenTofu module through the opentofu-operator binary.
 func opentofuOnlySuites(target string) []SuiteResult {

@@ -25,7 +25,7 @@
   "$id": "https://mitstack.dev/schemas/block/manifest.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A block manifest under mitstack/v1beta: its requirements by exact type, the resources it creates by exact type, the resources it provides, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice or holding a slash, a requirement reference used twice, an entry listing several types without a name, and a provides entry that names no resource or one marked many.",
+  "description": "A block manifest under mitstack/v1beta: its requirements by exact type, the resources it creates by exact type, the resources it provides, the state it keeps, its lifecycle and its observability. Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice or holding a slash, a requirement reference used twice, an entry listing several types without a name, a provides entry that names no resource or one marked many, a state name used twice and a handover other than none or snapshot.",
   "properties": {
     "apiVersion": {
       "const": "mitstack/v1beta",
@@ -135,6 +135,36 @@
             "mechanism"
           ],
           "type": "object"
+        },
+        "continuity": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "handover": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "kind": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "stateful": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "stateful",
+              "handover"
+            ],
+            "type": "object"
+          },
+          "type": "array"
         },
         "description": {
           "type": "string"

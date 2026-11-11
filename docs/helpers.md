@@ -23,6 +23,8 @@ package has [a page of its own](gitops.md).
 | `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
 | `helpers/tools` | Copies a tool onto a machine or a runner while it runs, such as age onto a Docker host or k3s onto a node |
 | `helpers/signin` | Builds the sign-in companion, a program a Docker host runs to open an app only to its org's members, as [Opening an app only to its org's members](#opening-an-app-only-to-its-orgs-members) describes. A block reads only its constants, such as `signin.ContainerName` |
+| `helpers/age` | Encrypts or decrypts a file in the age v1 format with an X25519 key, so the public `age` tool opens what a block wrote |
+| `helpers/continuity` | Keeps state that must survive a replacement of its server, such as a volume, an OpenBao store or a CloudNativePG database, and serves the `snapshot` and `restore` operations |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made, judging each by the kit's subscription tag |
@@ -1077,6 +1079,72 @@ bytes under a digest, and `reg.RefuseTokens(status)` refuses the pull token as
 a private package does, so a test can prove what your block does when a copy
 fails.
 
+## The continuity hooks
+
+A block that keeps data declares it under `spec.continuity` and serves the
+`snapshot` and `restore` operations, as [The state a block keeps](manifest.md#the-state-a-block-keeps)
+and [Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
+explain. `helpers/continuity` holds the part every such block would write the
+same way. This section is for a block writer who keeps a volume, an OpenBao
+store or a CloudNativePG database. A hook is the code that takes one snapshot
+or restores it, and a handover is the string a snapshot publishes for the
+restore to read.
+
+A `continuity.Hook` joins four things. A `State` knows how to read one kind of
+data out and back in, `Links` hands out the presigned upload and download
+links, `Keys` hands out the age keys, and the `Hook` itself does the rest:
+
+```go
+hook := continuity.Hook{
+	Links: platformLinks{},                       // yours, filled from the platform's lease route
+	Keys:  unitKeys{},                            // yours: the public key, and the restore key kept outside the bucket
+	State: continuity.Volume{Dir: "/var/lib/app"},
+}
+handover, err := hook.Snapshot(ctx, "app-data")
+```
+
+`hook.Snapshot` runs these steps in order, and fails at the first that does not
+hold:
+
+1. It reads the unit's data out of the `State` and encrypts it with age, using
+   only the public key, into a temporary file that holds ciphertext alone.
+2. It uploads the file to the upload link with a `Content-Length`, since a
+   presigned upload refuses a chunked body.
+3. It downloads the stored object through a download link, decrypts it with
+   the restore key and gives it to `State.Verify`, which restores it into a
+   scratch copy, checks the copy and discards it.
+4. Only after the check passes does it return the handover, a JSON string
+   holding the object's reference, the ciphertext's SHA-256 and size, and the
+   time of the snapshot.
+
+`hook.Restore` parses the handover, downloads the object, refuses one whose
+digest or size differs, decrypts it and gives the bytes to `State.Import`. A
+hook holds no storage key, so the bucket's credentials never reach it. The
+links come from the `Links` you pass, and an error from the hook never carries
+a link or its query string, since the signature in a link is a credential. No
+plain text of the data leaves the process: the upload sees ciphertext, and the
+restore key stays outside the bucket.
+
+| State | What it keeps | How `Verify` checks it |
+|---|---|---|
+| `continuity.Volume{Dir}` | The files under a directory, as a tar archive that ends with each file's path, mode and SHA-256 | Extracts the archive into a scratch directory, refusing a path that leaves it, and rehashes every file |
+| `continuity.OpenBao{Live, Scratch, Restart}` | An OpenBao store, through its raft snapshot routes | Force-restores the snapshot into the `Scratch` instance and requires its health route to read initialised |
+| `continuity.CloudNativePG{Cluster, Check}` | A CloudNativePG database, through CloudNativePG's own backup and recovery | Recovers the archive into a scratch cluster, runs `Check` against it and always discards it |
+
+`OpenBao.Import` calls `Restart` after the force restore, because every member
+of the store restarts for the restored data to take effect. The
+`CloudNativePG` hook runs over the `CNPGCluster` interface, which starts the
+backup, recovers an archive into a named cluster and reads the cluster's
+status. Each wait on the cluster proceeds on the status it reports, and the
+hook polls nothing. No concrete implementation of `CNPGCluster` ships with the
+kit yet, so this hook is proven against a fake and not against a live cluster.
+
+`helpers/age` is the encryption underneath. It writes and reads the age v1
+format with an X25519 recipient, so the public `age` tool opens a snapshot with
+the restore key. It seals with the ChaCha20-Poly1305 of `golang.org/x/crypto`,
+the one module the kit requires beyond the standard library, and a test reads
+files made by the reference age implementation.
+
 ## Removing a member of a redundant set
 
 This section is for the author of a block whose step removes or replaces one
@@ -1658,8 +1726,7 @@ supplies, creates it on the vSwitch. Whether the hand-off succeeds or fails,
 the install deletes the short-lived server and the rescue key, restores the
 firewall and resets the server into its disk.
 
-The kit's module holds no SSH client, since it takes no dependency beyond the
-standard library. `Installer.Dial` opens the session, and the module
+The kit's module holds no SSH client. `Installer.Dial` opens the session, and the module
 `github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/rescuessh`
 provides one: `rescuessh.Config{Script: script}.Dial` accepts only a host key
 Robot named, and any key when Robot named none, and it runs nothing but the

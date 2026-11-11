@@ -141,6 +141,10 @@ func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secret
 		return h.lease(ctx, req, secrets)
 	case req.Operation == contract.OperationRun:
 		return h.run(ctx, req, secrets)
+	case req.Operation == contract.OperationSnapshot:
+		return h.snapshot(ctx, req, secrets)
+	case req.Operation == contract.OperationRestore:
+		return h.restore(ctx, req, secrets)
 	}
 	return h.dispatchDeclared(ctx, req.Operation, req.Desired(), secrets)
 }

@@ -70,6 +70,12 @@ type Leaser interface {
 	Lease(ctx context.Context, d contract.Desired, l contract.LeaseRequest) (contract.Lease, error)
 }
 
+// Snapshotter, which a block-level Resource implements to serve a manifest that lists snapshot and restore, snapshots one declared state and returns its handover only once a scratch restore of the snapshot has passed, and puts the state back from that handover.
+type Snapshotter interface {
+	Snapshot(ctx context.Context, d contract.Desired, unit string) (handover string, err error)
+	Restore(ctx context.Context, d contract.Desired, unit, handover string) error
+}
+
 // Config wires a Handler; Resource, Manifest and JWKSURL are required, a nil Logs answers GET /logs with 404, SubscriptionLogs, required exactly when the manifest lists the operation logs, answers a signed POST /logs with the lines of the subscription its request names, and Run, required exactly when the manifest lists run, runs a builder's command and answers pending through Wait until it ended.
 type Config struct {
 	Resource Resource
@@ -123,6 +129,9 @@ type Handler struct {
 
 	leaser Leaser
 
+	snapshotter   Snapshotter
+	snapshotUnits []string
+
 	audience  string
 	jwksURL   string
 	publicKey func(kid string) (ed25519.PublicKey, error)
@@ -174,9 +183,15 @@ func New(cfg Config) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	snapshotter, err := checkSnapshotter(cfg, declared)
+	if err != nil {
+		return nil, err
+	}
 
 	h := &Handler{
 		leaser:           leaser,
+		snapshotter:      snapshotter,
+		snapshotUnits:    declared.snapshotUnits,
 		resource:         cfg.Resource,
 		declared:         resources,
 		typeObservers:    cfg.TypeObservers,

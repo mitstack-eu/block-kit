@@ -74,6 +74,9 @@ type Request struct {
 
 	IssueAppID string `json:"issueAppId,omitempty"`
 
+	Unit      string `json:"unit,omitempty"`
+	Replacing bool   `json:"replacing,omitempty"`
+
 	// LeaseID, Want, Retire and Caller are read on a lease alone, and Resource then names the resource the credential is leased from.
 	LeaseID string          `json:"leaseId,omitempty"`
 	Want    json.RawMessage `json:"want,omitempty"`
@@ -90,6 +93,15 @@ type Request struct {
 	CapabilitySlug    string            `json:"capabilitySlug,omitempty"`
 	EnteredCredential map[string]string `json:"enteredCredential,omitempty"`
 }
+
+// OperationSnapshot asks a block to snapshot one declared state, check the snapshot by a scratch restore and publish its handover only when the check passes, and OperationRestore asks it to put that state back from the handover.
+const (
+	OperationSnapshot = "snapshot"
+	OperationRestore  = "restore"
+)
+
+// HandoverOutputKey is the output a snapshot publishes the handover of unit under, and the key of the prior output a restore reads it from.
+func HandoverOutputKey(unit string) string { return "handover." + unit }
 
 // OperationIssue asks a capability for one app's credential, OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook, OperationVerifyConnection asks a capability's operator whether the credential an org entered works, before any subscription exists, OperationLease asks a block for a short-lived credential of a resource it provides, or to retire the ones it minted, and OperationRun asks a block to run a builder's one-off command in a fresh container of the app.
 const (
@@ -306,6 +318,8 @@ type Desired struct {
 	VerbAt            time.Time
 	NeverActive       bool
 
+	Replacing bool
+
 	OwnSecrets map[string]string
 }
 
@@ -399,6 +413,8 @@ var validOperations = map[string]bool{
 	OperationVerifyConnection: true,
 	OperationLease:            true,
 	OperationRun:              true,
+	OperationSnapshot:         true,
+	OperationRestore:          true,
 }
 
 // DecodeRequest decodes raw into a Request validated against envelope.schema.json, naming the JSON field in every error.
@@ -430,7 +446,7 @@ func DecodeRequest(raw []byte) (Request, error) {
 
 	if !validOperations[req.Operation] {
 		return Request{}, fmt.Errorf(
-			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, run, got %q",
+			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, run, snapshot, restore, got %q",
 			"operation", req.Operation)
 	}
 
@@ -443,6 +459,9 @@ func DecodeRequest(raw []byte) (Request, error) {
 		if err := checkRun(req); err != nil {
 			return Request{}, err
 		}
+	}
+	if (req.Operation == OperationSnapshot || req.Operation == OperationRestore) && req.Unit == "" {
+		return Request{}, fmt.Errorf("contract: envelope field %q is required on a %s", "unit", req.Operation)
 	}
 
 	if len(req.ResourceIdentity) > 0 && req.Resource == "" {
@@ -567,6 +586,7 @@ func (r Request) Desired() Desired {
 		RequirementTypes:      r.RequirementTypes,
 		VerbAt:                r.verbAt(),
 		NeverActive:           r.NeverActive,
+		Replacing:             r.Replacing,
 		OwnSecrets:            r.OwnSecrets,
 	}
 }

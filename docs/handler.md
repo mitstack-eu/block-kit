@@ -122,6 +122,7 @@ and `d.Instances` read the same on every call.
 | `PriorOutputs`, `CloudIdentity` | The outputs the last call recorded, and the short-lived AWS web identity of the org's cloud account, nil when it has none |
 | `VerbAt` | The time an observer reads after, which the next section explains |
 | `NeverActive` | `true` only when the engine has proved the subscription holds no user data |
+| `Replacing` | `true` on every request sent during a replacement, which tells the block to send no install retry, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
 
 The platform runs an observer of its own, outside your block, which asks a
 provider whether a resource still exists. When it reads a resource absent, the
@@ -835,6 +836,67 @@ A block whose manifest does not list `run` answers 400 with the refusal class
 `run-not-listed`. The handler never replays a run from the idempotency cache,
 because each send reads the host's newest report, and it sends no lifecycle
 event for one, since the platform records the run itself.
+
+## Snapshotting and restoring state
+
+A block that keeps data carries it across a replacement of its server with two
+operations, `snapshot` and `restore`. A replacement is an upgrade the user
+confirms that creates the block's server again with the same identity. This
+section is for a block writer whose manifest declares state under
+`spec.continuity`, as [The state a block keeps](manifest.md#the-state-a-block-keeps)
+explains. A unit is one entry of that declaration, and a handover is the output
+a snapshot publishes for the restore to read.
+
+The engine sends the operations in stages. A `snapshot` takes the data out of
+the old server before it goes, a reinstall creates the new server, a `restore`
+puts the data back, and the engine then observes each replaced resource until
+it reads present and healthy. A block lists both operations under
+`spec.lifecycle.operations` and implements `handler.Snapshotter`, and
+`handler.New` refuses a manifest that lists them over a `Resource` that does
+not:
+
+```go
+type Snapshotter interface {
+	Snapshot(ctx context.Context, d contract.Desired, unit string) (handover string, err error)
+	Restore(ctx context.Context, d contract.Desired, unit, handover string) error
+}
+```
+
+Both calls name one unit in the request's `unit`, and the handler refuses a
+unit the manifest does not hand over by snapshot before the block runs. A
+snapshot takes a copy of the unit's data, restores it into a scratch copy,
+checks that copy, and returns the handover only when the check passes. The
+handler answers a snapshot that returns an error with that error and no
+handover, so a handover the engine records always names a snapshot that
+restored. It publishes the handover as the answer's output
+`contract.HandoverOutputKey(unit)`, which is `handover.` followed by the unit's
+name. A restore reads the handover from the request's `priorOutputs` under the
+same key.
+
+This request asks for a snapshot of the unit `app-data`:
+
+```json
+{"operation": "snapshot", "subscriptionId": "sub_a1b2c3d4e5", "unit": "app-data", "replacing": true}
+```
+
+Every request sent during a replacement carries `"replacing": true`, which the
+block reads as `d.Replacing`. A block that retries its server's install when
+the first attempt looks stuck must not do so while `d.Replacing` is true, since
+a second install over a server that holds the data being restored would
+destroy it.
+
+| What goes wrong | Status |
+|---|---|
+| The manifest does not list `snapshot` and `restore` | 400, `refused:snapshot-not-listed` |
+| The unit is not a `spec.continuity` entry handed over by snapshot | 400, `refused:unknown-unit` |
+| A restore carries no handover under the unit's output key | 400, `refused:no-handover` |
+| The block returns an error, or a handover that is empty or repeats a secret the request carried | 500, with no handover |
+
+The kit's shared hooks serve a volume, an OpenBao store and a CloudNativePG
+database, as [The continuity hooks](helpers.md#the-continuity-hooks) explains.
+blockverify's `replacement` suite replaces a stateful block's server in a
+fixture and fails it when a datum is lost, as [Running the block checks](block-checks.md)
+describes.
 
 ## Serving a subscription's logs
 

@@ -16,6 +16,7 @@ checks below against a fake Hetzner API.
 | A name starting `TestUnsubscribeDeletes` | `kittest.AssertTeardownAfterBrokenSetup`, or your own test code | An unsubscribe deletes what a subscribe made |
 | A name starting `TestNoSecretLeak` | `kittest.AssertNoSecretLeak` | No secret reaches an answer, a log line or `/logs` |
 | `TestNoSecretLeak_VerifyConnection`, for a capability operator that answers `verify-connection` | `kittest.AssertNoSecretLeak` with a `verify-connection` request | The entered credential reaches no answer, log line or `/logs` |
+| `TestReplacementDrill`, for a block that declares state handed over by snapshot | `kittest.AssertReplacement` | Replacing the block's server loses no datum, and every resource reads present and healthy after the restore |
 | `TestGuardedClient`, for the same operator | `kittest.AssertGuardedClient` | The client the operator calls its vendor with refuses plain http, a redirect, an undeclared host and a loopback, private, link-local or unspecified address, each before a connection opens |
 
 blockverify finds each test by name, runs it, and fails the block when the
@@ -269,6 +270,58 @@ answer of 401, a `Serve` that replaces the standard logger's writer, and a
 check sends the standard logger to its own capture as well as to `/logs` and
 the earlier writer, so the test must not run in parallel with a test that
 logs. `kittest.CheckNoSecretLeak` returns the problems as strings.
+
+## Proving a replacement
+
+A block that keeps data declares it under `spec.continuity`, as [The state a
+block keeps](manifest.md#the-state-a-block-keeps) explains, and carries it
+across a replacement of its server with the `snapshot` and `restore`
+operations. A replacement is an upgrade the user confirms that creates the
+block's server again with the same identity. A block whose manifest hands a
+unit over by `snapshot` proves the whole sequence with
+`kittest.AssertReplacement` in a test named `TestReplacementDrill`, which
+blockverify's `replacement` suite requires. A block that declares no state, or
+only state handed over by `none`, writes no such test.
+
+```go
+func TestReplacementDrill(t *testing.T) {
+	kittest.AssertReplacement(t, kittest.Replacement{
+		Block: block, // the kittest.Block that TestDeclaredResources passes
+		Unit:  "app-data",
+		Data:  &volumeData{dir: dir},
+	})
+}
+```
+
+| Field | What you supply |
+|---|---|
+| `Block` | The same `kittest.Block` `AssertBlock` takes, so the drill serves your block through `handler.New` as the engine reaches it |
+| `Unit` | The name of a `spec.continuity` entry whose handover is `snapshot` |
+| `Data` | Your view of the data the unit keeps, a `kittest.DrillData` with `Write`, `Read` and `Replace`. `Replace` destroys the live state as a lost server would and leaves it empty |
+
+The drill subscribes the block and writes three known values through
+`Data.Write`. It sends a `snapshot` and keeps the handover the answer
+publishes under `contract.HandoverOutputKey`, calls `Data.Replace`, loses each
+stateful resource from the provider, and sends an `upgrade` so the block
+creates them again. It then sends a `restore` carrying the handover and
+validates every declared resource until it reads present and healthy. Every
+request after the snapshot carries `replacing: true`, the marker that tells
+the block to send no install retry. The drill reads the data back through
+`Data.Read` and fails with one message per problem, as in these two:
+
+```text
+replacement lost datum "beta"
+resource "aws.ebs-volume": reads unhealthy after the restore: the volume is still creating, attaching or detaching (the restored volume reports no attachment)
+```
+
+A value that comes back changed fails as `replacement changed datum`. A
+resource that reads unhealthy passes only if it turns healthy within the same
+ten seconds `AssertBlock` allows, since the engine observes a replaced
+resource until it reads present and healthy. The drill logs `kittest.AssertReplacement
+drill ran:` with the stages it ran. `kittest.CheckReplacement` returns the
+problems as strings. The kit's shared hooks for a volume, an OpenBao store and
+a CloudNativePG database pass the drill when your `Snapshot` and `Restore`
+call them, as [The continuity hooks](helpers.md#the-continuity-hooks) explains.
 
 ## Proving a re-driven subscribe resumes the work
 
