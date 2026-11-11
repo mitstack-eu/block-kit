@@ -18,7 +18,8 @@ const (
 	ephemeralPorts  = "32768-65535"
 	// internalRuleName names the two mail-port output rules Robot keeps ahead of whatever a write sends.
 	internalRuleName = "Block mail ports"
-	// firewallSettleTimeout outlasts one firewall change settling, which took up to 131 seconds on the trial.
+	// firewallSettleTimeout outlasts two firewall changes settling, which took up to 131 seconds each on the trial, so it
+	// bounds one settle wait and a whole restore alike.
 	firewallSettleTimeout = 5 * time.Minute
 )
 
@@ -212,7 +213,9 @@ func (c *Client) OpenRescueWindow(ctx context.Context, number int64, installer n
 	restore = func(ctx context.Context) error { return c.WriteFirewall(ctx, number, found) }
 	if err := c.WriteFirewall(ctx, number, window); err != nil {
 		// A write Robot took may still apply, so the rules found go back even once ctx ended.
-		return nil, errors.Join(fmt.Errorf("opening port 22 for the rescue session: %w", err), restore(context.WithoutCancel(ctx)))
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), firewallSettleTimeout)
+		defer cancel()
+		return nil, errors.Join(fmt.Errorf("opening port 22 for the rescue session: %w", err), restore(rctx))
 	}
 	return restore, nil
 }
