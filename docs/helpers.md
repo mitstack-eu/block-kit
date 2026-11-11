@@ -31,7 +31,7 @@ package has [a page of its own](gitops.md).
 | `helpers/tftpl` | Renders in Go an OpenTofu template its module also renders with `templatefile` |
 | `capabilities/github/ghapi` | Calls the GitHub REST API |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
-| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, or reads a server's `serverType` input |
+| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, reads a server's `serverType` input, or waits on the Cloud actions its calls start |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
@@ -1390,6 +1390,50 @@ as a fault does, and return true when it has answered.
 Hetzner's API reference at
 [docs.hetzner.cloud](https://docs.hetzner.cloud/reference/cloud#primary-ips)
 describes each call.
+
+## Waiting on a Hetzner Cloud action
+
+Hetzner Cloud answers a call that changes a resource, such as creating a
+server, with an action: Hetzner's record of that work, which runs until Hetzner
+marks it a success or an error. Hetzner refuses a call on a resource with
+`locked` while an action on it still runs, so a block waits for each action it
+starts before its next call. Hetzner sends no signal when an action ends, so the wait asks
+Hetzner again until it does.
+
+`cloud.WaitForActions` is that wait for every Hetzner Cloud block. It takes the
+request's context, your client's waiter, a few words naming what the actions
+do, and the actions. The waiter is the function in your block's own Hetzner
+Cloud client that asks Hetzner until the actions end, such as
+`Client.Action.WaitFor` in hcloud-go, Hetzner's Go client. The kit holds no
+Hetzner client of its own that asks, so it adds no timer, as [the kit's wait
+standard](maintainers.md#judging-the-waits-a-pull-request-adds) requires.
+hcloud-go's waiter skips a nil action, so a call that may start none, such as
+creating a primary IP, needs no check of its own.
+
+Here is how a block built on hcloud-go creates a server and waits on it. Here
+`client` is the block's `*hcloud.Client`:
+
+```go
+res, _, err := client.Server.Create(ctx, opts)
+if err != nil {
+	return fmt.Errorf("creating server %s: %w", opts.Name, err)
+}
+err = cloud.WaitForActions(ctx, client.Action.WaitFor, "server "+opts.Name+" to be created", res.Action)
+```
+
+The table gives what the call returns in each case.
+
+| When | What `WaitForActions` returns |
+|---|---|
+| Every action succeeds | `nil` |
+| Hetzner marks an action an error | `waiting for server web-1 to be created: server limit exceeded (server_limit_exceeded, 42)`, wrapping the client's error, so `errors.As` still reaches Hetzner's code |
+| The context ends while an action runs | `waiting for server web-1 to be created: context deadline exceeded: remaining running actions: [42]`, for which `errors.Is(err, context.DeadlineExceeded)` holds |
+
+The context bounds the wait, so it lasts no longer than the call it serves.
+When the call's time runs out first, the call fails with that error, and the
+engine retries it, as [Errors, refusals and
+panics](handler.md#errors-refusals-and-panics) explains. How often the waiter
+asks Hetzner is your client's own setting, such as hcloud-go's `WithPollOpts`.
 
 ## Adopting a Hetzner dedicated server
 

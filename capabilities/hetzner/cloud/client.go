@@ -55,6 +55,14 @@ func ErrorCode(err error) string {
 	return ""
 }
 
+// WaitForActions waits for actions through wait, the waiter of the block's own Hetzner Cloud client such as hcloud-go's Client.Action.WaitFor, for no longer than ctx allows, and its error names what the actions do beside Hetzner's error or the context's.
+func WaitForActions[A any](ctx context.Context, wait func(context.Context, ...A) error, what string, actions ...A) error {
+	if err := wait(ctx, actions...); err != nil {
+		return fmt.Errorf("waiting for %s: %w", what, err)
+	}
+	return nil
+}
+
 // do sends in as JSON when it is not nil, and decodes the answer into out when out is not nil.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, in, out any) error {
 	var body io.Reader
