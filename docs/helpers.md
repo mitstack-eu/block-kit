@@ -487,14 +487,16 @@ three values: the `dockerhost.Report`, a `found` flag that is `false` while
 the host has sent no report, and an error. An empty `hostSubscription` is
 refused through `handler.Refuse` with the class `host-binding`, so the
 platform shows the subscriber why. A platform that does not answer or a
-report that is not JSON returns a plain error. The report gives you four
-things:
+report that is not JSON returns a plain error. A reader that already holds a
+report's body, such as the platform, reads it with
+`dockerhost.ReadReport(body)` instead. The report gives you five things:
 
 | Field or method | What it gives |
 |---|---|
 | `report.Allocatable` | The host's allocatable capacity, or `nil` when the report gives none |
 | `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
 | `report.AppRelease(app, subscription)` | The app's newest release command as a `dockerhost.AppRelease`, described below |
+| `report.ReleaseAgainst(app, subscription, asked)` | The same release command judged against the image the app's newest deploy asked for, described below |
 | `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as each app's containers |
 
 `SyncedCommit` never reads the agent's log. The report carries only the log's
@@ -565,6 +567,61 @@ if release.Failed {
 	}
 	obs.Unhealthy = &contract.Unhealthy{Cause: releaseFailed,
 		Detail: "the release command failed on " + release.FailedDigest + ", and " + serving}
+}
+```
+
+### Judging a release against the image a deploy asked for
+
+The host keeps a failed run until the next release command runs, and it runs
+none for an image whose release already passed. So when a builder reverts a bad
+commit and the deploy asks for the earlier image again, the report still names
+the failed run on the newer image. `report.ReleaseAgainst(app, subscription,
+asked)` judges the record against `asked`, the image the app's newest deploy
+asked for, so a failure on an older image stops counting once the asked image
+serves. The platform's deploy verdict and every block call it, so both read
+one record by one rule.
+
+The asked image comes from the app's image file, `image.env` in the host's
+repository, which `dockerhost.ImageFile` reads and writes. A deploy writes one
+line naming the image. A rollback writes the image the host returns to, then
+the image the failed deploy asked for, so the asked image stays the failed
+one until the next deploy changes the file:
+
+```text
+APP_IMAGE=ghcr.io/acme/shop@sha256:aaaa
+APP_ROLLED_BACK_FROM=ghcr.io/acme/shop@sha256:bbbb
+```
+
+`dockerhost.ParseImageFile(text)` reads the file, skipping any line it does
+not define, as the host's agent does, and `.Asked()` gives the asked image:
+the rolled-back-from image when the file names one, and the image otherwise.
+`ImageFile.String()` writes the file back. Read the file at the commit the
+host's agent synced, so the asked image is the one the report describes.
+
+`ReleaseAgainst` returns a `dockerhost.AskedRelease`, which carries the
+`AppRelease` fields, the asked image's `AskedDigest` and the run's `ExitCode`:
+
+| Method | When it holds |
+|---|---|
+| `FailedOnAsked()` | The newest release command failed on the asked image, or failed at all when `asked` is empty |
+| `AskedAbsent()` | A release failed on an older image and no container of your subscription runs the asked one |
+
+A block reads the release failed only while `FailedOnAsked` holds. While
+`AskedAbsent` holds, no release failed on the asked image, so a block says
+that no container runs it and never that a release failed. Once the asked
+image serves, neither holds and the older failure reads as nothing:
+
+```go
+file := dockerhost.ParseImageFile(imageEnvAtSyncedCommit)
+release, err := report.ReleaseAgainst(app, d.SubscriptionID, file.Asked())
+if err != nil {
+	return contract.Observation{}, err
+}
+switch {
+case release.FailedOnAsked():
+	// the release command failed on release.FailedDigest
+case release.AskedAbsent():
+	// no container runs release.AskedDigest
 }
 ```
 
