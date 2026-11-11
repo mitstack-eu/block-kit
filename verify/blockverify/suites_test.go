@@ -236,7 +236,14 @@ func kitObservedBlock(ownObserver string) dirFunc {
 
 func TestResourcesSuite(t *testing.T) {
 	twoResources := withSource(manifestFile, "resources-two-resources-manifest.yaml")
+	listsRun := func(t *testing.T, files map[string]string) {
+		files[manifestFile] = replaced(t, files[manifestFile], "validate]", "validate, run]")
+	}
 	runSuites(t, []string{"resources"}, []suiteCase{
+		{name: "a block whose manifest lists run and wires no run function fails, naming run and Config.Run",
+			dir: moduleBlock(withSource(manifestFile, "resources-block-manifest.yaml"), listsRun, withSource("block_test.go", "resources-block_test.go"), withTypeSnapshot,
+				with("resources_test.go", "package main\n\nimport \"testing\"\n\nfunc TestDeclaredResources(t *testing.T) {\n\tassertBlock(t, misbehave{}, false)\n}\n")),
+			status: "fail", detail: []string{"the operation run", "Config.Run"}},
 		{name: "a manifest in the old version fails, naming the version the kit knows", dir: manifestOnly(oldVersionManifest),
 			status: "fail", detail: []string{`apiVersion "mitstack/v1alpha" is not a manifest version the kit knows; it must be mitstack/v1beta`}},
 		{name: "a block that defines no TestDeclaredResources fails, naming it",
