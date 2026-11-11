@@ -37,7 +37,7 @@ func furthest(kept, next checkReport) checkReport {
 	return kept
 }
 
-// checkWait is what a removal pull request's required checks hold it on: nothing once each has passed, and under way while one is queued, running or failed, since a new result for that check moves the removal on.
+// checkWait is what a removal pull request's required checks hold it on, empty once each has passed; underWay is set only when the held check has reported, queued, running or failed, since a new result for it moves the removal on.
 type checkWait struct {
 	waitsOn  string
 	underWay bool
@@ -68,7 +68,7 @@ func (a api) requiredCheckWait(ctx context.Context, pr openPull) (checkWait, err
 	return checkWait{waitsOn: waitsOn, underWay: report.state != checkMissing}, nil
 }
 
-// holdingCheck names the required check that holds a removal back: a failed one first, since no other result lets the pull request merge, then one queued or running, then one not reported.
+// holdingCheck names the required check a removal waits on, a failed one before one queued or running, and that before one not reported.
 func holdingCheck(reports map[string]checkReport, required []string) (string, bool) {
 	holding, rank := "", 0
 	for _, check := range required {
@@ -79,7 +79,6 @@ func holdingCheck(reports map[string]checkReport, required []string) (string, bo
 	return holding, rank > 0
 }
 
-// holdRank orders how firmly a check's state holds a removal back, zero for a passed check that holds nothing.
 func holdRank(s checkState) int {
 	switch s {
 	case checkFailed:

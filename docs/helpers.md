@@ -1261,9 +1261,9 @@ merging or closing.
 
 `Remove` and the observer read one judgement of the required checks,
 `requiredCheckWait` in `capabilities/github/landing/checks.go`, so the wait
-`Remove` answers is word for word the one the observer names. A failed check
-comes first, since no other result lets the pull request merge, then a queued
-or running one. A pending commit status, and a check run that GitHub has
+`Remove` answers is word for word the one the observer names. When several
+required checks hold the pull request, the wait names a failed one before a
+queued or running one. A pending commit status, and a check run that GitHub has
 queued but not started, count as queued. Once the pull request closes
 unmerged, or every required check has passed or not yet reported, the answer
 carries no `Removing` for the checks, and the attempts count again. A read of
