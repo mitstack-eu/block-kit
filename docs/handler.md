@@ -758,7 +758,7 @@ A builder sometimes needs one admin step inside their app, such as adding a
 user, and nobody logs in to a host mitstack manages. The platform asks the
 block that runs the app with the `run` operation, a signed call to the
 operator's `/hook` like any other lifecycle call. The block starts the command
-in a fresh container of the app's image and answers once the command ended.
+in a fresh container of the app's image and answers once the command has ended.
 [ADR 0142](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0142-a-one-off-command-runs-in-the-apps-container.md)
 holds the reasoning.
 
@@ -779,7 +779,8 @@ cfg.Run = dockerhost.Runner{Block: "docker-app-slice", Processes: []string{"web"
 
 `handler.New` refuses a manifest that lists `run` with no `Config.Run`, and a
 `Config.Run` whose manifest does not list `run`, so a run never reaches a
-block that cannot answer it. A block whose app runs on a Docker host uses
+block that cannot answer it. blockverify fails such a block and quotes that
+refusal in its `resources` suite. A block whose app runs on a Docker host uses
 `dockerhost.Runner`, as above and in
 [Running a command in an app's container](helpers.md#running-a-command-in-an-apps-container).
 
@@ -811,7 +812,7 @@ digits, hyphens and underscores. A refused request never reaches the block.
 `contract/goldens/run.json` is the whole request the platform sends.
 
 The engine sends the same run again on each node report of the host until the
-block answers it ended. Each answer of the function maps to one answer of the
+block answers that it has ended. Each answer of the function maps to one answer of the
 handler:
 
 | The function returns | The handler answers |

@@ -508,6 +508,7 @@ func checkRun(req Request) error {
 	return nil
 }
 
+// Run is the run a run request names.
 func (r Request) Run() RunRequest {
 	return RunRequest{ID: r.RunID, Command: r.Command, Process: r.Process}
 }
