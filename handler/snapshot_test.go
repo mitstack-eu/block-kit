@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -124,5 +125,27 @@ func TestSnapshotAndRestore_RefuseWhatTheManifestDoesNotDeclare(t *testing.T) {
 				t.Errorf("%s reached the block (snapshots %v, restores %v), want it refused first", tc.name, block.taken, block.restored)
 			}
 		})
+	}
+}
+
+func TestRestore_ReachesTheBlockForEachUnitSentUnderOneIdempotencyKey(t *testing.T) {
+	twoUnits := strings.Replace(snapshotManifest, "handover: none", "handover: snapshot", 1)
+	block := newSnapshottingBlock("hnd_0001")
+	x := newHarness(t, block, withManifest(twoUnits), func(cfg *handler.Config) { cfg.Observers = asObservers(blockObservers(newFakeCloud())) })
+
+	for _, unit := range []string{"app-data", "gateway"} {
+		status, raw := x.postContext(context.Background(), map[string]any{"operation": "restore"}, map[string]any{
+			"unit": unit, "idempotencyKey": "sub-1:restore:rep_01",
+			"priorOutputs": map[string]any{contract.HandoverOutputKey(unit): "hnd_" + unit}})
+		if status != http.StatusOK {
+			t.Fatalf("restore of %s: status %d, body %s; want 200", unit, status, raw)
+		}
+	}
+
+	if want := []string{"app-data", "gateway"}; !slices.Equal(block.restored, want) {
+		t.Errorf("the block restored %v under one idempotency key, want %v: a second unit must not be answered from the first unit's cached answer", block.restored, want)
+	}
+	if want := []string{"hnd_app-data", "hnd_gateway"}; !slices.Equal(block.handed, want) {
+		t.Errorf("the block was handed %v, want %v", block.handed, want)
 	}
 }
