@@ -431,9 +431,10 @@ report a state the resource has left.
 The request's events callback is a URL and token the platform includes so the
 operator can report back. A `subscribe`, `upgrade` or `unsubscribe` sends
 `progress` with its status detail while it is pending or still present,
-`completed` once it settles, and `failed` on an error answer. A `validate` and
-an `issue` send none. An unsubscribe therefore completes only after its
-teardown is observed absent.
+`completed` once it settles, and `failed` on an error answer. A `snapshot` or
+a `restore` sends `completed` on a 2xx answer and `failed` on any other. A
+`validate` and an `issue` send none. An unsubscribe therefore completes only
+after its teardown is observed absent.
 
 ## Work that outlasts one call
 
