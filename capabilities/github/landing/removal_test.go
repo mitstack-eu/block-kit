@@ -317,23 +317,36 @@ func TestUnsubscribeAndObserver_NameTheSameWaitWhileARequiredCheckIsQueuedRunnin
 		arrange func(f *landingtest.Fake)
 		check   string
 		naming  string
+		// run is the page the wait names when a commit status, not a check run, reports the check.
+		run string
 	}{
-		{"its required check is queued", func(f *landingtest.Fake) { f.RunCheck("managed-ci", "queued") }, "managed-ci", "is queued"},
-		{"its required check is running", func(f *landingtest.Fake) { f.RunCheck("managed-ci", "in_progress") }, "managed-ci", "is running"},
-		{"its required check failed", func(f *landingtest.Fake) { f.ReportCheck("managed-ci", "failure") }, "managed-ci", "failed"},
+		{"its required check is queued", func(f *landingtest.Fake) { f.RunCheck("managed-ci", "queued") }, "managed-ci", "is queued", ""},
+		{"its required check is running", func(f *landingtest.Fake) { f.RunCheck("managed-ci", "in_progress") }, "managed-ci", "is running", ""},
+		{"its required check failed", func(f *landingtest.Fake) { f.ReportCheck("managed-ci", "failure") }, "managed-ci", "failed", ""},
 		{"its required check failed while a review is also required", func(f *landingtest.Fake) {
 			f.RequireReviews(1)
 			f.ReportCheck("managed-ci", "failure")
-		}, "managed-ci", "failed"},
+		}, "managed-ci", "failed", ""},
 		{"one required check failed while another runs", func(f *landingtest.Fake) {
 			f.RunCheck("managed-ci", "in_progress")
 			f.RequireCheck("lint")
 			f.ReportCheck("lint", "failure")
-		}, "lint", "failed"},
+		}, "lint", "failed", ""},
+		{"its required check reports a failed commit status", func(f *landingtest.Fake) {
+			f.ReportStatus("managed-ci", "failure", "https://ci.example/builds/7")
+		}, "managed-ci", "failed", "https://ci.example/builds/7"},
+		{"its check run failed and a newer commit status of that check is pending", func(f *landingtest.Fake) {
+			f.ReportCheck("managed-ci", "failure")
+			f.ReportStatus("managed-ci", "pending", "https://ci.example/builds/8")
+		}, "managed-ci", "is queued", "https://ci.example/builds/8"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, rec := waitingRemoval(t)
 			tc.arrange(f)
+			run := tc.run
+			if run == "" {
+				run = f.RunURL(tc.check)
+			}
 
 			_, err := remove(client(f), rec)
 			obs := observeRemoval(t, f, rec, true)
@@ -348,7 +361,7 @@ func TestUnsubscribeAndObserver_NameTheSameWaitWhileARequiredCheckIsQueuedRunnin
 			if w.Detail != obs.Removing.WaitsOn {
 				t.Errorf("once %s the unsubscribe waits on %q and the observer on %q, want one wait", tc.name, w.Detail, obs.Removing.WaitsOn)
 			}
-			for _, naming := range []string{"#1", repo, `"` + tc.check + `"`, tc.naming, f.RunURL(tc.check)} {
+			for _, naming := range []string{"#1", repo, `"` + tc.check + `"`, tc.naming, run} {
 				if !strings.Contains(obs.Removing.WaitsOn, naming) {
 					t.Errorf("waitsOn = %q, want it to name %q", obs.Removing.WaitsOn, naming)
 				}
