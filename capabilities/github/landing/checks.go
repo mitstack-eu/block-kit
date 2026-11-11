@@ -23,6 +23,11 @@ func (s checkState) String() string {
 	return [...]string{"not reported", "failed", "queued", "running", "passed"}[s]
 }
 
+// reads is the state as the clause after a check's name in a wait.
+func (s checkState) reads() string {
+	return [...]string{"has not reported", "failed", "is queued", "is running", "passed"}[s]
+}
+
 // checkReport is what one required check last reported on a commit, and the page of the run that reported it when GitHub names one.
 type checkReport struct {
 	state checkState
@@ -68,31 +73,37 @@ func (a api) requiredCheckWait(ctx context.Context, pr openPull) (checkWait, err
 	return checkWait{waitsOn: waitsOn, underWay: report.state != checkMissing}, nil
 }
 
+// holdRank orders the states that hold a removal back, a higher rank named first in its wait.
+type holdRank int
+
+const (
+	holdsNothing holdRank = iota
+	holdsUnreported
+	holdsInFlight
+	holdsFailed
+)
+
 // holdingCheck names the required check a removal waits on, a failed one before one queued or running, and that before one not reported.
 func holdingCheck(reports map[string]checkReport, required []string) (string, bool) {
-	holding, rank := "", 0
+	holding, rank := "", holdsNothing
 	for _, check := range required {
-		if r := holdRank(reports[check].state); r > rank {
+		if r := rankOf(reports[check].state); r > rank {
 			holding, rank = check, r
 		}
 	}
-	return holding, rank > 0
+	return holding, rank > holdsNothing
 }
 
-func holdRank(s checkState) int {
+func rankOf(s checkState) holdRank {
 	switch s {
 	case checkFailed:
-		return 3
+		return holdsFailed
 	case checkQueued, checkRunning:
-		return 2
+		return holdsInFlight
 	case checkMissing:
-		return 1
+		return holdsUnreported
 	}
-	return 0
-}
-
-func (s checkState) reads() string {
-	return [...]string{"has not reported", "failed", "is queued", "is running", "passed"}[s]
+	return holdsNothing
 }
 
 // removalUnderWay is what the subscription's open removal pull request waits on while a check main requires is queued, running or failed on it, or while a review main requires is missing, and empty otherwise.
@@ -240,8 +251,8 @@ func (a api) statusRefused(err error, reports map[string]checkReport, required [
 	owner, _, _ := strings.Cut(a.repo, "/")
 	var open []string
 	for _, check := range required {
-		if s := reports[check].state; s != checkPassed {
-			open = append(open, fmt.Sprintf("%q (%s)", check, s))
+		if state := reports[check].state; state != checkPassed {
+			open = append(open, fmt.Sprintf("%q (%s)", check, state))
 		}
 	}
 	return fmt.Errorf("the installation of %s lacks the permission %s to read commit statuses, so required checks %s cannot be decided: %w", owner, permission, strings.Join(open, ", "), err)
