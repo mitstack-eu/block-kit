@@ -6,6 +6,8 @@ import (
 	"math"
 	"regexp"
 	"strconv"
+
+	"github.com/mitstack-eu/block-kit/handler"
 )
 
 const (
@@ -64,6 +66,59 @@ func Free(allocatable, others Reservation) Reservation {
 // Fits holds each amount within free, and a reservation of no disk fits whatever disk is free.
 func (r Reservation) Fits(free Reservation) bool {
 	return r.CPUMillis <= free.CPUMillis && r.MemoryBytes <= free.MemoryBytes && (r.DiskBytes == 0 || r.DiskBytes <= free.DiskBytes)
+}
+
+// Ask is the room one Part, such as shop's database, asks of a Docker host, and Kind, such as database, is what a
+// refusal tells the developer to give less.
+type Ask struct {
+	Part string
+	Kind string
+	Size Reservation
+}
+
+// Capacity is the allocatable capacity the host's report gives, whatever error it also carries, a wait for the host's next report while it gives none, or a refusal of a host the platform attests absent.
+func Capacity(report Report, found bool, part string) (Reservation, error) {
+	switch {
+	case report.absence != nil:
+		return Reservation{}, handler.Refuse("host-absent", "the platform's %s read the host's %s absent, so %s cannot be placed on it; give the app a running host",
+			report.absence.Observer, report.absence.Resource, part)
+	case found && report.Allocatable == nil && report.capacityError != "":
+		return Reservation{}, handler.WaitForSignal("the host's newest node report gives no allocatable capacity but the error %q, so %s waits for a report that gives it before it is sized",
+			report.capacityError, part)
+	case !found || report.Allocatable == nil:
+		return Reservation{}, handler.WaitForSignal("the host has sent no node report giving its allocatable capacity yet, so %s waits for that capacity report before it is sized", part)
+	}
+	return *report.Allocatable, nil
+}
+
+// CheckRoom waits or refuses as Capacity does, and refuses host-full, naming the free and asked amounts, when ask does not fit in what the host can give its apps less what others hold.
+func CheckRoom(report Report, found bool, ask Ask, others Reservation) error {
+	allocatable, err := Capacity(report, found, ask.Part)
+	if err != nil {
+		return err
+	}
+	return fitRoom(allocatable, ask, others)
+}
+
+func fitRoom(allocatable Reservation, ask Ask, others Reservation) error {
+	free := Free(allocatable, others)
+	if ask.Size.Fits(free) {
+		return nil
+	}
+	return handler.Refuse("host-full",
+		"the host has %s free beyond what its other apps reserve, and %s asks for %s; give the %s less, or remove an app from the host first",
+		roomText(free, ask.Size), ask.Part, Describe(ask.Size), ask.Kind)
+}
+
+func roomText(free, asked Reservation) string {
+	if asked.DiskBytes == 0 {
+		free.DiskBytes = 0
+		return Describe(free)
+	}
+	if free.DiskBytes <= 0 {
+		return Describe(Reservation{CPUMillis: free.CPUMillis, MemoryBytes: free.MemoryBytes}) + " and no disk"
+	}
+	return Describe(free)
 }
 
 // Describe writes the amounts as the console's host-room panel does, rounded down so a refusal never names room the host lacks.

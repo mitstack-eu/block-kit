@@ -126,7 +126,7 @@ and `d.Instances` read the same on every call.
 The platform runs an observer of its own, outside your block, which asks a
 provider whether a resource still exists. When it reads a resource absent, the
 platform records that on an unsubscribe as a `contract.Absence`: `Observer` names
-the platform's observer, `Resource` the resource type it read, `ReadAbsentAt`
+the platform's observer, `Resource` the resource type (such as `hetzner.server`) it read, `ReadAbsentAt`
 when it read it absent, and `ProvesAbsence` is true when the platform stands
 behind the reading. This observer differs from the observers your block
 registers. `d.AttestedAbsent(subscriptionID)` returns `(Absence, bool)` for the
@@ -330,6 +330,39 @@ describes. The handler observes nothing on that call. The engine asks again,
 as it does for any pending answer, and the wait counts against the block's
 settle budget.
 
+`handler.WaitForSignal(format, args...)` builds the same wait for a call that
+changed nothing because it waits on what another subscription reports, such as
+a Docker host that has sent no node report yet. A node report is the state a
+host pushes to mitstack on its own. The answer carries `redrive:true` beside
+`pending:true`, which asks the engine to send the `subscribe` again. For an
+example app named `shop`, the answer reads
+`{"pending": true, "redrive": true, "statusDetail": "the host has sent no node report giving its allocatable capacity yet, so shop waits for that capacity report before it is sized"}`.
+
+This wait is an exception to the settle check described above, which
+polls a pending answer with `validate`. The engine handles it on a
+`subscribe` in these steps:
+
+1. The engine sends no `validate`, since nothing landed for one to observe.
+   It sends nothing more for this subscription until step 2 or step 3 happens.
+2. When the host's next node report reaches mitstack, the engine sends the
+   `subscribe` again. Your block registers nothing for this, because the
+   engine itself links the report to each subscription bound to the host.
+3. If no report has ended the wait when the settle budget runs out, the
+   subscription fails, naming the wait. The settle budget is the time the
+   block's manifest, or else the engine's default, gives a subscription to
+   finish.
+
+On an `upgrade`, the handler still answers `pending:true` with `redrive:true`,
+and the engine ignores the `redrive`. Every pending upgrade, waiting or not,
+is followed by a `subscribe` before any `validate`, so that subscribe's own
+answer starts the steps above.
+
+On an `unsubscribe`, a `Delete` that returns this wait answers `absent:false`
+with no `redrive`, as a plain wait does.
+
+Your `EnsureResources` runs again from the start on each `subscribe`, so it
+must write nothing before it returns this wait.
+
 `handler.WaitOnRemoval(format, args...)` builds the same wait for a `Delete`
 whose removal has started and now moves outside the block, such as a pull
 request waiting on its checks. The `unsubscribe` still answers `absent:false`
@@ -421,7 +454,8 @@ again because the cache never stores a pending answer. `EnsureResources` takes
 the next piece of work from what it observes at the provider, and running it
 against finished work changes nothing. Report `Redrive` from the provider's
 state alone, never from a clock or a count of calls. The handler reads it only
-beside `Unknown`, and a subscribe's own pending answer never carries it.
+beside `Unknown`. A subscribe's own pending answer carries `redrive` only when
+the block returns `handler.WaitForSignal`.
 
 A resource the kit observer reads has no observer of yours to report this. Give
 your `Resource` a method `Converging(ctx, d)` instead, which makes it a
@@ -760,8 +794,8 @@ shop-web | GET / 500
 
 When it has no lines, it answers one line saying why: the host has sent no
 report yet, the host's release sends no container output, or no container of
-the subscription runs on the host yet. A block on another kind of platform
-writes its own function that reads its subscription's lines.
+the subscription runs on the host yet. A block whose app runs anywhere other than a
+Docker host writes its own function that reads its subscription's lines.
 
 The platform then sends a signed `POST /logs` whose body is a request with the
 operation `logs`. It carries what a hook carries for that subscription: its

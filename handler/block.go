@@ -38,7 +38,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 	case "subscribe", "upgrade":
 		reported, err := r.ensureBlock(ctx)
 		if w, ok := waiting(err); ok {
-			return r.withOwnSecrets(http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, r.secrets...)})
+			return r.withOwnSecrets(http.StatusOK, contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: safe.Scrub(w.Detail, r.secrets...)})
 		}
 		if err != nil {
 			status, resp := r.h.errorResponse(err, r.secrets)
@@ -97,12 +97,19 @@ type Waiting struct {
 	Detail string
 	// Removal, on an unsubscribe, has the absent:false answer carry each standing resource's observe, so the engine reads a removal an observer reports under way.
 	Removal bool
+	// Redrive answers redrive beside pending, which the engine reads on a subscribe alone and answers by sending the subscribe again on the next signal about the subscription rather than settling it through validate.
+	Redrive bool
 }
 
 func (e *Waiting) Error() string { return e.Detail }
 
 func Wait(format string, args ...any) error {
 	return &Waiting{Detail: fmt.Sprintf(format, args...)}
+}
+
+// WaitForSignal is Wait for a call that changed nothing and waits on something another subscription reports, such as a host's node report.
+func WaitForSignal(format string, args ...any) error {
+	return &Waiting{Detail: fmt.Sprintf(format, args...), Redrive: true}
 }
 
 // WaitOnRemoval is Wait for a Delete whose removal has started and moves outside the block, such as a pull request waiting on its checks.

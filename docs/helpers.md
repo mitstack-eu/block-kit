@@ -414,13 +414,34 @@ host sends them:
 `dockerhost.Report`, whose `Allocatable` field holds the report's allocatable
 capacity as a `dockerhost.Reservation`, or `nil` when the report gives none.
 [Reading what the host last synced](#reading-what-the-host-last-synced) covers
-its arguments and the rest of what it returns. Your block sums the other blocks' records and checks that its own
-reservation fits in what is left before it writes anything. When it does
-not fit, the block's subscribe returns a `handler.Refuse` error naming the
-free and the requested amounts, so the platform shows the refusal and nothing
-lands on the host.
+its arguments and the rest of what it returns.
 
-Five functions keep every block's sizes the same as the console's, which
+Your block checks that its own reservation fits before it writes anything, by
+calling `dockerhost.CheckRoom(report, found, ask, others)`. The `report` and
+`found` arguments are what `dockerhost.NewestReport` returned, and `others` is
+what `dockerhost.SumReservations` added up. The `ask` argument is a
+`dockerhost.Ask` with three fields. `Part` names what is placed, such as
+`shop` or `shop's database`. `Kind` names what the developer should give less
+of, such as `app` or `database`. `Size` is the reservation it asks for.
+
+`CheckRoom` answers one of four ways, so every per-app block treats a host the
+same:
+
+| The host | `CheckRoom` returns |
+|---|---|
+| Has sent no node report, or a report without allocatable capacity | A `handler.WaitForSignal` wait naming the missing capacity report, so the engine sends the subscribe again once the host reports |
+| Sent a report whose capacity carries an `error` in place of `allocatable` | The same wait, quoting that error |
+| Is read absent by the platform, such as a server deleted outside mitstack | A `host-absent` refusal |
+| Has too little free beyond what the others reserve | A `host-full` refusal naming the free and the requested amounts |
+
+Otherwise it returns `nil` and your block writes its files. A refusal shows
+in the console and nothing lands on the host. A wait writes nothing either,
+and [Errors, refusals and panics](handler.md#errors-refusals-and-panics) says
+how the engine answers it. `dockerhost.Capacity(report, found, part)` gives
+the allocatable capacity alone, with the same wait and `host-absent` refusal,
+for a block that checks something else between reading it and sizing.
+
+Five more functions keep every block's sizes the same as the console's, which
 reads the same inputs on its subscribe page:
 
 | Function | What it does |
@@ -432,17 +453,17 @@ reads the same inputs on its subscribe page:
 | `dockerhost.Describe(r)` | Writes the amounts as the console does, such as `0.5 vCPU, 512 MiB and 10 GiB of disk`, rounded down, with the disk only when `r` holds some |
 
 Each parse function returns an error saying what to give, which your block
-puts in its refusal of the input:
+puts in its refusal of the input. A block that lands an app named `shop`
+checks its room like this:
 
 ```go
-others, err := dockerhost.SumReservations(files, app+"/reservations/docker-app-slice.json")
+others, err := dockerhost.SumReservations(files, "shop/reservations/docker-app-slice.json")
 if err != nil {
 	return nil, err
 }
-free := dockerhost.Free(allocatable, others)
-if !want.Fits(free) {
-	return nil, handler.Refuse("host-full", "the host has %s free, and the app asks for %s",
-		dockerhost.Describe(free), dockerhost.Describe(want))
+ask := dockerhost.Ask{Part: "shop", Kind: "app", Size: want}
+if err := dockerhost.CheckRoom(report, found, ask, others); err != nil {
+	return nil, err
 }
 ```
 
@@ -688,10 +709,13 @@ any of these holds:
 | `invalid-param` | An input does not parse, or `env` names a value the database does not give, or gives two values one variable |
 | `disk-fixed` | An upgrade asks for a disk other than the volume's, which the host cannot resize |
 | `host-takes-no-backups` | The host's node report says its backups fail, such as for a host made without a backup public key |
+| `host-absent` | The platform reads the database's host absent |
 | `host-full` | The database's reservation does not fit in what the host can give its apps less what its other apps reserve |
 
-A host that has sent no node report yet gets no refusal. The subscribe fails
-with an error saying so, and the next one retries.
+A host that has sent no node report giving its capacity yet gets no refusal.
+The subscribe writes nothing and waits for that report, as
+[Sizing an app against what the host holds](#sizing-an-app-against-what-the-host-holds)
+describes.
 
 #### What the engine gives
 
