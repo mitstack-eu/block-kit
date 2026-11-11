@@ -1134,20 +1134,28 @@ A request names the account the org's GitHub connection is installed on, and
 the id of the mitstack GitHub App whose installation minted its token.
 `ghapi.Owner(d)` and `ghapi.AppID(d)` read them from the `contract.Desired`
 your block already holds, and answer `""` when the request carries none. Each
-reads the `github` instance's config first, and the `github` secret group only
-when the config lacks the value. Read both through these two helpers and never
-from the request yourself, so your block keeps working when the place a
-request carries them changes.
+reads the connection's plain settings first, which a request carries in
+`Instances["github"].Config`. It falls back to the connection's secrets in
+`Secrets["github"]` only when the settings lack the value. Read both through
+these two helpers and never from the request yourself, so your block keeps
+working when the place a request carries them changes.
+
+An empty owner means the org has no GitHub connection, so refuse the request
+before you name a repository with it:
 
 ```go
-repo := ghapi.Owner(d) + "/" + d.Params["appName"]
+owner := ghapi.Owner(d)
+if owner == "" {
+	return handler.Refuse("missing-github-access", "the request carries no GitHub owner; reconnect GitHub and retry")
+}
+repo := owner + "/" + d.Params["appName"]
 ```
 
-Neither value is a credential. The handler scrubs every value of four or more
-characters that a request's secret groups hold, from each answer and each log
-line it writes. A message naming such an owner therefore reads `[REDACTED]` in
-its place for as long as the request carries the owner in the `github` secret
-group.
+Neither value is a credential. The kit's handler, which serves every request
+your block receives, scrubs from each answer and each log line it writes every
+value of four or more characters that a request's secrets hold. A message
+naming such an owner therefore reads `[REDACTED]` in its place for as long as
+the request carries the owner in `Secrets["github"]`.
 
 `EnsureRepo(ctx, org, name, appID)` creates a private repository, or finds one,
 and keeps a ruleset on its main branch. The ruleset refuses every update,
