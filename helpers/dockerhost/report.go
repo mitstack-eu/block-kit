@@ -57,11 +57,20 @@ func NewestReport(ctx context.Context, api observe.NodeReportsAPI, d contract.De
 	if newest == nil {
 		return Report{}, false, nil
 	}
-	var parts reportParts
-	if err := json.Unmarshal(newest.Body, &parts); err != nil {
-		return Report{}, false, fmt.Errorf("decoding the host's newest node report: %w", err)
+	report, err := ReadReport(newest.Body)
+	if err != nil {
+		return Report{}, false, fmt.Errorf("reading the host's newest node report: %w", err)
 	}
-	return Report{Allocatable: parts.Host.Capacity.Allocatable, body: newest.Body, agent: parts.Host.Agent, capacityError: parts.Host.Capacity.Error}, true, nil
+	return report, true, nil
+}
+
+// ReadReport reads a node report body its caller already holds, such as the platform reading a host's newest report itself.
+func ReadReport(body []byte) (Report, error) {
+	var parts reportParts
+	if err := json.Unmarshal(body, &parts); err != nil {
+		return Report{}, fmt.Errorf("decoding the host's node report: %w", err)
+	}
+	return Report{Allocatable: parts.Host.Capacity.Allocatable, body: body, agent: parts.Host.Agent, capacityError: parts.Host.Capacity.Error}, nil
 }
 
 // Decode reads the report's body into v, for the fields only one block reads.
@@ -176,12 +185,19 @@ func (a AppRelease) Serves() bool { return a.ServingDigest != "" }
 
 // AppRelease reads app's newest release command and the digest its running container labelled with subscription serves, reading an app the report names no release of as not failed.
 func (r Report) AppRelease(app, subscription string) (AppRelease, error) {
+	read, _, err := r.appRelease(app, subscription)
+	return read, err
+}
+
+// appRelease is AppRelease with the newest release command's exit code, 0 when none ran.
+func (r Report) appRelease(app, subscription string) (AppRelease, int, error) {
 	var out reportedOutput
 	if err := r.Decode(&out); err != nil {
-		return AppRelease{}, fmt.Errorf("decoding app %s's release from the host's newest node report: %w", app, err)
+		return AppRelease{}, 0, fmt.Errorf("decoding app %s's release from the host's newest node report: %w", app, err)
 	}
 	var read AppRelease
-	if ran, ok := out.Host.Releases[app]; ok && ran.ExitCode != 0 {
+	ran := out.Host.Releases[app]
+	if ran.ExitCode != 0 {
 		read.Failed, read.FailedDigest = true, digestOf(ran.Image)
 	}
 	for _, c := range out.Host.Apps[app] {
@@ -190,7 +206,77 @@ func (r Report) AppRelease(app, subscription string) (AppRelease, error) {
 			break
 		}
 	}
-	return read, nil
+	return read, ran.ExitCode, nil
+}
+
+// AskedRelease is an app's newest release command judged against the image the app's newest deploy asked for.
+type AskedRelease struct {
+	AppRelease
+	AskedDigest string
+	ExitCode    int
+}
+
+// FailedOnAsked reports whether the newest release command failed on the asked image, or failed at all when no image was asked for.
+func (a AskedRelease) FailedOnAsked() bool {
+	return a.Failed && (a.AskedDigest == "" || a.FailedDigest == a.AskedDigest)
+}
+
+// AskedAbsent reports whether a release failed on an older image while no container serves the asked one; once the asked image serves, that older failure reads as nothing.
+func (a AskedRelease) AskedAbsent() bool {
+	return a.Failed && !a.FailedOnAsked() && a.ServingDigest != a.AskedDigest
+}
+
+// ReleaseAgainst reads app's newest release command as AppRelease does and judges it against asked, the image ImageFile.Asked gives, so every reader of the record applies one rule.
+func (r Report) ReleaseAgainst(app, subscription, asked string) (AskedRelease, error) {
+	read, exitCode, err := r.appRelease(app, subscription)
+	if err != nil {
+		return AskedRelease{}, err
+	}
+	return AskedRelease{AppRelease: read, AskedDigest: digestOf(asked), ExitCode: exitCode}, nil
+}
+
+// The variables an app's image file, image.env in the host's repository, defines; the host's agent reads only imageVariable.
+const (
+	imageVariable          = "APP_IMAGE="
+	rolledBackFromVariable = "APP_ROLLED_BACK_FROM="
+)
+
+// ImageFile is an app's image file: the image the host runs the app on and, after mitstack rolled a deploy back, the image that deploy asked for.
+type ImageFile struct {
+	Image          string
+	RolledBackFrom string
+}
+
+// ParseImageFile reads an image file's text, skipping any line it does not define, as the host's agent does.
+func ParseImageFile(text string) ImageFile {
+	var f ImageFile
+	for line := range strings.Lines(text) {
+		line = strings.TrimRight(line, "\r\n")
+		switch {
+		case strings.HasPrefix(line, imageVariable):
+			f.Image = strings.TrimPrefix(line, imageVariable)
+		case strings.HasPrefix(line, rolledBackFromVariable):
+			f.RolledBackFrom = strings.TrimPrefix(line, rolledBackFromVariable)
+		}
+	}
+	return f
+}
+
+// String is the file's text: the image line, then the rolled-back-from line only when a rollback wrote the file.
+func (f ImageFile) String() string {
+	text := imageVariable + f.Image + "\n"
+	if f.RolledBackFrom != "" {
+		text += rolledBackFromVariable + f.RolledBackFrom + "\n"
+	}
+	return text
+}
+
+// Asked is the image the app's newest deploy asked for: the one a rollback returned from when the file names one, and Image otherwise.
+func (f ImageFile) Asked() string {
+	if f.RolledBackFrom != "" {
+		return f.RolledBackFrom
+	}
+	return f.Image
 }
 
 // digestOf is the digest an image reference pins, or the whole reference when it pins none.
