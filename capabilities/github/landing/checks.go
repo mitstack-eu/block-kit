@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -196,9 +197,19 @@ func (a api) checkReports(ctx context.Context, commit string, required []string)
 		return nil, a.statusRefused(err, reports, required)
 	}
 	for _, s := range combined.Statuses {
-		reports[s.Context] = furthest(reports[s.Context], checkReport{state: statusState(s.State), run: s.TargetURL})
+		reports[s.Context] = furthest(reports[s.Context], checkReport{state: statusState(s.State), run: runPage(s.TargetURL)})
 	}
 	return reports, nil
+}
+
+// runPage is a commit status's target_url without the credentials, query or fragment a CI may carry a token in, and empty unless it is an http or https address.
+func runPage(target string) string {
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" || u.Scheme != "https" && u.Scheme != "http" {
+		return ""
+	}
+	u.User, u.RawQuery, u.Fragment = nil, "", ""
+	return u.String()
 }
 
 func runState(status, conclusion string) checkState {
