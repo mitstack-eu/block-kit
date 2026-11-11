@@ -186,12 +186,22 @@ jobs:
       contents: write
       actions: write
       id-token: write
+      packages: read
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@v0.4.0
     with:
       block-id: hetzner-firewall
       ecr-repository: mitstack-hetzner-firewall
       kit-ref: v0.4.0
 ```
+
+The `permissions` block grants the most the workflow's jobs may use, because
+a called job gets no more than its caller grants. GitHub refuses to start the
+workflow when one of its jobs asks for more, with an error such as `The nested
+job 'conformance' is requesting 'packages: read', but is only allowed
+'packages: none'`. So grant all four lines, even when your block needs none of
+what one of them opens. `packages: read` lets the three jobs that build your
+image log in to ghcr.io with the job's own token, so your `Dockerfile` may
+copy from a private package your repository publishes.
 
 `ecr-repository` names the repository in Amazon Elastic Container Registry
 (ECR), AWS's image registry, that receives the image, and `kit-ref` the
@@ -422,6 +432,7 @@ jobs:
       contents: write
       actions: write
       id-token: write
+      packages: read
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
     with:
       block-id: opentofu-s3-bucket
@@ -512,6 +523,7 @@ jobs:
       contents: write
       actions: write
       id-token: write
+      packages: read
     uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
     with:
       block-id: "@acme/billing-db"
