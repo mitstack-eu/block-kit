@@ -1,10 +1,11 @@
 package dockerhost_test
 
-// A Docker host's newest node report answers its allocatable capacity, the commit its agent last synced from host.agent.syncedCommit, never from the agent's log, whether an app's newest release command failed and what serves it, and one subscription's own containers' output, with an explicit reason when it cannot.
+// A Docker host's newest node report answers its allocatable capacity, the commit its agent last synced from host.agent.syncedCommit, never from the agent's log, whether an app's newest release command failed on the image its newest deploy asked for and what serves it, and one subscription's own containers' output, with an explicit reason when it cannot.
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -237,6 +238,137 @@ func TestReport_AppReleaseReadsWhetherTheNewestReleaseCommandFailedAndWhatServes
 				t.Errorf("AppRelease(%s, %s) = %+v serving %v, %v; want %+v serving %v", tc.app, tc.sub, got, got.Serves(), err, tc.want, tc.serves)
 			}
 		})
+	}
+}
+
+const (
+	imageA = "ghcr.io/acme/shop@sha256:aaaa"
+	imageB = "ghcr.io/acme/shop@sha256:bbbb"
+	imageC = "ghcr.io/acme/shop@sha256:cccc"
+)
+
+// shopReport is the node report of a host whose shop container serves serving, or none when serving is empty, and whose newest release command ran on ran and exited exitCode.
+func shopReport(serving, ran string, exitCode int) string {
+	apps := `"shop":[]`
+	if serving != "" {
+		apps = `"shop":[{"container":"shop-web","subscription":"sub_shop","image":"` + serving + `","state":"running"}]`
+	}
+	return fmt.Sprintf(`{"host":{"apps":{%s},"releases":{"shop":{"subscription":"sub_shop","image":"%s","exitCode":%d}}}}`, apps, ran, exitCode)
+}
+
+func TestImageFile_ReadsTheImageTheNewestDeployAskedFor(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		want       dockerhost.ImageFile
+		asked      string
+	}{
+		{"a file of one line asks for the image it names, as every file did before a rollback could mark one",
+			"APP_IMAGE=" + imageA + "\n", dockerhost.ImageFile{Image: imageA}, imageA},
+		{"a file a rollback wrote asks for the image it rolled back from, while the host returns to the image it names",
+			"APP_IMAGE=" + imageA + "\nAPP_ROLLED_BACK_FROM=" + imageB + "\n", dockerhost.ImageFile{Image: imageA, RolledBackFrom: imageB}, imageB},
+		{"a line the file does not define is skipped, as the host's agent skips it",
+			"# pinned by mitstack\nAPP_IMAGE=" + imageC + "\n", dockerhost.ImageFile{Image: imageC}, imageC},
+		{"an empty file asks for no image", "", dockerhost.ImageFile{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := dockerhost.ParseImageFile(tc.text)
+
+			if got != tc.want || got.Asked() != tc.asked {
+				t.Errorf("ParseImageFile(%q) = %+v asking %q; want %+v asking %q", tc.text, got, got.Asked(), tc.want, tc.asked)
+			}
+		})
+	}
+}
+
+func TestImageFile_WritesTheTextItReadsBack(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file dockerhost.ImageFile
+		want string
+	}{
+		{"a deploy writes one line, the form the host's agent and every earlier file hold",
+			dockerhost.ImageFile{Image: imageA}, "APP_IMAGE=" + imageA + "\n"},
+		{"a rollback writes the image it returns to, then the image it rolled back from",
+			dockerhost.ImageFile{Image: imageA, RolledBackFrom: imageB}, "APP_IMAGE=" + imageA + "\nAPP_ROLLED_BACK_FROM=" + imageB + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := tc.file.String()
+
+			if text != tc.want || dockerhost.ParseImageFile(text) != tc.file {
+				t.Errorf("%+v.String() = %q reading back %+v; want %q", tc.file, text, dockerhost.ParseImageFile(text), tc.want)
+			}
+		})
+	}
+}
+
+func TestReport_ReleaseAgainstJudgesTheNewestReleaseByTheImageAskedFor(t *testing.T) {
+	for _, tc := range []struct {
+		name, report, imageFile string
+		want                    dockerhost.AskedRelease
+		failedOnAsked, absent   bool
+	}{
+		{"image A's release passed and A serves, so nothing reads against the app",
+			shopReport(imageA, imageA, 0), "APP_IMAGE=" + imageA + "\n",
+			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{ServingDigest: "sha256:aaaa"}, AskedDigest: "sha256:aaaa"}, false, false},
+		{"image B's release failed and mitstack rolled back to A, so the release failed on the asked B while A serves",
+			shopReport(imageA, imageB, 1), "APP_IMAGE=" + imageA + "\nAPP_ROLLED_BACK_FROM=" + imageB + "\n",
+			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{Failed: true, FailedDigest: "sha256:bbbb", ServingDigest: "sha256:aaaa"}, AskedDigest: "sha256:bbbb", ExitCode: 1}, true, false},
+		{"after that rollback a deploy asks for the serving A again with no host commit, so B's failed release reads as nothing",
+			shopReport(imageA, imageB, 1), "APP_IMAGE=" + imageA + "\n",
+			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{Failed: true, FailedDigest: "sha256:bbbb", ServingDigest: "sha256:aaaa"}, AskedDigest: "sha256:aaaa", ExitCode: 1}, false, false},
+		{"a failed first deploy fails on the asked image with no image serving",
+			shopReport("", imageB, 137), "APP_IMAGE=" + imageB + "\n",
+			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{Failed: true, FailedDigest: "sha256:bbbb"}, AskedDigest: "sha256:bbbb", ExitCode: 137}, true, false},
+		{"a release that failed on the asked C reads failed though the earlier A still serves",
+			shopReport(imageA, imageC, 2), "APP_IMAGE=" + imageC + "\n",
+			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{Failed: true, FailedDigest: "sha256:cccc", ServingDigest: "sha256:aaaa"}, AskedDigest: "sha256:cccc", ExitCode: 2}, true, false},
+		{"a release that failed on the older B while no container runs the asked C reads the asked image absent and no release failed on it",
+			shopReport(imageA, imageB, 1), "APP_IMAGE=" + imageC + "\n",
+			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{Failed: true, FailedDigest: "sha256:bbbb", ServingDigest: "sha256:aaaa"}, AskedDigest: "sha256:cccc", ExitCode: 1}, false, true},
+		{"a release that passed on the asked B while A still serves leaves the container's health to its own check",
+			shopReport(imageA, imageB, 0), "APP_IMAGE=" + imageA + "\nAPP_ROLLED_BACK_FROM=" + imageB + "\n",
+			dockerhost.AskedRelease{AppRelease: dockerhost.AppRelease{ServingDigest: "sha256:aaaa"}, AskedDigest: "sha256:bbbb"}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := dockerhost.ParseImageFile(tc.imageFile).Asked()
+
+			got, err := newest(t, received(39, tc.report)).ReleaseAgainst("shop", "sub_shop", asked)
+
+			if err != nil || got != tc.want || got.FailedOnAsked() != tc.failedOnAsked || got.AskedAbsent() != tc.absent {
+				t.Errorf("ReleaseAgainst(shop, sub_shop, %s) = %+v failed on asked %v, asked absent %v, %v; want %+v, %v, %v",
+					asked, got, got.FailedOnAsked(), got.AskedAbsent(), err, tc.want, tc.failedOnAsked, tc.absent)
+			}
+		})
+	}
+}
+
+func TestReport_ReleaseAgainstNoAskedImageReadsEveryFailedReleaseAsFailed(t *testing.T) {
+	got, err := newest(t, received(39, shopReport(imageA, imageB, 1))).ReleaseAgainst("shop", "sub_shop", "")
+
+	if err != nil || !got.FailedOnAsked() || got.AskedAbsent() {
+		t.Errorf("ReleaseAgainst(shop, sub_shop, \"\") = %+v failed on asked %v, asked absent %v, %v; want the failure on B read as failed",
+			got, got.FailedOnAsked(), got.AskedAbsent(), err)
+	}
+}
+
+func TestReadReport_ReadsABodyTheCallerAlreadyHolds(t *testing.T) {
+	report, err := dockerhost.ReadReport([]byte(shopReport(imageA, imageB, 1)))
+	if err != nil {
+		t.Fatalf("ReadReport = %v; want the report read", err)
+	}
+
+	got, err := report.ReleaseAgainst("shop", "", imageB)
+
+	if err != nil || !got.FailedOnAsked() || got.ExitCode != 1 {
+		t.Errorf("ReleaseAgainst(shop, \"\", %s) on a read body = %+v, %v; want the release failed on B with exit code 1", imageB, got, err)
+	}
+}
+
+func TestReadReport_FailsABodyThatIsNotAReport(t *testing.T) {
+	_, err := dockerhost.ReadReport([]byte(`not json`))
+
+	if err == nil || !strings.Contains(err.Error(), "node report") {
+		t.Errorf("ReadReport(not json) = %v; want an error naming the node report", err)
 	}
 }
 
