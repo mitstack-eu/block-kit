@@ -3,13 +3,20 @@ package robot_test
 // Contract tests of the Robot calls against robottest's fake, which answers in the shapes Robot answered a live trial.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/netip"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -183,6 +190,174 @@ func TestWriteFirewall_SendsNoInternalRuleBackAndWaitsUntilRobotAppliesIt(t *tes
 	}
 	if !slices.Equal(got.Input, want.Input) || !got.WhitelistHOS || got.Status != "active" {
 		t.Errorf("the firewall reads %+v, want the input rules written and active", got)
+	}
+}
+
+func TestWriteFirewall_GivesUpOnAFirewallStuckInProcessOnceTheKitsBoundRunsOut(t *testing.T) {
+	cases := []struct {
+		name      string
+		stick     func(ctx context.Context, f *robottest.Fake, c *robot.Client) error
+		newWrites int
+	}{
+		{"an earlier change never settles, so nothing is written", func(ctx context.Context, f *robottest.Fake, c *robot.Client) error {
+			f.SettleReads = 1_000_000
+			return c.SetFirewall(ctx, number, robot.Firewall{Status: "active", Input: robot.ReplyRules()})
+		}, 0},
+		{"its own write never settles", func(_ context.Context, f *robottest.Fake, _ *robot.Client) error {
+			f.SettleReads = 1_000_000
+			return nil
+		}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, c := newFake(t)
+			c.SetFirewallSettleTimeout(20 * time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := tc.stick(ctx, f, c); err != nil {
+				t.Fatal(err)
+			}
+			writes := len(f.Writes())
+
+			err := c.WriteFirewall(ctx, number, robot.Firewall{Status: "active", FilterIPv6: true, WhitelistHOS: true, Input: robot.ReplyRules()})
+
+			want := "waiting for the firewall of server 3041839 to settle: Robot read it in process after 20ms"
+			if err == nil || !strings.Contains(err.Error(), want) || !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("WriteFirewall = %v; want an error naming %q that matches context.DeadlineExceeded", err, want)
+			}
+			if ctx.Err() != nil {
+				t.Errorf("WriteFirewall ran until the caller's context ended (%v), want it to end at the kit's bound", ctx.Err())
+			}
+			if got := len(f.Writes()) - writes; got != tc.newWrites {
+				t.Errorf("WriteFirewall sent %d writes, want %d", got, tc.newWrites)
+			}
+		})
+	}
+}
+
+func TestWriteFirewall_EndsWithTheCallersContextWhenItEndsBeforeTheKitsBound(t *testing.T) {
+	f, c := newFake(t)
+	f.SettleReads = 1_000_000
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	err := c.WriteFirewall(ctx, number, robot.Firewall{Status: "active", Input: robot.ReplyRules()})
+
+	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "in process after") {
+		t.Errorf("WriteFirewall = %v; want the caller's context.DeadlineExceeded, not the kit's bound", err)
+	}
+}
+
+// proxyTo forwards every request to f, counting them, and lets modify edit each answer on its way back.
+func proxyTo(t *testing.T, f *robottest.Fake, modify func(*http.Response) error) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	target, err := url.Parse(f.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forward := httputil.NewSingleHostReverseProxy(target)
+	forward.ModifyResponse = modify
+	var forwarded atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		forward.ServeHTTP(w, r)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy, &forwarded
+}
+
+// editSettledReadsAfterAWrite passes edit each settled firewall read Robot answers once a firewall write has gone through.
+func editSettledReadsAfterAWrite(edit func(fw map[string]any)) func(*http.Response) error {
+	var written atomic.Bool
+	return func(resp *http.Response) error {
+		if !strings.HasPrefix(resp.Request.URL.Path, "/firewall/") {
+			return nil
+		}
+		if resp.Request.Method != http.MethodGet {
+			written.Store(true)
+			return nil
+		}
+		var answer map[string]map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		if fw := answer["firewall"]; written.Load() && fw["status"] != "in process" {
+			edit(fw)
+		}
+		raw, err := json.Marshal(answer)
+		resp.Body, resp.ContentLength = io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(raw)))
+		return err
+	}
+}
+
+func TestWriteFirewall_FailsNamingEachFieldRobotReadsBackOtherThanWritten(t *testing.T) {
+	rules := func(fw map[string]any, direction string) []any { return fw["rules"].(map[string]any)[direction].([]any) }
+	setRules := func(fw map[string]any, direction string, r []any) { fw["rules"].(map[string]any)[direction] = r }
+	otherStatus := func(fw map[string]any) { fw["status"] = "disabled" }
+	ipv6Unfiltered := func(fw map[string]any) { fw["filter_ipv6"] = false }
+	hosUnlisted := func(fw map[string]any) { fw["whitelist_hos"] = false }
+	inputDropped := func(fw map[string]any) { setRules(fw, "input", rules(fw, "input")[1:]) }
+	outputAdded := func(fw map[string]any) {
+		setRules(fw, "output", append(rules(fw, "output"), map[string]any{"name": "stray", "action": "accept"}))
+	}
+	fields := []string{"status", "filter_ipv6", "whitelist_hos", "input rules", "output rules"}
+	cases := []struct {
+		name  string
+		edit  func(fw map[string]any)
+		named []string
+	}{
+		{"Robot reads every field as written", func(map[string]any) {}, nil},
+		{"Robot lists no internal output rule ahead of those written", func(fw map[string]any) {
+			setRules(fw, "output", rules(fw, "output")[len(robottest.InternalRules):])
+		}, nil},
+		{"Robot reads another status", otherStatus, []string{"status"}},
+		{"Robot reads IPv6 unfiltered", ipv6Unfiltered, []string{"filter_ipv6"}},
+		{"Robot reads Hetzner's services not admitted", hosUnlisted, []string{"whitelist_hos"}},
+		{"Robot reads an input rule fewer", inputDropped, []string{"input rules"}},
+		{"Robot reads an output rule it was not sent", outputAdded, []string{"output rules"}},
+		{"Robot reads every field otherwise", func(fw map[string]any) {
+			otherStatus(fw)
+			ipv6Unfiltered(fw)
+			hosUnlisted(fw)
+			inputDropped(fw)
+			outputAdded(fw)
+		}, fields},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := newFake(t)
+			proxy, _ := proxyTo(t, f, editSettledReadsAfterAWrite(tc.edit))
+			want := robot.Firewall{Status: "active", FilterIPv6: true, WhitelistHOS: true, Input: robot.ReplyRules()}
+
+			err := f.ClientAt(proxy.URL).WriteFirewall(context.Background(), number, want)
+
+			if (err != nil) != (len(tc.named) > 0) {
+				t.Fatalf("WriteFirewall = %v; want an error naming %v", err, tc.named)
+			}
+			for _, field := range fields {
+				if err != nil && strings.Contains(err.Error(), field) != slices.Contains(tc.named, field) {
+					t.Errorf("WriteFirewall = %v; naming %s is %v, want %v", err, field, !slices.Contains(tc.named, field), slices.Contains(tc.named, field))
+				}
+			}
+		})
+	}
+}
+
+func TestFakeClientAt_ReachesTheFakeThroughAnotherAddressAndPollsWithoutWaiting(t *testing.T) {
+	f, _ := newFake(t)
+	proxy, forwarded := proxyTo(t, f, nil)
+
+	c := f.ClientAt(proxy.URL)
+	_, err := c.GetServer(context.Background(), number)
+
+	if err != nil || forwarded.Load() != 1 || f.Calls(http.MethodGet, "/server/3041839") != 1 {
+		t.Errorf("GetServer through the proxy = %v after %d forwarded requests and %d at the fake, want nil after 1 and 1",
+			err, forwarded.Load(), f.Calls(http.MethodGet, "/server/3041839"))
+	}
+	if c.PollInterval != time.Millisecond || c.ReadWindow != 0 {
+		t.Errorf("the client polls every %s with a read window of %s, want 1ms and none", c.PollInterval, c.ReadWindow)
 	}
 }
 
