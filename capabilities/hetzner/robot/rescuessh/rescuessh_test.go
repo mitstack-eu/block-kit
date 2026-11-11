@@ -9,8 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -192,6 +196,24 @@ func TestRun_ReturnsTheLastWholeLinesThatFitAndTheExitErrorWhenTheScriptFails(t 
 	}
 }
 
+// A line cut short could end inside a secret and slip past the block's scrub, so a line too long to keep whole is dropped.
+func TestRun_ReturnsNoOutputWhenItsLastLineIsLongerThanMaxOutput(t *testing.T) {
+	h := rescuesshtest.New(t, admitAll)
+	config := rescuessh.Config{Script: []byte("echo first; head -c 100000 /dev/zero | tr '\\0' x; echo; exit 3\n")}
+	s, err := config.Dial(context.Background(), h.Addr, newKey(t), server, nil)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer s.Close()
+
+	out, err := s.Run(context.Background(), "write")
+
+	var exit *ssh.ExitError
+	if out != "" || !errors.As(err, &exit) {
+		t.Errorf("Run returned %d bytes starting %.20q and %v, want no output and the script's exit error", len(out), out, err)
+	}
+}
+
 func TestRun_RunsTheScriptWithNoArguments(t *testing.T) {
 	h := rescuesshtest.New(t, admitAll)
 	s, err := rescuessh.Config{Script: []byte("echo read the logs; exit 4\n")}.Dial(context.Background(), h.Addr, newKey(t), server, nil)
@@ -211,20 +233,59 @@ func TestRun_RunsTheScriptWithNoArguments(t *testing.T) {
 	}
 }
 
-func TestRun_StopsWhenTheContextEndsAndReturnsTheOutputSoFar(t *testing.T) {
+// cancelOnOutput ends a run's context once the output reaching the session holds want, so the end never races the output.
+type cancelOnOutput struct {
+	mu     sync.Mutex
+	got    strings.Builder
+	want   string
+	cancel context.CancelFunc
+}
+
+func (w *cancelOnOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.got.Write(p)
+	if strings.Contains(w.got.String(), w.want) {
+		w.cancel()
+	}
+	return len(p), nil
+}
+
+func (w *cancelOnOutput) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.got.String()
+}
+
+func TestRun_StopsWhenTheContextEndsWhileTheScriptStillRuns(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	if err := syscall.Mkfifo(hold, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The script opens the hold before it prints, so this write always finds it reading and lets it exit.
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(hold, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_, _ = f.WriteString("\n")
+			f.Close()
+		}
+	})
 	h := rescuesshtest.New(t, admitAll)
-	s, err := rescuessh.Config{Script: []byte("echo started; exec timeout 30 tail -f /dev/null\n")}.Dial(context.Background(), h.Addr, newKey(t), server, nil)
+	config := rescuessh.Config{Script: []byte("exec 3<> '" + hold + "'; echo started; read -r _ <&3\n")}
+	s, err := config.Dial(context.Background(), h.Addr, newKey(t), server, nil)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
 	defer s.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	start := time.Now()
+	out := &cancelOnOutput{want: "started\n", cancel: cancel}
 
-	out, err := s.Run(ctx, "write")
+	err = s.RunTo(ctx, out, "write")
 
-	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 10*time.Second || out != "started\n" {
-		t.Errorf("Run = %q, %v after %s, want the output so far and the deadline at once", out, err, time.Since(start))
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "the rescue script write did not finish") {
+		t.Errorf("Run = %v, want the context's end, naming the script", err)
+	}
+	if got := out.String(); got != "started\n" {
+		t.Errorf("the script printed %q before the context ended, want %q", got, "started\n")
 	}
 }

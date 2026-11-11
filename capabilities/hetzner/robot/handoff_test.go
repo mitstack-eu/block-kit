@@ -5,6 +5,7 @@ package robot_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"slices"
@@ -235,25 +236,31 @@ func TestInstall_DeletesTheShortLivedServerWhenTheHandOffFails(t *testing.T) {
 }
 
 // The hand-off sends the rescue session no secret, so its scripts' output may stand in the error.
-func TestInstall_AFailedRescueStepNamesTheScriptsOutput(t *testing.T) {
+func TestInstall_AFailedRescueStepNamesTheScriptsOutputWhenItPrintedAny(t *testing.T) {
 	for _, step := range []string{"read", "write"} {
-		t.Run(step, func(t *testing.T) {
-			h := newHandOff(t, "FSN1-DC14")
-			failed := errors.New("the rescue script " + step + " failed: Process exited with status 3")
-			if step == "read" {
-				h.rescue.readErr = failed
-			} else {
-				h.rescue.writeErr = failed
-			}
-			h.rescue.failOutput = "mkfs: /dev/nvme0n1 is apparently in use by the system\n"
+		for _, output := range []string{"mkfs: /dev/nvme0n1 is apparently in use by the system\n", ""} {
+			t.Run(fmt.Sprintf("%s printing %q", step, output), func(t *testing.T) {
+				h := newHandOff(t, "FSN1-DC14")
+				failed := errors.New("the rescue script " + step + " failed: Process exited with status 3")
+				if step == "read" {
+					h.rescue.readErr = failed
+				} else {
+					h.rescue.writeErr = failed
+				}
+				h.rescue.failOutput = output
 
-			err := h.install(t)
+				err := h.install(t)
 
-			if !errors.Is(err, failed) || !strings.Contains(err.Error(), h.rescue.failOutput) {
-				t.Fatalf("Install = %v, want the %s step's failure and the script's output", err, step)
-			}
-			assertCleanedUp(t, h)
-		})
+				want := failed.Error()
+				if output != "" {
+					want += "; its output ended: " + output
+				}
+				if !errors.Is(err, failed) || !strings.HasSuffix(err.Error(), want) {
+					t.Fatalf("Install = %v, want it to end with %q", err, want)
+				}
+				assertCleanedUp(t, h)
+			})
+		}
 	}
 }
 
