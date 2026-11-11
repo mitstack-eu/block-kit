@@ -222,6 +222,10 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 			edit: func(d *contract.Desired) {
 				d.Bindings["host"]["clusterRepoUrl"] = "https://github.com/other/docker-host"
 			}},
+		{name: "a host repository outside the account the request's GitHub config names", class: "host-binding", says: "is not a repository of the GitHub connection's account other-account",
+			edit: func(d *contract.Desired) {
+				d.Instances = map[string]contract.InstanceConfig{"github": {Config: map[string]string{"owner": "other-account"}}}
+			}},
 		{name: "a GitHub API base off the allowlist", class: "untrusted-api-base", says: "github api base rejected",
 			edit: func(d *contract.Desired) {
 				d.Instances = map[string]contract.InstanceConfig{"github": {Endpoint: "https://api.github.example.org"}}
@@ -248,6 +252,27 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 				t.Errorf("a refused subscribe left shop holding %v; want it as it was, %v", slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(held)))
 			}
 		})
+	}
+}
+
+func TestDatabase_LandsOnTheHostRepositoryOfAnOwnerTheRequestCarriesOnlyInTheGitHubConfig(t *testing.T) {
+	e := newDBEnv(t)
+	d := dbDesired("shop", nil)
+	d.Secrets = map[string]map[string]string{"github": {"token": dbToken}}
+	d.Instances = map[string]contract.InstanceConfig{"github": {Config: map[string]string{"owner": dbOwner}}}
+
+	_, err := e.db.EnsureResources(context.Background(), d)
+
+	if err != nil {
+		t.Fatalf("EnsureResources with the owner %q only in the GitHub config = %v; want the database landed on %s", dbOwner, err, dbRepo)
+	}
+	if _, landed := e.host.Main()["shop/"+dbBlock+".compose.yaml"]; !landed {
+		t.Errorf("%s holds %v; want shop's compose file landed on it", dbRepo, slices.Sorted(maps.Keys(e.host.Main())))
+	}
+	for _, r := range e.host.Writes() {
+		if !strings.HasPrefix(r.Path, "/repos/"+dbRepo+"/") {
+			t.Errorf("%s %s wrote outside the host repository; want every write under /repos/%s/", r.Method, r.Path, dbRepo)
+		}
 	}
 }
 

@@ -112,7 +112,10 @@ host. A request hands the operator each connection's secrets in `Secrets` and
 its settings, such as its API endpoint, in `Instances`. The suite counts a
 block as calling the API when a non-test file reads `Secrets["github"]` for
 anything but its `owner`, reads `Instances["github"]`, or names
-`api.github.com`. Such a block passes only when both of these hold:
+`api.github.com`. A block that reads the owner and the App id through
+`ghapi.Owner` and `ghapi.AppID` reads neither place itself, so those two calls
+alone make no block an API caller. A block that calls the API passes only when
+both of these hold:
 
 - It resolves the API host a request supplies through the kit's `ghapi.Base`
   or `ghapi.BaseFromEnv`, which check it against an allowlist of hosts, or

@@ -27,10 +27,10 @@ type hostRepo struct {
 
 // dialHostRepo refuses, before any request, a host repository outside the GitHub connection's account.
 func dialHostRepo(d contract.Desired, recorded string, newClient func(base, token string) *ghapi.Client) (*hostRepo, error) {
-	token, owner := d.Secrets["github"]["token"], d.Secrets["github"]["owner"]
+	token, owner := d.Secrets["github"]["token"], ghapi.Owner(d)
 	if token == "" || owner == "" {
 		return nil, handler.Refuse("missing-github-access",
-			"the GitHub connection is missing: secrets.github.token or secrets.github.owner is empty, so the host's repository cannot be read or written; reconnect GitHub and retry")
+			"the GitHub connection is missing: the request carries no GitHub token or no GitHub owner, so the host's repository cannot be read or written; reconnect GitHub and retry")
 	}
 	repoURL := d.Bindings[reqHost]["clusterRepoUrl"]
 	if repoURL == "" && recorded != "" {
