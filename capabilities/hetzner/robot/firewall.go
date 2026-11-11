@@ -106,11 +106,8 @@ func (c *Client) SetFirewall(ctx context.Context, number int64, fw Firewall) err
 	return c.do(ctx, http.MethodPost, numbered("/firewall/", number), form, nil)
 }
 
-// WriteFirewall waits out an earlier change, writes want and waits until Robot reads every field as written. With no
-// output rules in want, it keeps the output rules it read but Robot's internal ones, which Robot keeps itself and would
-// otherwise list twice, and admits all output when none is left, as the trial server's firewall did before any write.
-// Each of its two waits ends within firewallSettleTimeout, so a caller restoring after its own context ended may pass
-// context.WithoutCancel of it.
+// WriteFirewall writes want once an earlier change settles and returns once Robot reads every field as written, each
+// wait ending within firewallSettleTimeout, so a restore may pass context.WithoutCancel of its context.
 func (c *Client) WriteFirewall(ctx context.Context, number int64, want Firewall) error {
 	ctx = afresh(ctx)
 	current, err := c.settledFirewall(ctx, number)
@@ -118,6 +115,7 @@ func (c *Client) WriteFirewall(ctx context.Context, number int64, want Firewall)
 		return err
 	}
 	if want.Output == nil {
+		// Robot keeps its internal rules itself and would list them twice, and the trial server admitted all output before any write.
 		for _, r := range current.Output {
 			if r.Name != internalRuleName && !slices.Contains(want.Output, r) {
 				want.Output = append(want.Output, r)
