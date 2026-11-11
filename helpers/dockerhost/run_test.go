@@ -154,6 +154,18 @@ func TestRunner_CommitsOneRequestNamingTheServerAndADeadline15MinutesOnAndAnswer
 	}
 }
 
+func TestRunner_RequestPathNamesTheFileARunCommitsSoABlockCanRemoveIt(t *testing.T) {
+	e := newRunEnv(t)
+	_, err := e.run(t, asked(runID))
+	wantPending(t, err)
+
+	got := e.runner.RequestPath(runApp)
+
+	if _, held := e.host.Main()[got]; got != requestPath || !held {
+		t.Errorf("RequestPath(%s) = %q, held on main %v; want %q, the file the run committed", runApp, got, held, requestPath)
+	}
+}
+
 func TestRunner_CommitsNothingWhenTheSameRunIdIsSentAgain(t *testing.T) {
 	e := newRunEnv(t)
 	_, first := e.run(t, asked(runID))

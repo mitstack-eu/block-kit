@@ -126,6 +126,11 @@ func (r Runner) service(process string) (string, error) {
 	return process, nil
 }
 
+// RequestPath is where a run of the app commits its request in the host's repository, which the block removes with the app's other files.
+func (r Runner) RequestPath(app string) string {
+	return appPath(app, r.Block+runRequestSuffix)
+}
+
 func (r Runner) now() time.Time {
 	if r.Now == nil {
 		return time.Now()
@@ -170,7 +175,7 @@ func (r Runner) ask(ctx context.Context, d contract.Desired, t target, file RunR
 	if err != nil {
 		return err
 	}
-	path := appPath(t.app, r.Block+runRequestSuffix)
+	path := r.RequestPath(t.app)
 	held, err := heldRunID(ctx, repo, snap, path)
 	if err != nil || held == file.RunID {
 		return err
