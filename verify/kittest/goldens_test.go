@@ -44,7 +44,7 @@ func TestValidGoldens_PortableOutsideMonorepo(t *testing.T) {
 
 	got := kittest.ValidGoldens(t)
 
-	want := []string{"subscribe", "unsubscribe", "upgrade", "validate", "logs", "run"}
+	want := []string{"subscribe", "unsubscribe", "upgrade", "validate", "logs", "run", "snapshot", "restore"}
 	if len(got) != len(want) {
 		t.Fatalf("ValidGoldens() from outside the monorepo returned %d golden(s), want %d: %v",
 			len(got), len(want), got)

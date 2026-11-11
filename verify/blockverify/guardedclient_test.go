@@ -11,7 +11,7 @@ const capabilityOperatorDir = "testdata/capability-verify-connection"
 
 func capabilityOperator(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
-		return map[string]string{"go.mod": kitGoMod(t)}
+		return map[string]string{"go.mod": kitGoMod(t), "go.sum": kitGoSum(t)}
 	}, append([]option{withDir(capabilityOperatorDir)}, opts...)...)
 }
 

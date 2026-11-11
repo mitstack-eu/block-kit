@@ -30,10 +30,43 @@ func kitModuleDir(t *testing.T) string {
 	return dir
 }
 
+// kitGoMod requires the kit on this checkout and, as go mod tidy leaves a block, what the kit's own go.mod requires at the kit's Go version.
 func kitGoMod(t *testing.T) string {
 	t.Helper()
-	return "module fixture\n\ngo 1.25\n\nrequire github.com/mitstack-eu/block-kit v0.4.0\n\n" +
+	goLine, requires := "", []string{"github.com/mitstack-eu/block-kit v0.4.0"}
+	for _, line := range strings.Split(kitModuleFile(t, "go.mod"), "\n") {
+		line, _, _ = strings.Cut(line, "//")
+		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require "))
+		switch {
+		case len(fields) == 2 && fields[0] == "go":
+			goLine = line
+		case len(fields) == 2 && strings.Contains(fields[0], "/"):
+			requires = append(requires, fields[0]+" "+fields[1]+" // indirect")
+		}
+	}
+	if goLine == "" {
+		t.Fatal("the kit's go.mod has no go line")
+	}
+	return "module fixture\n\n" + goLine + "\n\nrequire (\n\t" + strings.Join(requires, "\n\t") + "\n)\n\n" +
 		"replace github.com/mitstack-eu/block-kit => " + kitModuleDir(t) + "\n"
+}
+
+// kitGoSum is the kit's own go.sum, which holds the sum of every module a kit package imports, and is empty while the kit requires nothing.
+func kitGoSum(t *testing.T) string {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(kitModuleDir(t), "go.sum")); err != nil {
+		return ""
+	}
+	return kitModuleFile(t, "go.sum")
+}
+
+func kitModuleFile(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(kitModuleDir(t), name))
+	if err != nil {
+		t.Fatalf("reading the kit's %s: %v", name, err)
+	}
+	return string(raw)
 }
 
 func readTxtar(t *testing.T, path string) (comment string, files map[string]string) {
@@ -132,7 +165,7 @@ func fullBlock(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
 		_, files := readTxtar(t, filepath.Join(fixturesDir, "full-block.txtar"))
 		withTypeSnapshot(t, files)
-		files["go.mod"] = kitGoMod(t)
+		files["go.mod"], files["go.sum"] = kitGoMod(t), kitGoSum(t)
 		return files
 	}, opts...)
 }
@@ -161,14 +194,14 @@ func kitV1Block(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
 		_, files := readTxtar(t, filepath.Join(fixturesDir, "kit-v1-block.txtar"))
 		withTypeSnapshot(t, files)
-		files["go.mod"] = kitGoMod(t)
+		files["go.mod"], files["go.sum"] = kitGoMod(t), kitGoSum(t)
 		return files
 	}, opts...)
 }
 
 func moduleBlock(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
-		return map[string]string{"go.mod": kitGoMod(t), "main.go": source(t, "main-without-handler.go")}
+		return map[string]string{"go.mod": kitGoMod(t), "go.sum": kitGoSum(t), "main.go": source(t, "main-without-handler.go")}
 	}, opts...)
 }
 
@@ -285,6 +318,7 @@ var suitesByName = map[string]func(target, base, changed string) SuiteResult{
 	"guarded-client": func(d, _, _ string) SuiteResult { return guardedClientSuite(d) },
 	"teardown":       func(d, _, _ string) SuiteResult { return teardownSuite(d) },
 	"resources":      func(d, _, _ string) SuiteResult { return resourcesSuite(d) },
+	"replacement":    func(d, _, _ string) SuiteResult { return replacementSuite(d) },
 	"deliverable":    func(d, _, _ string) SuiteResult { return deliverableSuite(d) },
 	"manifest":       func(d, b, c string) SuiteResult { return manifestSuite(d, b, c, "") },
 }

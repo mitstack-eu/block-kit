@@ -57,6 +57,7 @@ func requestFromGolden(m map[string]any) contract.Request {
 		BlockID: strOf(m, "blockId"), BlockVersion: strOf(m, "blockVersion"), OrgID: strOf(m, "orgId"), AppID: strOf(m, "appId"),
 		OBO: strOf(m, "obo"), Nonce: strOf(m, "nonce"),
 		RunID: strOf(m, "runId"), Command: strOf(m, "command"), Process: strOf(m, "process"),
+		Unit: strOf(m, "unit"), Replacing: m["replacing"] == true,
 		Params: strMap(m["params"]), SecretInputs: strMap(m["secretInputs"]), AppSecrets: strMap(m["appSecrets"]),
 		PriorOutputs: strMap(m["priorOutputs"]), Secrets: strMaps(m["secrets"]), Bindings: strMaps(m["bindings"]),
 	}
@@ -128,7 +129,7 @@ func TestDecodeRequest_CarriesEveryGoldenFieldOntoTheRequest(t *testing.T) {
 func TestDecodeRequest_EveryRequestGoldenDecodesOrIsRefusedExactlyAsPinned(t *testing.T) {
 	refusals := map[string]string{
 		"invalid-missing-nonce": `contract: envelope field "nonce" is required`,
-		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, run, got "reticulate"`,
+		"invalid-unknown-verb":  `contract: envelope field "operation" must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, run, snapshot, restore, got "reticulate"`,
 	}
 	pinned, err := os.ReadFile("testdata/request-golden-encodings.json")
 	if err != nil {
@@ -594,6 +595,16 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 				t.Errorf("properties.process type = %v, want string", schemaTypes(prop))
 			}
 		}},
+		{"unit", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "string") {
+				t.Errorf("properties.unit type = %v, want string", schemaTypes(prop))
+			}
+		}},
+		{"replacing", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "boolean") {
+				t.Errorf("properties.replacing type = %v, want boolean", schemaTypes(prop))
+			}
+		}},
 		{"caller", func(t *testing.T, prop map[string]any) {
 			if !hasType(prop, "object") {
 				t.Fatalf("properties.caller type = %v, want object", schemaTypes(prop))
@@ -622,11 +633,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_15_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_16_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.15.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.15.0: it adds the operation run, a minor change from 1.14.0, which added lease", doc["version"])
+	if doc["version"] != "1.16.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.16.0: it adds the operations snapshot and restore, a minor change from 1.15.0, which added run", doc["version"])
 	}
 }
 
@@ -636,6 +647,18 @@ func TestEnvelopeSchema_ListsTheRunOperation(t *testing.T) {
 
 	if enum, _ := operation["enum"].([]any); !slices.Contains(enum, any("run")) {
 		t.Errorf("envelope.schema.json operation enum = %v, want it to list \"run\"", operation["enum"])
+	}
+}
+
+func TestEnvelopeSchema_ListsTheSnapshotAndRestoreOperations(t *testing.T) {
+	doc := jsonObject(t, contract.EnvelopeSchema)
+	operation, _ := doc["properties"].(map[string]any)["operation"].(map[string]any)
+	enum, _ := operation["enum"].([]any)
+
+	for _, op := range []string{"snapshot", "restore"} {
+		if !slices.Contains(enum, any(op)) {
+			t.Errorf("envelope.schema.json operation enum = %v, want it to list %q", operation["enum"], op)
+		}
 	}
 }
 
@@ -844,4 +867,84 @@ func TestDecodeRequest_RefusesARunWhoseIdCommandOrProcessIsOutOfForm(t *testing.
 			requireErrorNaming(t, "DecodeRequest(run)", err, tc.wants...)
 		})
 	}
+}
+
+func TestDecodeRequest_ReadsTheUnitAndTheReplacementMarkerOfASnapshotAndARestore(t *testing.T) {
+	cases := []struct {
+		golden       string
+		wantHandover string
+	}{
+		{"snapshot", ""},
+		{"restore", "hnd_0001"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.golden, func(t *testing.T) {
+			req := decodeGolden(t, tc.golden)
+
+			if req.Operation != tc.golden || req.Unit != "app-data" || !req.Replacing {
+				t.Errorf("the %s golden decodes to operation %q, unit %q, replacing %v; want %q, \"app-data\", true", tc.golden, req.Operation, req.Unit, req.Replacing, tc.golden)
+			}
+			if got := req.PriorOutputs[contract.HandoverOutputKey("app-data")]; got != tc.wantHandover {
+				t.Errorf("the %s golden carries the handover %q under priorOutputs[%q]; want %q", tc.golden, got, contract.HandoverOutputKey("app-data"), tc.wantHandover)
+			}
+			if d := req.Desired(); d.Replacing != req.Replacing {
+				t.Errorf("Desired().Replacing = %v for a request sent during a replacement, want %v", d.Replacing, req.Replacing)
+			}
+		})
+	}
+}
+
+func TestDecodeRequest_ARequestOutsideAReplacementCarriesNoMarker(t *testing.T) {
+	req := decodeGolden(t, "upgrade")
+
+	if req.Replacing || req.Desired().Replacing {
+		t.Errorf("the upgrade golden sent outside a replacement decodes with replacing set: request %v, desired %v", req.Replacing, req.Desired().Replacing)
+	}
+}
+
+func TestDecodeRequest_RefusesASnapshotOrARestoreNamingNoUnit(t *testing.T) {
+	for _, operation := range []string{contract.OperationSnapshot, contract.OperationRestore} {
+		for label, unit := range map[string]any{"no unit": nil, "an empty unit": ""} {
+			t.Run(operation+" with "+label, func(t *testing.T) {
+				raw := mutateGolden(t, operation, func(m map[string]any) {
+					if unit == nil {
+						delete(m, "unit")
+						return
+					}
+					m["unit"] = unit
+				})
+
+				_, err := contract.DecodeRequest(raw)
+
+				requireErrorNaming(t, "DecodeRequest("+operation+")", err, `"unit"`)
+			})
+		}
+	}
+}
+
+func TestHandoverOutputKey_NamesTheUnitItHandsOver(t *testing.T) {
+	for unit, want := range map[string]string{"app-data": "handover.app-data", "vault": "handover.vault"} {
+		if got := contract.HandoverOutputKey(unit); got != want {
+			t.Errorf("HandoverOutputKey(%q) = %q, want %q", unit, got, want)
+		}
+	}
+}
+
+func mutateGolden(t *testing.T, name string, mutate func(m map[string]any)) []byte {
+	t.Helper()
+	valid, err := contract.ValidGoldens()
+	if err != nil {
+		t.Fatalf("contract.ValidGoldens(): %v", err)
+	}
+	raw, ok := valid[name]
+	if !ok {
+		t.Fatalf("contract.ValidGoldens() has no %q entry", name)
+	}
+	m := jsonObject(t, raw)
+	mutate(m)
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("re-marshal mutated %s golden: %v", name, err)
+	}
+	return out
 }
