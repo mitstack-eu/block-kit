@@ -76,7 +76,7 @@ type Ask struct {
 	Size Reservation
 }
 
-// Capacity is what the host's report says it can give its apps, a wait for the host's next report while it gives none, or a refusal of a host the platform attests absent.
+// Capacity is the allocatable capacity the host's report gives, whatever error it also carries, a wait for the host's next report while it gives none, or a refusal of a host the platform attests absent.
 func Capacity(report Report, found bool, part string) (Reservation, error) {
 	switch {
 	case report.absence != nil:
