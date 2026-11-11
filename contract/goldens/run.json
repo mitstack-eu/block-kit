@@ -1,0 +1,35 @@
+{
+  "operation": "run",
+  "subscriptionId": "sub_a1b2c3d4e5",
+  "idempotencyKey": "sub_a1b2c3d4e5:run:run_4c1e9a7f2b3d",
+  "blockId": "blk_docker_app_slice",
+  "blockVersion": "1.0.0",
+  "orgId": "org_acme",
+  "appId": "app_webapp01",
+  "params": {
+    "appName": "myapp"
+  },
+  "secrets": {
+    "github": {
+      "token": "github-token-placeholder"
+    }
+  },
+  "obo": "eyJvcmdfaWQiOiJvcmdfYWNtZSJ9.c2lnbmF0dXJlLXBsYWNlaG9sZGVy",
+  "eventsCallback": {
+    "url": "https://api.mitstack.dev/v1/webhooks/operator-events",
+    "token": "events-callback-token-placeholder"
+  },
+  "bindings": {
+    "host": {
+      "subscriptionId": "sub_h0st5e1f2a",
+      "clusterRepoUrl": "https://github.com/acme/mitstack-host",
+      "execKind": "git-pull",
+      "execTarget": "61432178"
+    }
+  },
+  "createdAt": "2026-11-11T14:00:00Z",
+  "nonce": "n0nce-run-0006",
+  "runId": "run_4c1e9a7f2b3d",
+  "command": "php bin/add-user.php alice@example.com",
+  "process": "web"
+}

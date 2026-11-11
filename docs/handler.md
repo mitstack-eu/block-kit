@@ -752,6 +752,89 @@ id that signed it passes. The handler never replays a lease from the idempotency
 cache, because a replayed credential may have expired, and it sends no
 lifecycle event for one.
 
+## Running a one-off command
+
+A builder sometimes needs one admin step inside their app, such as adding a
+user, and nobody logs in to a host mitstack manages. The platform asks the
+block that runs the app with the `run` operation, a signed call to the
+operator's `/hook` like any other lifecycle call. The block starts the command
+in a fresh container of the app's image and answers once the command ended.
+[ADR 0142](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0142-a-one-off-command-runs-in-the-apps-container.md)
+holds the reasoning.
+
+A block that answers it lists `run` under `spec.lifecycle.operations` and names
+its function in `Config.Run`. The platform sends the operation only to a block
+that lists it:
+
+```yaml
+lifecycle:
+  endpoint: https://app-slice.example.com/hook
+  operations: [subscribe, unsubscribe, upgrade, validate, logs, run]
+  contract: kit/v1
+```
+
+```go
+cfg.Run = dockerhost.Runner{Block: "docker-app-slice", Processes: []string{"web"}, Reports: observe.NodeReportsClient{}}.Run
+```
+
+`handler.New` refuses a manifest that lists `run` with no `Config.Run`, and a
+`Config.Run` whose manifest does not list `run`, so a run never reaches a
+block that cannot answer it. A block whose app runs on a Docker host uses
+`dockerhost.Runner`, as above and in
+[Running a command in an app's container](helpers.md#running-a-command-in-an-apps-container).
+
+The request carries three fields beside the usual ones, and `req.Run()` hands
+them to the function as a `contract.RunRequest`:
+
+| Field | Go field | Meaning |
+|---|---|---|
+| `runId` | `ID` | The id the platform mints when it accepts the run, `run_` and twelve lowercase hex characters, kept the same on every send of one run |
+| `command` | `Command` | One line of at most 1,000 printable ASCII characters, `contract.MaxRunCommandLength`, which the container runs with `sh -c` |
+| `process` | `Process` | The container of the part the command runs in, such as `web`. It is empty when the builder named none, and the block then runs its entry, the process that serves the app's address |
+
+A run request looks like this, cut to the fields a run adds:
+
+```json
+{
+  "operation": "run",
+  "subscriptionId": "sub_a1b2c3d4e5",
+  "runId": "run_4c1e9a7f2b3d",
+  "command": "php bin/add-user.php alice@example.com",
+  "process": "web"
+}
+```
+
+`contract.DecodeRequest` refuses a run whose id has another form, whose command
+is empty, longer than 1,000 characters, of a second line or holding a
+character outside printable ASCII, and whose process is not lowercase letters,
+digits, hyphens and underscores. A refused request never reaches the block.
+`contract/goldens/run.json` is the whole request the platform sends.
+
+The engine sends the same run again on each node report of the host until the
+block answers it ended. Each answer of the function maps to one answer of the
+handler:
+
+| The function returns | The handler answers |
+|---|---|
+| A `contract.RunResult` | 200 with the result under `run`, every request secret scrubbed from its output |
+| An error wrapping `handler.Wait` | 200 `pending:true`, with the wait's detail as `statusDetail` |
+| A `handler.Refuse` | 400 with the refusal, as when the host refused the run or the run names a process the block does not run |
+| Any other error, or a panic | 500 |
+
+An answer that ended looks like this:
+
+```json
+{"outputs":null,"run":{"exitCode":0,"output":"added alice@example.com\n","digest":"sha256:5f1c","startedAt":"2026-11-11T14:00:09Z","endedAt":"2026-11-11T14:00:10Z"}}
+```
+
+`exitCode` and `output` are always there, and `digest`, `startedAt` and
+`endedAt` name the image and the times when the host reported them. A command
+that exits non-zero still ended, so its answer is a 200 with that exit code.
+A block whose manifest does not list `run` answers 400 with the refusal class
+`run-not-listed`. The handler never replays a run from the idempotency cache,
+because each send reads the host's newest report, and it sends no lifecycle
+event for one, since the platform records the run itself.
+
 ## Serving a subscription's logs
 
 The console's Troubleshoot panel and MCP's `get_app_logs` show a part's recent

@@ -1,0 +1,14 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: shop-slice
+  name: Shop slice
+  owner: acme
+spec:
+  version: 1.2.0
+  description: Runs one app's container on its org's Docker host and its admin commands.
+  resources: [hetzner.server-container]
+  lifecycle:
+    endpoint: https://shop-slice.example.com/hook
+    operations: [subscribe, unsubscribe, upgrade, validate, logs, run]
+    contract: kit/v1

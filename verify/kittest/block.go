@@ -159,12 +159,21 @@ type blockServer struct {
 	audience string
 }
 
-// sendsNoLogs gives a check built from the manifest alone, which never sends a logs request, the logs function handler.New requires of a manifest listing logs.
-func sendsNoLogs(cfg handler.Config) handler.Config {
+// sendsNoLogsOrRun gives a check built from the manifest alone, which never sends a logs or a run request, the functions handler.New requires of a manifest listing either.
+func sendsNoLogsOrRun(cfg handler.Config) handler.Config {
 	m, err := contract.ParseManifest(cfg.Manifest)
-	if err == nil && cfg.SubscriptionLogs == nil && slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs) {
+	if err != nil {
+		return cfg
+	}
+	operations := m.Block.Spec.Lifecycle.Operations
+	if cfg.SubscriptionLogs == nil && slices.Contains(operations, contract.OperationLogs) {
 		cfg.SubscriptionLogs = func(context.Context, contract.Desired) ([]string, error) {
 			return nil, errors.New("kittest: this check sends no logs request")
+		}
+	}
+	if cfg.Run == nil && slices.Contains(operations, contract.OperationRun) {
+		cfg.Run = func(context.Context, contract.Desired, contract.RunRequest) (contract.RunResult, error) {
+			return contract.RunResult{}, errors.New("kittest: this check sends no run request")
 		}
 	}
 	return cfg
