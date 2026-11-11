@@ -1503,8 +1503,11 @@ standard library. `Installer.Dial` opens the session, and the module
 `github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/rescuessh`
 provides one: `rescuessh.Config{Script: script}.Dial` accepts only a host key
 Robot named, and any key when Robot named none, and it runs nothing but the
-script. `rescuesshtest.New(t, admit)` is a fake rescue system for a block's
-tests, which runs each command with bash.
+script. The session's `Run` returns the end of the script's output, the last
+whole lines that fit 64 KiB, even when the script fails or the context ends
+first. Its error quotes none of that output, so scrub the output before you
+report it if your script can print a secret. `rescuesshtest.New(t, admit)` is
+a fake rescue system for a block's tests, which runs each command with bash.
 
 Robot's documentation at
 [robot.hetzner.com/doc/webservice](https://robot.hetzner.com/doc/webservice/en.html)

@@ -20,7 +20,7 @@ import (
 const (
 	user        = "root"
 	dialTimeout = 10 * time.Second
-	// MaxOutput is how much of a script's output a session keeps.
+	// MaxOutput is how much of the end of a script's output a session keeps, from a line's start.
 	MaxOutput = 64 << 10
 )
 
@@ -102,7 +102,7 @@ func dial(ctx context.Context, addr string, config *ssh.ClientConfig) (*ssh.Clie
 	return ssh.NewClient(c, chans, reqs), nil
 }
 
-// Run runs the script with args and returns its output, ended at MaxOutput.
+// Run runs the script with args and returns the end of its output beside any error, which quotes none of the output.
 func (s *Session) Run(ctx context.Context, args ...string) (string, error) {
 	session, err := s.client.NewSession()
 	if err != nil {
@@ -113,33 +113,43 @@ func (s *Session) Run(ctx context.Context, args ...string) (string, error) {
 	session.Stdin, session.Stdout, session.Stderr = bytes.NewReader(s.script), &out, &out
 	done := make(chan error, 1)
 	go func() { done <- session.Run(strings.Join(append([]string{"bash", "-s", "--"}, args...), " ")) }()
+	script := strings.Join(append([]string{"the rescue script"}, args[:min(len(args), 1)]...), " ")
 	select {
 	case err = <-done:
+		if err != nil {
+			return out.String(), fmt.Errorf("%s failed: %w", script, err)
+		}
+		return out.String(), nil
 	case <-ctx.Done():
-		err = ctx.Err()
+		return out.String(), fmt.Errorf("%s did not finish: %w", script, ctx.Err())
 	}
-	if err != nil {
-		return "", fmt.Errorf("the rescue script %s failed: %w; its output: %s", args[0], err, out.String())
-	}
-	return out.String(), nil
 }
 
 func (s *Session) Close() error { return s.client.Close() }
 
 type output struct {
-	mu  sync.Mutex
-	buf []byte
+	mu      sync.Mutex
+	buf     []byte
+	midLine bool
 }
 
 func (o *output) Write(p []byte) (int, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.buf = append(o.buf, p[:min(len(p), max(MaxOutput-len(o.buf), 0))]...)
+	o.buf = append(o.buf, p...)
+	if cut := len(o.buf) - MaxOutput; cut > 0 {
+		o.midLine = o.buf[cut-1] != '\n'
+		o.buf = o.buf[:copy(o.buf, o.buf[cut:])]
+	}
 	return len(p), nil
 }
 
 func (o *output) String() string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return string(o.buf)
+	if !o.midLine {
+		return string(o.buf)
+	}
+	_, whole, _ := bytes.Cut(o.buf, []byte("\n"))
+	return string(whole)
 }
