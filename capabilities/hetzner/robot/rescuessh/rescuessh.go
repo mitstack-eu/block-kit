@@ -113,15 +113,18 @@ func (s *Session) Run(ctx context.Context, args ...string) (string, error) {
 	session.Stdin, session.Stdout, session.Stderr = bytes.NewReader(s.script), &out, &out
 	done := make(chan error, 1)
 	go func() { done <- session.Run(strings.Join(append([]string{"bash", "-s", "--"}, args...), " ")) }()
-	script := strings.Join(append([]string{"the rescue script"}, args[:min(len(args), 1)]...), " ")
+	name := "the rescue script"
+	if len(args) > 0 {
+		name += " " + args[0]
+	}
 	select {
 	case err = <-done:
 		if err != nil {
-			return out.String(), fmt.Errorf("%s failed: %w", script, err)
+			return out.String(), fmt.Errorf("%s failed: %w", name, err)
 		}
 		return out.String(), nil
 	case <-ctx.Done():
-		return out.String(), fmt.Errorf("%s did not finish: %w", script, ctx.Err())
+		return out.String(), fmt.Errorf("%s did not finish: %w", name, ctx.Err())
 	}
 }
 
