@@ -37,6 +37,8 @@ type Client struct {
 	// ReadWindow is how long a read answers the same read from every client of this login; zero sends each to Robot.
 	ReadWindow time.Duration
 	Now        func() time.Time
+	// firewallSettleTimeout bounds each wait for a firewall change to settle, which only this package's tests shorten.
+	firewallSettleTimeout time.Duration
 }
 
 func New(user, password string) *Client { return NewAt(Endpoint, user, password) }
@@ -46,6 +48,7 @@ func NewAt(base, user, password string) *Client {
 	return &Client{
 		base: base, user: user, password: password, login: loginKey(base, user, password),
 		http: &http.Client{Timeout: timeout}, PollInterval: 10 * time.Second, ReadWindow: ReadWindow, Now: time.Now,
+		firewallSettleTimeout: firewallSettleTimeout,
 	}
 }
 
@@ -181,16 +184,22 @@ func (c *Client) send(ctx context.Context, method, path string, form url.Values)
 
 func numbered(prefix string, n int64) string { return prefix + strconv.FormatInt(n, 10) }
 
-// wait reads until done holds or ctx ends, sleeping PollInterval between reads.
+// wait reads until done holds or ctx ends, sleeping PollInterval between reads, and names ctx's cause when it ends.
 func (c *Client) wait(ctx context.Context, what string, done func() (bool, error)) error {
 	for {
 		ok, err := done()
-		if err != nil || ok {
+		if err == nil && ok {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("waiting for %s: %w", what, context.Cause(ctx))
+		}
+		if err != nil {
 			return err
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for %s: %w", what, ctx.Err())
+			return fmt.Errorf("waiting for %s: %w", what, context.Cause(ctx))
 		case <-time.After(c.PollInterval):
 		}
 	}
