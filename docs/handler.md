@@ -416,7 +416,8 @@ The engine sets `idempotencyKey` once per call and keeps it across every retry
 of that call. The handler keeps a settled answer for an hour, keyed by
 subscription and idempotency key, and replays it to a later delivery of the
 same key. A delivery that arrives while the same key is still running waits
-for it and receives the same answer.
+for it and receives the same answer. A snapshot or a restore is also keyed by
+its unit, so one key that names two units reaches your code once for each.
 
 The cache stores only a settled answer: a 2xx or a 400 refusal. It never
 stores a 500, so a retry reaches your code again. It never stores a

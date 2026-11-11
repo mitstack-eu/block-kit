@@ -37,7 +37,7 @@ func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req co
 	var status int
 	var raw []byte
 	if req.IdempotencyKey != "" && !answersFresh(req.Operation) {
-		key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey, resource: req.Resource}
+		key := idempotencyKey{subscriptionID: req.SubscriptionID, idempotencyKey: req.IdempotencyKey, resource: req.Resource, unit: req.Unit}
 		status, raw = h.idempotency.do(h.now(), key, run)
 	} else {
 		status, raw, _ = run()

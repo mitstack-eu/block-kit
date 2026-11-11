@@ -9,11 +9,12 @@ import (
 // idempotencyTTL bounds the cache without a separate size limit.
 const idempotencyTTL = time.Hour
 
-// idempotencyKey pairs idempotencyKey with subscriptionID so two subscriptions reusing a key never replay each other's response, and carries the named resource so one key naming different resources never replays one's answer for another.
+// idempotencyKey pairs idempotencyKey with subscriptionID so two subscriptions reusing a key never replay each other's response, and carries the named resource and the named unit so one key naming different resources or units never replays one's answer for another.
 type idempotencyKey struct {
 	subscriptionID string
 	idempotencyKey string
 	resource       string
+	unit           string
 }
 
 type idempotencyEntry struct {
