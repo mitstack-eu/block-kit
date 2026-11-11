@@ -15,6 +15,15 @@ import (
 	"github.com/mitstack-eu/block-kit/handler"
 )
 
+const (
+	endsOnceApproved       = "The wait ends once an approving review is given, or once the pull request is merged or closed"
+	endsOnceMergedOrClosed = "the wait ends once it is merged or closed"
+)
+
+func endsOnceItPasses(check string) string {
+	return `The wait ends once "` + check + `" passes, or once the pull request is merged or closed`
+}
+
 func waiting(t *testing.T, err error, detail string) {
 	t.Helper()
 	var w *handler.Waiting
@@ -219,6 +228,8 @@ func TestUnsubscribe_WaitsWhileGitHubRefusesTheMerge(t *testing.T) {
 
 			_, err := remove(client(f), rec)
 			waiting(t, err, "#1")
+			waiting(t, err, f.PullURL(1))
+			waiting(t, err, endsOnceMergedOrClosed)
 			if pulls := f.Pulls(); len(pulls) != 1 || !pulls[0].Open {
 				t.Errorf("pull requests = %+v, want the removal left open", pulls)
 			}
@@ -361,7 +372,7 @@ func TestUnsubscribeAndObserver_NameTheSameWaitWhileARequiredCheckIsQueuedRunnin
 			if w.Detail != obs.Removing.WaitsOn {
 				t.Errorf("once %s the unsubscribe waits on %q and the observer on %q, want one wait", tc.name, w.Detail, obs.Removing.WaitsOn)
 			}
-			for _, naming := range []string{"#1", repo, `"` + tc.check + `"`, tc.naming, run} {
+			for _, naming := range []string{"#1", repo, f.PullURL(1), `"` + tc.check + `"`, tc.naming, run, endsOnceItPasses(tc.check)} {
 				if !strings.Contains(obs.Removing.WaitsOn, naming) {
 					t.Errorf("waitsOn = %q, want it to name %q", obs.Removing.WaitsOn, naming)
 				}
@@ -495,19 +506,19 @@ func TestObserver_ReadsARemovalHeldBackForAReviewAsRemovingNamingTheReview(t *te
 		arrange func(f *landingtest.Fake)
 		naming  []string
 	}{
-		{"no review given", func(*landingtest.Fake) {}, []string{"an approving review"}},
+		{"no review given", func(*landingtest.Fake) {}, []string{"an approving review", endsOnceApproved}},
 		{"only a ruleset requires the review", func(f *landingtest.Fake) {
 			f.RequireReviews(0)
 			f.RequireReviewsByRuleset(1)
-		}, []string{"an approving review"}},
+		}, []string{"an approving review", endsOnceApproved}},
 		{"a review given and a reviewer who then requested changes", func(f *landingtest.Fake) {
 			f.Review(1, "ana", "APPROVED")
 			f.Review(1, "bo", "CHANGES_REQUESTED")
-		}, []string{"an approving review", "requested changes"}},
+		}, []string{"an approving review", "requested changes", "The wait ends once an approving review leaves no reviewer requesting changes, or once the pull request is merged or closed"}},
 		{"its required check passed", func(f *landingtest.Fake) {
 			f.RequireCheck("managed-ci")
 			f.ReportCheck("managed-ci", "success")
-		}, []string{"an approving review"}},
+		}, []string{"an approving review", endsOnceApproved}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, rec := reviewHeldRemoval(t, 1)
@@ -518,12 +529,69 @@ func TestObserver_ReadsARemovalHeldBackForAReviewAsRemovingNamingTheReview(t *te
 			if obs.State != contract.Present || obs.Removing == nil {
 				t.Fatalf("observe with %s = %s with removing %+v (%s), want present with removing", tc.name, obs.State, obs.Removing, obs.StatusDetail)
 			}
-			for _, naming := range append([]string{"#1", repo}, tc.naming...) {
+			for _, naming := range append([]string{"#1", repo, f.PullURL(1)}, tc.naming...) {
 				if !strings.Contains(obs.Removing.WaitsOn, naming) {
 					t.Errorf("waitsOn = %q, want it to name %q", obs.Removing.WaitsOn, naming)
 				}
 			}
 		})
+	}
+}
+
+func TestUnsubscribeAndObserver_NameThePullRequestsAddressAndWhatEndsTheWaitWhileARequiredReviewIsMissing(t *testing.T) {
+	f, rec := reviewHeldRemoval(t, 1)
+
+	_, err := remove(client(f), rec)
+	obs := observeRemoval(t, f, rec, true)
+
+	var w *handler.Waiting
+	if !errors.As(err, &w) || obs.Removing == nil {
+		t.Fatalf("Remove = %#v and observe removing = %+v while the required review is missing, want a wait from both", err, obs.Removing)
+	}
+	for _, tc := range []struct{ name, wait, ends string }{
+		{"the unsubscribe", w.Detail, endsOnceMergedOrClosed},
+		{"the observer", obs.Removing.WaitsOn, endsOnceApproved},
+	} {
+		for _, naming := range []string{"(" + f.PullURL(1) + ")", tc.ends} {
+			if !strings.Contains(tc.wait, naming) {
+				t.Errorf("%s waits on %q, want it to name %q", tc.name, tc.wait, naming)
+			}
+		}
+	}
+}
+
+func TestUnsubscribeAndObserver_NameThePullRequestUnderTheHostGitHubServesItsPagesOn(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ServePagesUnder("https://code.acme.example")
+	f.ReportCheck("managed-ci", "failure")
+
+	_, err := remove(client(f), rec)
+	obs := observeRemoval(t, f, rec, true)
+
+	var w *handler.Waiting
+	if !errors.As(err, &w) || obs.Removing == nil {
+		t.Fatalf("Remove = %#v and observe removing = %+v once the check failed, want a wait from both", err, obs.Removing)
+	}
+	for name, wait := range map[string]string{"the unsubscribe": w.Detail, "the observer": obs.Removing.WaitsOn} {
+		if want := "(https://code.acme.example/" + repo + "/pull/1)"; !strings.Contains(wait, want) {
+			t.Errorf("%s waits on %q, want it to name the address GitHub answered, %s", name, wait, want)
+		}
+		if strings.Contains(wait, "github.com") {
+			t.Errorf("%s waits on %q, want no host GitHub did not answer", name, wait)
+		}
+	}
+}
+
+func TestUnsubscribe_NamesTheNewPullRequestsAddressOnceAPersonClosedTheFirst(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ClosePull(1)
+
+	_, err := remove(client(f), rec)
+
+	waiting(t, err, "("+f.PullURL(2)+")")
+	var w *handler.Waiting
+	if errors.As(err, &w) && strings.Contains(w.Detail, f.PullURL(1)+")") {
+		t.Errorf("Remove waits on %q, want the closed pull request %s left unnamed", w.Detail, f.PullURL(1))
 	}
 }
 
@@ -603,7 +671,7 @@ func TestUnsubscribe_NamesThePermissionAndTheInstallationWhenGitHubRefusesTheSta
 	if !errors.As(err, &w) {
 		t.Fatalf("Remove with no check reported and the status read refused = %v, want a handler.Waiting", err)
 	}
-	for _, naming := range []string{"the installation of acme lacks the permission statuses=read", `"managed-ci"`} {
+	for _, naming := range []string{"the installation of acme lacks the permission statuses=read", `"managed-ci"`, f.PullURL(1), "waits until its checks can be read or it is merged or closed"} {
 		if !strings.Contains(w.Detail, naming) {
 			t.Errorf("wait detail = %q, want it to name %q", w.Detail, naming)
 		}
