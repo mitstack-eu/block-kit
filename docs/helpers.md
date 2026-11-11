@@ -1617,7 +1617,7 @@ recorded in the workspace note
 | `Release(ctx, number, name)` | Clears the rescue activation, the keys named after the server and its name, and admits all traffic, but only while the server carries `name` |
 | `Couple(ctx, name, number)` | Finds or creates the vSwitch `name` on the lowest free VLAN and waits until Robot reads the server ready on it, which took under three minutes on the trial |
 | `Uncouple(ctx, id, number)` and `CancelVSwitch(ctx, id)` | Takes the server off and waits until Robot stops listing it, which took 152 seconds, then cancels the vSwitch |
-| `WriteFirewall(ctx, number, fw)` | Writes the firewall and waits until Robot reads it active, which took 62 to 131 seconds. It never sends Robot's two internal mail-port rules back, since Robot keeps them ahead of every write |
+| `WriteFirewall(ctx, number, fw)` | Waits out an earlier change, writes the firewall and waits until Robot reads it settled, which took 62 to 131 seconds. Each of the two waits gives up after five minutes, so a call under `context.WithoutCancel` still ends. The call then fails naming each field Robot reads back otherwise than written: the status, `filter_ipv6`, `whitelist_hos`, the input rules and the output rules. It never sends Robot's two internal mail-port rules back, since Robot keeps them ahead of every write |
 | `OpenRescueWindow(ctx, number, installer)` | Adds one rule admitting SSH from the installer's address alone and admits Hetzner's own services. The function it returns writes back the firewall it found |
 | `NewRescueKey()` and `BootRescue(ctx, number, keyName, key)` | Mints a one-time ed25519 key, registers it and resets the server into a rescue system that admits that key alone |
 | `LeaveRescue(ctx, session)` | Clears any activation Robot still holds and deletes the key, so the next reset boots the disk |
@@ -1707,6 +1707,7 @@ process` once after each write, clears a rescue activation once it boots it,
 and lists a server joining or leaving a vSwitch as `in process`.
 `fake.Client()` returns a client logged in to it that sends every read to the
 fake, so a test that changes the fake reads the change at once.
-`fake.Calls(method, path)` counts the requests sent, and
+`fake.ClientAt(base)` returns the same client sent to `base` instead, such as
+a proxy the test puts in front of the fake. `fake.Calls(method, path)` counts the requests sent, and
 `fake.SetRateLimited(true)` answers every request `403 RATE_LIMIT_EXCEEDED`
 until it is set false.

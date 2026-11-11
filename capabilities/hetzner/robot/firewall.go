@@ -18,8 +18,9 @@ const (
 	ephemeralPorts  = "32768-65535"
 	// internalRuleName names the two mail-port output rules Robot keeps ahead of whatever a write sends.
 	internalRuleName = "Block mail ports"
-	// restoreTimeout outlasts two firewall writes, which took up to 131 seconds each on the trial.
-	restoreTimeout = 5 * time.Minute
+	// firewallSettleTimeout outlasts two firewall changes settling, which took up to 131 seconds each on the trial, so it
+	// bounds one settle wait and a whole restore alike.
+	firewallSettleTimeout = 5 * time.Minute
 )
 
 // ReplyRules admit the replies to a server's own TCP, DNS and NTP traffic, which the stateless firewall otherwise drops.
@@ -106,9 +107,8 @@ func (c *Client) SetFirewall(ctx context.Context, number int64, fw Firewall) err
 	return c.do(ctx, http.MethodPost, numbered("/firewall/", number), form, nil)
 }
 
-// WriteFirewall waits out an earlier change, writes want and waits until Robot reads it active. With no output rules
-// in want, it keeps the output rules it read but Robot's internal ones, which Robot keeps itself and would otherwise
-// list twice, and admits all output when none is left, as the trial server's firewall did before any write.
+// WriteFirewall writes want once an earlier change settles and returns once Robot reads every field as written, each
+// wait ending within firewallSettleTimeout, so a restore may pass context.WithoutCancel of its context.
 func (c *Client) WriteFirewall(ctx context.Context, number int64, want Firewall) error {
 	ctx = afresh(ctx)
 	current, err := c.settledFirewall(ctx, number)
@@ -116,6 +116,7 @@ func (c *Client) WriteFirewall(ctx context.Context, number int64, want Firewall)
 		return err
 	}
 	if want.Output == nil {
+		// Robot keeps its internal rules itself and would list them twice, and the trial server admitted all output before any write.
 		for _, r := range current.Output {
 			if r.Name != internalRuleName && !slices.Contains(want.Output, r) {
 				want.Output = append(want.Output, r)
@@ -132,13 +133,45 @@ func (c *Client) WriteFirewall(ctx context.Context, number int64, want Firewall)
 	if err != nil {
 		return err
 	}
-	if applied.Status != want.Status || !slices.EqualFunc(applied.Input, want.Input, func(a, b Rule) bool { return hostForm(a) == hostForm(b) }) {
-		return fmt.Errorf("the firewall of server %d reads %s with input rules %v after the write, not the %s rules written", number, applied.Status, applied.Input, want.Status)
+	if differences := firewallDifferences(applied, want); len(differences) > 0 {
+		return fmt.Errorf("the firewall of server %d reads otherwise than written once settled: %s", number, strings.Join(differences, "; "))
 	}
 	return nil
 }
 
+func firewallDifferences(applied, want Firewall) []string {
+	var differences []string
+	if applied.Status != want.Status {
+		differences = append(differences, fmt.Sprintf("status %s, want %s", applied.Status, want.Status))
+	}
+	if applied.FilterIPv6 != want.FilterIPv6 {
+		differences = append(differences, fmt.Sprintf("filter_ipv6 %v, want %v", applied.FilterIPv6, want.FilterIPv6))
+	}
+	if applied.WhitelistHOS != want.WhitelistHOS {
+		differences = append(differences, fmt.Sprintf("whitelist_hos %v, want %v", applied.WhitelistHOS, want.WhitelistHOS))
+	}
+	if !sameRules(applied.Input, want.Input) {
+		differences = append(differences, fmt.Sprintf("input rules %v, want %v", applied.Input, want.Input))
+	}
+	if got, wrote := withoutInternalRules(applied.Output), withoutInternalRules(want.Output); !sameRules(got, wrote) {
+		differences = append(differences, fmt.Sprintf("output rules %v, want %v", got, wrote))
+	}
+	return differences
+}
+
+func sameRules(a, b []Rule) bool {
+	return slices.EqualFunc(a, b, func(x, y Rule) bool { return hostForm(x) == hostForm(y) })
+}
+
+// withoutInternalRules drops the rules Robot keeps itself, which a read lists ahead of the written ones or not at all.
+func withoutInternalRules(rules []Rule) []Rule {
+	return slices.DeleteFunc(slices.Clone(rules), func(r Rule) bool { return r.Name == internalRuleName })
+}
+
 func (c *Client) settledFirewall(ctx context.Context, number int64) (Firewall, error) {
+	bound := c.firewallSettleTimeout
+	ctx, cancel := context.WithTimeoutCause(ctx, bound, fmt.Errorf("Robot read it %s after %s: %w", statusInProcess, bound, context.DeadlineExceeded))
+	defer cancel()
 	var fw Firewall
 	err := c.wait(ctx, fmt.Sprintf("the firewall of server %d to settle", number), func() (bool, error) {
 		var err error
@@ -180,7 +213,7 @@ func (c *Client) OpenRescueWindow(ctx context.Context, number int64, installer n
 	restore = func(ctx context.Context) error { return c.WriteFirewall(ctx, number, found) }
 	if err := c.WriteFirewall(ctx, number, window); err != nil {
 		// A write Robot took may still apply, so the rules found go back even once ctx ended.
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), firewallSettleTimeout)
 		defer cancel()
 		return nil, errors.Join(fmt.Errorf("opening port 22 for the rescue session: %w", err), restore(rctx))
 	}

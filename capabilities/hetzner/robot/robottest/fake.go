@@ -100,8 +100,11 @@ func New(t testing.TB) *Fake {
 
 // Client is a client logged in to the fake that polls without waiting and sends every read to the fake, so a test
 // that changes the fake behind it reads the change at once.
-func (f *Fake) Client() *robot.Client {
-	c := robot.NewAt(f.URL, User, Password)
+func (f *Fake) Client() *robot.Client { return f.ClientAt(f.URL) }
+
+// ClientAt is Client sent to base instead, such as a test's proxy in front of the fake.
+func (f *Fake) ClientAt(base string) *robot.Client {
+	c := robot.NewAt(base, User, Password)
 	c.PollInterval = time.Millisecond
 	c.ReadWindow = 0
 	return c
