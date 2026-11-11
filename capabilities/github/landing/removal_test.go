@@ -310,21 +310,78 @@ func TestObserver_ReadsTheRemovalUnderWayWhileItsPullRequestsRequiredCheckIsQueu
 	}
 }
 
+// The unsubscribe and the observer read one judgement of the required checks, so the wait the unsubscribe answers is the one the observer names.
+func TestUnsubscribeAndObserver_NameTheSameWaitWhileARequiredCheckIsQueuedRunningOrFailed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(f *landingtest.Fake)
+		check   string
+		naming  string
+	}{
+		{"its required check is queued", func(f *landingtest.Fake) { f.RunCheck("managed-ci", "queued") }, "managed-ci", "is queued"},
+		{"its required check is running", func(f *landingtest.Fake) { f.RunCheck("managed-ci", "in_progress") }, "managed-ci", "is running"},
+		{"its required check failed", func(f *landingtest.Fake) { f.ReportCheck("managed-ci", "failure") }, "managed-ci", "failed"},
+		{"its required check failed while a review is also required", func(f *landingtest.Fake) {
+			f.RequireReviews(1)
+			f.ReportCheck("managed-ci", "failure")
+		}, "managed-ci", "failed"},
+		{"one required check failed while another runs", func(f *landingtest.Fake) {
+			f.RunCheck("managed-ci", "in_progress")
+			f.RequireCheck("lint")
+			f.ReportCheck("lint", "failure")
+		}, "lint", "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := waitingRemoval(t)
+			tc.arrange(f)
+
+			_, err := remove(client(f), rec)
+			obs := observeRemoval(t, f, rec, true)
+
+			var w *handler.Waiting
+			if !errors.As(err, &w) || !w.Removal {
+				t.Fatalf("Remove once %s = %#v, want a handler.Waiting with Removal set", tc.name, err)
+			}
+			if obs.State != contract.Present || obs.Removing == nil {
+				t.Fatalf("observe once %s = %s with removing %+v (%s), want present with removing", tc.name, obs.State, obs.Removing, obs.StatusDetail)
+			}
+			if w.Detail != obs.Removing.WaitsOn {
+				t.Errorf("once %s the unsubscribe waits on %q and the observer on %q, want one wait", tc.name, w.Detail, obs.Removing.WaitsOn)
+			}
+			for _, naming := range []string{"#1", repo, `"` + tc.check + `"`, tc.naming, f.RunURL(tc.check)} {
+				if !strings.Contains(obs.Removing.WaitsOn, naming) {
+					t.Errorf("waitsOn = %q, want it to name %q", obs.Removing.WaitsOn, naming)
+				}
+			}
+		})
+	}
+}
+
+func TestUnsubscribe_MergesOnceAFailedRequiredCheckPassesOnANewRun(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ReportCheck("managed-ci", "failure")
+	_, err := remove(client(f), rec)
+	waiting(t, err, "managed-ci")
+
+	f.ReportCheck("managed-ci", "success")
+	_, err = remove(client(f), rec)
+
+	if err != nil {
+		t.Fatalf("Remove once the failed check passed on a new run: %v", err)
+	}
+	if pulls := f.Pulls(); len(pulls) != 1 || !pulls[0].Merged {
+		t.Errorf("pull requests = %+v, want the one removal merged", pulls)
+	}
+	if len(f.Main()) != 0 {
+		t.Errorf("main = %v, want every landed file removed", f.Main())
+	}
+}
+
 func TestObserver_ReadsNoRemovalUnderWayOnceNothingMovesIt(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		arrange func(f *landingtest.Fake)
 	}{
-		{"its required check failed", func(f *landingtest.Fake) { f.ReportCheck("managed-ci", "failure") }},
-		{"its required check failed while a review is also required", func(f *landingtest.Fake) {
-			f.RequireReviews(1)
-			f.ReportCheck("managed-ci", "failure")
-		}},
-		{"one required check failed while another runs", func(f *landingtest.Fake) {
-			f.RunCheck("managed-ci", "in_progress")
-			f.RequireCheck("lint")
-			f.ReportCheck("lint", "failure")
-		}},
 		{"it closed unmerged while its check runs", func(f *landingtest.Fake) {
 			f.RunCheck("managed-ci", "in_progress")
 			f.ClosePull(1)
