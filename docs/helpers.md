@@ -613,9 +613,10 @@ Each call takes these steps:
    and answers pending. When another block's commit moved main first, it
    takes steps 4 and 5 again on the newest main, in three attempts at most.
 
-`Run` never removes the request file after its run ends, and the next run
+`Run` leaves the request file in place after its run ends, and the next run
 replaces it. Its run id, server id and deadline keep the host from running it
-twice.
+twice. `Runner.RequestPath(app)` names the file, `<app>/<block>.run-request`,
+so the block's unsubscribe removes it with the app's other files.
 
 The request file is one JSON object, which
 `helpers/dockerhost/testdata/run-request.json` holds as the golden the host
