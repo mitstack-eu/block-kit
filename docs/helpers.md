@@ -1260,11 +1260,14 @@ new result for that check moves the removal on, and so does the pull request
 merging or closing.
 
 `Remove` and the observer read one judgement of the required checks,
-`requiredCheckWait` in `capabilities/github/landing/checks.go`, so the wait
-`Remove` answers is word for word the one the observer names. When several
+`requiredCheckWait` in `capabilities/github/landing/checks.go`. While a
+required check is queued, running or failed, the wait `Remove` answers for
+one repository is word for word the one the observer names. When several
 required checks hold the pull request, the wait names a failed one before a
 queued or running one. A pending commit status, and a check run that GitHub has
-queued but not started, count as queued. Once the pull request closes
+queued but not started, count as queued. For a check that a commit status
+reports, the run is the status's `target_url` without its credentials, query or
+fragment, and the wait names no run when that address is not http or https. Once the pull request closes
 unmerged, or every required check has passed or not yet reported, the answer
 carries no `Removing` for the checks, and the attempts count again. A read of
 the pull request or its checks that fails reads unknown. Outside an
