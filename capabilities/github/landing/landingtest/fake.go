@@ -56,12 +56,15 @@ type Fake struct {
 	reviews        map[int][]review
 	checks         map[string]string
 	running        map[string]string
-	selection      string
-	deleted        bool
-	answers        map[string]int
-	noStatus       bool
-	requests       []Request
-	before         func(method, path string) error
+	// runs numbers each check's latest run, so a report on a check starts a new run with its own URL.
+	runs      map[string]int
+	lastRun   int
+	selection string
+	deleted   bool
+	answers   map[string]int
+	noStatus  bool
+	requests  []Request
+	before    func(method, path string) error
 }
 
 func New(t testing.TB, repo string) *Fake {
@@ -73,6 +76,7 @@ func New(t testing.TB, repo string) *Fake {
 		refs:      map[string]string{},
 		checks:    map[string]string{},
 		running:   map[string]string{},
+		runs:      map[string]int{},
 		selection: "all",
 		answers:   map[string]int{},
 	}
@@ -212,20 +216,35 @@ func (f *Fake) RequireCheckByRuleset(name string) {
 	f.ruled = append(f.ruled, name)
 }
 
-// ReportCheck reports the check with conclusion on every commit.
+// ReportCheck reports the check with conclusion on every commit, in a new run.
 func (f *Fake) ReportCheck(name, conclusion string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.checks[name] = conclusion
 	delete(f.running, name)
+	f.lastRun++
+	f.runs[name] = f.lastRun
 }
 
-// RunCheck reports the check on every commit as status, queued or in_progress, with no conclusion yet.
+// RunCheck reports the check on every commit as status, queued or in_progress, with no conclusion yet, in a new run.
 func (f *Fake) RunCheck(name, status string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.running[name] = status
 	delete(f.checks, name)
+	f.lastRun++
+	f.runs[name] = f.lastRun
+}
+
+// RunURL is the html_url of the check's latest run, the page a reader opens to see its result.
+func (f *Fake) RunURL(name string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runURL(name)
+}
+
+func (f *Fake) runURL(name string) string {
+	return fmt.Sprintf("https://github.com/%s/runs/%d", f.Repo, f.runs[name])
 }
 
 // DeleteRepository makes every route under the repository answer 404, as GitHub does for a deleted repository.
@@ -633,10 +652,10 @@ func (f *Fake) protected() bool { return len(f.required)+len(f.ruled) > 0 }
 func (f *Fake) checkRuns() (int, any) {
 	runs := []any{}
 	for _, name := range slices.Sorted(maps.Keys(f.checks)) {
-		runs = append(runs, map[string]any{"name": name, "status": "completed", "conclusion": f.checks[name]})
+		runs = append(runs, map[string]any{"name": name, "status": "completed", "conclusion": f.checks[name], "html_url": f.runURL(name)})
 	}
 	for _, name := range slices.Sorted(maps.Keys(f.running)) {
-		runs = append(runs, map[string]any{"name": name, "status": f.running[name], "conclusion": nil})
+		runs = append(runs, map[string]any{"name": name, "status": f.running[name], "conclusion": nil, "html_url": f.runURL(name)})
 	}
 	return http.StatusOK, map[string]any{"total_count": len(runs), "check_runs": runs}
 }

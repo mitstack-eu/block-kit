@@ -129,8 +129,12 @@ func (a api) removeThroughPullRequest(ctx context.Context, st mainState, subscri
 	if err != nil {
 		return err
 	}
-	if err := a.requiredChecksPassed(ctx, number, commit); err != nil {
-		return err
+	wait, err := a.requiredCheckWait(ctx, openPull{number: number, head: commit})
+	switch {
+	case err != nil:
+		return handler.Wait("removal pull request #%d of %s waits, since %v", number, a.repo, err)
+	case wait.waitsOn != "":
+		return handler.WaitOnRemoval("%s", wait.waitsOn)
 	}
 	return a.merge(ctx, number, commit, title, trailer)
 }
