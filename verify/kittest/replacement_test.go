@@ -347,19 +347,9 @@ func TestCheckReplacement_FailsADrillWhoseReplaceLeavesTheDataInPlace(t *testing
 // keptState keeps the map the drill hands it as its live data, as an in-memory block may.
 type keptState struct{ data map[string]string }
 
-func (s *keptState) Write(_ context.Context, data map[string]string) error {
-	s.data = data
-	return nil
-}
-
-func (s *keptState) Read(context.Context) (map[string]string, error) {
-	return maps.Clone(s.data), nil
-}
-
-func (s *keptState) Replace(context.Context) error {
-	clear(s.data)
-	return nil
-}
+func (s *keptState) Write(_ context.Context, data map[string]string) error { s.data = data; return nil }
+func (s *keptState) Read(context.Context) (map[string]string, error)       { return maps.Clone(s.data), nil }
+func (s *keptState) Replace(context.Context) error                         { clear(s.data); return nil }
 
 // forgetful is a carrier whose restore brings nothing back.
 type forgetful struct{}
