@@ -335,7 +335,7 @@ func TestUnsubscribeAndObserver_NameTheSameWaitWhileARequiredCheckIsQueuedRunnin
 		{"its required check reports a failed commit status", func(f *landingtest.Fake) {
 			f.ReportStatus("managed-ci", "failure", "https://ci.example/builds/7")
 		}, "managed-ci", "failed", "https://ci.example/builds/7"},
-		{"its check run failed and a newer commit status of that check is pending", func(f *landingtest.Fake) {
+		{"its check run failed and a commit status of that check is pending, which is further along", func(f *landingtest.Fake) {
 			f.ReportCheck("managed-ci", "failure")
 			f.ReportStatus("managed-ci", "pending", "https://ci.example/builds/8")
 		}, "managed-ci", "is queued", "https://ci.example/builds/8"},
@@ -367,6 +367,41 @@ func TestUnsubscribeAndObserver_NameTheSameWaitWhileARequiredCheckIsQueuedRunnin
 				}
 			}
 		})
+	}
+}
+
+// Any CI may post a status, and some carry a token in its target_url, so the wait names the page alone.
+func TestUnsubscribeAndObserver_NameACommitStatusPageWithoutItsCredentialsQueryOrFragment(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ReportStatus("managed-ci", "failure", "https://bot:hunter2@ci.example/builds/9?token=abc123#log")
+
+	_, err := remove(client(f), rec)
+	obs := observeRemoval(t, f, rec, true)
+
+	var w *handler.Waiting
+	if !errors.As(err, &w) || obs.Removing == nil {
+		t.Fatalf("Remove = %#v and observe removing = %+v once the status failed, want a wait from both", err, obs.Removing)
+	}
+	for name, wait := range map[string]string{"the unsubscribe": w.Detail, "the observer": obs.Removing.WaitsOn} {
+		if !strings.Contains(wait, "(run https://ci.example/builds/9)") {
+			t.Errorf("%s waits on %q, want it to name the run page https://ci.example/builds/9", name, wait)
+		}
+		for _, leaked := range []string{"bot", "hunter2", "token", "abc123", "#log"} {
+			if strings.Contains(wait, leaked) {
+				t.Errorf("%s waits on %q, want no %q from the status's target_url", name, wait, leaked)
+			}
+		}
+	}
+}
+
+func TestObserver_NamesNoRunPageForAStatusTargetThatIsNoWebAddress(t *testing.T) {
+	f, rec := waitingRemoval(t)
+	f.ReportStatus("managed-ci", "failure", "javascript:alert(1)")
+
+	obs := observeRemoval(t, f, rec, true)
+
+	if obs.Removing == nil || strings.Contains(obs.Removing.WaitsOn, "run ") {
+		t.Errorf("observe removing = %+v, want a wait naming the failed check and no run page for a target that is no http or https address", obs.Removing)
 	}
 }
 
