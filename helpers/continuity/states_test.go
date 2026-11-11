@@ -28,7 +28,6 @@ func digest(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// archive writes a volume archive whose digest list names each regular entry, with its digest taken from digests when it holds the name.
 func archive(t *testing.T, digests map[string]string, entries ...entry) []byte {
 	t.Helper()
 	var buf bytes.Buffer

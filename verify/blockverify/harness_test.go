@@ -51,12 +51,9 @@ func kitGoMod(t *testing.T) string {
 		"replace github.com/mitstack-eu/block-kit => " + kitModuleDir(t) + "\n"
 }
 
-// kitGoSum is the kit's own go.sum, which holds the sum of every module a kit package imports, and is empty while the kit requires nothing.
+// kitGoSum is the kit's own go.sum, which holds the sum of every module a kit package imports.
 func kitGoSum(t *testing.T) string {
 	t.Helper()
-	if _, err := os.Stat(filepath.Join(kitModuleDir(t), "go.sum")); err != nil {
-		return ""
-	}
 	return kitModuleFile(t, "go.sum")
 }
 

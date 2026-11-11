@@ -305,6 +305,10 @@ func TestReplacementSuite(t *testing.T) {
 			status: "fail", detail: []string{"replacement lost datum", `"beta"`}},
 		{name: "a block whose observe reads unhealthy after the restore fails, naming the resource", dir: replacementBlock("unhealthy"),
 			status: "fail", detail: []string{`resource "aws.ebs-volume"`, "reads unhealthy after the restore"}},
+		{name: "a TestReplacementDrill that skips before the drill fails, since no stage ran",
+			dir: moduleBlock(stateful, withSource("block_test.go", "replacement-block_test.go"), withTypeSnapshot,
+				with("replacement_test.go", "package main\n\nimport \"testing\"\n\nfunc TestReplacementDrill(t *testing.T) {\n\tt.Skip(\"not yet\")\n\tassertReplacement(t, \"hooks\")\n}\n")),
+			status: "fail", detail: []string{"TestReplacementDrill", "ran no stage"}},
 		{name: "a block built on the shared hooks passes, naming the drill", dir: replacementBlock("hooks"),
 			status: "pass", detail: []string{"TestReplacementDrill"}},
 	})

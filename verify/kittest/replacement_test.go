@@ -324,3 +324,56 @@ func TestCheckReplacement_PassesABlockBuiltOnTheSharedHooks(t *testing.T) {
 
 	wantNoProblems(t, kittest.CheckReplacement(in))
 }
+
+// stubbornState is a memState whose Replace leaves the data in place.
+type stubbornState struct{ *memState }
+
+func (stubbornState) Replace(context.Context) error { return nil }
+
+func TestCheckReplacement_FailsADrillWhoseReplaceLeavesTheDataInPlace(t *testing.T) {
+	live := &memState{data: map[string]string{}}
+	_, in := newStateBlock(t, live, func(restored *atomic.Bool) carrier {
+		return &vault{live: live, restored: restored, taken: map[string]map[string]string{}}
+	}, false)
+	in.Data = stubbornState{live}
+
+	problems := kittest.CheckReplacement(in)
+
+	for _, datum := range []string{`"alpha"`, `"beta"`, `"gamma"`} {
+		wantProblemNaming(t, problems, "Data.Replace left datum", datum)
+	}
+}
+
+// keptState keeps the map the drill hands it as its live data, as an in-memory block may.
+type keptState struct{ data map[string]string }
+
+func (s *keptState) Write(_ context.Context, data map[string]string) error {
+	s.data = data
+	return nil
+}
+
+func (s *keptState) Read(context.Context) (map[string]string, error) {
+	return maps.Clone(s.data), nil
+}
+
+func (s *keptState) Replace(context.Context) error {
+	clear(s.data)
+	return nil
+}
+
+// forgetful is a carrier whose restore brings nothing back.
+type forgetful struct{}
+
+func (forgetful) Snapshot(context.Context, string) (string, error) { return "hnd-1", nil }
+func (forgetful) Restore(context.Context, string, string) error    { return nil }
+
+func TestCheckReplacement_FailsEveryDatumOfABlockThatKeepsTheDrillsMapAndRestoresNothing(t *testing.T) {
+	_, in := newStateBlock(t, nil, func(*atomic.Bool) carrier { return forgetful{} }, false)
+	in.Data = &keptState{}
+
+	problems := kittest.CheckReplacement(in)
+
+	for _, datum := range []string{`"alpha"`, `"beta"`, `"gamma"`} {
+		wantProblemNaming(t, problems, "replacement lost datum", datum)
+	}
+}

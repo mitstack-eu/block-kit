@@ -153,3 +153,23 @@ func TestRestore_RefusesAHandoverNoSnapshotPublished(t *testing.T) {
 		}
 	}
 }
+
+// silentState exports nothing and accepts whatever it is handed back.
+type silentState struct{}
+
+func (silentState) Export(context.Context, io.Writer) error { return nil }
+func (silentState) Import(context.Context, io.Reader) error { return nil }
+func (silentState) Verify(context.Context, io.Reader) error { return nil }
+
+func TestSnapshot_PublishesNoHandoverAndUploadsNothingWhenTheStateExportsNothing(t *testing.T) {
+	hook, s := newHook(t, silentState{})
+
+	handover, err := hook.Snapshot(context.Background(), "app-data")
+
+	if handover != "" || err == nil || !strings.Contains(err.Error(), "exported nothing") {
+		t.Errorf("Snapshot of a state that exports nothing = %q, %v; want no handover and an error saying the state exported nothing", handover, err)
+	}
+	if len(s.puts) != 0 {
+		t.Errorf("Snapshot of a state that exports nothing sent %d uploads, want none", len(s.puts))
+	}
+}
