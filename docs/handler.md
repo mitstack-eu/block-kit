@@ -69,7 +69,9 @@ another status:
 3. The handler decodes the body with `contract.DecodeRequest`, which refuses
    a missing required field or an unknown `operation` with a 400 naming the
    field. The operations are `subscribe`, `upgrade`, `validate`,
-   `unsubscribe` and `issue`, the last only for a capability.
+   `unsubscribe`, `issue`, the last only for a capability, and `lease`, only for
+   a block that lists it, as [Leasing a short-lived credential](#leasing-a-short-lived-credential)
+   explains.
 4. The body's `obo` field must hold an OBO token, the platform's signed
    statement of the block, org, app and subscription the call is for. Its
    block must be your manifest's `metadata.id`, and its org, app and
@@ -601,16 +603,23 @@ through [`guardedhttp`](helpers.md#calling-a-vendor-with-an-orgs-credential).
 ## Leasing a short-lived credential
 
 A block, or a Docker host (the server an `hcloud-docker-host` subscription
-runs), sometimes needs a credential that only the provider of a resource can
-mint, such as a signed upload link for a backup bucket or a write-only token
-for a telemetry backend. The provider is the subscription whose operator
-manages that resource. The caller asks the platform, and the platform asks the
-provider's operator for the credential with the `lease` operation, a signed
-call to the operator's `/hook` like any other lifecycle call. No provider's key
-shape then lives in platform code. A block that provides a resource and mints
-these credentials lists `lease` under `spec.lifecycle.operations`, as a
-lifecycle operation the platform sends only to a block that lists it, and
-implements `handler.Leaser`:
+runs), sometimes needs a credential that only the owner of a resource can mint,
+such as a signed upload link for a backup bucket or a write-only token for a
+telemetry backend. This section calls the block or host that needs the
+credential the caller. It calls the subscription whose operator manages the
+resource the provider. A subscription is one customer's running copy of a
+block.
+
+The caller asks the platform, and the platform asks the provider's operator for
+the credential with the `lease` operation, a signed call to the operator's
+`/hook` like any other lifecycle call. The call goes to the provider, so the
+request's `subscriptionId`, and the subscription its OBO token names, are the
+provider's, and the caller appears only in `Caller`. The platform never needs
+to know how a provider signs a credential, so the provider's key format stays in
+the provider's block. A block that provides a resource and mints these
+credentials lists `lease` under `spec.lifecycle.operations` and implements
+`handler.Leaser`. The platform sends the operation only to a block that lists
+it:
 
 ```yaml
 lifecycle:
@@ -626,51 +635,88 @@ type Leaser interface {
 ```
 
 `handler.New` refuses a manifest that lists `lease` when `Config.Resource` is
-not a `Leaser`, so a lease never reaches a block that cannot answer it. The
-request is a signed call to `/hook`, and `Desired` carries the provider's own
-connection secrets, which the block signs with. `contract.LeaseRequest` holds
-what the caller asked:
+not a `Leaser`, so a lease never reaches a block that cannot answer it.
+`Desired` carries the provider's own connection secrets, which the block signs
+with. `contract.LeaseRequest` holds what the caller asked, and `contract.Lease`
+is what the block answers:
+
+```go
+type LeaseRequest struct {
+	ID       string          // the lease id
+	Resource string          // the resource to lease from
+	Want     json.RawMessage // a JSON object the platform never reads, or nil
+	Retire   []string        // handles of earlier credentials to delete
+	Caller   LeaseCaller
+}
+
+type LeaseCaller struct {
+	SubscriptionID string
+	Placed         []Placed
+}
+
+type Placed struct {
+	App            string
+	BlockID        string
+	SubscriptionID string
+}
+
+type Lease struct {
+	Credential json.RawMessage // a non-empty JSON object, passed on unread
+	ExpiresAt  time.Time
+	ID         string // the block's handle for deleting the credential, empty if none is needed
+}
+```
 
 | Field | Meaning |
 |---|---|
-| `ID` | The lease id, the same on every attempt of one lease, and empty on a request that only retires |
-| `Resource` | The resource the credential is leased from, as the caller's manifest names it, such as `hetzner.backup-bucket` |
+| `ID` | The lease id, which the platform chooses and keeps the same on every attempt of one lease. It is empty on a request that only retires |
+| `Resource` | The reference the caller's manifest uses for the resource: its exact type, such as `hetzner.backup-bucket`, or its name where two resources share a type. The block answers for the resource of its own that this reference names |
 | `Want` | An object the platform forwards and never reads, such as `{"signals":"metrics,logs"}` |
-| `Retire` | The handles of earlier credentials to delete, which the block answered as `id` |
-| `Caller` | The calling subscription, and `Placed`, the apps and blocks the platform records as running on the caller |
+| `Retire` | The handles of earlier credentials to delete. Each is a `Lease.ID` this block answered before |
+| `Caller` | The calling subscription in `Caller.SubscriptionID`, and in `Caller.Placed` the apps and blocks the platform records as running on the caller |
 
-`Placed` lists entries such as
+A `Placed` entry looks like
 `{"app":"shop","blockId":"docker-mariadb","subscriptionId":"sub_db"}`, one for
-each block of an app that the platform records as running on the caller. A
-block mints only for what `Caller.Placed` lists, and a caller cannot name an
-app in `Want`, which keeps a host to its own apps. A block reads `Want` for the
-shape of what it mints, such as the signals of a token, and never for which
-apps.
+each block of an app that the platform records as running on the caller. The
+platform builds the list from its own records and not from the caller's
+request, so the block can trust it. A block mints only for what `Caller.Placed`
+lists, and a caller cannot name an app in `Want`, which keeps a host to its own
+apps. A block reads `Want` for the shape of what it mints, such as the signals
+of a token, and never for which apps.
+
+The platform sends `Retire` when a credential that has a handle is no longer
+wanted. Its expiry may have passed with no newer lease, or the caller may have
+been unsubscribed. One request can both mint and retire, in which case the
+block deletes the listed handles and then mints. A request with an empty lease
+id only retires: the block deletes what `Retire` lists, and the handler answers
+200 with no `lease`.
 
 The handler answers 200 with the credential under `lease`, as in
 `{"outputs":null,"lease":{"credential":{"token":"..."},"expiresAt":"2026-10-14T13:00:00Z","id":"tok_1"}}`.
 The platform passes `credential` on unread and records only `id` and
 `expiresAt`, and it records nothing when `id` is left out, as for a link that
-expires on its own. A request with no lease id only retires: the block deletes
-what `Retire` lists, and the handler answers 200 with no `lease`.
+expires on its own.
 
 | Case | Answer |
 |---|---|
-| The manifest does not list `lease` | 400, refusal class `lease-not-listed` |
+| The manifest does not list `lease` | 400, refusal class `lease-not-listed`, and the block is never called |
 | The request names no resource, or mints without a caller, or neither mints nor retires | 400 |
 | The lease holds no credential, a credential that is not a non-empty JSON object, or one whose strings are all empty | 500 |
 | The lease has no expiry, an expiry already passed, or one more than `contract.MaxLeaseLife`, 24 hours, ahead | 500 |
 | A string in the credential, or the `id`, equals a secret the request carried | 500, naming where in the credential it sits, such as `credential.nested.key`, and never the value |
 
-When the handler refuses a lease that came with an `id`, it calls the block
-once more to retire that `id`, since the platform records only what a 200
-carries and could never find the credential. A retire that fails joins its
-error to the refusal.
+A 500 carries no `lease`, so the platform records nothing for it. When the
+handler refuses a lease whose answer carried a handle (the `ID` of the
+`Lease` the block returned), it calls the block once more to retire that
+handle, since the platform records only what a 200 carries and could never find
+the credential. A retire that fails joins its error to the refusal, and a
+refusal the retire itself returns never changes the status of the refusal
+being answered.
 
 The last row compares whole values only, so a signed link that names the key
-id that signed it passes. The handler never replays a lease from the
-idempotency cache, because a replayed credential may have expired, and it
-sends no lifecycle event for one.
+id that signed it passes. The handler never replays a lease from the idempotency
+cache, because a replayed credential may have expired, and it sends no
+lifecycle event for one.
 
 ## Serving a subscription's logs
 
