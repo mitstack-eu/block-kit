@@ -77,13 +77,13 @@ func (r Runner) Run(ctx context.Context, d contract.Desired, req contract.RunReq
 	if listed {
 		return answerRun(ran)
 	}
-	if err := r.ask(ctx, d, t, file); err != nil {
+	if err := retryOnMovedMain(func() error { return r.ask(ctx, d, t, file) }); err != nil {
 		return contract.RunResult{}, err
 	}
 	return contract.RunResult{}, handler.Wait("run %s is in the host's repository and waits for the host's node report to list it", req.ID)
 }
 
-// request refuses, before anything is read, a process the block does not run and a host the request could not reach.
+// request refuses, before anything is read, a process the block does not run and a host the request could not reach or the platform attests absent.
 func (r Runner) request(d contract.Desired, req contract.RunRequest) (RunRequestFile, target, error) {
 	service, err := r.service(req.Process)
 	if err != nil {
@@ -92,6 +92,10 @@ func (r Runner) request(d contract.Desired, req contract.RunRequest) (RunRequest
 	t, err := readTarget(d)
 	if err != nil {
 		return RunRequestFile{}, target{}, err
+	}
+	if absence, ok := d.AttestedAbsent(t.hostSub); ok {
+		return RunRequestFile{}, target{}, handler.Refuse("host-absent", "the platform's %s read the host's %s absent, so run %s has no host to run on; give the app a running host",
+			absence.Observer, absence.Resource, req.ID)
 	}
 	host := d.Bindings[reqHost]
 	if kind := host["execKind"]; kind != execKindGitPull {

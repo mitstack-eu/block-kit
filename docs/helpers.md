@@ -602,14 +602,20 @@ Each call takes these steps:
 1. It refuses a process the block does not run, listing those it runs, with
    the class `run-process`, before it reads or writes anything.
 2. It refuses a host binding whose `execKind` is not `git-pull`, or that names
-   no `execTarget`, with the class `host-binding`.
+   no `execTarget`, with the class `host-binding`, and a host the platform
+   attests absent with the class `host-absent`.
 3. It reads the host's newest node report. When the report lists the run id,
    it answers from that entry and commits nothing.
 4. Otherwise it reads `<app>/<block>.run-request` on main. When the file names
    the same run id, an earlier call committed it, so nothing is committed
    again, even after the block restarted between its commit and its answer.
 5. Otherwise it commits the request, replacing the request of an earlier run,
-   and answers pending.
+   and answers pending. When another block's commit moved main first, it
+   takes steps 4 and 5 again on the newest main, in three attempts at most.
+
+`Run` never removes the request file after its run ends, and the next run
+replaces it. Its run id, server id and deadline keep the host from running it
+twice.
 
 The request file is one JSON object, which
 `helpers/dockerhost/testdata/run-request.json` holds as the golden the host
@@ -650,7 +656,7 @@ running carries neither:
 | Lists the run with an exit code | The exit code, the output whole, the digest and the times, whatever the exit code |
 | Lists the run with a refusal | A refusal of class `run-refused` naming the run id and the host's words |
 | Lists the run with neither | Pending, since the command is still running |
-| Does not list the run, or the host has sent no report | Pending, after the commit of step 5 |
+| Does not list the run, or the host has sent no report | Pending, once main holds the request, by step 4 or step 5 |
 
 `Run` keeps whatever output the report carries, so the host alone decides how
 much of it to keep.
