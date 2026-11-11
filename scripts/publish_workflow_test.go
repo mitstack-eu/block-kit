@@ -612,38 +612,30 @@ func runReleaseStep(t *testing.T, step, tag string, tags map[string]string, publ
 	return out, exit, github
 }
 
-// ghcrLogin is how each job that builds the block's image logs in to ghcr.io, with the job's own token on stdin.
-const ghcrLogin = `printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin`
-
-// A block's image may build on a private package its own repository publishes, so each job that runs docker build reads packages with the job's own token before its first build, and the conformance job before the block's own tests, which may build the image too.
-func TestPublishBlockWorkflow_EveryJobThatBuildsTheImageReadsTheBlocksOwnPackages(t *testing.T) {
+// Each job that builds the block's image reads packages and logs in to ghcr.io with its own token before its first build, the conformance job before the block's tests, and no other job reads packages.
+func TestPublishBlockWorkflow_OnlyTheJobsThatBuildTheImageReadTheBlocksOwnPackages(t *testing.T) {
 	all := publishWorkflow(t)
-	jobs := []struct{ job, firstBuilder string }{
-		{"conformance", "go test"},
-		{"opentofu-conformance", "Build the block image"},
-		{"publish", "Build and push image"},
-	}
+	builders := map[string]string{"conformance": "go test", "opentofu-conformance": "Build the block image", "publish": "Build and push image"}
 
-	for _, j := range jobs {
-		login, builder := stepAt(all, j.job, "run", ghcrLogin), stepAt(all, j.job, "name", j.firstBuilder)
-		step := func(key string) string { return all["jobs."+j.job+".steps."+strconv.Itoa(login)+"."+key] }
-		cases := []struct{ name, got, want string }{
-			{"the job may read packages", all["jobs."+j.job+".permissions.packages"], "read"},
+	for _, job := range slices.Sorted(maps.Keys(all)) {
+		job, isJob := strings.CutPrefix(job, "jobs.")
+		if !isJob || strings.Contains(job, ".") {
+			continue
+		}
+		firstBuild, builds := builders[job]
+		if !builds {
+			if got, ok := all["jobs."+job+".permissions.packages"]; ok {
+				t.Errorf("publish-block.yml jobs.%s.permissions.packages = %q, want it absent", job, got)
+			}
+			continue
+		}
+		login := stepAt(all, job, "run", `printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin`)
+		step := func(key string) string { return all["jobs."+job+".steps."+strconv.Itoa(login)+"."+key] }
+		checkFields(t, "publish-block.yml", job+": ", []struct{ name, got, want string }{
+			{"the job may read packages", all["jobs."+job+".permissions.packages"], "read"},
 			{"the login takes the job's own token and actor", step("env.GHCR_TOKEN") + " " + step("env.GHCR_USER"), "${{ github.token }} ${{ github.actor }}"},
-			{"the login comes before the job's first step that builds the image", strconv.FormatBool(login >= 0 && builder >= 0 && login < builder), "true"},
-		}
-		checkFields(t, "publish-block.yml", j.job+": ", cases)
-	}
-}
-
-// A job that builds no image keeps no packages permission, so a caller's grant reaches only the jobs that need it.
-func TestPublishBlockWorkflow_NoOtherJobReadsPackages(t *testing.T) {
-	all := publishWorkflow(t)
-
-	for _, job := range []string{"secrets", "scripts", "delivery", "platform-verdict", "attest", "no-registry"} {
-		if got, ok := all["jobs."+job+".permissions.packages"]; ok {
-			t.Errorf("publish-block.yml jobs.%s.permissions.packages = %q, want it absent", job, got)
-		}
+			{"the login comes before the job's first build", strconv.FormatBool(login >= 0 && login < stepAt(all, job, "name", firstBuild)), "true"},
+		})
 	}
 }
 
@@ -658,12 +650,11 @@ func TestBlockChecksDoc_EveryCallerExampleGrantsPackagesRead(t *testing.T) {
 	for _, fence := range strings.Split(string(raw), "```yaml")[1:] {
 		example, _, _ := strings.Cut(fence, "```")
 		all := workflowFields(example)
-		if !strings.HasPrefix(all["jobs.block.uses"], "mitstack-eu/block-kit/.github/workflows/publish-block.yml@") {
-			continue
-		}
-		callers++
-		if got := all["jobs.block.permissions.packages"]; got != "read" {
-			t.Errorf("the caller example using %s grants packages %q, want read", all["jobs.block.uses"], got)
+		if strings.HasPrefix(all["jobs.block.uses"], "mitstack-eu/block-kit/.github/workflows/publish-block.yml@") {
+			callers++
+			if got := all["jobs.block.permissions.packages"]; got != "read" {
+				t.Errorf("the caller example using %s grants packages %q, want read", all["jobs.block.uses"], got)
+			}
 		}
 	}
 
