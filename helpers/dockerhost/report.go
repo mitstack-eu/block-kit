@@ -189,7 +189,6 @@ func (r Report) AppRelease(app, subscription string) (AppRelease, error) {
 	return read, err
 }
 
-// appRelease is AppRelease with the newest release command's exit code, 0 when none ran.
 func (r Report) appRelease(app, subscription string) (AppRelease, int, error) {
 	var out reportedOutput
 	if err := r.Decode(&out); err != nil {
@@ -216,7 +215,6 @@ type AskedRelease struct {
 	ExitCode    int
 }
 
-// FailedOnAsked reports whether the newest release command failed on the asked image, or failed at all when no image was asked for.
 func (a AskedRelease) FailedOnAsked() bool {
 	return a.Failed && (a.AskedDigest == "" || a.FailedDigest == a.AskedDigest)
 }
@@ -235,13 +233,12 @@ func (r Report) ReleaseAgainst(app, subscription, asked string) (AskedRelease, e
 	return AskedRelease{AppRelease: read, AskedDigest: digestOf(asked), ExitCode: exitCode}, nil
 }
 
-// The variables an app's image file, image.env in the host's repository, defines; the host's agent reads only imageVariable.
 const (
 	imageVariable          = "APP_IMAGE="
 	rolledBackFromVariable = "APP_ROLLED_BACK_FROM="
 )
 
-// ImageFile is an app's image file: the image the host runs the app on and, after mitstack rolled a deploy back, the image that deploy asked for.
+// ImageFile is an app's image.env in the host's repository: the image the host runs the app on, the only line the host's agent reads, and after a rollback the image the rolled-back deploy asked for.
 type ImageFile struct {
 	Image          string
 	RolledBackFrom string
@@ -262,7 +259,6 @@ func ParseImageFile(text string) ImageFile {
 	return f
 }
 
-// String is the file's text: the image line, then the rolled-back-from line only when a rollback wrote the file.
 func (f ImageFile) String() string {
 	text := imageVariable + f.Image + "\n"
 	if f.RolledBackFrom != "" {
