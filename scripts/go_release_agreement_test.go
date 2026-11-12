@@ -1,6 +1,6 @@
 package scripts_test
 
-// Every Go release a kit workflow installs or a kit Dockerfile builds on is the one publish-block.yml installs by default.
+// After a Go move that edits one place only, the suite names each kit workflow and Dockerfile left on another release than publish-block.yml installs by default.
 
 import (
 	"io/fs"
