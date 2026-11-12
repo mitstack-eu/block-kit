@@ -8,11 +8,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/helpers/continuity"
@@ -153,5 +157,100 @@ func TestOpenBaoVerify_FailsWhenTheScratchServerReportsItselfUninitialized(t *te
 
 	if err == nil || !strings.Contains(err.Error(), "uninitialized") {
 		t.Errorf("Verify against an uninitialized scratch server = %v; want an error saying so", err)
+	}
+}
+
+func TestVolumeExport_RefusesADirThatIsALinkOrAFile(t *testing.T) {
+	volume := filepath.Join(t.TempDir(), "data")
+	if err := os.Mkdir(volume, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(volume, "orders.txt")
+	if err := os.WriteFile(file, []byte(datum), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(volume, link); err != nil {
+		t.Fatal(err)
+	}
+	for label, dir := range map[string]string{"a link to the volume": link, "a regular file": file} {
+		t.Run(label, func(t *testing.T) {
+			var out bytes.Buffer
+
+			err := continuity.Volume{Dir: dir}.Export(context.Background(), &out)
+
+			if err == nil || !strings.Contains(err.Error(), "not a directory") {
+				t.Errorf("Export of %s returned %v and wrote %d bytes; want an error saying it is not a directory", label, err, out.Len())
+			}
+		})
+	}
+}
+
+// keptBits are the mode bits a restore must bring back.
+const keptBits = fs.ModePerm | fs.ModeSticky | fs.ModeSetuid | fs.ModeSetgid
+
+func ownerOf(t *testing.T, path string) (uid, gid int) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	return int(stat.Uid), int(stat.Gid)
+}
+
+func TestVolumeRestore_KeepsEachEntrysModeAndOwner(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	modes := map[string]fs.FileMode{"shared": fs.ModeSticky | 0o777, "shared/notes.txt": 0o664, "secret.key": 0o400}
+	if err := os.MkdirAll(filepath.Join(dir, "shared"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"shared/notes.txt", "secret.key"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(datum), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, mode := range modes {
+		if err := os.Chmod(filepath.Join(dir, name), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	uid, gid := ownerOf(t, filepath.Join(dir, "secret.key"))
+	var archive bytes.Buffer
+	if err := (continuity.Volume{Dir: dir}).Export(context.Background(), &archive); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	for tr := tar.NewReader(bytes.NewReader(archive.Bytes())); ; {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Name != ".continuity-manifest.json" && (hdr.Uid != uid || hdr.Gid != gid) {
+			t.Errorf("the archive records %s as owned by %d:%d; want %d:%d, the owner on disk", hdr.Name, hdr.Uid, hdr.Gid, uid, gid)
+		}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	err := continuity.Volume{Dir: dir}.Import(context.Background(), &archive)
+
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	for name, want := range modes {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode() & keptBits; got != want {
+			t.Errorf("%s came back with mode %v; want %v", name, got, want)
+		}
+		if gotUID, gotGID := ownerOf(t, filepath.Join(dir, name)); gotUID != uid || gotGID != gid {
+			t.Errorf("%s came back owned by %d:%d; want %d:%d", name, gotUID, gotGID, uid, gid)
+		}
 	}
 }

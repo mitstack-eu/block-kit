@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -171,5 +172,40 @@ func TestSnapshot_PublishesNoHandoverAndUploadsNothingWhenTheStateExportsNothing
 	}
 	if len(s.puts) != 0 {
 		t.Errorf("Snapshot of a state that exports nothing sent %d uploads, want none", len(s.puts))
+	}
+}
+
+// recordedLinks and recordedState note, in order, when a snapshot asks for its upload link and when it exports.
+type recordedLinks struct {
+	continuity.Links
+	events *[]string
+}
+
+func (l recordedLinks) Upload(ctx context.Context, unit string) (continuity.Link, error) {
+	*l.events = append(*l.events, "upload link")
+	return l.Links.Upload(ctx, unit)
+}
+
+type recordedState struct {
+	continuity.State
+	events *[]string
+}
+
+func (s recordedState) Export(ctx context.Context, w io.Writer) error {
+	*s.events = append(*s.events, "export")
+	return s.State.Export(ctx, w)
+}
+
+func TestSnapshot_AsksForTheUploadLinkOnlyAfterTheStateIsExported(t *testing.T) {
+	var events []string
+	hook, _ := newHook(t, recordedState{volumeKind(t).state, &events})
+	hook.Links = recordedLinks{hook.Links, &events}
+
+	if _, err := hook.Snapshot(context.Background(), "app-data"); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	if want := []string{"export", "upload link"}; !slices.Equal(events, want) {
+		t.Errorf("Snapshot ran %v; want %v, so a long export cannot outlive the link's lifetime", events, want)
 	}
 }
