@@ -1,4 +1,4 @@
-// Package reportproof, an optional helper, signs a node report's exact body and checks that signature, so mitstack can tell a node's own report from one sent with a leaked report token.
+// Package reportproof, an optional helper, signs a node report's exact body and checks that signature, so mitstack can tell a node's own report from one sent with a leaked report token, and signs the token a node opens its commit stream with.
 package reportproof
 
 import (
@@ -29,7 +29,7 @@ const lifetime = 10 * time.Minute
 //go:embed scripts/token-request.sh
 var TokenRequestScript string
 
-// SignScript prints, with openssl alone, the key set KeySet and the proof Sign make for a host's own Ed25519 key.
+// SignScript prints, with openssl alone, what KeySet, Sign and SignStream make for a host's own Ed25519 key.
 //
 //go:embed scripts/sign.sh
 var SignScript string
@@ -47,11 +47,9 @@ func Sign(key ed25519.PrivateKey, kid string, body []byte, platformOrigin string
 	return input + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(input)))
 }
 
-// StreamAudience names the platform's commit stream in a stream token's audience, beside the platform's origin.
 const StreamAudience = "cluster-signals"
 
-// SignStream returns the token that opens subject's commit stream on platformOrigin, valid for ten minutes from now,
-// for a node that holds its own key.
+// SignStream returns the ten-minute token that opens subject's commit stream on platformOrigin, naming StreamAudience.
 func SignStream(key ed25519.PrivateKey, kid, platformOrigin, subject string, now time.Time) string {
 	input := segment(map[string]string{"alg": "EdDSA", "kid": kid, "typ": "JWT"}) + "." +
 		segment(map[string]any{"aud": []string{platformOrigin, StreamAudience}, "sub": subject, "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(lifetime).Unix()})
@@ -157,7 +155,6 @@ func publicKeys(keySet []byte) (map[string]crypto.PublicKey, error) {
 	return keys, nil
 }
 
-// audience is a JWT aud claim, one string or an array of them.
 type audience []string
 
 func (a *audience) UnmarshalJSON(raw []byte) error {
