@@ -15,13 +15,11 @@ import (
 // CallbackToken is the events-callback token of the call a Platform's Context serves.
 const CallbackToken = "evt-callback-token-sentinel-4d1a"
 
-// CommitReport is one commit report the fake platform took, with the bearer it carried.
 type CommitReport struct {
 	Repository, Commit, Bearer string
 }
 
-// Platform is the fake platform a block reports the commits it lands to, answering each report with Status, or 202
-// when Status is zero.
+// Platform takes a block's commit reports, answering each with Status, or 202 when Status is zero.
 type Platform struct {
 	Status int
 
@@ -49,7 +47,6 @@ func (p *Platform) Context(ctx context.Context) context.Context {
 	})
 }
 
-// Reports is every commit report the platform took, in the order it took them.
 func (p *Platform) Reports() []CommitReport {
 	p.mu.Lock()
 	defer p.mu.Unlock()
