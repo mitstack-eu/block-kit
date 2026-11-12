@@ -1186,8 +1186,8 @@ links, `Keys` hands out the age keys, and the `Hook` itself does the rest:
 
 ```go
 hook := continuity.Hook{
-	Links: platformLinks{},                       // yours, filled from the platform's lease route
-	Keys:  unitKeys{},                            // yours: the public key, and the restore key kept outside the bucket
+	Links: platformLinks{},                              // yours, filled from the platform's lease route
+	Keys:  continuity.OwnSecretKeys{OwnSecrets: d.OwnSecrets}, // the unit's key, kept in the block's own secrets
 	State: continuity.Volume{Dir: "/var/lib/app"},
 }
 handover, err := hook.Snapshot(ctx, "app-data")
@@ -1199,7 +1199,8 @@ hold:
 1. It reads the unit's data out of the `State` and encrypts it with age, using
    only the public key, into a temporary file that holds ciphertext alone. It
    refuses a `State` that exports nothing, before anything is uploaded.
-2. It uploads the file to the upload link with a `Content-Length`, since a
+2. It asks `Links` for the upload link only now, so a long export cannot
+   outlive the link, and uploads the file with a `Content-Length`, since a
    presigned upload refuses a chunked body.
 3. It downloads the stored object through a download link, decrypts it with
    the restore key and gives it to `State.Verify`, which restores it into a
@@ -1218,11 +1219,40 @@ restore key stays outside the bucket.
 
 | State | What it keeps | How `Verify` checks it |
 |---|---|---|
-| `continuity.Volume{Dir}` | The files under a directory, as a tar archive that ends with each file's path, mode and SHA-256 | Extracts the archive into a scratch directory, refusing a path that leaves it, and rehashes every file |
-| `continuity.OpenBao{Live, Scratch, Restart}` | An OpenBao store, through its raft snapshot routes | Force-restores the snapshot into the `Scratch` instance and requires its health route to read initialised |
+| `continuity.Volume{Dir}` | The directories and regular files under a directory, each with its mode and owner, as a tar archive that ends with each file's path and SHA-256 | Extracts the archive into a scratch directory, refusing a path that leaves it, rehashes every file, and gives each entry its mode and owner back |
+| `continuity.OpenBao{Live, Scratch, Restart, Discard}` | An OpenBao store, through its raft snapshot routes | Force-restores the snapshot into the `Scratch` instance, requires its health route to read initialised, and calls `Discard` |
 
-`OpenBao.Import` calls `Restart` after the force restore, because every member
-of the store restarts for the restored data to take effect.
+`Volume` refuses a `Dir` that is not a directory itself, such as a link to the
+volume, since a walk of a link visits nothing. A restore gives each entry its
+recorded owner back, which needs a process allowed to do so, such as one that
+runs as root. A process that is not allowed fails the scratch check, so the
+snapshot publishes no handover it could not restore.
+
+`OpenBao.Verify` calls `Discard` whatever the check found, and refuses to
+restore into a `Scratch` that has none, because the scratch copy holds every
+secret of the live store. The check itself proves two things: the scratch
+instance accepted the snapshot, and it still reports itself initialised. It
+does not prove that the restored data unseals. `OpenBao.Import` calls
+`Restart` after the force restore, because every member of the store restarts
+for the restored data to take effect.
+
+`continuity.OwnSecretKeys` keeps each unit's key in the block's own secrets,
+which [What the answer carries](handler.md#what-the-answer-carries) describes,
+so the restore key never sits in the bucket. `continuity.MintKeys` returns an
+age identity for each unit that holds none yet, under the name
+`continuity.KeyName(unit)`, and never replaces a held one. A block returns
+them from its `EnsureResourcesOwning`:
+
+```go
+func (b *block) EnsureResourcesOwning(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, map[string]string, error) {
+	keys, err := continuity.MintKeys(d.OwnSecrets, "app-data")
+	if err != nil {
+		return nil, nil, err
+	}
+	created, err := b.ensure(ctx, d) // your own ensure
+	return created, keys, err
+}
+```
 
 `helpers/age` is the encryption underneath. It writes and reads the age v1
 format with an X25519 recipient, so the public `age` tool opens a snapshot with

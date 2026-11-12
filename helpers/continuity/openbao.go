@@ -54,10 +54,11 @@ func (e Endpoint) doOK(ctx context.Context, method, path string, body io.Reader)
 	return resp, nil
 }
 
-// OpenBao snapshots Live's raft storage, checks a snapshot by restoring it into Scratch, and restarts every member of Live through Restart after a force restore.
+// OpenBao snapshots Live's raft storage, checks a snapshot by restoring it into Scratch and discarding that copy through Discard, and restarts every member of Live through Restart after a force restore.
 type OpenBao struct {
 	Live, Scratch Endpoint
 	Restart       func(ctx context.Context) error
+	Discard       func(ctx context.Context) error
 }
 
 func (o OpenBao) Export(ctx context.Context, w io.Writer) error {
@@ -70,7 +71,16 @@ func (o OpenBao) Export(ctx context.Context, w io.Writer) error {
 	return err
 }
 
-func (o OpenBao) Verify(ctx context.Context, r io.Reader) error {
+// Verify discards the scratch copy whatever the check found, on a context that outlives a cancelled one, since the copy holds every secret of the live store.
+func (o OpenBao) Verify(ctx context.Context, r io.Reader) (err error) {
+	if o.Discard == nil {
+		return errors.New("OpenBao.Discard is not set, and the scratch copy would keep every secret of the live store")
+	}
+	defer func() {
+		if discardErr := o.Discard(context.WithoutCancel(ctx)); discardErr != nil {
+			err = errors.Join(err, fmt.Errorf("discarding the scratch copy: %w", discardErr))
+		}
+	}()
 	resp, err := o.Scratch.doOK(ctx, http.MethodPost, snapshotForcePath, r)
 	if err != nil {
 		return err
