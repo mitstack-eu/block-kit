@@ -73,6 +73,14 @@ func ReadReport(body []byte) (Report, error) {
 	return Report{Allocatable: parts.Host.Capacity.Allocatable, body: body, agent: parts.Host.Agent, capacityError: parts.Host.Capacity.Error}, nil
 }
 
+// CapacityError is the error the report carries in place of its allocatable capacity, empty when it gives that capacity or names no error.
+func (r Report) CapacityError() string {
+	if r.Allocatable != nil {
+		return ""
+	}
+	return r.capacityError
+}
+
 // Decode reads the report's body into v, for the fields only one block reads.
 func (r Report) Decode(v any) error {
 	return json.Unmarshal(r.body, v)

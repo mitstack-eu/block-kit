@@ -509,11 +509,12 @@ refused through `handler.Refuse` with the class `host-binding`, so the
 platform shows the subscriber why. A platform that does not answer or a
 report that is not JSON returns a plain error. A reader that already holds a
 report's body, such as the platform, reads it with
-`dockerhost.ReadReport(body)` instead. The report gives you five things:
+`dockerhost.ReadReport(body)` instead. The report gives you six things:
 
 | Field or method | What it gives |
 |---|---|
 | `report.Allocatable` | The host's allocatable capacity, or `nil` when the report gives none |
+| `report.CapacityError()` | The error the host sent under `host.capacity.error` in place of its allocatable capacity, such as `nproc, free -b or df -B1 / printed nothing the report can read`. It is empty when the report gives the capacity or names no error, so a page that shows a host's room quotes the same error `CheckRoom` waits on |
 | `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
 | `report.AppRelease(app, subscription)` | The app's newest release command as a `dockerhost.AppRelease`, described below |
 | `report.ReleaseAgainst(app, subscription, asked)` | The same release command judged against the image the app's newest deploy asked for, described below |
