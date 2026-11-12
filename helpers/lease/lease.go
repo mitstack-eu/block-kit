@@ -17,14 +17,14 @@ import (
 
 const (
 	routePath = "/v1/cluster-leases"
-	// maxAnswerBytes fits the largest credential the route passes on, 48 KiB, with its expiry.
+	// maxAnswerBytes is above the largest credential the route passes on, with room for its expiry.
 	maxAnswerBytes = 64 << 10
 	askTimeout     = 10 * time.Second
 	redacted       = "[REDACTED]"
 	// maxWaitSeconds is the longest Retry-After a time.Duration can hold.
 	maxWaitSeconds    = math.MaxInt64 / int64(time.Second)
 	unreadableMessage = "the answer is not the route's JSON"
-	withheldMessage   = "the route's message is withheld, since it holds an address"
+	withheldMessage   = "the route's message is withheld, since it holds a URL"
 )
 
 // Platform is where a node asks for a lease and the bearer the route knows it by, the report token the node received at enrolment.
@@ -33,7 +33,7 @@ type Platform struct {
 	Token   string
 	// HTTPClient defaults to one that waits ten seconds at most and follows no redirect.
 	HTTPClient *http.Client
-	// Clock judges an answer's expiry and defaults to time.Now.
+	// Clock judges an answer's expiry and a dated Retry-After, and defaults to time.Now.
 	Clock func() time.Time
 }
 
@@ -43,7 +43,7 @@ type Answer struct {
 	ExpiresAt  time.Time
 }
 
-// Refusal is an answer of the route that grants no lease, and RetryAfter is the wait a 503 names, zero when the answer names none it can hold.
+// Refusal is an answer of the route that grants no lease, and RetryAfter is the wait its Retry-After header names, zero when it names none or one no time.Duration holds.
 type Refusal struct {
 	Status     int
 	Resource   string
@@ -128,7 +128,7 @@ func (p Platform) now() time.Time {
 	return time.Now()
 }
 
-// message passes on the route's own message only when it holds no address, with the bearer redacted, so a refusal cannot carry a secret into a log.
+// message withholds a route message that holds a URL and redacts the bearer, since a refusal's text ends up in logs.
 func (p Platform) message(raw []byte) string {
 	var body struct {
 		Error string `json:"error"`
@@ -142,7 +142,6 @@ func (p Platform) message(raw []byte) string {
 	return strings.ReplaceAll(body.Error, p.Token, redacted)
 }
 
-// retryAfter reads both forms of Retry-After, seconds and a date, as the wait from now.
 func (p Platform) retryAfter(resp *http.Response) time.Duration {
 	header := resp.Header.Get("Retry-After")
 	if seconds, err := strconv.ParseInt(header, 10, 64); err == nil {

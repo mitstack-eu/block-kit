@@ -15,7 +15,7 @@ const (
 	LinkDownload = "download"
 )
 
-// LinkWant is the want of a snapshot link's lease, which the asking hook writes and the store's provider reads: an upload link for a new object of Unit, or a download link for the object Ref names. The provider answers a Link as the lease's credential.
+// LinkWant is the want a hook sends for a snapshot link's lease and the store's provider reads, answering a Link as the credential: an upload link for a new object of Unit, or a download link for the object Ref names.
 type LinkWant struct {
 	Use  string `json:"use"`
 	Unit string `json:"unit"`

@@ -238,8 +238,8 @@ expiry.
 program decides when to ask again, such as on its next scheduled run, and
 `RetryAfter` is how long the platform asks it to wait. Read a refusal's fields
 with `errors.As`. An error's text names the resource, the status and the
-platform's message. It never holds the token, and a message that holds an
-address is withheld:
+platform's message. It never holds the token, and a message that holds a URL
+is withheld:
 
 ```text
 lease of "scaleway.cockpit": the platform answered 503: lease is not available yet; retry later (Retry-After 30s)
