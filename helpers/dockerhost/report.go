@@ -113,8 +113,8 @@ func misread(err error) string {
 }
 
 // Allocatable is the capacity the report gives whole, given false when it gives none or one CapacityError explains.
-func (r Report) Allocatable() (allocatable Allocatable, given bool) {
-	allocatable, given, _ = r.capacity()
+func (r Report) Allocatable() (Allocatable, bool) {
+	allocatable, given, _ := r.capacity()
 	return allocatable, given
 }
 
