@@ -60,8 +60,8 @@ func TestPublishBlockWorkflow_APullRequestRunsThePublishScan(t *testing.T) {
 	const scan, image = `bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" `, `"block:${GITHUB_SHA}"`
 	raw := publishWorkflowText(t)
 	all := workflowFields(raw)
-	if run := all[stepOf(all, "publish", "name", "Build and push image")+"run"]; !strings.Contains(run, scan) {
-		t.Fatalf("the publish job's build runs\n%s\nwant it to run %s", run, scan)
+	if run := all[stepOf(all, "publish", "name", "Scan and push the image")+"run"]; !strings.Contains(run, scan) {
+		t.Fatalf("the publish job's push runs\n%s\nwant it to run %s", run, scan)
 	}
 	for _, copied := range []string{"aquasecurity/trivy", "trivy image", "--ignore-unfixed", "--exit-code"} {
 		if strings.Contains(raw, copied) {
@@ -226,18 +226,22 @@ func TestPublishBlockWorkflow_EveryCheckoutKeepsNoToken(t *testing.T) {
 	}
 }
 
-// The image copies the block's whole tree, so the OpenTofu job keeps blockverify and its report in RUNNER_TEMP and runs it before the verify role is assumed.
+// The image copies the block's whole tree, so the OpenTofu job keeps blockverify and its report in RUNNER_TEMP, and it assumes no role, since the base image job pulls the operator image for it.
 func TestPublishBlockWorkflow_TheOpenTofuJobBuildsBlockverifyFromItsKitCheckout(t *testing.T) {
 	all := publishWorkflow(t)
 	const job = "opentofu-conformance"
 	kit, moved := stepAt(all, job, "with.ref", "${{ inputs.kit-ref }}"), stepAt(all, job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`)
 	built := stepAt(all, job, "run", `go build -o "$RUNNER_TEMP/blockverify" ./verify/blockverify`)
-	judged, assumed := stepAt(all, job, "name", "blockverify (standalone contract check)"), stepAt(all, job, "name", "Configure AWS credentials for the verify role")
+	judged, fetched := stepAt(all, job, "name", "blockverify (standalone contract check)"), stepAt(all, job, "name", "Fetch the base images")
 	report := stepOf(all, job, "with.name", "blockverify-report")
 	cases := []struct{ name, got, want string }{
 		{"blockverify builds from the kit checkout before it leaves the tree", strconv.FormatBool(kit >= 0 && kit < built && built < moved), "true"},
 		{"the build runs in the kit checkout", all["jobs."+job+".steps."+strconv.Itoa(built)+".working-directory"], "block-kit"},
-		{"blockverify runs before the job assumes the verify role", strconv.FormatBool(judged >= 0 && judged < assumed), "true"},
+		{"blockverify runs before the job fetches the base images", strconv.FormatBool(judged >= 0 && judged < fetched), "true"},
+		{"the job fetches the base images the base image job uploads, into the directory its build reads", all[stepOf(all, job, "name", "Fetch the base images")+"with.name"] + " " + all[stepOf(all, job, "name", "Fetch the base images")+"with.path"], "base-images ${{ runner.temp }}/base-images"},
+		{"the base image job uploads that directory under that name", all[stepOf(all, "base-image", "name", "Hand the base images to the conformance job")+"with.name"] + " " + all[stepOf(all, "base-image", "name", "Hand the base images to the conformance job")+"with.path"], "base-images ${{ runner.temp }}/base-images"},
+		{"a rerun of the base image job replaces the images an earlier attempt handed over", all[stepOf(all, "base-image", "name", "Hand the base images to the conformance job")+"with.overwrite"], "true"},
+		{"the job assumes no AWS role", strconv.FormatBool(stepWith(all, job, "with.role-to-assume", "${{ vars.AWS_BLOCK_VERIFY_ROLE_ARN }}")), "false"},
 		{"the report uploads whatever the verdict", all[report+"if"], "always()"},
 		{"the report uploads from RUNNER_TEMP", all[report+"with.path"], "${{ runner.temp }}/blockverify-report.json"},
 	}
@@ -438,7 +442,7 @@ func TestPublishBlockWorkflow_TagsAReleaseOnlyFromTheCommitThatBuiltItsImage(t *
 	all := publishWorkflow(t)
 	at := func(name string) int { return stepAt(all, "publish", "name", name) }
 	step := func(name, key string) string { return all[stepOf(all, "publish", "name", name)+key] }
-	probe, built, recorded := at("Probe the version tag and its provenance record"), at("Build and push image"), at("blockprov push")
+	probe, built, recorded := at("Probe the version tag and its provenance record"), at("Scan and push the image"), at("blockprov push")
 	refused, tagged, started := at(releaseSteps[0]), at(releaseSteps[1]), at(releaseSteps[2])
 	cases := []struct{ name, got, want string }{
 		{"the publish job may push the tag", all["jobs.publish.permissions.contents"], "write"},
@@ -459,7 +463,7 @@ func TestPublishBlockWorkflow_TagsAReleaseOnlyFromTheCommitThatBuiltItsImage(t *
 	}
 	checkFields(t, "publish-block.yml", "", cases)
 
-	for _, job := range []string{"conformance", "opentofu-conformance", "secrets", "scripts", "platform-verdict", "attest"} {
+	for _, job := range []string{"conformance", "base-image", "opentofu-conformance", "secrets", "scripts", "platform-verdict", "attest"} {
 		if got := all["jobs."+job+".permissions.contents"]; got != "read" {
 			t.Errorf("publish-block.yml jobs.%s.permissions.contents = %q, want read, since only publish pushes a tag", job, got)
 		}
@@ -612,10 +616,10 @@ func runReleaseStep(t *testing.T, step, tag string, tags map[string]string, publ
 	return out, exit, github
 }
 
-// Each job that builds the block's image reads packages and logs in to ghcr.io with its own token before its first build, the conformance job before the block's tests, and no other job reads packages.
+// Each job that builds the block's image reads packages and logs in to ghcr.io with its own token before its first build, the conformance job before the block's tests, and no other job reads packages, publish included, since it pushes the image a conformance job built.
 func TestPublishBlockWorkflow_OnlyTheJobsThatBuildTheImageReadTheBlocksOwnPackages(t *testing.T) {
 	all := publishWorkflow(t)
-	builders := map[string]string{"conformance": "go test", "opentofu-conformance": "Build the block image", "publish": "Build and push image"}
+	builders := map[string]string{"conformance": "go test", "opentofu-conformance": "Build the block image"}
 
 	for _, job := range slices.Sorted(maps.Keys(all)) {
 		job, isJob := strings.CutPrefix(job, "jobs.")
