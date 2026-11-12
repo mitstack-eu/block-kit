@@ -32,7 +32,7 @@ type ask struct {
 	}
 }
 
-// route is the platform's lease route, answering every ask with status, header and body.
+// route stands in for the platform's lease route.
 type route struct {
 	srv    *httptest.Server
 	status int

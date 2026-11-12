@@ -171,7 +171,6 @@ func (l *leaseRoute) uses() []string {
 	return uses
 }
 
-// newLeasedHook is newHook with the kit's own links, which ask a leaseRoute as a node holding reportToken.
 func newLeasedHook(t *testing.T, state continuity.State) (continuity.Hook, *leaseRoute) {
 	t.Helper()
 	hook, s := newHook(t, state)
