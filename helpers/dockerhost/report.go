@@ -115,18 +115,9 @@ const (
 // reportedOutput is each app's output as the host reports it, every container and release labelled with the subscription whose block wrote it.
 type reportedOutput struct {
 	Host struct {
-		Apps     map[string][]containerOutput `json:"apps"`
-		Releases map[string]releaseOutput     `json:"releases"`
+		Apps     map[string][]Container   `json:"apps"`
+		Releases map[string]releaseOutput `json:"releases"`
 	} `json:"host"`
-}
-
-// containerOutput's Logs is absent from the report of a host release that sends no container output, and Subscription is empty for a container no block labelled.
-type containerOutput struct {
-	Container    string  `json:"container"`
-	Subscription string  `json:"subscription"`
-	Image        string  `json:"image"`
-	State        string  `json:"state"`
-	Logs         *string `json:"logs"`
 }
 
 type releaseOutput struct {
@@ -168,10 +159,10 @@ func SubscriptionLogs(ctx context.Context, api observe.NodeReportsAPI, d contrac
 				continue
 			}
 			held = true
-			if logs := led(c.Container, *c.Logs); len(logs) > 0 {
+			if logs := led(c.Name, *c.Logs); len(logs) > 0 {
 				lines = append(lines, logs...)
 			} else {
-				lines = append(lines, c.Container+" | wrote no output yet")
+				lines = append(lines, c.Name+" | wrote no output yet")
 			}
 		}
 	}
@@ -208,7 +199,7 @@ func (r Report) appRelease(app, subscription string) (AppRelease, int, error) {
 		read.Failed, read.FailedDigest = true, digestOf(ran.Image)
 	}
 	for _, c := range out.Host.Apps[app] {
-		if c.Subscription == subscription && c.State == "running" {
+		if c.Subscription == subscription && c.State == stateRunning {
 			read.ServingDigest = digestOf(c.Image)
 			break
 		}

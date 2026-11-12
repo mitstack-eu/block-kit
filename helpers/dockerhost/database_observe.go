@@ -4,36 +4,28 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"slices"
+	"regexp"
 	"strings"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 )
 
+// The causes a database answers once it has read active, which its catalogue type lists word for word.
 const (
-	healthUnhealthy = "unhealthy"
-	// DatabaseUnhealthy is the cause an unhealthy database answers, which its catalogue type lists word for word.
-	DatabaseUnhealthy = "the database's container reads unhealthy on the host"
+	DatabaseUnhealthy  = "the database's container reads unhealthy on the host"
+	DatabaseNotRunning = "the database's container is not running on the host"
 )
 
 // databaseReport is the host's newest node report, with the parts only a Database reads.
 type databaseReport struct {
 	Report
 	Host struct {
-		Apps    map[string][]databaseContainer `json:"apps"`
+		Apps    map[string][]Container `json:"apps"`
 		Backups struct {
 			Error *string `json:"error"`
 		} `json:"backups"`
 	} `json:"host"`
-}
-
-type databaseContainer struct {
-	Container string  `json:"container"`
-	Digest    string  `json:"digest"`
-	State     string  `json:"state"`
-	Health    string  `json:"health"`
-	Logs      *string `json:"logs"`
 }
 
 func (db Database) readReport(ctx context.Context, d contract.Desired, hostSub string) (databaseReport, bool, error) {
@@ -62,34 +54,17 @@ func (db Database) SubscriptionLogs(ctx context.Context, d contract.Desired) ([]
 	return SubscriptionLogs(ctx, db.Reports, d, t.hostSub)
 }
 
-func (h databaseReport) database(name string, app string) (databaseContainer, bool) {
+func (h databaseReport) database(name string, app string) (Container, bool) {
 	for _, c := range h.Host.Apps[app] {
-		if c.Container == name {
+		if c.Name == name {
 			return c, true
 		}
 	}
-	return databaseContainer{}, false
+	return Container{}, false
 }
 
-// trouble quotes the last line of the container's output that names a failure, or says the host's release sends none.
-func (db Database) trouble(c databaseContainer) string {
-	if c.Logs == nil {
-		return "; this host's node report carries no container output, so the cause cannot be read until the host runs a release that sends it"
-	}
-	if db.Engine.Trouble == nil {
-		return ""
-	}
-	lines := strings.Split(*c.Logs, "\n")
-	for _, line := range slices.Backward(lines) {
-		if db.Engine.Trouble.MatchString(line) {
-			return ": " + line
-		}
-	}
-	return ""
-}
-
-// ObserveResource reads the database's files at main's head, and reads them present only once the host's newest node
-// report shows its pull agent synced a commit holding those same files and the database's container running.
+// ObserveResource waits on the host's newest node report, since files at main's head show only intent, and a database
+// that has read active stays present, carrying Unhealthy, when its container stops or turns unhealthy.
 func (db Database) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	t, err := readTarget(r.Desired)
 	if err != nil {
@@ -146,25 +121,40 @@ func (db Database) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 	if !ok {
 		return unknown("the host synced main's head %s, and its newest node report shows no %s", snap.head, name), nil
 	}
-	unhealthy := c.Health == healthUnhealthy
-	switch {
-	case c.State != "running":
-		return unknown("the host synced main's head %s, and %s reads %s%s", snap.head, name, c.State, db.trouble(c)), nil
-	case c.Health == "starting":
-		return unknown("the host synced main's head %s, and %s is still starting%s", snap.head, name, db.trouble(c)), nil
-	case unhealthy && r.Desired.NeverActive:
-		return unknown("the host synced main's head %s, and %s reads unhealthy before it ever read active%s", snap.head, name, db.trouble(c)), nil
+	unhealthy, waits := c.DatabaseHealth(r.Desired.NeverActive, db.Engine.Trouble, report.Host.Apps[t.app])
+	if waits != "" {
+		return unknown("the host synced main's head %s, and %s", snap.head, waits), nil
+	}
+	runs := fmt.Sprintf("%s runs %s, %s", c.Name, c.Digest, c.Health)
+	if c.Read() == ContainerNotRunning {
+		runs = c.Name + " reads " + c.State
 	}
 	fixed := db.fixedValues(t)
 	obs := contract.Observation{
 		State: contract.Present, Identity: db.identity(repo, t),
 		Outputs:      map[string]string{"dbName": fixed["dbName"], "host": fixed["host"], "port": fixed["port"], "username": fixed["username"]},
-		StatusDetail: fmt.Sprintf("the host synced %s's database as main's head %s holds it, and %s runs %s, %s", t.app, snap.head, c.Container, c.Digest, c.Health),
-	}
-	if unhealthy {
-		obs.Unhealthy = &contract.Unhealthy{Cause: DatabaseUnhealthy, Detail: name + " reads unhealthy" + db.trouble(c)}
+		StatusDetail: fmt.Sprintf("the host synced %s's database as main's head %s holds it, and %s", t.app, snap.head, runs),
+		Unhealthy:    unhealthy,
 	}
 	return obs, nil
+}
+
+// DatabaseHealth judges a database's container among those listed beside it: why the answer waits while it starts or
+// is being replaced, or while it is down or unhealthy before the database ever read active, and otherwise its Unhealthy.
+func (c Container) DatabaseHealth(neverActive bool, trouble *regexp.Regexp, listed []Container) (*contract.Unhealthy, string) {
+	reading, quote := c.Read(), c.quote(trouble)
+	o, replaced := c.Replacement(listed)
+	switch {
+	case replaced:
+		return nil, c.replacedBy(o, "the database")
+	case reading == ContainerStarting && c.State == stateRunning:
+		return nil, c.Name + " is still starting" + quote
+	case reading == ContainerStarting, reading == ContainerNotRunning && neverActive:
+		return nil, c.Name + " reads " + c.State + quote
+	case reading == ContainerUnhealthy && neverActive:
+		return nil, c.Name + " reads unhealthy before it ever read active" + quote
+	}
+	return c.Unhealthy(ContainerCauses{NotRunning: DatabaseNotRunning, Unhealthy: DatabaseUnhealthy}), ""
 }
 
 // changedSince names the first of the database's files that differs between the commit the agent synced and main's
