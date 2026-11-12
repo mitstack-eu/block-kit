@@ -154,7 +154,7 @@ func (r *declaredRun) checkReported(created []contract.CreatedResource) (map[str
 		if !slices.Contains(nr.declaration.Types, c.Type) {
 			return nil, typeNotListed(nr, c.Type)
 		}
-		if err := refuseSecretValues("identity key", c.Identity, r.d.Secrets); err != nil {
+		if err := refuseSecretValues("identity key", c.Identity, r.connectionSecrets); err != nil {
 			return nil, err
 		}
 		reported[c.Name] = c

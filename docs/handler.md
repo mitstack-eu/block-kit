@@ -344,6 +344,10 @@ request's secrets from it.
 The handler answers an error your code returns by its type. A
 `*handler.Refused`, which you build with `handler.Refuse(class, format,
 args...)`, answers 400 with a `statusDetail` of `refused:<class>: <detail>`.
+The handler masks each secret the request carries in the detail and in any
+text your code wraps around the refusal. It leaves the class as your code wrote
+it, because the platform reads the class back, so keep a class a fixed word
+and never format a value into it.
 The engine reads a refusal as permanent and stops retrying. Any other error
 answers 500, and the engine retries the call under the same idempotency key.
 
@@ -589,7 +593,10 @@ the output's key and never its value, so the refusal cannot leak it. The check
 compares whole values only, so an output that merely contains a secret passes
 it, and your code must keep secrets out of plain outputs. The handler never
 inspects `SecretOutputs`, where a secret belongs, and it ignores an empty
-secret value, which names an unset optional secret.
+secret value, which names an unset optional secret. An output equal to an app
+secret, a secret input or an own secret is reported, because an output such as
+an app's address may rightly equal an app secret such as `APP_URL`. The handler
+scrubs those values from text alone.
 
 ## Serving a capability and issuing an app's credential
 

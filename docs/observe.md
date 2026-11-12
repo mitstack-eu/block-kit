@@ -81,8 +81,12 @@ return contract.Observation{State: contract.Present, Outputs: outputs,
 
 The engine still reads the resource present, so an unhealthy answer drives
 no lifecycle step, and the platform shows the failure by the type's entry.
-The handler scrubs request secrets from both fields, and
-`kittest.AssertBlock` fails a cause the type does not list.
+The handler scrubs request secrets from `Detail`. It leaves `Cause` whole when
+the type snapshot you pass as `Config.Types` lists it under the type's
+failures, so an app secret such as `container` cannot rewrite the cause
+`container-not-running`. It scrubs any other cause, and every cause of a block
+that passes no snapshot. `kittest.AssertBlock` fails a cause the type does not
+list.
 
 ## A resource being removed
 

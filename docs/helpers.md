@@ -53,6 +53,11 @@ characters a crafted value could use to forge a log line.
 log.Printf("creating the firewall for %s", safe.LogSafe(d.SubscriptionID, d.Secrets["hetzner"]["api_token"]))
 ```
 
+To scrub every secret the request carries, as the handler does, pass
+`d.SecretValues().All()`. `contract.SecretValues` keeps the values apart by
+where the request carries them: its connections' secrets, its secret inputs,
+the app's secrets and the block's own secrets.
+
 The second rule is that the operator, never the request, picks the host it
 sends a token to. A request may carry an endpoint, such as a GitHub instance's
 API address, and building a URL from it would let a forged request send the
