@@ -127,6 +127,24 @@ without its `/v1/webhooks/operator-events` path, and the callback's token. A
 block calls another platform route with that base URL and token, acting for
 the call it serves, as `observe.NodeReportsClient` does to read node reports.
 
+`events.ReportCommit(ctx, repository, commit)` tells the platform that a commit
+landed on a repository a cluster or a Docker host reads. The platform passes
+the report down that cluster's or host's commit stream, so the cluster's Argo
+CD or the host's agent pulls the repository at once instead of waiting for its
+own timer. It posts one request to `POST /v1/gitops-commits` with the
+callback's token, and makes no second request, even after a failure. The
+repository is the GitHub `owner/name` the reader pulls:
+
+```json
+{"repository": "acme/docker-host-sub-host0123456789", "commit": "2d266ec0449adf437f9226b938817a45da1ed95c"}
+```
+
+It returns an error when the platform answers anything but 202, cannot be
+reached, or the request carries no callback. Log that error and carry on with
+the commit, never undoing or failing it, since the reader's own timer still
+takes it. `hostRepo.commit` in `helpers/dockerhost` reports
+each commit it lands on a host's repository this way.
+
 ## Reading each thing once in a request
 
 The handler gives every request a cache, so a block's passes over the same
@@ -1046,6 +1064,22 @@ refuses a `kid` of anything but letters, digits, dots, underscores and
 hyphens, an origin that is not https, and a time that is not a whole number
 written without leading zeros, since each is written into the proof's JSON. It
 also refuses a key file that holds no Ed25519 key.
+
+A Docker host also holds its commit stream open, the connection over which the
+platform passes it each commit that `events.ReportCommit` reports, as
+[Reporting progress and reading the platform](#reporting-progress-and-reading-the-platform) describes. The
+`stream` mode prints the token the host opens that stream with, byte for byte
+what `reportproof.SignStream(key, kid, origin, subject, now)` makes in Go. It
+takes the key file, the `kid`, the platform's origin, the subject and the Unix
+time, in that order. The token lasts ten minutes. Its audience names the
+platform's origin and `cluster-signals`, the value of
+`reportproof.StreamAudience`. Its subject is the host's own subscription id.
+The mode refuses a subject of anything but
+letters, digits, dots, colons, underscores and hyphens:
+
+```bash
+bash sign.sh stream /var/lib/mitstack/report.key docker-host https://api.mitstack.dev sub_host0123456789 "$(date +%s)"
+```
 
 ### How a proof is checked
 

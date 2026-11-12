@@ -245,6 +245,20 @@ func TestSignScript_PrintsTheProofThatSignMakesAndVerifyAccepts(t *testing.T) {
 	}
 }
 
+func TestSignStreamAndSignScript_MakeOneTenMinuteTokenNamingThePlatformTheStreamAndTheSubject(t *testing.T) {
+	keyPath, key := opensslKey(t)
+	now := time.Now().Truncate(time.Second)
+	want := signed(key, map[string]any{"alg": "EdDSA", "kid": hostKid, "typ": "JWT"}, map[string]any{"aud": []string{platform, reportproof.StreamAudience},
+		"sub": "sub_host0123456789", "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(10 * time.Minute).Unix()})
+
+	fromGo := reportproof.SignStream(key, hostKid, platform, "sub_host0123456789", now)
+	fromScript, err := runSignScript(t, "stream", keyPath, hostKid, platform, "sub_host0123456789", strconv.FormatInt(now.Unix(), 10))
+
+	if fromGo != want || fromScript != want || err != nil {
+		t.Errorf("SignStream made\n%s\nand sign.sh stream printed\n%s (%v)\nwant\n%s", fromGo, fromScript, err, want)
+	}
+}
+
 func TestSignScript_RefusesAnArgumentItCannotSignAsSignWould(t *testing.T) {
 	keyPath, _ := opensslKey(t)
 	bodyPath := filepath.Join(t.TempDir(), "report.json")
@@ -262,6 +276,10 @@ func TestSignScript_RefusesAnArgumentItCannotSignAsSignWould(t *testing.T) {
 		{"a time that is not a whole number", []string{"proof", keyPath, hostKid, platform, bodyPath, "now"}},
 		{"a time written with a leading zero", []string{"proof", keyPath, hostKid, platform, bodyPath, "0100"}},
 		{"a time past what Sign's int64 holds", []string{"proof", keyPath, hostKid, platform, bodyPath, "99999999999999999999"}},
+		{"a stream subject carrying a quote", []string{"stream", keyPath, hostKid, platform, `sub_"1`, "1793400000"}},
+		{"a stream origin that is not https", []string{"stream", keyPath, hostKid, "http://api.test.local", "sub_1", "1793400000"}},
+		{"a stream time that is not a whole number", []string{"stream", keyPath, hostKid, platform, "sub_1", "now"}},
+		{"a stream with no subject", []string{"stream", keyPath, hostKid, platform, "1793400000"}},
 		{"an unknown mode", []string{"verify", keyPath, hostKid}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -269,6 +287,34 @@ func TestSignScript_RefusesAnArgumentItCannotSignAsSignWould(t *testing.T) {
 				t.Errorf("sign.sh %s printed %q with no error; want a refusal", strings.Join(tc.args, " "), out)
 			}
 		})
+	}
+}
+
+func TestSignScript_FailsAndPrintsNoTokenWhenOpensslCannotSign(t *testing.T) {
+	keyPath, _ := opensslKey(t)
+	bodyPath := filepath.Join(t.TempDir(), "report.json")
+	if err := os.WriteFile(bodyPath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	real, err := exec.LookPath("openssl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	failing := "#!/bin/sh\n[ \"$1\" = pkeyutl ] && exit 1\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "openssl"), []byte(failing), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	for _, args := range [][]string{
+		{"proof", keyPath, hostKid, platform, bodyPath, "1793400000"},
+		{"stream", keyPath, hostKid, platform, "sub_host0123456789", "1793400000"},
+	} {
+		out, err := runSignScript(t, args...)
+
+		if err == nil || len(out) > 0 {
+			t.Errorf("sign.sh %s with a failing openssl signer printed %q, error %v; want no token and an error", args[0], out, err)
+		}
 	}
 }
 

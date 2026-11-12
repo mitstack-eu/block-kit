@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,6 +130,54 @@ func TestEnvelopeFrom(t *testing.T) {
 
 			if ok != tc.wantOK || !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("EnvelopeFrom = %+v, %v; want %+v, %v", got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestReportCommit(t *testing.T) {
+	const repository, commit = "acme/docker-host-sub-host0123456789", "2d266ec0449adf437f9226b938817a45da1ed95c"
+	type taken struct{ path, authorization, body string }
+	cases := []struct {
+		name     string
+		status   int
+		envelope *events.Envelope
+		want     []taken
+		wantErr  string
+	}{
+		{"one report posts the repository and the commit with the callback's token as its bearer", http.StatusAccepted,
+			&events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{Token: "evt-token"}},
+			[]taken{{"/v1/gitops-commits", "Bearer evt-token", `{"repository":"` + repository + `","commit":"` + commit + `"}`}}, ""},
+		{"a platform answering 503 takes one request and the report is an error naming the status", http.StatusServiceUnavailable,
+			&events.Envelope{SubscriptionID: "sub-1", Callback: &events.Callback{Token: "evt-token"}},
+			[]taken{{"/v1/gitops-commits", "Bearer evt-token", `{"repository":"` + repository + `","commit":"` + commit + `"}`}}, "503"},
+		{"a call with no events callback sends nothing and the report is an error", http.StatusAccepted,
+			&events.Envelope{SubscriptionID: "sub-1"}, nil, "callback"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []taken
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				got = append(got, taken{r.URL.Path, r.Header.Get("Authorization"), strings.TrimSpace(string(raw))})
+				w.WriteHeader(tc.status)
+			}))
+			env := *tc.envelope
+			if env.Callback != nil {
+				env.Callback = &events.Callback{URL: srv.URL + "/v1/webhooks/operator-events", Token: env.Callback.Token}
+			}
+
+			err := events.ReportCommit(events.WithEnvelope(context.Background(), env), repository, commit)
+			srv.Close()
+
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ReportCommit sent %v, want %v", got, tc.want)
+			}
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("ReportCommit = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr) || strings.Contains(err.Error(), "evt-token")):
+				t.Errorf("ReportCommit = %v, want an error naming %q and carrying no token", err, tc.wantErr)
 			}
 		})
 	}

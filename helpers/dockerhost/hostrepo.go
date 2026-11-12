@@ -3,6 +3,7 @@ package dockerhost
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/helpers/events"
 )
 
 const (
@@ -102,7 +104,8 @@ func (g *hostRepo) read(ctx context.Context, head, path string) (string, error) 
 	return string(content), nil
 }
 
-// commit lands changes on head, an empty content deleting its path.
+// commit lands changes on head, an empty content deleting its path, and reports a commit it lands so the host's
+// agent pulls it at once.
 func (g *hostRepo) commit(ctx context.Context, head, message string, changes map[string]string) error {
 	entries := map[string]*string{}
 	for path, content := range changes {
@@ -112,8 +115,20 @@ func (g *hostRepo) commit(ctx context.Context, head, message string, changes map
 		}
 		entries[path] = &content
 	}
-	if _, err := g.client.CommitChanges(ctx, g.fullName, head, message, entries); err != nil {
+	landed, err := g.client.CommitChanges(ctx, g.fullName, head, message, entries)
+	if err != nil {
 		return fmt.Errorf("committing to %s: %w", g.fullName, err)
 	}
+	// CommitChanges answers head itself when the changes left the tree as it was.
+	if landed != head {
+		g.report(ctx, landed)
+	}
 	return nil
+}
+
+// report never fails the commit, since the agent's own timed pull takes it anyway.
+func (g *hostRepo) report(ctx context.Context, commit string) {
+	if err := events.ReportCommit(ctx, g.fullName, commit); err != nil {
+		log.Printf("dockerhost: the host's agent takes %s at its next pull, since the platform was not told of it: %v", commit, err)
+	}
 }
