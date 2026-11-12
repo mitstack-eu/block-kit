@@ -6,16 +6,25 @@
 # `publish` needs every check job, so a red check never starts a publish, and
 # `blockprov build` refuses a non-pass verdict a second time regardless.
 #
+# No job that runs the block's code holds the `id-token` permission, so
+# nothing a block ships can ask GitHub for the identity token that signs its
+# record. On a push that publishes, the conformance job hands `publish` the
+# image it built, manifest.yaml and its verdict as the `block-release`
+# artifact. `publish` checks out none of the block's tree, never builds or
+# runs its image, and runs only the kit's own tools on those files.
+#
 # An OpenTofu-only block, a module with no go.mod whose image builds on the
 # opentofu-operator image, sets `opentofu-only`. Its checks then run in the
 # `opentofu-conformance` job in place of `conformance`, under the same check
-# name. That job runs the kit's blockverify with --opentofu-only on the tree,
-# which on a pull request judges spec.version as the Go job does. It then
-# assumes the caller's AWS_BLOCK_VERIFY_ROLE_ARN role to pull the operator
-# image, builds the block's image once, and runs `tofu fmt`, `tofu test` and
-# the operator's block-verify inside it. The publish job runs
-# block-verify again in the image it pushed and signs that result into the
-# provenance record, with the kit version the operator binary was built with.
+# name. The `base-image` job first assumes the caller's
+# AWS_BLOCK_VERIFY_ROLE_ARN role, pulls the operator image the block's
+# Dockerfile names and hands it on as a file. `opentofu-conformance` runs the
+# kit's blockverify with --opentofu-only on the tree, which on a pull request
+# judges spec.version as the Go job does, builds the block's image once on
+# the image it was handed, and runs `tofu fmt`, `tofu test` and the operator's
+# block-verify inside it. The publish job signs that block-verify result into
+# the provenance record, with the kit version the operator binary was built
+# with.
 #
 # The block type's conformance job, `secrets` and `scripts` run on every
 # event. `publish` runs only on a push to the caller's default branch, so a
@@ -54,7 +63,7 @@
 # block holds one. Before it pushes anything, the run fails when the tag
 # already names another commit, so a tag never moves. A later push that keeps
 # spec.version, as a change to Markdown alone may, finds the image and its
-# record published, builds nothing and cuts no tag.
+# record published, pushes nothing and cuts no tag.
 #
 # A version tag already in the registry is never pushed over. The probe asks
 # two questions, whether the tag is published and whether its provenance
@@ -63,14 +72,17 @@
 # never pushes the image again. The record signs the run's commit, so only a
 # rerun of the run that built the image completes it; a later commit that
 # finds the record missing fails rather than attesting an image it did not
-# build. A tag that already has its record ends green
-# with no writes.
+# build. The record also signs the verdict of the image the run was handed, so
+# that rerun is a rerun of the failed jobs, which reads the first hand-over
+# while GitHub keeps it. A rerun of every job hands over a new build, and
+# `publish` refuses to complete the record with it. A tag that already has
+# its record ends green with no writes.
 #
 # Two events scan the block's image with the kit's scripts/scan-image.sh, which
 # refuses every finding that has a fixed version. On a pull request, whichever
 # conformance job runs builds the image, pushes it nowhere and scans it, so a
 # finding fails the conformance check before merge. On a push to the default
-# branch, the publish job scans the image it built before any push. No other
+# branch, the publish job scans the image it was handed before any push. No other
 # event scans the image. The one finding the script accepts is GO-2026-5932 in
 # an OpenTofu provider binary that scripts/go-2026-5932-exception.sh proves
 # free of openpgp code.
@@ -138,7 +150,11 @@ on:
 # re-grants what it actually needs.
 permissions:
   contents: read
-  id-token: write
+
+# A job's own if: cannot read env, so publish and no-registry spell out the
+# event and branch test themselves.
+env:
+  PUBLISHES: ${{ inputs.ecr-repository != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
   # A branch protection rule names one conformance check for every block type,
@@ -155,6 +171,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Trivy reads these from its working directory with no flag, so a
+      # committed one could silence a finding. None is allowed anywhere.
+      - name: Refuse a committed Trivy ignore or config file
+        run: |
+          set -euo pipefail
+          found=$(find . -path ./.git -prune -o \( -name .trivyignore -o -name .trivyignore.yaml -o -name trivy.yaml -o -name trivy-secret.yaml \) -print)
+          if [ -n "$found" ]; then
+            printf 'Trivy would read these with no flag, so the image is neither scanned nor pushed:\n%s\n' "$found" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -248,30 +275,103 @@ jobs:
           name: blockverify-report
           path: blockverify-report.json
 
-      # A push to the default branch builds and scans the image in publish.
+      # A push that publishes hands this image to publish, which scans it.
       - name: Build the block image
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || env.PUBLISHES == 'true'
         run: DOCKER_BUILDKIT=1 docker build -t "block:${GITHUB_SHA}" .
 
       - name: Scan the block image
         if: github.event_name == 'pull_request'
         run: bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" "block:${GITHUB_SHA}"
 
-  # The only check job with an identity token, which the verify role needs to
-  # pull the private operator image, the one thing that role grants. The
-  # block's own code runs only inside the image, which receives no token.
-  opentofu-conformance:
-    name: ${{ inputs.opentofu-only && 'conformance' || 'opentofu conformance' }}
+      - name: Collect what the release signs
+        if: env.PUBLISHES == 'true'
+        env:
+          PUBLISHER_WORKFLOW: ${{ inputs.publisher-workflow }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/collect-release.sh" "block:${GITHUB_SHA}" "$RUNNER_TEMP/block-release" "$PUBLISHER_WORKFLOW" manifest.yaml go.mod blockverify-report.json
+
+      - name: Hand the release to the publish job
+        if: env.PUBLISHES == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: block-release
+          path: ${{ runner.temp }}/block-release
+          include-hidden-files: true
+          retention-days: 1
+          overwrite: true
+
+  # Assuming the verify role takes an identity token, so the pull of the
+  # private operator image is a job of its own that runs none of the block's
+  # code. It reads the Dockerfile as text through the API, with no checkout.
+  base-image:
+    name: base image
     if: inputs.opentofu-only
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     permissions:
       contents: read
       id-token: write
+    steps:
+      - name: Checkout block-kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mitstack-eu/block-kit
+          ref: ${{ inputs.kit-ref }}
+          path: block-kit
+          persist-credentials: false
+
+      - name: Configure AWS credentials for the verify role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_VERIFY_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # The verify role sits in the account whose registry holds the operator image.
+      - name: Log in to the operator image's registry
+        run: |
+          set -euo pipefail
+          REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ inputs.aws-region }}.amazonaws.com"
+          echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Pull the images the block's Dockerfile names in that registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash block-kit/scripts/base-images.sh pull "$REGISTRY" "$RUNNER_TEMP/base-images"
+
+      - name: Hand the base images to the conformance job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: base-images
+          path: ${{ runner.temp }}/base-images
+          retention-days: 1
+          overwrite: true
+
+  # A failed need would skip this job, and a required check that is skipped
+  # reads as passed, so it runs whatever base-image's result and fails in a
+  # step of its own.
+  opentofu-conformance:
+    name: ${{ inputs.opentofu-only && 'conformance' || 'opentofu conformance' }}
+    needs: base-image
+    if: ${{ !cancelled() && inputs.opentofu-only }}
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
       packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Trivy reads these from its working directory with no flag, so a
+      # committed one could silence a finding. None is allowed anywhere.
+      - name: Refuse a committed Trivy ignore or config file
+        run: |
+          set -euo pipefail
+          found=$(find . -path ./.git -prune -o \( -name .trivyignore -o -name .trivyignore.yaml -o -name trivy.yaml -o -name trivy-secret.yaml \) -print)
+          if [ -n "$found" ]; then
+            printf 'Trivy would read these with no flag, so the image is neither scanned nor pushed:\n%s\n' "$found" >&2
+            exit 1
+          fi
 
       # blockverify and the image scan's GO-2026-5932 exception are Go tools
       # of the kit's.
@@ -312,8 +412,7 @@ jobs:
         run: bash "$RUNNER_TEMP/block-kit/scripts/write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"
 
       # blockverify reads only the tree and the platform's served type
-      # snapshot, and runs none of the block's code, so it judges the block
-      # before the job assumes the verify role.
+      # snapshot, so it judges the block before the job fetches any image.
       - name: blockverify (standalone contract check)
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -334,18 +433,21 @@ jobs:
         run: |
           "$RUNNER_TEMP/checkpolls" -base "$BASE_SHA"
 
-      - name: Configure AWS credentials for the verify role
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: ${{ vars.AWS_BLOCK_VERIFY_ROLE_ARN }}
-          aws-region: ${{ inputs.aws-region }}
-
-      # The verify role sits in the account whose registry holds the operator image.
-      - name: Log in to the operator image's registry
+      # A rerun could otherwise build on the images an earlier attempt handed
+      # over.
+      - name: Stop where the base image job did not succeed
+        if: needs.base-image.result != 'success'
+        env:
+          RESULT: ${{ needs.base-image.result }}
         run: |
-          set -euo pipefail
-          REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ inputs.aws-region }}.amazonaws.com"
-          aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
+          echo "::error::the base image job ended ${RESULT}, so this run was handed no base image to build on"
+          exit 1
+
+      - name: Fetch the base images
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: base-images
+          path: ${{ runner.temp }}/base-images
 
       # The block's image may build on a private package its own repository
       # publishes.
@@ -355,11 +457,15 @@ jobs:
           GHCR_USER: ${{ github.actor }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
 
+      # The contexts go through a file, since a failed load inside a process
+      # substitution would not stop the build.
       - name: Build the block image
         id: image
         run: |
           set -euo pipefail
-          DOCKER_BUILDKIT=1 docker build --iidfile "$RUNNER_TEMP/block.iid" -t "block:${GITHUB_SHA}" .
+          bash "$RUNNER_TEMP/block-kit/scripts/base-images.sh" load "$RUNNER_TEMP/base-images" > "$RUNNER_TEMP/base-contexts"
+          mapfile -t contexts < "$RUNNER_TEMP/base-contexts"
+          DOCKER_BUILDKIT=1 docker buildx build "${contexts[@]}" --iidfile "$RUNNER_TEMP/block.iid" -t "block:${GITHUB_SHA}" .
           echo "id=$(cat "$RUNNER_TEMP/block.iid")" >> "$GITHUB_OUTPUT"
 
       - name: tofu fmt -check
@@ -374,15 +480,34 @@ jobs:
           docker run --rm --entrypoint sh "$IMAGE_ID" -c \
             'tofu -chdir=/module init -backend=false -input=false -no-color > /dev/null && tofu -chdir=/module test -no-color'
 
+      # The record signs this output, of the very image a release pushes.
       - name: block-verify
         env:
           IMAGE_ID: ${{ steps.image.outputs.id }}
-        run: docker run --rm --entrypoint block-verify "$IMAGE_ID" -test.v
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint block-verify "$IMAGE_ID" -test.v | tee "$RUNNER_TEMP/block-verify.txt"
 
-      # A push to the default branch scans the image in publish.
+      # A push that publishes hands this image to publish, which scans it.
       - name: Scan the block image
         if: github.event_name == 'pull_request'
         run: bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" "block:${GITHUB_SHA}"
+
+      - name: Collect what the release signs
+        if: env.PUBLISHES == 'true'
+        env:
+          PUBLISHER_WORKFLOW: ${{ inputs.publisher-workflow }}
+        run: bash "$RUNNER_TEMP/block-kit/scripts/collect-release.sh" "block:${GITHUB_SHA}" "$RUNNER_TEMP/block-release" "$PUBLISHER_WORKFLOW" manifest.yaml "$RUNNER_TEMP/block-verify.txt"
+
+      - name: Hand the release to the publish job
+        if: env.PUBLISHES == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: block-release
+          path: ${{ runner.temp }}/block-release
+          include-hidden-files: true
+          retention-days: 1
+          overwrite: true
 
   secrets:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
@@ -497,7 +622,7 @@ jobs:
   # The attestation route digests the platform's own copy of the manifest, so
   # blockverify judges that copy, and the platform signs a passing report as
   # the attestation the catalogue badge reads. The job repeats the blockverify
-  # build that conformance and publish each run.
+  # build that conformance runs.
   attest:
     needs: [conformance, secrets, scripts]
     if: inputs.post-attestation && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -578,6 +703,9 @@ jobs:
           fi
           echo "The platform signed the attestation: $body"
 
+  # The one job that signs: it holds `id-token`, so it checks out no block
+  # tree, never builds or runs the image, and reads the block's files as data.
+  #
   # One of the two conformance jobs is always skipped, and GitHub skips a job
   # with a skipped need unless its if: calls a status function. So this if:
   # asks that no need failed or was cancelled.
@@ -591,23 +719,7 @@ jobs:
       contents: write
       id-token: write
       actions: write
-      packages: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # Trivy reads these from its working directory with no flag, so a
-      # committed one could silence a finding. None is allowed anywhere.
-      - name: Refuse a committed Trivy ignore or config file
-        run: |
-          set -euo pipefail
-          found=$(find . -path ./.git -prune -o \( -name .trivyignore -o -name .trivyignore.yaml -o -name trivy.yaml -o -name trivy-secret.yaml \) -print)
-          if [ -n "$found" ]; then
-            printf 'Trivy would read these with no flag, so the image is neither scanned nor pushed:\n%s\n' "$found" >&2
-            exit 1
-          fi
-
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ inputs.go-version }}
@@ -626,17 +738,15 @@ jobs:
           path: block-kit
           persist-credentials: false
 
-      - name: Build blockverify and blockprov
+      # blockprov lives in RUNNER_TEMP, where no file of the block's can
+      # replace it.
+      - name: Build blockprov
         working-directory: block-kit
-        run: |
-          go build -o ../blockverify ./verify/blockverify
-          go build -o ../blockprov ./verify/blockprov
+        run: go build -o "$RUNNER_TEMP/blockprov" ./verify/blockprov
 
-      # blockverify judges `.` and the image builds from `.`, so the kit
-      # checked out inside the block's tree must be gone before either reads
-      # it, or the block is judged by the kit's own source. The image scan
-      # runs the kit's scripts from where the checkout moves to.
-      - name: Remove the kit checkout from the block tree
+      # The block's files land in the working directory below, so the kit
+      # leaves it first, or one of them could replace a kit script.
+      - name: Move the kit out of the working directory
         run: |
           mv block-kit "$RUNNER_TEMP/block-kit"
 
@@ -647,13 +757,12 @@ jobs:
           echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
           aws ecr get-login-password --region ${{ inputs.aws-region }} | docker login --username AWS --password-stdin "$REGISTRY"
 
-      # The block's image may build on a private package its own repository
-      # publishes.
-      - name: Log in to ghcr.io with the job's token
-        env:
-          GHCR_TOKEN: ${{ github.token }}
-          GHCR_USER: ${{ github.actor }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      # Every step after this one treats these files as data: none runs an
+      # action, builds, or runs a file from the working directory.
+      - name: Fetch what the release signs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: block-release
 
       # A version tag already in the registry is never pushed over, and a
       # record already beside it is never written again. This probe is
@@ -662,7 +771,7 @@ jobs:
       # record tag sha256-<hex>.prov that `blockprov push` writes for that
       # digest; and `built`, whether this commit built the image. A tag
       # that is not published has no digest yet, so its record is absent
-      # by definition and is not probed, and this run builds it. The build
+      # by definition and is not probed, and this run pushes it. The push
       # tags the image with the commit sha, so for a published tag only the
       # run that built it, or a rerun of that run, answers `built=true`. A
       # missing record is completed only for an image this commit built,
@@ -719,7 +828,7 @@ jobs:
           # The record signs this run's commit, so it is completed only for
           # an image this commit built.
           if [ "$BUILT" != "$DIGEST" ]; then
-            echo "no provenance record at ${RECORD_TAG}, and v${VERSION} (${DIGEST}) was not built from commit ${GITHUB_SHA} (its sha tag answers ${BUILT}); rerun the run that published it to complete the record" >&2
+            echo "no provenance record at ${RECORD_TAG}, and v${VERSION} (${DIGEST}) was not built from commit ${GITHUB_SHA} (its sha tag answers ${BUILT}); re-run the failed jobs of the run that published it, while GitHub keeps that run's block-release artifact, to complete the record" >&2
             exit 1
           fi
           echo "no provenance record at ${RECORD_TAG}; completing it for ${DIGEST}"
@@ -732,17 +841,17 @@ jobs:
           TAG: ${{ steps.existing.outputs.tag }}
         run: bash "$RUNNER_TEMP/block-kit/scripts/release-tag.sh" check "$TAG"
 
-      # Any finding with a fixed version, at any severity, stops the job
-      # before the first push, but the one scan-image.sh's exception proves.
-      - name: Build and push image
+      # The image is the one the conformance job built and judged. Any finding
+      # with a fixed version, at any severity, stops the job before the first
+      # push, but the one scan-image.sh's exception proves.
+      - name: Scan and push the image
         if: steps.existing.outputs.published == 'false'
         run: |
           set -euo pipefail
           VERSION=$(awk '$1=="version:"{print $2; exit}' manifest.yaml)
-          DOCKER_BUILDKIT=1 docker build \
-            -t "${REGISTRY}/${{ inputs.ecr-repository }}:v${VERSION}" \
-            -t "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}" \
-            .
+          docker load --input image.tar
+          docker tag "block:${GITHUB_SHA}" "${REGISTRY}/${{ inputs.ecr-repository }}:v${VERSION}"
+          docker tag "block:${GITHUB_SHA}" "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}"
           bash "$RUNNER_TEMP/block-kit/scripts/scan-image.sh" "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}"
           # The sha tag goes first: a version tag in the registry then always
           # has the sha tag the probe checks before completing a record.
@@ -751,9 +860,26 @@ jobs:
           IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${REGISTRY}/${{ inputs.ecr-repository }}:${GITHUB_SHA}" | cut -d@ -f2)
           echo "IMAGE_DIGEST=$IMAGE_DIGEST" >> "$GITHUB_ENV"
 
+      # The record signs the verdict of the image this run was handed, so it
+      # is completed only where that image is the one already published.
+      - name: Refuse to complete the record of an image this run was not handed
+        if: steps.existing.outputs.published == 'true' && steps.existing.outputs.record == 'false'
+        run: |
+          set -euo pipefail
+          published="${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST}"
+          docker load --input image.tar
+          docker pull "$published"
+          content='{{json .RootFS.Layers}} {{json .Config}}'
+          handed=$(docker image inspect --format "$content" "block:${GITHUB_SHA}")
+          found=$(docker image inspect --format "$content" "$published")
+          if [ "$handed" != "$found" ]; then
+            echo "::error::the image this run was handed is not the one published as ${published}, so its verdict cannot be signed for that image. Re-run only the failed jobs of the run that pushed it, while GitHub keeps that run's block-release artifact, or release a new version." >&2
+            exit 1
+          fi
+
       # kit-ref names the kit that BUILT the tools above, not the one this
       # block compiles against, so the record's kitVersion comes from the
-      # block-kit pin in go.mod.
+      # block-kit pin in the go.mod the conformance job handed over.
       - name: Determine the kit version pinned in go.mod
         if: steps.existing.outputs.record == 'false' && !inputs.opentofu-only
         run: |
@@ -787,19 +913,8 @@ jobs:
           echo "KIT_VERSION=$KIT_VERSION" >> "$GITHUB_ENV"
 
       # A second gate over the same fact `needs: conformance` already
-      # enforces: blockprov build refuses to sign anything but a fresh pass.
-      - name: blockverify (standalone, for blockprov build's report)
-        if: steps.existing.outputs.record == 'false' && !inputs.opentofu-only
-        run: ./blockverify --standalone --json . > blockverify-report.json
-
-      # Like blockverify above, block-verify runs again here, in the very image
-      # the record describes, so blockprov build signs a fresh pass from it.
-      - name: block-verify inside the image, for blockprov build's result
-        if: steps.existing.outputs.record == 'false' && inputs.opentofu-only
-        run: |
-          set -euo pipefail
-          docker run --rm --entrypoint block-verify "${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST}" -test.v | tee block-verify.txt
-
+      # enforces: blockprov build refuses to sign anything but the pass the
+      # conformance job handed over.
       - name: blockprov build
         if: steps.existing.outputs.record == 'false'
         env:
@@ -809,7 +924,7 @@ jobs:
           if [ "$OPENTOFU_ONLY" = "true" ]; then
             result=(--block-verify block-verify.txt)
           fi
-          ./blockprov build \
+          "$RUNNER_TEMP/blockprov" build \
             --manifest manifest.yaml \
             "${result[@]}" \
             --block-id ${{ inputs.block-id }} \
@@ -842,7 +957,7 @@ jobs:
         env:
           ECR_PASSWORD: ${{ steps.ecr_password.outputs.password }}
         run: |
-          ./blockprov push \
+          "$RUNNER_TEMP/blockprov" push \
             --record record.json \
             --registry "$REGISTRY" \
             --repo "${{ inputs.ecr-repository }}" \

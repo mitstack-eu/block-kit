@@ -253,20 +253,39 @@ fixed sleep or a polling interval. To wait on provider work, your
 and the engine asks again later. Other code calls the waiter that the client of
 the system it waits on provides, a function that returns once that system
 reports the work done, as [Judging the waits a pull request
-adds](maintainers.md#judging-the-waits-a-pull-request-adds) explains. A
-red verdict stops the `publish` job, which on a push to your default branch
-builds the image, scans it and pushes it to the ECR repository you name, so
-no image ships without a pass. The job then runs `blockprov`, which builds a
-provenance record naming your repository, commit and CI run, signs it with
-the run's GitHub Actions identity token and pushes it beside the image.
+adds](maintainers.md#judging-the-waits-a-pull-request-adds) explains.
+
+A red verdict stops the `publish` job, so no image ships without a pass. On a
+push to your default branch, the conformance job builds your image and hands
+it to `publish` with `manifest.yaml` and its verdict. The `publish` job scans
+that image and pushes it to the ECR repository you name. It then runs
+`blockprov`, which builds a provenance record naming your repository, commit
+and CI run, signs it with the run's GitHub Actions identity token and pushes
+it beside the image.
+
+The job that signs runs none of your block's code. GitHub issues an identity
+token only to a job that holds the `id-token` permission, and no job of
+`publish-block.yml` that checks out your repository or runs your image holds
+it. The `publish` job checks out nothing of yours and never builds or runs
+the image. It reads the files the conformance job handed it as data, with the
+kit's own tools. A record's signature therefore says that the kit's steps
+wrote the record, and a test of yours that asks GitHub for a token gets none.
 
 Once the image and its record are pushed, the `publish` job cuts your block's
 release tag, `v` and the `spec.version` of `manifest.yaml`, such as `v1.2.0`,
 at the commit it built. A tag never moves. So before it pushes anything, the
 job fails when that tag already names another commit, and tells you to raise
 `spec.version`. A later push that keeps the version, such as a change to a
-README, finds the image and its record published, builds nothing and cuts no
+README, finds the image and its record published, pushes nothing and cuts no
 tag.
+
+When a run pushes the image and then fails before its record is pushed,
+re-run only that run's failed jobs, within one day. The `publish` job
+completes a missing record only with the image the pushing attempt was
+handed, and the run keeps that hand-over for one day. A rerun of every job
+builds the image again, and the `publish` job refuses to complete the record
+with that build, because the record signs the verdict of the image already
+published. After that day, raise `spec.version` and release again.
 
 A block can keep its source repository private and still show each release
 in public. Its public release repository is a second GitHub repository that
@@ -359,8 +378,8 @@ each push to `main` that workflow does three things with the token:
 
 ### How the publish job scans the image
 
-The `publish` job builds your image and runs the kit's `scripts/scan-image.sh`
-on it before any push. The script runs the image scanner Trivy 0.76.0,
+The `publish` job runs the kit's `scripts/scan-image.sh` on the image the
+conformance job built, before any push. The script runs the image scanner Trivy 0.76.0,
 checked by its sha256, from an empty directory with every `TRIVY_` variable
 unset, so no ignore file or setting can silence a finding. Any finding that
 has a fixed version, at any severity, stops the job, with the one exception
@@ -498,9 +517,15 @@ judges](#what-blockverify-judges):
 go run github.com/mitstack-eu/block-kit/verify/blockverify@<tag> --standalone --opentofu-only .
 ```
 
-The operator image is private, so the job then assumes the verify role to pull
-it. The job builds your block's image once and runs three checks inside it,
-and on a pull request it then scans the image as the publish job does:
+The operator image is private, and the verify role that pulls it takes
+GitHub's identity token. So a job of its own, `base image`, pulls the
+operator image your `Dockerfile` names and hands it to the conformance job as
+a file. That job runs none of your block's code: it reads the `Dockerfile` as
+text through GitHub's API. So write the operator image's name in the
+`Dockerfile` in full, with its tag or digest and no variable inside it, or
+the job fails naming it. The conformance job builds your block's image once
+on the image it was handed and runs three checks inside it, and on a pull
+request it then scans the image as the publish job does:
 
 | Check | What it runs |
 |---|---|
@@ -512,9 +537,9 @@ block-verify judges an OpenTofu-only block's module as blockverify's Go
 operator suites judge a Go block's code. It comes from the operator image,
 while blockverify comes from the kit at `kit-ref`.
 
-On a push to your default branch, the `publish` job builds, scans and pushes
-the image as it does for a Go block. The job runs block-verify again in the
-image it pushed and hands that output to `blockprov build --block-verify`.
+On a push to your default branch, the `publish` job scans and pushes the
+image the conformance job built, as it does for a Go block. It hands the
+output block-verify printed in that image to `blockprov build --block-verify`.
 The provenance record's `conformance` then carries block-verify's verdict and
 the sha256 of its output. Its `suiteVersion`, the field naming the checks that
 judged the block, reads `block-verify@<kit version>`. The record's kit version

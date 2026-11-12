@@ -10,7 +10,7 @@
 #   exit 1  a finding is refused, naming it, or Trivy or Docker failed
 #
 # Why this exists. publish-block.yml's publish job runs it on the image it
-# built before any push, and a pull-request job can run the same scan.
+# was handed before any push, and a pull-request job can run the same scan.
 set -euo pipefail
 
 # No name here starts with TRIVY_, since every TRIVY_ variable is unset before
