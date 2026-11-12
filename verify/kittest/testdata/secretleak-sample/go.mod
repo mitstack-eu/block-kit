@@ -1,6 +1,6 @@
 module example.com/secretleak-sample
 
-go 1.25
+go 1.26.0
 
 require github.com/mitstack-eu/block-kit v0.4.0
 

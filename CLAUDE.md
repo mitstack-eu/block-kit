@@ -3,7 +3,10 @@
 Module path: `github.com/mitstack-eu/block-kit`.
 
 The kit is stdlib-only by design. No third-party dependency is ever added,
-however convenient one looks for a single call site.
+however convenient one looks for a single call site. The one exception is
+`golang.org/x/crypto`, which `helpers/age` seals with, and the
+`golang.org/x/sys` it builds on: hand-written cryptography is a security risk,
+and this library is the Go team's own.
 
 Test with `go vet ./... && go test ./...`.
 

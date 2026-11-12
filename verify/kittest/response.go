@@ -70,7 +70,7 @@ func InvalidResponseGoldens(t *testing.T) map[string][]byte {
 	return out
 }
 
-// CheckResponse is hand-written because the kit module has no third-party dependencies, and it accepts an unknown top-level property so a new field never fails a shipping operator's test.
+// CheckResponse is hand-written because the kit module requires no JSON Schema library, and it accepts an unknown top-level property so a new field never fails a shipping operator's test.
 func CheckResponse(raw []byte) []string {
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {

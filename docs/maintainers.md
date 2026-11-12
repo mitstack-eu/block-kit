@@ -8,10 +8,15 @@ too.
 
 ## Testing the kit
 
-The kit's module is stdlib-only, and no third-party dependency is ever added.
-The Robot rescue system's SSH session needs `golang.org/x/crypto/ssh`, so it
-sits in a Go module of its own, `capabilities/hetzner/robot/rescuessh`, and the
-kit's `go.mod` still requires nothing. From the repository's root:
+The kit's module is stdlib-only, with one exception. Its `go.mod` requires
+`golang.org/x/crypto`, whose ChaCha20-Poly1305 `helpers/age` seals a snapshot
+with, because hand-written cryptography is a security risk and this library is
+the Go team's own. That module builds on `golang.org/x/sys`, which `go.mod`
+lists as an indirect requirement. No other third-party dependency is ever
+added. The Robot
+rescue system's SSH session sits in a Go module of its own,
+`capabilities/hetzner/robot/rescuessh`, with its own `golang.org/x/crypto`
+requirement. From the repository's root:
 
 ```sh
 go vet ./... && go test ./...
@@ -45,10 +50,10 @@ CADDY_IMAGE=caddy:2 go test -tags edgecaddy -run '^TestEdge_' ./helpers/dockerho
 The rescuessh module, the healthz module and the example block are Go modules
 of their own, so `./...` leaves them out and CI tests each by itself. The
 healthz module is one so that an operator on any kit release can mount the
-health handler without moving its kit pin. The rescuessh module is
-the only code here with a third-party dependency, so CI also runs govulncheck
-over every package it imports, and a known vulnerability in any of them fails
-the run. The example's `go.mod`
+health handler without moving its kit pin. CI also runs govulncheck over
+every package the rescuessh module imports, and a known vulnerability in any
+of them fails the run. That scan does not cover the kit's own module. The
+example's `go.mod`
 builds it against the kit in the same checkout. A test in `examples/` holds
 every README code fence whose lead-in links a file under `examples/` equal to
 that file, so a change to the example's `manifest.yaml` or `block.go` changes
@@ -64,8 +69,8 @@ provider binary that holds no openpgp code, as
 describes. The tests of that exception, in
 `scripts/go_2026_5932_exception_test.go`, build stand-in provider binaries
 from `scripts/testdata/fixture-provider`. That fixture is a module of its own
-requiring golang.org/x/crypto v0.58.0, so the kit's `go.mod` still requires
-nothing. The `openpgp` build tag adds an openpgp call, and the `nocrypto` tag
+requiring golang.org/x/crypto v0.58.0, a release the advisory covers, so the
+kit's own `go.mod` never carries that release. The `openpgp` build tag adds an openpgp call, and the `nocrypto` tag
 drops x/crypto altogether.
 
 `scripts/testdata/vulndb` stands in for the Go vulnerability database at
