@@ -227,6 +227,8 @@ type Response struct {
 	Resources map[string]ResourceOutcome `json:"resources,omitempty"`
 	// Replaces names, on a validate, the resources an upgrade would replace rather than change in place.
 	Replaces []string `json:"replaces,omitempty"`
+	// PlannedReplacements is true on a validate whose block planned its replacements, so an empty Replaces then means the upgrade replaces nothing rather than that nobody looked.
+	PlannedReplacements bool `json:"plannedReplacements,omitempty"`
 	// ResourceSecretOutputs keeps each provided resource's secret outputs apart, since the merged SecretOutputs keeps one value of a key two resources share.
 	ResourceSecretOutputs map[string]map[string]string `json:"resourceSecretOutputs,omitempty"`
 	// Credential answers an issue alone.

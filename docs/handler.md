@@ -278,6 +278,21 @@ type ReplacementPlanner interface {
 The engine replaces a stateful resource only with an explicit confirmation,
 and this list is how it learns that one is needed.
 
+The handler also sets `plannedReplacements` to true on that answer, for every
+block that implements `handler.ReplacementPlanner`, including one whose list
+comes back empty. You write no code for it. The engine needs it because an
+empty `replaces` alone cannot tell an upgrade that replaces nothing from a
+block that never looked. A block without the interface answers with the field
+left out, which the engine reads as "not planned". So does a block built on a
+kit release older than the field, and a `validate` naming one resource, which
+runs no planner. A validate answer from a planning block that replaces
+nothing reads:
+
+```json
+{"outputs": null, "absent": false, "plannedReplacements": true,
+ "resources": {"server": {"observe": {"state": "present", "type": "hetzner.server", "identity": {"serverId": "4711"}}}}}
+```
+
 A `validate` may name one resource in `resource`, `resourceIdentity` and
 `resourceType`, and the handler observes only that one. When the name is one
 an earlier version declared and the manifest no longer does, the handler hands
@@ -490,7 +505,7 @@ like this:
 ```
 
 ```json
-{"outputs": null, "absent": false, "replaces": ["aws.ebs-volume"],
+{"outputs": null, "absent": false, "replaces": ["aws.ebs-volume"], "plannedReplacements": true,
  "resources": {"aws.ebs-volume": {"observe": {"state": "present", "type": "aws.ebs-volume", "identity": {"volumeId": "vol-0abc"}}}}}
 ```
 
