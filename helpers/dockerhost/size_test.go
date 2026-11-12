@@ -117,9 +117,38 @@ func reportOf(d contract.Desired, reports ...observe.NodeReport) func(*testing.T
 	}
 }
 
+// giving reads a host's newest report whose allocatable capacity is the JSON allocatable.
+func giving(allocatable string) func(*testing.T) (dockerhost.Report, bool) {
+	return reportOf(contract.Desired{}, received(39, `{"host":{"capacity":{"allocatable":`+allocatable+`}}}`))
+}
+
+func TestCapacity_GivesTheReportsCapacityAndWaitsNamingAMeasureItLacks(t *testing.T) {
+	for _, tc := range []struct {
+		name, allocatable, lacks string
+	}{
+		{name: "a complete capacity is given as the report gives it", allocatable: `{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}`},
+		{name: "a capacity without its memory waits naming memoryBytes", allocatable: `{"cpuMillis":4000,"diskBytes":75161927680}`, lacks: "host.capacity.allocatable lacks memoryBytes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report, found := giving(tc.allocatable)(t)
+
+			got, err := dockerhost.Capacity(report, found, "shop")
+
+			if tc.lacks != "" {
+				if !waitsForSignal(err) || !strings.Contains(err.Error(), tc.lacks) {
+					t.Errorf("Capacity(%s) = %+v, %v; want a wait for the next report naming %q", tc.allocatable, got, err, tc.lacks)
+				}
+				return
+			}
+			if err != nil || got.CPUMillis != 3500 || got.MemoryBytes != 7*gib || got.DiskBytes != 70*gib {
+				t.Errorf("Capacity(%s) = %+v, %v; want 3500 millicores, 7 GiB of memory and 70 GiB of disk", tc.allocatable, got, err)
+			}
+		})
+	}
+}
+
 func TestCheckRoom_WaitsForTheHostsCapacityReportRefusesAnAbsentOrFullHostAndPassesWhatFits(t *testing.T) {
-	allocatable := dockerhost.Reservation{CPUMillis: 3500, MemoryBytes: 7 * gib, DiskBytes: 70 * gib}
-	reporting := func(*testing.T) (dockerhost.Report, bool) { return dockerhost.Report{Allocatable: &allocatable}, true }
+	reporting := giving(`{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}`)
 	others := dockerhost.Reservation{CPUMillis: 3000, MemoryBytes: 6 * gib}
 	small := dockerhost.Ask{Part: "shop", Kind: "app", Size: dockerhost.Reservation{CPUMillis: 500, MemoryBytes: 512 * mib}}
 	large := dockerhost.Ask{Part: "shop", Kind: "app", Size: dockerhost.Reservation{CPUMillis: 1000, MemoryBytes: 512 * mib}}
@@ -140,6 +169,10 @@ func TestCheckRoom_WaitsForTheHostsCapacityReportRefusesAnAbsentOrFullHostAndPas
 		{name: "a report stating why it gives no capacity waits, naming the host's own error",
 			report: reportOf(contract.Desired{}, received(39, `{"host":{"capacity":{"error":"nproc printed nothing"}}}`)), ask: small, others: others, wait: true,
 			says: []string{"nproc printed nothing", "shop waits for a report that gives it"}},
+		{name: "a capacity without its memory waits naming memoryBytes, and is never refused as a full host", report: giving(`{"cpuMillis":4000,"diskBytes":75161927680}`), ask: small, others: others, wait: true,
+			says: []string{"host.capacity.allocatable lacks memoryBytes", "shop waits for a report that gives it"}},
+		{name: "a capacity whose cpuMillis is text waits naming cpuMillis", report: giving(`{"cpuMillis":"[redacted]6","memoryBytes":7516192768,"diskBytes":75161927680}`), ask: small, others: others, wait: true,
+			says: []string{"host.capacity.allocatable.cpuMillis holds a JSON string", "shop waits for a report that gives it"}},
 		{name: "a host the platform attests absent is refused host-absent", report: reportOf(attestedAbsent(hostSub)), ask: small, others: others, class: "host-absent",
 			says: []string{"hetzner.docker-host", "hetzner.server absent", "shop cannot be placed on it"}},
 		{name: "an app too large is refused host-full, naming the free and asked amounts", report: reporting, ask: large, others: others, class: "host-full",

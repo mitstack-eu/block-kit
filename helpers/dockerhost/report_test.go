@@ -48,17 +48,18 @@ func newest(t *testing.T, reports ...observe.NodeReport) dockerhost.Report {
 
 func TestNewestReport_AnswersTheCommitAndCapacityOfTheNewestReport(t *testing.T) {
 	r := newest(t,
-		received(39, `{"host":{"capacity":{"allocatable":{"cpuMillis":3500,"memoryBytes":7516192768}},"agent":{"output":"Pulling fs layer\n","syncedCommit":"`+synced+`"}}}`),
+		received(39, `{"host":{"capacity":{"allocatable":{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}},"agent":{"output":"Pulling fs layer\n","syncedCommit":"`+synced+`"}}}`),
 		received(38, `{"host":{"agent":{"output":"","syncedCommit":"0123456789abcdef0123456789abcdef01234567"}}}`),
 	)
 
 	commit, err := r.SyncedCommit()
+	capacity, capacityErr := dockerhost.Capacity(r, true, "shop")
 
 	if err != nil || commit != synced {
 		t.Errorf("SyncedCommit = %q, %v; want the newest report's %s", commit, err, synced)
 	}
-	if r.Allocatable == nil || *r.Allocatable != (dockerhost.Reservation{CPUMillis: 3500, MemoryBytes: 7516192768}) {
-		t.Errorf("Allocatable = %+v, want the newest report's", r.Allocatable)
+	if capacityErr != nil || capacity.CPUMillis != 3500 || capacity.MemoryBytes != 7516192768 || capacity.DiskBytes != 75161927680 {
+		t.Errorf("Capacity = %+v, %v; want the newest report's 3500 millicores, 7516192768 memory bytes and 75161927680 disk bytes", capacity, capacityErr)
 	}
 	var body struct {
 		Host struct{ Agent struct{ Output string } }
@@ -73,6 +74,7 @@ func TestNewestReport_AnswersNoCommitWhenTheReportCannotNameOne(t *testing.T) {
 		{"a host on a release without the field, whatever its log says", `{"output":"agent: synced ` + synced + `\n"}`,
 			"no host.agent.syncedCommit, so the host runs a hcloud-docker-host release before 0.8.0; upgrade the host to 0.8.0"},
 		{"an agent that has not synced on this release", `{"output":"","syncedCommit":null}`, "has not synced since it took its current release"},
+		{"an agent the report gives as text", `"restarting"`, "host.agent holds a JSON string"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newest(t, received(39, `{"host":{"agent":`+tc.agent+`}}`))
@@ -193,6 +195,24 @@ func TestSubscriptionLogs_SaysWhyItHasNoLinesRatherThanAnsweringNone(t *testing.
 
 			if strings.Join(lines, "\n") != strings.Join(tc.want, "\n") {
 				t.Errorf("SubscriptionLogs(%s) = %q; want %q", tc.sub, lines, tc.want)
+			}
+		})
+	}
+}
+
+func TestSubscriptionLogs_AnswersTheLinesOfAReportWhoseOtherPartsCannotBeRead(t *testing.T) {
+	for _, tc := range []struct{ name, part string }{
+		{"a capacity whose cpuMillis is text", `"capacity":{"allocatable":{"cpuMillis":"[redacted]6","memoryBytes":8000000000,"diskBytes":80000000000}}`},
+		{"a capacity that is text", `"capacity":"unread"`},
+		{"an agent that is text", `"agent":"restarting"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"host":{` + tc.part + `,"apps":{"shop":[{"container":"shop-web","subscription":"sub_shop","logs":"listening on :8080\n"}]}}}`
+
+			lines := subscriptionLogs(t, "sub_shop", received(39, body))
+
+			if want := "shop-web | listening on :8080"; strings.Join(lines, "\n") != want {
+				t.Errorf("SubscriptionLogs(sub_shop) of %s = %q; want %q", body, lines, want)
 			}
 		})
 	}
@@ -387,6 +407,15 @@ func TestReport_CapacityErrorIsTheReasonAReportGivesInPlaceOfItsAllocatableCapac
 		{name: "a report with no capacity gives no error", body: `{"host":{}}`},
 		{name: "a report giving its allocatable capacity gives no error", body: `{"host":{"capacity":{` + allocatable + `}}}`},
 		{name: "a report giving its allocatable capacity beside an error gives no error", body: `{"host":{"capacity":{` + allocatable + `,"error":"` + unread + `"}}}`},
+		{name: "a null capacity beside an error gives that error", body: `{"host":{"capacity":{"allocatable":null,"error":"` + unread + `"}}}`, want: unread},
+		{name: "a capacity without its CPU names cpuMillis", body: `{"host":{"capacity":{"allocatable":{"memoryBytes":1,"diskBytes":1}}}}`, want: "host.capacity.allocatable lacks cpuMillis"},
+		{name: "a capacity without its memory names memoryBytes", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"diskBytes":1}}}}`, want: "host.capacity.allocatable lacks memoryBytes"},
+		{name: "a capacity without its disk names diskBytes", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"memoryBytes":1}}}}`, want: "host.capacity.allocatable lacks diskBytes"},
+		{name: "a negative amount names its measure", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"memoryBytes":-1,"diskBytes":1}}}}`, want: "host.capacity.allocatable gives a negative memoryBytes, -1"},
+		{name: "an amount given as text names its measure", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":"[redacted]6","memoryBytes":1,"diskBytes":1}}}}`,
+			want: "host.capacity.allocatable.cpuMillis holds a JSON string, which no amount can be read from"},
+		{name: "an amount past what an int64 holds names its measure", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"memoryBytes":1,"diskBytes":9223372036854775808}}}}`,
+			want: "host.capacity.allocatable.diskBytes holds a JSON number 9223372036854775808, which no amount can be read from"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			report, err := dockerhost.ReadReport([]byte(tc.body))

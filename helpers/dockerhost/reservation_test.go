@@ -37,6 +37,7 @@ func TestSumReservations_RefusesARecordItCannotTrustNamingItsPath(t *testing.T) 
 		{"a negative memory reservation", `{"cpuMillis":500,"memoryBytes":-1}`},
 		{"a record followed by more text", `{"cpuMillis":500,"memoryBytes":1} {"cpuMillis":1}`},
 		{"a record missing its memory", `{"cpuMillis":500}`},
+		{"a record missing its CPU", `{"memoryBytes":1}`},
 		{"an empty record", `{}`},
 		{"a null record", `null`},
 	} {
