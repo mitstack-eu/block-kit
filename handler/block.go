@@ -76,7 +76,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		}
 		return r.deleteEach(ctx)
 	case "validate":
-		replaces, err := r.planReplacements(ctx)
+		replaces, planned, err := r.planReplacements(ctx)
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
@@ -85,6 +85,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		status, resp := r.withOwnSecrets(r.validateEach(ctx))
 		if status == http.StatusOK {
 			resp.Replaces = replaces
+			resp.PlannedReplacements = planned
 		}
 		return status, resp
 	default:
@@ -211,22 +212,22 @@ func (r *declaredRun) deleteBlock(ctx context.Context) (map[string]string, error
 	return outputs, nil
 }
 
-func (r *declaredRun) planReplacements(ctx context.Context) ([]string, error) {
+func (r *declaredRun) planReplacements(ctx context.Context) (replaces []string, planned bool, err error) {
 	planner, ok := r.h.resource.(ReplacementPlanner)
 	if !ok {
-		return nil, nil
+		return nil, false, nil
 	}
-	replaces, err := planner.PlanReplacements(ctx, r.d)
+	replaces, err = planner.PlanReplacements(ctx, r.d)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for _, name := range replaces {
 		if _, ok := r.h.declaredResource(name); !ok {
-			return nil, Refuse(classUndeclaredResource,
+			return nil, false, Refuse(classUndeclaredResource,
 				"the block plans to replace resource %q, which the manifest's spec.resources does not declare", name)
 		}
 	}
-	return replaces, nil
+	return replaces, true, nil
 }
 
 func (r *declaredRun) setRefs(reported map[string]contract.CreatedResource) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ func TestDecodeResponse_CarriesEveryGoldenFieldOntoTheResponse(t *testing.T) {
 				StatusDetail: strOf(m, "statusDetail"), LastError: strOf(m, "lastError"), OwnSecrets: strMap(m["ownSecrets"])}
 			want.Pending, _ = m["pending"].(bool)
 			want.Redrive, _ = m["redrive"].(bool)
+			want.PlannedReplacements, _ = m["plannedReplacements"].(bool)
 			if absent, ok := m["absent"].(bool); ok {
 				want.Absent = &absent
 			}
@@ -52,16 +54,17 @@ func TestDecodeResponse_CarriesEveryGoldenFieldOntoTheResponse(t *testing.T) {
 func TestDecodeResponse_EveryResponseGoldenDecodesAsBefore(t *testing.T) {
 	f, tr := false, true
 	want := map[string]contract.Response{
-		"absent":          {Absent: &tr},
-		"error":           {Error: "subscription quota exceeded for this org"},
-		"last-error":      {LastError: "timed out waiting for the load balancer to become healthy"},
-		"null-outputs":    {},
-		"outputs":         {Outputs: map[string]string{"instanceId": "i-0123456789abcdef0", "endpoint": "https://example.apps.mitstack.dev"}},
-		"pending":         {Pending: true, StatusDetail: "waiting for the VPC to finish provisioning"},
-		"pending-redrive": {Pending: true, Redrive: true, StatusDetail: "the builder powered off; the snapshot comes next"},
-		"own-secrets":     {OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}},
-		"secret-outputs":  {SecretOutputs: map[string]string{"apiKey": "sk-example-not-a-real-secret"}},
-		"still-present":   {Absent: &f},
+		"absent":               {Absent: &tr},
+		"error":                {Error: "subscription quota exceeded for this org"},
+		"last-error":           {LastError: "timed out waiting for the load balancer to become healthy"},
+		"null-outputs":         {},
+		"outputs":              {Outputs: map[string]string{"instanceId": "i-0123456789abcdef0", "endpoint": "https://example.apps.mitstack.dev"}},
+		"pending":              {Pending: true, StatusDetail: "waiting for the VPC to finish provisioning"},
+		"pending-redrive":      {Pending: true, Redrive: true, StatusDetail: "the builder powered off; the snapshot comes next"},
+		"own-secrets":          {OwnSecrets: map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}},
+		"planned-replacements": {Absent: &f, PlannedReplacements: true},
+		"secret-outputs":       {SecretOutputs: map[string]string{"apiKey": "sk-example-not-a-real-secret"}},
+		"still-present":        {Absent: &f},
 	}
 	valid := validResponseGoldens(t)
 	for name := range valid {
@@ -103,6 +106,7 @@ func TestDecodeResponse_RejectsInvalidGoldensNamingField(t *testing.T) {
 		"invalid-outputs-not-strings":                      "outputs",
 		"invalid-pending-not-bool":                         "pending",
 		"invalid-pending-redrive-not-bool":                 "redrive",
+		"invalid-planned-replacements-not-bool":            "plannedReplacements",
 		"invalid-secret-outputs-not-strings":               "secretOutputs",
 		"invalid-own-secrets-not-strings":                  "ownSecrets",
 		"invalid-resource-secret-outputs-not-object":       "resourceSecretOutputs",
@@ -252,6 +256,10 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 			Credential: json.RawMessage(`{"links":{}}`), ExpiresAt: time.Date(2026, 7, 15, 23, 15, 6, 0, time.UTC)}},
 			`{"outputs":null,"lease":{"credential":{"links":{}},"expiresAt":"2026-07-15T23:15:06Z"}}`, true},
 		{"a response that leases nothing encodes as before", contract.Response{Lease: nil}, `{"outputs":null}`, true},
+		{"a validate answer from a block that planned its replacements carries plannedReplacements beside replaces",
+			contract.Response{Replaces: []string{"server"}, PlannedReplacements: true}, `{"outputs":null,"replaces":["server"],"plannedReplacements":true}`, true},
+		{"a validate answer from a block that planned no replacement still carries plannedReplacements",
+			contract.Response{PlannedReplacements: true}, `{"outputs":null,"plannedReplacements":true}`, true},
 		{"a finished run encodes its exit code, output, digest, start and end", contract.Response{Run: &contract.RunResult{
 			ExitCode: 0, Output: "added alice@example.com\n", Digest: "sha256:5f1c",
 			StartedAt: time.Date(2026, 11, 11, 14, 0, 9, 0, time.UTC), EndedAt: time.Date(2026, 11, 11, 14, 0, 10, 0, time.UTC)}},
@@ -368,6 +376,22 @@ func jsonNames(typ reflect.Type) []string {
 	return out
 }
 
+func atLeastVersion(version string, major, minor, patch int) bool {
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	got := make([]int, 0, len(parts))
+	for _, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return false
+		}
+		got = append(got, n)
+	}
+	return slices.Compare(got, []int{major, minor, patch}) >= 0
+}
+
 func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 	doc := jsonObject(t, contract.ResponseSchema)
 	props := schemaAt(t, doc, doc, "properties")
@@ -434,6 +458,17 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 		{"redrive is a boolean", func(t *testing.T) {
 			if f := schemaAt(t, doc, props, "redrive"); !hasType(f, "boolean") {
 				t.Errorf("properties.redrive type = %v, want boolean", schemaTypes(f))
+			}
+		}},
+		{"plannedReplacements is an optional boolean from version 1.13.0", func(t *testing.T) {
+			if slices.Contains(sortedStrings(doc["required"]), "plannedReplacements") {
+				t.Error(`response.schema.json requires "plannedReplacements", but an answer from a block on an older kit must stay valid`)
+			}
+			if f := schemaAt(t, doc, props, "plannedReplacements"); !hasType(f, "boolean") {
+				t.Errorf("properties.plannedReplacements type = %v, want boolean", schemaTypes(f))
+			}
+			if version, _ := doc["version"].(string); !atLeastVersion(version, 1, 13, 0) {
+				t.Errorf("response.schema.json version = %q, want at least 1.13.0, the version that adds plannedReplacements", version)
 			}
 		}},
 		{"resources is an optional object of outcomes by name", func(t *testing.T) {

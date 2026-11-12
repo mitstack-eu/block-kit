@@ -257,9 +257,11 @@ observer that reports no identity leaves the one it was handed on the outcome.
 The handler refuses an identity holding one of the request's secrets, as it
 refuses such an output.
 
-An observer that reads records the provider writes over time, such as
-`observe.NodeReported` reading node reports, counts only records made after
-`Desired.VerbAt`, so a record older than the call cannot settle it. After
+An observer may read records the provider writes over time, such as
+`observe.NodeReported`, which reads node reports: the state a Docker host or a
+cluster node pushes to mitstack on its own. Such an observer counts only
+records made after `Desired.VerbAt`, the time of the call a record must
+answer, so a record older than the call cannot settle it. After
 `EnsureResources` or `Delete`, the handler sets `VerbAt` to its clock once the
 call returned. On a `validate` it is the request's `settlesAt`, the time of the
 call the validate settles, and otherwise the request's `createdAt`.
@@ -277,6 +279,31 @@ type ReplacementPlanner interface {
 
 The engine replaces a stateful resource only with an explicit confirmation,
 and this list is how it learns that one is needed.
+
+The handler also sets `plannedReplacements` to true on that answer, for every
+block that implements `handler.ReplacementPlanner`, including one whose list
+comes back empty. You write no code for it. The engine needs it because an
+empty `replaces` alone cannot tell an upgrade that replaces nothing from a
+block that never looked.
+
+Three answers leave the field out, and the engine reads each as "not planned":
+the answer of a block without the interface, the answer of a block built on a
+kit release older than the field, and the answer to a `validate` naming one
+resource, which runs no planner.
+
+An empty list from `PlanReplacements` therefore tells the engine that the
+upgrade replaces nothing. When your planner cannot tell, for example because
+another call of your block holds a lock on what it reads, return an error
+instead. The validate then answers that error and carries no
+`plannedReplacements`.
+
+An empty list goes out with no `replaces` key at all, so a validate answer
+from a planning block that replaces nothing reads:
+
+```json
+{"outputs": null, "absent": false, "plannedReplacements": true,
+ "resources": {"server": {"observe": {"state": "present", "type": "hetzner.server", "identity": {"serverId": "4711"}}}}}
+```
 
 A `validate` may name one resource in `resource`, `resourceIdentity` and
 `resourceType`, and the handler observes only that one. When the name is one
@@ -490,7 +517,7 @@ like this:
 ```
 
 ```json
-{"outputs": null, "absent": false, "replaces": ["aws.ebs-volume"],
+{"outputs": null, "absent": false, "replaces": ["aws.ebs-volume"], "plannedReplacements": true,
  "resources": {"aws.ebs-volume": {"observe": {"state": "present", "type": "aws.ebs-volume", "identity": {"volumeId": "vol-0abc"}}}}}
 ```
 

@@ -127,6 +127,7 @@ func CheckResponse(raw []byte) []string {
 	checkStringMap("secretOutputs")
 	checkStringMap("ownSecrets")
 	checkBool("pending", false)
+	checkBool("plannedReplacements", false)
 	checkBool("redrive", false)
 	checkBool("absent", true)
 	checkString("error")

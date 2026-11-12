@@ -45,7 +45,7 @@ type TeardownReporter interface {
 	TeardownDetail(ctx context.Context, d contract.Desired) (string, error)
 }
 
-// ReplacementPlanner names, on a validate, the declared resources an upgrade would replace, and a name the manifest does not declare is refused with a 400.
+// ReplacementPlanner names, on a validate, the declared resources an upgrade would replace, and a name the manifest does not declare is refused with a 400; a planner that cannot tell returns an error, since an empty list answers that the upgrade replaces nothing.
 type ReplacementPlanner interface {
 	PlanReplacements(ctx context.Context, d contract.Desired) ([]string, error)
 }

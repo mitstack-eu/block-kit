@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/response.schema.json",
   "title": "mitstack lifecycle webhook response",
   "description": "Versioned wire-shape contract for the JSON body a block owner's registered webhook endpoint returns to mitstack's lifecycle engine for a subscribe/unsubscribe/upgrade/validate call (MIT-1136, the response half of the bidirectional contract envelope.schema.json pins on the request side). Mirrors api/internal/lifecycle.webhookResponse byte-for-byte for every property but resources, which reports the outcome of each declared resource's ensure, observe and delete calls by name. Additive-friendly: additionalProperties is true at every level so a new optional response field never breaks an existing operator or this contract test. Nothing is required: a verb with nothing to report legitimately answers {}.",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "type": "object",
   "additionalProperties": true,
   "properties": {
@@ -47,6 +47,10 @@
       "description": "On a validate, the names of the declared resources the block's upgrade would replace rather than change in place.",
       "type": "array",
       "items": { "type": "string" }
+    },
+    "plannedReplacements": {
+      "description": "On a validate, true when the block planned its replacements, so an empty or absent replaces means its upgrade replaces nothing. Omitted or false means the replacements were not planned, as in an answer from a block with no planner, from a block on a kit release older than this field, or to a validate naming one resource.",
+      "type": "boolean"
     },
     "outputs": {
       "description": "Manifest-declared, non-secret outputs the operator produced (T-473). A Go nil map encodes to JSON null, and shipping operators emit exactly that on a verb with nothing to return, so null is tolerated alongside an object of string values.",

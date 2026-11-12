@@ -675,8 +675,33 @@ func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBl
 		t.Errorf("validate ran block Ensure, Delete %v times, want none", got)
 	}
 	wantEveryResourceObserved(t, resp, contract.Present)
-	if !slices.Equal(resp.Replaces, []string{"b"}) {
-		t.Errorf("replaces = %q, want [b]", resp.Replaces)
+	if !slices.Equal(resp.Replaces, []string{"b"}) || !resp.PlannedReplacements {
+		t.Errorf("replaces = %q, plannedReplacements = %v; want [b] and true", resp.Replaces, resp.PlannedReplacements)
+	}
+}
+
+func TestBlockLevel_ValidateAnswersPlannedReplacementsOnlyForABlockThatImplementsReplacementPlanner(t *testing.T) {
+	cases := []struct {
+		label   string
+		block   func(b *blockResource) handler.Resource
+		planned bool
+	}{
+		{"a block implementing ReplacementPlanner that plans none answers planned with nothing replaced",
+			func(b *blockResource) handler.Resource { return planningBlock{blockResource: b} }, true},
+		{"a block not implementing ReplacementPlanner answers not planned",
+			func(b *blockResource) handler.Resource { return b }, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			cloud := standingCloud()
+
+			status, resp := serveBlock(t, blockCall{r: tc.block(&blockResource{cloud: cloud}), obs: asObservers(blockObservers(cloud)), op: "validate", fields: recordedAll()})
+
+			wantOK(t, status, resp)
+			if resp.PlannedReplacements != tc.planned || len(resp.Replaces) != 0 {
+				t.Errorf("plannedReplacements = %v, replaces = %q; want %v and none", resp.PlannedReplacements, resp.Replaces, tc.planned)
+			}
+		})
 	}
 }
 
