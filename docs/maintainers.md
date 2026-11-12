@@ -82,16 +82,40 @@ with stand-in `trivy` and `docker` commands, so it needs neither installed.
 
 A pull request that changes the scan also runs
 `.github/workflows/scan-image-proof.yml`. It builds one image holding the AWS
-provider 6.71.0 and one holding the Scaleway provider 2.89.0, each fetched by
+provider 6.73.0 and one holding the Scaleway provider 2.89.0, each fetched by
 the checksum the registry publishes, and runs `scripts/scan-image.sh` on both.
 It expects GO-2026-5932 accepted in each and refused nowhere.
 
-The AWS scan is expected to pass. The Scaleway release also carries x/net and
+The AWS scan is expected to pass. When an advisory with a fix reaches that AWS
+release, its job fails until the matrix row moves to a release built on the
+fix. The Scaleway release also carries x/net and
 standard-library findings that have fixes, which the scan refuses as it should,
 so its scan is expected to exit 1. Once a Scaleway release clears them, that
 job fails until its matrix row moves to the new release. To repeat the proof
 on `main` with no change, start the workflow by hand from the repository's
 Actions tab, which its `workflow_dispatch` trigger allows.
+
+## The Go release the kit builds on
+
+`.github/workflows/publish-block.yml` names the Go release once, as the default
+of its `go-version` input. A block's CI installs that release when its `ci.yml`
+passes no `go-version` of its own. The kit's other workflows name the same
+release in each `setup-go` step, and so do the two Dockerfiles that build Go,
+`helpers/tools/Dockerfile` and `examples/hetzner-firewall/Dockerfile`.
+
+`scripts/go_release_agreement_test.go` reads the default and fails each place
+that names another release, with its file and line:
+
+```sh
+go test ./scripts/ -run TestGoRelease_
+```
+
+To move the kit to a new release, change the default, run the suite, and
+change each place it names. Give both Dockerfiles the digest that
+`docker buildx imagetools inspect golang:<release>-alpine` prints, because
+Docker builds from the digest and ignores a tag that disagrees with it. The
+`go` line of the kit's `go.mod` stays where it is, since it is the oldest Go a
+block importing the kit may build on.
 
 ## Release
 

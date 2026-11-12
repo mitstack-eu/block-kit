@@ -108,7 +108,7 @@ on:
       go-version:
         required: false
         type: string
-        default: "1.26.8"
+        default: "1.26.11"
       runs-on:
         required: false
         type: string
