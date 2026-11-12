@@ -529,6 +529,9 @@ func TestParseManifest_V1BetaReadsEachPieceOfStateUnderContinuity(t *testing.T) 
 		{"a state whose handover is stated as none",
 			continuityOf(t, "    - name: gateway\n      kind: server\n      stateful: false\n      handover: none\n"),
 			[]contract.ManifestContinuity{{Name: "gateway", Kind: "server", Stateful: false, Handover: contract.HandoverNone}}},
+		{"a state the user would miss whose handover is none, which the parser accepts",
+			continuityOf(t, "    - name: uploads\n      kind: volume\n      stateful: true\n      handover: none\n"),
+			[]contract.ManifestContinuity{{Name: "uploads", Kind: "volume", Stateful: true, Handover: contract.HandoverNone}}},
 		{"two states read in the order written",
 			continuityOf(t, "    - name: vault\n      kind: openbao\n      stateful: true\n      handover: snapshot\n"+
 				"    - name: cache\n      kind: volume\n      stateful: false\n      handover: none\n"),
