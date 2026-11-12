@@ -80,6 +80,11 @@ func (h Hook) client() *http.Client {
 	if h.Client != nil {
 		return h.Client
 	}
+	return newClient()
+}
+
+// newClient follows no redirect, since a redirect would hand a presigned link's query or a store's token to another host.
+func newClient() *http.Client {
 	return &http.Client{Timeout: transferTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 

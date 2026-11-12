@@ -17,7 +17,7 @@ const (
 	tokenHeader       = "X-Vault-Token"
 )
 
-// Endpoint is one OpenBao server and the token that may read or restore its raft snapshot.
+// Endpoint is one OpenBao server and the token that may read or restore its raft snapshot, reached through a nil Client that follows no redirect.
 type Endpoint struct {
 	Addr   string
 	Token  string
@@ -33,7 +33,7 @@ func (e Endpoint) do(ctx context.Context, method, path string, body io.Reader) (
 	req.Header.Set(tokenHeader, e.Token)
 	client := e.Client
 	if client == nil {
-		client = &http.Client{Timeout: transferTimeout}
+		client = newClient()
 	}
 	resp, err := client.Do(req)
 	if err != nil {

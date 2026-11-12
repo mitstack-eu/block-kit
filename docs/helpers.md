@@ -1182,16 +1182,52 @@ handover is the string a snapshot publishes for the restore to read.
 
 A `continuity.Hook` joins four things. A `State` knows how to read one kind of
 data out and back in, `Links` hands out the presigned upload and download
-links, `Keys` hands out the age keys, and the `Hook` itself does the rest:
+links, `Keys` hands out the age keys, and the `Hook` itself does the rest. Your
+block's `Snapshot` and `Restore`, which
+[Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
+describes, build one from the request's `contract.Desired`, here `d`, and call
+it:
 
 ```go
-hook := continuity.Hook{
-	Links: platformLinks{},                              // yours, filled from the platform's lease route
-	Keys:  continuity.OwnSecretKeys{OwnSecrets: d.OwnSecrets}, // the unit's key, kept in the block's own secrets
-	State: continuity.Volume{Dir: "/var/lib/app"},
+func (b *block) hook(d contract.Desired) continuity.Hook {
+	return continuity.Hook{
+		Links: platformLinks{},                                    // yours, see below
+		Keys:  continuity.OwnSecretKeys{OwnSecrets: d.OwnSecrets}, // the unit's key, kept in the block's own secrets
+		State: continuity.Volume{Dir: "/var/lib/app"},
+	}
 }
-handover, err := hook.Snapshot(ctx, "app-data")
+
+func (b *block) Snapshot(ctx context.Context, d contract.Desired, unit string) (string, error) {
+	return b.hook(d).Snapshot(ctx, unit)
+}
+
+func (b *block) Restore(ctx context.Context, d contract.Desired, unit, handover string) error {
+	return b.hook(d).Restore(ctx, unit, handover)
+}
 ```
+
+`unit` is the name of the manifest's `spec.continuity` entry, such as
+`app-data`. `hook.Snapshot` returns the handover string, and `hook.Restore`
+takes the same string back, which the restore request carries.
+
+`Links` is the one interface you write. It hands the hook a presigned link for
+one upload and one for each download, as ADR 0125 point 11 plans:
+
+```go
+type Links interface {
+	Upload(ctx context.Context, unit string) (Link, error)
+	Download(ctx context.Context, unit, ref string) (Link, error)
+}
+
+type Link struct {
+	URL string
+	Ref string
+}
+```
+
+`Upload` answers the link to upload to and, in `Ref`, the name of the object
+that link writes. The handover carries that `Ref`, and `Download` receives it
+back and answers a link to read the same object.
 
 `hook.Snapshot` runs these steps in order, and fails at the first that does not
 hold:
@@ -1226,22 +1262,37 @@ restore key stays outside the bucket.
 volume, since a walk of a link visits nothing. A restore gives each entry its
 recorded owner back, which needs a process allowed to do so, such as one that
 runs as root. A process that is not allowed fails the scratch check, so the
-snapshot publishes no handover it could not restore.
+snapshot publishes no handover it could not restore. Two limits are yours to
+handle. The snapshot records the entries under `Dir` and not `Dir` itself, so
+a restore creates a missing `Dir` with mode 0755 and the restoring process as
+its owner. `Volume` also copies the files one by one while nothing stops other
+writers, so stop what writes to the directory before a snapshot.
+
+`Live` and `Scratch` are each a `continuity.Endpoint{Addr, Token, Client}`:
+the address of an OpenBao server, a token allowed to read and restore its
+snapshot, and an optional HTTP client. `Live` is the store the block keeps,
+and `Scratch` is a throwaway store used only for the check. `Restart` and
+`Discard` are each a `func(ctx context.Context) error` you supply: `Restart`
+restarts every member of `Live`, and `Discard` removes the scratch copy. With
+no `Client`, an endpoint follows no redirect, so the token reaches no other
+host.
 
 `OpenBao.Verify` calls `Discard` whatever the check found, and refuses to
 restore into a `Scratch` that has none, because the scratch copy holds every
 secret of the live store. The check itself proves two things: the scratch
 instance accepted the snapshot, and it still reports itself initialised. It
 does not prove that the restored data unseals. `OpenBao.Import` calls
-`Restart` after the force restore, because every member of the store restarts
-for the restored data to take effect.
+`Restart` after the force restore, since ADR 0125 has a restored store unseal
+once every member restarts.
 
 `continuity.OwnSecretKeys` keeps each unit's key in the block's own secrets,
 which [What the answer carries](handler.md#what-the-answer-carries) describes,
 so the restore key never sits in the bucket. `continuity.MintKeys` returns an
 age identity for each unit that holds none yet, under the name
 `continuity.KeyName(unit)`, and never replaces a held one. A block returns
-them from its `EnsureResourcesOwning`:
+them from its `EnsureResourcesOwning`, which runs on the subscribe, so the key
+exists before the first snapshot reads it. The unit named here is the one
+`Snapshot` and `Restore` are called with:
 
 ```go
 func (b *block) EnsureResourcesOwning(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, map[string]string, error) {

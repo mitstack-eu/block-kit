@@ -389,7 +389,8 @@ observe, read-back`. A block that hands several units over by snapshot calls
 fails a block that left one undrilled. `kittest.CheckReplacement` returns the
 problems as strings. A block whose `Snapshot` and `Restore` call the kit's
 shared hooks, which [The continuity hooks](helpers.md#the-continuity-hooks)
-describes, passes the drill as the kit's own fixture does.
+describes, writes the same `TestReplacementDrill`, and the kit's own fixture
+built on those hooks passes it.
 
 ## Proving a re-driven subscribe resumes the work
 
