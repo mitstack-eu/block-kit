@@ -136,6 +136,42 @@ func TestAsk_NamesTheRoutesAnswerForEachRefusalAndAsksNoSecondTime(t *testing.T)
 	}
 }
 
+func TestAsk_KeepsTheStatusAndTheWaitOfARefusalItCannotPassOnWhole(t *testing.T) {
+	cases := []struct {
+		label, retryAfter, body string
+		cutOff                  bool
+		wantWait                time.Duration
+		wantText                string
+	}{
+		{"a body that is not the route's JSON, as a proxy answers", "", "<html>" + leasedLink + "</html>", false, 0, "not the route's JSON"},
+		{"a body cut off before its end", "30", `{"error":"lease is not`, true, 30 * time.Second, "Retry-After 30s"},
+		{"a Retry-After written as a date", "Thu, 12 Nov 2026 12:00:45 GMT", `{"error":"later"}`, false, 45 * time.Second, "Retry-After 45s"},
+		{"a Retry-After too large to be a wait", "9223372037", `{"error":"later"}`, false, 0, "later"},
+		{"a message that holds a link", "", `{"error":"see ` + leasedLink + `"}`, false, 0, "withheld"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			r := newRoute(t, http.StatusServiceUnavailable, tc.body)
+			if tc.retryAfter != "" {
+				r.header.Set("Retry-After", tc.retryAfter)
+			}
+			if tc.cutOff {
+				r.header.Set("Content-Length", "200")
+			}
+
+			_, err := r.platform().Ask(context.Background(), resource, nil)
+
+			var refusal *lease.Refusal
+			if !errors.As(err, &refusal) || refusal.Status != http.StatusServiceUnavailable || refusal.RetryAfter != tc.wantWait {
+				t.Fatalf("Ask of %s = %v; want a *lease.Refusal holding status 503 and a Retry-After of %v", tc.label, err, tc.wantWait)
+			}
+			if text := err.Error(); !strings.Contains(text, tc.wantText) || strings.Contains(text, "X-Amz") || strings.Contains(text, "store.example") || strings.Contains(text, "html") {
+				t.Errorf("the error %q does not name %q, or carries the link or the body it could not read", text, tc.wantText)
+			}
+		})
+	}
+}
+
 func TestAsk_RefusesAnAnswerThatIsNoUsableLease(t *testing.T) {
 	cases := []struct{ label, body, want string }{
 		{"an answer whose expiry has passed", leaseBody("2026-11-12T11:59:59Z"), "expired"},
