@@ -414,7 +414,7 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 		host                                 func(*dockerhosttest.Host)
 		engine                               func(*dockerhost.Engine)
 		state                                contract.State
-		says                                 string
+		says, cause                          string
 		unwell, neverActive, recorded, whole bool
 	}{
 		{name: "nothing landed", state: contract.Absent},
@@ -443,10 +443,19 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 			state: contract.Unknown, says: "without " + dbBlock + ".gives"},
 		{name: "a report naming no container of the database", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"container": "shop-web"} },
 			state: contract.Unknown, says: "shows no shop-store"},
-		{name: "a container that exited", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"state": "exited", "logs": logs} },
-			state: contract.Unknown, says: "reads exited: FATAL: password authentication failed"},
-		{name: "a container that exited on a host that sends no output", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"state": "exited"} },
-			state: contract.Unknown, says: "reads exited; this host's node report carries no container output"},
+		{name: "a container that exited before it ever read active", land: true, neverActive: true, state: contract.Unknown, says: "reads exited: FATAL: password authentication failed",
+			host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"state": "exited", "logs": logs} }},
+		{name: "a container that exited on a host that sends no output before it ever read active", land: true, neverActive: true, state: contract.Unknown,
+			says: "reads exited; this host's node report carries no container output", host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"state": "exited"} }},
+		{name: "a container restarting before it ever read active", land: true, neverActive: true, state: contract.Unknown, says: "reads restarting: FATAL",
+			host: func(h *dockerhosttest.Host) {
+				h.Containers["shop"] = map[string]any{"state": "restarting", "health": "unhealthy", "logs": logs}
+			}},
+		{name: "a container restarting after it read active", land: true, state: contract.Present, unwell: true, cause: dockerhost.DatabaseNotRunning,
+			whole: true, says: "shop-store reads restarting",
+			host: func(h *dockerhosttest.Host) {
+				h.Containers["shop"] = map[string]any{"state": "restarting", "health": "unhealthy", "logs": logs}
+			}},
 		{name: "an unhealthy container of an engine naming no trouble", land: true, state: contract.Present, unwell: true, whole: true, says: "shop-store reads unhealthy",
 			engine: func(en *dockerhost.Engine) { en.Trouble = nil },
 			host: func(h *dockerhosttest.Host) {
@@ -457,7 +466,8 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 				h.Containers["shop"] = map[string]any{"health": "unhealthy", "logs": logs}
 			}},
 		{name: "a request naming its repository only in the recorded identity", land: true, recorded: true, state: contract.Present, says: "shop-store runs"},
-		{name: "an unhealthy container", land: true, state: contract.Present, unwell: true, says: "FATAL: password authentication failed",
+		{name: "an unhealthy container names its health and no output line", land: true, state: contract.Present, unwell: true, cause: dockerhost.DatabaseUnhealthy,
+			whole: true, says: "shop-store reads unhealthy",
 			host: func(h *dockerhosttest.Host) {
 				h.Containers["shop"] = map[string]any{"health": "unhealthy", "logs": logs}
 			}},
@@ -491,8 +501,9 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 			if obs.Unhealthy != nil {
 				detail = obs.Unhealthy.Detail
 			}
-			if obs.State != tc.state || (obs.Unhealthy != nil) != tc.unwell || !strings.Contains(detail, tc.says) || (tc.whole && detail != tc.says) {
-				t.Errorf("ObserveResource = %+v; want %s, unhealthy %v, naming %q", obs, tc.state, tc.unwell, tc.says)
+			if obs.State != tc.state || (obs.Unhealthy != nil) != tc.unwell || !strings.Contains(detail, tc.says) || (tc.whole && detail != tc.says) ||
+				(tc.cause != "" && obs.Unhealthy.Cause != tc.cause) {
+				t.Errorf("ObserveResource = %+v; want %s, unhealthy %v %q, naming %q", obs, tc.state, tc.unwell, tc.cause, tc.says)
 			}
 			if obs.State == contract.Present && (obs.Outputs["host"] != "shop-store" || obs.Outputs["port"] != "7000") {
 				t.Errorf("the outputs are %v; want host shop-store on port 7000", obs.Outputs)
