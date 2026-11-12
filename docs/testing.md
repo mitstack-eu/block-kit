@@ -13,7 +13,7 @@ checks below against a fake Hetzner API.
 | Test name | Check it calls | What it proves |
 |---|---|---|
 | `TestDeclaredResources` | `kittest.AssertBlock` | Each declared resource is created, tagged, observed from the provider and gone after unsubscribe |
-| `TestReplacementDrill`, for a block that declares state handed over by snapshot | `kittest.AssertReplacement` | Replacing the block's server loses no datum, and every resource reads present and healthy after the restore |
+| `TestReplacementDrill`, for a block whose manifest hands state over by snapshot, as [Proving a replacement](#proving-a-replacement) explains | `kittest.AssertReplacement` | Replacing the block's server loses no datum, and every resource reads present and healthy after the restore |
 | A name starting `TestUnsubscribeDeletes` | `kittest.AssertTeardownAfterBrokenSetup`, or your own test code | An unsubscribe deletes what a subscribe made |
 | A name starting `TestNoSecretLeak` | `kittest.AssertNoSecretLeak` | No secret reaches an answer, a log line or `/logs` |
 | `TestNoSecretLeak_VerifyConnection`, for a capability operator that answers `verify-connection` | `kittest.AssertNoSecretLeak` with a `verify-connection` request | The entered credential reaches no answer, log line or `/logs` |
@@ -287,13 +287,21 @@ only state handed over by `none`, writes no such test.
 
 ```go
 func TestReplacementDrill(t *testing.T) {
+	dir := t.TempDir()
 	kittest.AssertReplacement(t, kittest.Replacement{
-		Block: block, // the kittest.Block that TestDeclaredResources passes
+		Block: testBlock(t, dir), // your own helper, described below
 		Unit:  "app-data",
 		Data:  &volumeData{dir: dir},
 	})
 }
 ```
+
+The drill and the block must look at the same data. Here `testBlock` is a
+helper of your own that builds the `kittest.Block` that `TestDeclaredResources`
+passes, with the block under test keeping the unit `app-data` under `dir`. The
+block's `Snapshot` then copies that directory out and its `Restore` writes it
+back, while the drill writes, destroys and reads the same directory through
+`volumeData`.
 
 | Field | What you supply |
 |---|---|
@@ -314,7 +322,9 @@ type DrillData interface {
 
 For a unit kept as files in one directory, the `volumeData` of the example
 above writes each value as a file, reads the files back, and empties the
-directory:
+directory. The drill's values are named `alpha`, `beta` and `gamma`, which are
+safe as file names, and the code needs the `context`, `os` and `path/filepath`
+packages:
 
 ```go
 type volumeData struct{ dir string }
@@ -358,8 +368,10 @@ publishes under `contract.HandoverOutputKey`, calls `Data.Replace`, loses each
 stateful resource from the provider, and sends an `upgrade` so the block
 creates them again. It then sends a `restore` carrying the handover and
 validates every declared resource until it reads present and healthy. Every
-request from the snapshot on carries `replacing: true`, the marker that tells
-the block to send no install retry. The drill reads the data back through
+request from the snapshot on carries `replacing: true`, which the block reads
+as `d.Replacing`, as
+[Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
+explains. The drill reads the data back through
 `Data.Read` and fails with one message per problem, as in these two:
 
 ```text
@@ -369,8 +381,7 @@ resource "aws.ebs-volume": reads unhealthy after the restore: the volume is stil
 
 A value that comes back changed fails as `replacement changed datum`. A
 resource that reads unhealthy passes only if it turns healthy within the same
-ten seconds `AssertBlock` allows, since the engine observes a replaced
-resource until it reads present and healthy. The drill logs one line that
+ten seconds `AssertBlock` allows. The drill logs one line that
 names its unit and the stages it ran, as in `kittest.AssertReplacement drill
 of "app-data" ran: subscribe, write, snapshot, replace, upgrade, restore,
 observe, read-back`. A block that hands several units over by snapshot calls
