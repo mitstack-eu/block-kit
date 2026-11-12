@@ -328,6 +328,40 @@ func TestSignScript_RefusesAnArgumentItCannotSignAsSignWould(t *testing.T) {
 	}
 }
 
+func TestSignScript_FailsAndPrintsNoTokenWhenOpensslCannotSign(t *testing.T) {
+	keyPath, _ := opensslKey(t)
+	bodyPath := filepath.Join(t.TempDir(), "report.json")
+	if err := os.WriteFile(bodyPath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	real, err := exec.LookPath("openssl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	failing := "#!/bin/sh\n[ \"$1\" = pkeyutl ] && exit 1\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "openssl"), []byte(failing), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "sign.sh")
+	if err := os.WriteFile(script, []byte(reportproof.SignScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"proof", keyPath, hostKid, platform, bodyPath, "1793400000"},
+		{"stream", keyPath, hostKid, platform, "sub_host0123456789", "1793400000"},
+	} {
+		cmd := exec.Command("bash", append([]string{script}, args...)...)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+
+		out, err := cmd.Output()
+
+		if err == nil || len(out) > 0 {
+			t.Errorf("sign.sh %s with a failing openssl signer printed %q, error %v; want no token and an error", args[0], out, err)
+		}
+	}
+}
+
 func TestSignScript_RefusesAKeyThatIsNotEd25519(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "x25519.key")
 	if out, err := exec.Command("openssl", "genpkey", "-algorithm", "x25519", "-out", keyPath).CombinedOutput(); err != nil {
