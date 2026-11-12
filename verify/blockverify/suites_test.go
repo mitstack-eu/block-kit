@@ -275,3 +275,45 @@ func TestResourcesSuite(t *testing.T) {
 			}},
 	})
 }
+
+func replacementBlock(mode string, opts ...option) dirFunc {
+	return moduleBlock(append([]option{
+		withSource(manifestFile, "replacement-manifest.yaml"),
+		withSource("block_test.go", "replacement-block_test.go"),
+		withTypeSnapshot,
+		with("replacement_test.go", "package main\n\nimport \"testing\"\n\nfunc TestReplacementDrill(t *testing.T) {\n\tassertReplacement(t, \""+mode+"\")\n}\n"),
+	}, opts...)...)
+}
+
+func TestReplacementSuite(t *testing.T) {
+	stateful := withSource(manifestFile, "replacement-manifest.yaml")
+	withoutState := "  continuity:\n    - name: gateway\n      kind: server\n      stateful: false\n      handover: none\n  lifecycle:\n"
+	runSuites(t, []string{"replacement"}, []suiteCase{
+		{name: "a stateless block with no spec.continuity is skipped, so it passes blockverify as before", dir: fullBlock(),
+			status: "skipped", detail: []string{"spec.continuity"}},
+		{name: "a block whose every state is handed over by none is skipped", dir: fullBlock(with(manifestFile, replaced(t, fullManifest(t), "  lifecycle:\n", withoutState))),
+			status: "skipped", detail: []string{"snapshot"}},
+		{name: "a manifest in the old version fails, naming the version the kit knows", dir: manifestOnly(oldVersionManifest),
+			status: "fail", detail: []string{`apiVersion "mitstack/v1alpha" is not a manifest version the kit knows`}},
+		{name: "a stateful block that defines no TestReplacementDrill fails, naming it",
+			dir:    moduleBlock(stateful, with("state_test.go", "package main\n\nimport \"testing\"\n\nfunc TestSomethingElse(t *testing.T) {}\n")),
+			status: "fail", detail: []string{"TestReplacementDrill"}},
+		{name: "a TestReplacementDrill that never calls kittest.AssertReplacement fails, naming it",
+			dir:    moduleBlock(stateful, with("state_test.go", "package main\n\nimport \"testing\"\n\nfunc TestReplacementDrill(t *testing.T) {}\n")),
+			status: "fail", detail: []string{"kittest.AssertReplacement"}},
+		{name: "a block whose restore drops a datum fails, naming the datum", dir: replacementBlock("drop"),
+			status: "fail", detail: []string{"replacement lost datum", `"beta"`}},
+		{name: "a block whose observe reads unhealthy after the restore fails, naming the resource", dir: replacementBlock("unhealthy"),
+			status: "fail", detail: []string{`resource "aws.ebs-volume"`, "reads unhealthy after the restore"}},
+		{name: "a TestReplacementDrill that skips before the drill fails, since no stage ran",
+			dir: moduleBlock(stateful, withSource("block_test.go", "replacement-block_test.go"), withTypeSnapshot,
+				with("replacement_test.go", "package main\n\nimport \"testing\"\n\nfunc TestReplacementDrill(t *testing.T) {\n\tt.Skip(\"not yet\")\n\tassertReplacement(t, \"keeps\")\n}\n")),
+			status: "fail", detail: []string{"TestReplacementDrill", "ran no stage"}},
+		{name: "a block that keeps every datum and reads healthy passes, naming the drill and its unit", dir: replacementBlock("keeps"),
+			status: "pass", detail: []string{"TestReplacementDrill", `"app-data"`}},
+		{name: "a block that drills one of its two units handed over by snapshot fails, naming the other",
+			dir: replacementBlock("keeps", with(manifestFile, replaced(t, source(t, "replacement-manifest.yaml"), "  lifecycle:\n",
+				"    - name: vault\n      kind: openbao\n      stateful: true\n      handover: snapshot\n  lifecycle:\n"))),
+			status: "fail", detail: []string{"TestReplacementDrill", `"vault"`}},
+	})
+}

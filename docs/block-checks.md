@@ -14,7 +14,7 @@ passed every check, which the catalog shows as a verified badge.
 
 ## What blockverify judges
 
-blockverify runs eight suites over one block's directory, in this order. A
+blockverify runs nine suites over one block's directory, in this order. A
 suite that fails turns the verdict to `fail`, and a partial pass is never
 signed. A suite that does not apply to your block reports `skipped` with the
 reason.
@@ -27,13 +27,14 @@ reason.
 | `guarded-client` | Runs only for a manifest that lists `verify-connection`, and reports `skipped` for every other block. No non-test file builds an HTTP client, transport or dialer of its own or uses `http.DefaultClient`, `http.Get`, `net.Dial` and the like, one imports `helpers/guardedhttp`, and `TestGuardedClient`, which calls `kittest.AssertGuardedClient` on the client the operator builds, exists and passes |
 | `teardown` | A test whose name starts `TestUnsubscribeDeletes` exists and passes. It proves that an unsubscribe deletes what a subscribe made, by checking that your fake provider holds nothing for the subscription afterwards. For a block declaring a file-landing type it also runs `TestDeclaredResources`, whose `kittest.AssertBlock` reads the fake repository's main after unsubscribe, and names the path or branch it reports, as [Testing a block](testing.md#proving-a-block-that-lands-files) describes |
 | `resources` | `TestDeclaredResources` exists, calls `kittest.AssertBlock` and passes, and the pass names the guards that ran |
+| `replacement` | Runs only for a manifest that declares state under `spec.continuity` with the handover `snapshot`, and reports `skipped` for every other block and for an OpenTofu-only block. `TestReplacementDrill` exists, calls `kittest.AssertReplacement` and passes. A test that passes without the drill logging its stages fails the suite, as when it skips before the drill, and so does one that drills only some of the units handed over by snapshot. The drill writes known data, snapshots, replaces the server, restores and observes, and fails a block that loses a datum or reads anything but present and healthy after the restore, as [Proving a replacement](testing.md#proving-a-replacement) describes |
 | `deliverable` | The block has its own `Dockerfile`, and it copies nothing from `examples/operator-kit`, the folder of the platform's repository where the kit once lived, which a block's own build cannot reach |
 | `manifest` | The manifest parses strictly as `mitstack/v1beta`, and `contract.CheckManifest`, the platform's own checks, accepts it against the block's `type-snapshot.json`, as [Writing the manifest](manifest.md) lists. With `--api-url`, which the shared workflow passes on every pull request and push, the suite also reads the [type snapshot](manifest.md#the-type-snapshot) the platform serves. It fails when `type-snapshot.json` differs from it in a field or an output of a type the manifest requires or declares, leaving out only the type's `version` number. The message names the type and each field and output, and gives the command that refreshes the file. A route that gives no snapshot fails the suite, naming the route and its answer. On a pull request, a `spec.version` that differs from the base branch's manifest needs both `spec.releaseClass` and `spec.releaseNote`. A `spec.version` equal to the base branch's fails when the pull request changes any file other than Markdown, a file under `.github/` or `LICENSE`, and the message names the files and the missing version bump |
 
 An OpenTofu-only block, a module with no Go code of its own, runs
 `blockverify --standalone --opentofu-only .`. The flag changes what
-`trust-plumbing` judges and skips the five suites that judge a Go operator:
-`contract`, `secret-safety`, `guarded-client`, `teardown` and `resources`.
+`trust-plumbing` judges and skips the six suites that judge a Go operator:
+`contract`, `secret-safety`, `guarded-client`, `teardown`, `resources` and `replacement`.
 [Checks for an OpenTofu-only block](#checks-for-an-opentofu-only-block) gives
 the details.
 
@@ -160,7 +161,7 @@ running your tests. A passing block ends with a line like this, where
 `kit v0.4.0` is the floor the suites held your `go.mod` to:
 
 ```text
-VERDICT: PASS — 8 suite(s), kit v0.4.0, standalone mode
+VERDICT: PASS — 9 suite(s), kit v0.4.0, standalone mode
 ```
 
 A failing suite prints its reason on its own line, such as the missing test or
@@ -487,7 +488,7 @@ With `--opentofu-only`, each suite answers as this table shows:
 | Suite | What it judges for an OpenTofu-only block |
 |---|---|
 | `trust-plumbing` | `manifest.yaml` exists and declares `contract: kit/v1`, a `.tf` or `.tofu` file sits at the root, and no `go.mod` or `.go` file sits anywhere in the tree, a Go test file included. These replace the Go rules on `go.mod`, the kit floor and the `handler` import. A block with Go code of its own runs without the flag |
-| `contract`, `secret-safety`, `guarded-client`, `teardown`, `resources` | `skipped`, since each judges a Go operator and the block's operator is opentofu-operator |
+| `contract`, `secret-safety`, `guarded-client`, `teardown`, `resources`, `replacement` | `skipped`, since each judges a Go operator and the block's operator is opentofu-operator |
 | `deliverable`, `manifest` | The same as for any block |
 
 To run it on your machine, add the flag to the command in [What blockverify

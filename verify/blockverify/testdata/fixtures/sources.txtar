@@ -693,3 +693,221 @@ package main
 import "net"
 
 func dialLoopback() (net.Conn, error) { return net.Dial("tcp", "127.0.0.1:8080") }
+-- replacement-manifest.yaml --
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: blockverify-state-fixture
+  name: blockverify state fixture
+  owner: blockverify-tests
+spec:
+  version: 1.0.0
+  description: A fixture block that keeps data on a volume and carries it across a replacement.
+  resources:
+    - aws.ebs-volume
+  continuity:
+    - name: app-data
+      kind: volume
+      stateful: true
+      handover: snapshot
+  lifecycle:
+    endpoint: https://api.mitstack.dev/operators/blockverify-state-fixture/hook
+    operations: [subscribe, unsubscribe, upgrade, validate, snapshot, restore]
+    contract: kit/v1
+-- replacement-block_test.go --
+package main
+
+import (
+	"context"
+	"fmt"
+	"maps"
+	"os"
+	"sync"
+	"sync/atomic"
+	"testing"
+
+	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/observe"
+	"github.com/mitstack-eu/block-kit/verify/kittest"
+)
+
+type carrier interface {
+	Snapshot(ctx context.Context, unit string) (string, error)
+	Restore(ctx context.Context, unit, handover string) error
+}
+
+type provider struct {
+	mu  sync.Mutex
+	ids map[string]bool
+}
+
+func (p *provider) holds(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.ids[id]
+}
+
+func (p *provider) set(id string, held bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ids[id] = held
+}
+
+func (p *provider) ListTagged(context.Context, string) ([]observe.Tagged, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []observe.Tagged
+	for id, held := range p.ids {
+		if held {
+			out = append(out, observe.Tagged{Type: "aws.ebs-volume", ID: id})
+		}
+	}
+	return out, nil
+}
+
+func (p *provider) Lose(_ context.Context, r contract.CreatedResource) error {
+	p.set(r.Identity["id"], false)
+	return nil
+}
+
+type block struct {
+	p     *provider
+	carry carrier
+	mu    sync.Mutex
+	seq   int
+	id    string
+}
+
+func (b *block) EnsureResources(context.Context, contract.Desired) ([]contract.CreatedResource, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.id == "" || !b.p.holds(b.id) {
+		b.seq++
+		b.id = fmt.Sprintf("vol-%d", b.seq)
+		b.p.set(b.id, true)
+	}
+	return []contract.CreatedResource{{Name: "aws.ebs-volume", Type: "aws.ebs-volume", Identity: map[string]string{"id": b.id}}}, nil
+}
+
+func (b *block) Ensure(ctx context.Context, d contract.Desired) error {
+	_, err := b.EnsureResources(ctx, d)
+	return err
+}
+
+func (b *block) Delete(context.Context, contract.Desired) (map[string]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.p.set(b.id, false)
+	return nil, nil
+}
+
+func (b *block) Snapshot(ctx context.Context, _ contract.Desired, unit string) (string, error) {
+	return b.carry.Snapshot(ctx, unit)
+}
+
+func (b *block) Restore(ctx context.Context, _ contract.Desired, unit, handover string) error {
+	return b.carry.Restore(ctx, unit, handover)
+}
+
+type observer struct {
+	p         *provider
+	unhealthy bool
+	restored  *atomic.Bool
+}
+
+func (o observer) ObserveResource(_ context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	id := r.Identity["id"]
+	switch {
+	case id == "":
+		return contract.Observation{State: contract.Unknown}, nil
+	case !o.p.holds(id):
+		return contract.Observation{State: contract.Absent}, nil
+	case o.unhealthy && o.restored.Load():
+		return contract.Observation{State: contract.Present, Unhealthy: &contract.Unhealthy{
+			Cause: "the volume is still creating, attaching or detaching", Detail: "the restored volume reports no attachment"}}, nil
+	}
+	return contract.Observation{State: contract.Present}, nil
+}
+
+type memState struct {
+	mu   sync.Mutex
+	data map[string]string
+}
+
+func (s *memState) Write(_ context.Context, data map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	maps.Copy(s.data, data)
+	return nil
+}
+
+func (s *memState) Read(context.Context) (map[string]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return maps.Clone(s.data), nil
+}
+
+func (s *memState) Replace(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.data)
+	return nil
+}
+
+type vault struct {
+	live     *memState
+	drop     string
+	restored *atomic.Bool
+	taken    map[string]map[string]string
+}
+
+func (v *vault) Snapshot(ctx context.Context, _ string) (string, error) {
+	data, _ := v.live.Read(ctx)
+	handover := fmt.Sprintf("hnd-%d", len(v.taken)+1)
+	v.taken[handover] = data
+	return handover, nil
+}
+
+func (v *vault) Restore(ctx context.Context, _, handover string) error {
+	data := maps.Clone(v.taken[handover])
+	delete(data, v.drop)
+	v.restored.Store(true)
+	return v.live.Write(ctx, data)
+}
+
+// assertReplacement drives the block through the drill; mode is drop, unhealthy or keeps.
+func assertReplacement(t *testing.T, mode string) {
+	manifest, err := os.ReadFile("manifest.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("type-snapshot.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := contract.ParseTypeSnapshot(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, restored := &provider{ids: map[string]bool{}}, &atomic.Bool{}
+	b := &block{p: p}
+	live := &memState{data: map[string]string{}}
+	v := &vault{live: live, restored: restored, taken: map[string]map[string]string{}}
+	if mode == "drop" {
+		v.drop = "beta"
+	}
+	b.carry = v
+	kittest.AssertReplacement(t, kittest.Replacement{
+		Block: kittest.Block{
+			Config: handler.Config{
+				Resource: b, Manifest: manifest, Types: snap,
+				Observers: map[string]handler.Observer{"aws.ebs-volume": observer{p: p, unhealthy: mode == "unhealthy", restored: restored}},
+			},
+			Provider: p,
+			Desired:  contract.Desired{Identity: contract.Identity{SubscriptionID: "sub-fixture", BlockID: "blockverify-state-fixture", OrgID: "org-fixture"}},
+		},
+		Unit: "app-data",
+		Data: live,
+	})
+}

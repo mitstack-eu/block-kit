@@ -19,6 +19,36 @@ const HandlerPackage = "github.com/mitstack-eu/block-kit/handler"
 // UnservableBlock opens the error kittest reports when the kit's handler refuses a block's Config, so blockverify can quote it.
 const UnservableBlock = "the block cannot be served: "
 
+// DrillRanPrefix opens the line kittest logs for each unit it drilled, so blockverify can read which units a block's replacement drill covered.
+const DrillRanPrefix = "kittest.AssertReplacement drill of "
+
+// DrillRan is the line kittest logs once it drilled unit through stages.
+func DrillRan(unit string, stages []string) string {
+	return DrillRanPrefix + strconv.Quote(unit) + " ran: " + strings.Join(stages, ", ")
+}
+
+// DrilledUnits reads from a test run's output each unit a drill logged, with the stages it ran.
+func DrilledUnits(output string) map[string]string {
+	drilled := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
+		_, rest, found := strings.Cut(line, DrillRanPrefix)
+		if !found {
+			continue
+		}
+		quoted, err := strconv.QuotedPrefix(rest)
+		if err != nil {
+			continue
+		}
+		unit, err := strconv.Unquote(quoted)
+		stages, ran := strings.CutPrefix(rest[len(quoted):], " ran: ")
+		if err != nil || !ran {
+			continue
+		}
+		drilled[unit] = strings.TrimSpace(stages)
+	}
+	return drilled
+}
+
 // HandlerImportFiles returns the sorted, slash-separated paths under dir of non-test files a default build compiles that import HandlerPackage, and fails the scan on any file it cannot judge.
 func HandlerImportFiles(dir string) ([]string, error) {
 	fset := token.NewFileSet()

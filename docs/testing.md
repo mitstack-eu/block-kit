@@ -13,6 +13,7 @@ checks below against a fake Hetzner API.
 | Test name | Check it calls | What it proves |
 |---|---|---|
 | `TestDeclaredResources` | `kittest.AssertBlock` | Each declared resource is created, tagged, observed from the provider and gone after unsubscribe |
+| `TestReplacementDrill`, for a block whose manifest hands state over by snapshot, as [Proving a replacement](#proving-a-replacement) explains | `kittest.AssertReplacement` | Replacing the block's server loses no datum, and every resource reads present and healthy after the restore |
 | A name starting `TestUnsubscribeDeletes` | `kittest.AssertTeardownAfterBrokenSetup`, or your own test code | An unsubscribe deletes what a subscribe made |
 | A name starting `TestNoSecretLeak` | `kittest.AssertNoSecretLeak` | No secret reaches an answer, a log line or `/logs` |
 | `TestNoSecretLeak_VerifyConnection`, for a capability operator that answers `verify-connection` | `kittest.AssertNoSecretLeak` with a `verify-connection` request | The entered credential reaches no answer, log line or `/logs` |
@@ -269,6 +270,124 @@ answer of 401, a `Serve` that replaces the standard logger's writer, and a
 check sends the standard logger to its own capture as well as to `/logs` and
 the earlier writer, so the test must not run in parallel with a test that
 logs. `kittest.CheckNoSecretLeak` returns the problems as strings.
+
+## Proving a replacement
+
+A block that keeps data declares it under `spec.continuity`, as [The state a
+block keeps](manifest.md#the-state-a-block-keeps) explains, and carries it
+across a replacement of its server with the `snapshot` and `restore`
+operations. A replacement is an upgrade the user confirms in which the block
+creates a resource that holds data again, such as its server, on the same
+subscription. A unit is one entry under `spec.continuity`, and a handover is
+the string a snapshot answers for the restore to read. A block whose manifest
+gives a unit `handover: snapshot` proves the whole sequence with
+`kittest.AssertReplacement` in a test named `TestReplacementDrill`, which
+blockverify's `replacement` suite requires. A block that declares no state, or
+only state handed over by `none`, writes no such test.
+
+```go
+func TestReplacementDrill(t *testing.T) {
+	dir := t.TempDir()
+	kittest.AssertReplacement(t, kittest.Replacement{
+		Block: testBlock(t, dir), // your own helper, described below
+		Unit:  "app-data",
+		Data:  &volumeData{dir: dir},
+	})
+}
+```
+
+The drill and the block must look at the same data. Here `testBlock` is a
+helper of your own that builds the `kittest.Block` that `TestDeclaredResources`
+passes, with the block under test keeping the unit `app-data` under `dir`. The
+block's `Snapshot` then copies that directory out and its `Restore` writes it
+back, while the drill writes, destroys and reads the same directory through
+`volumeData`.
+
+| Field | What you supply |
+|---|---|
+| `Block` | The same `kittest.Block` `AssertBlock` takes, so the drill serves your block through `handler.New` as the engine reaches it |
+| `Unit` | The name of a `spec.continuity` entry whose handover is `snapshot` |
+| `Data` | Your view of the data the unit keeps, a `kittest.DrillData`, shown below. `Replace` destroys the live state as a lost server would and leaves it empty. The drill reads the state after `Replace` and fails when a known value is still there, since a value that was never lost proves no restore |
+
+`kittest.DrillData` is three methods over the unit's live data, which the
+drill calls and your test implements:
+
+```go
+type DrillData interface {
+	Write(ctx context.Context, data map[string]string) error
+	Read(ctx context.Context) (map[string]string, error)
+	Replace(ctx context.Context) error
+}
+```
+
+For a unit kept as files in one directory, the `volumeData` of the example
+above writes each value as a file, reads the files back, and empties the
+directory. The drill's values are named `alpha`, `beta` and `gamma`, which are
+safe as file names, and the code needs the `context`, `os` and `path/filepath`
+packages:
+
+```go
+type volumeData struct{ dir string }
+
+func (v *volumeData) Write(_ context.Context, data map[string]string) error {
+	for name, value := range data {
+		if err := os.WriteFile(filepath.Join(v.dir, name), []byte(value), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *volumeData) Read(context.Context) (map[string]string, error) {
+	entries, err := os.ReadDir(v.dir)
+	if err != nil {
+		return nil, err
+	}
+	data := map[string]string{}
+	for _, e := range entries {
+		raw, err := os.ReadFile(filepath.Join(v.dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		data[e.Name()] = string(raw)
+	}
+	return data, nil
+}
+
+func (v *volumeData) Replace(context.Context) error {
+	if err := os.RemoveAll(v.dir); err != nil {
+		return err
+	}
+	return os.Mkdir(v.dir, 0o700)
+}
+```
+
+The drill subscribes the block and writes three known values through
+`Data.Write`. It sends a `snapshot` and keeps the handover the answer
+publishes under `contract.HandoverOutputKey`, calls `Data.Replace`, loses each
+stateful resource from the provider, and sends an `upgrade` so the block
+creates them again. It then sends a `restore` carrying the handover and
+validates every declared resource until it reads present and healthy. Every
+request from the snapshot on carries `replacing: true`, which the block reads
+as `d.Replacing`, as
+[Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
+explains. The drill reads the data back through
+`Data.Read` and fails with one message per problem, as in these two:
+
+```text
+replacement lost datum "beta"
+resource "aws.ebs-volume": reads unhealthy after the restore: the volume is still creating, attaching or detaching (the restored volume reports no attachment)
+```
+
+A value that comes back changed fails as `replacement changed datum`. A
+resource that reads unhealthy passes only if it turns healthy within the same
+ten seconds `AssertBlock` allows. The drill logs one line that
+names its unit and the stages it ran, as in `kittest.AssertReplacement drill
+of "app-data" ran: subscribe, write, snapshot, replace, upgrade, restore,
+observe, read-back`. A block that hands several units over by snapshot calls
+`AssertReplacement` once for each, since blockverify reads those lines and
+fails a block that left one undrilled. `kittest.CheckReplacement` returns the
+problems as strings.
 
 ## Proving a re-driven subscribe resumes the work
 

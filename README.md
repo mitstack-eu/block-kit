@@ -385,8 +385,8 @@ go run github.com/mitstack-eu/block-kit/verify/blockverify@v0.4.0 --standalone .
 ```
 
 blockverify runs only with `--standalone`, which checks the block in the
-directory you name, here `.`, on its own. It runs eight suites, groups of
-checks, and a passing block ends with `VERDICT: PASS — 8 suite(s)`.
+directory you name, here `.`, on its own. It runs nine suites, groups of
+checks, and a passing block ends with `VERDICT: PASS — 9 suite(s)`.
 
 ## The rest of the repository
 
