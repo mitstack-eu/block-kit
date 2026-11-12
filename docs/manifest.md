@@ -240,13 +240,14 @@ out, naming its path, as in `spec.continuity[0].handover is required`.
 
 | Key | What it says |
 |---|---|
-| `name` | The unit a snapshot and a restore name, unique in the block |
+| `name` | The unit a snapshot and a restore name, unique in the block and in lowercase kebab case, such as `app-data` |
 | `kind` | What the state is, such as `postgres`, `openbao` or `volume` |
 | `stateful` | `true` when the user would miss the contents, `false` for state that can be rebuilt |
 | `handover` | `snapshot` when the snapshot and restore operations carry the state across, or `none` when nothing does. The key is required either way, so a block says which it is |
 
-The parser also refuses a `handover` other than `none` and `snapshot`, and a
-`name` used twice. `contract.CheckManifest` refuses an entry whose handover is
+The parser also refuses a `handover` other than `none` and `snapshot`, a
+`name` used twice, and a `name` that is not lowercase letters and digits in
+groups joined by single hyphens. `contract.CheckManifest` refuses an entry whose handover is
 `snapshot` while the operations leave out `snapshot` or `restore`, and refuses
 either operation when no entry hands over by snapshot. A block answers the two
 operations through `handler.Snapshotter`, as

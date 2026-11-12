@@ -878,11 +878,12 @@ with that error and no handover. It publishes the handover as the answer's outpu
 name. A restore reads the handover from the request's `priorOutputs` under the
 same key.
 
-The handover is a string your block chooses, and the platform stores it and
-hands it back without reading it. It names where the snapshot is, such as an
-object's reference with its digest, so that your `Restore` alone can find the
-data again. It holds no secret, since it travels as an output, and the handler
-refuses one that repeats a secret the request carried.
+The handover is a string your block chooses. The handler publishes it as the
+unit's output, and passes the string it finds in `priorOutputs` to `Restore`
+unchanged. It names where the snapshot is, such as an object's reference with
+its digest, so that your `Restore` alone can find the data again. It holds no
+secret, since it travels as an output, and the handler refuses one that
+repeats a secret the request carried.
 
 This request asks for a snapshot of the unit `app-data`:
 
