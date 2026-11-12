@@ -68,7 +68,7 @@ type reportedCapacity struct {
 				MemoryBytes *int64 `json:"memoryBytes"`
 				DiskBytes   *int64 `json:"diskBytes"`
 			} `json:"allocatable"`
-			Error string `json:"error"`
+			Error json.RawMessage `json:"error"`
 		} `json:"capacity"`
 	} `json:"host"`
 }
@@ -86,7 +86,7 @@ func (r Report) capacity() (allocatable Allocatable, given bool, unread string) 
 	}
 	reported := parts.Host.Capacity.Allocatable
 	if reported == nil {
-		return Allocatable{}, false, parts.Host.Capacity.Error
+		return Allocatable{}, false, hostError(parts.Host.Capacity.Error)
 	}
 	measures := []struct {
 		name   string
@@ -103,11 +103,22 @@ func (r Report) capacity() (allocatable Allocatable, given bool, unread string) 
 	return Allocatable{CPUMillis: *reported.CPUMillis, MemoryBytes: *reported.MemoryBytes, DiskBytes: *reported.DiskBytes}, true, ""
 }
 
-// misread names the field a decode stopped on by its path in the report.
+// hostError quotes an error the host sent as anything but text as it stands, so its type never hides it.
+func hostError(sent json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(sent, &text); err != nil {
+		return string(sent)
+	}
+	return text
+}
+
 func misread(err error) string {
 	var mistyped *json.UnmarshalTypeError
-	if !errors.As(err, &mistyped) {
+	switch {
+	case !errors.As(err, &mistyped):
 		return err.Error()
+	case mistyped.Field == "":
+		return "the report holds a JSON " + mistyped.Value
 	}
 	return fmt.Sprintf("%s holds a JSON %s", mistyped.Field, mistyped.Value)
 }
