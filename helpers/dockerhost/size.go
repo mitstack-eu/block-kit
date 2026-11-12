@@ -76,19 +76,20 @@ type Ask struct {
 	Size Reservation
 }
 
-// Capacity is the allocatable capacity the host's report gives, whatever error it also carries, a wait for the host's next report while it gives none, or a refusal of a host the platform attests absent.
+// Capacity is the allocatable capacity the host's report gives whole, a wait for the host's next report while it gives none or one CapacityError explains, or a refusal of a host the platform attests absent.
 func Capacity(report Report, found bool, part string) (Reservation, error) {
+	allocatable, given, unread := report.capacity()
 	switch {
 	case report.absence != nil:
 		return Reservation{}, handler.Refuse(classHostAbsent, "the platform's %s read the host's %s absent, so %s cannot be placed on it; give the app a running host",
 			report.absence.Observer, report.absence.Resource, part)
-	case found && report.CapacityError() != "":
+	case found && unread != "":
 		return Reservation{}, handler.WaitForSignal("the host's newest node report gives no allocatable capacity but the error %q, so %s waits for a report that gives it before it is sized",
-			report.CapacityError(), part)
-	case !found || report.Allocatable == nil:
+			unread, part)
+	case !found || !given:
 		return Reservation{}, handler.WaitForSignal("the host has sent no node report giving its allocatable capacity yet, so %s waits for that capacity report before it is sized", part)
 	}
-	return *report.Allocatable, nil
+	return allocatable, nil
 }
 
 // CheckRoom waits or refuses as Capacity does, and refuses host-full, naming the free and asked amounts, when ask does not fit in what the host can give its apps less what others hold.
