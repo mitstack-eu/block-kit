@@ -853,16 +853,19 @@ unit is one entry of that declaration. A handover is the string a snapshot
 answers, which names where the snapshot is so that the restore can find it.
 
 [ADR 0125](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0125-a-confirmed-upgrade-replaces-a-stateful-server-through-a-recorded-handover-with-keys-from-a-per-subscription-escrow-and-two-drills-that-keep-it-working.md)
-sets out a replacement as four stages, in this order:
+names four stages of a replacement: snapshot, reinstall, restore and observe.
+This is what a block does at each:
 
-1. The platform sends `snapshot` for a unit, and the block copies the unit's
-   data out of the old resource.
-2. The platform sends an ordinary `upgrade`, called the reinstall. It reaches
-   your `EnsureResources` as any upgrade does, and the block creates the new
-   resource.
-3. The platform sends `restore` for the unit, and the block puts the data back.
-4. The platform observes each replaced resource until it reads present and its
-   observation carries no `Unhealthy` cause.
+1. Snapshot: the block copies a unit's data out of the old resource. The kit's
+   `snapshot` operation serves this stage, with one unit per request.
+2. Reinstall: the block creates the new resource. ADR 0125 makes a replacement
+   an ordinary upgrade the user confirms, and an upgrade reaches your
+   `EnsureResources`.
+3. Restore: the block puts the unit's data back. The kit's `restore` operation
+   serves this stage, with one unit per request.
+4. Observe: the block's observers report each replaced resource. ADR 0125
+   ends the replacement when each reads present and healthy, which an
+   observation shows as `Present` with no `Unhealthy` cause.
 
 A block lists both operations under `spec.lifecycle.operations` and implements
 `handler.Snapshotter`, and `handler.New` refuses a manifest that lists them
@@ -905,12 +908,12 @@ snapshot adds, and the answer carries the handover:
 {"outputs": {"handover.app-data": "hnd_0001"}}
 ```
 
-A request that is part of a replacement carries `"replacing": true`, on the
-snapshot, the reinstall and the restore alike, and the block reads it as
-`d.Replacing`. The marker is for a block whose `EnsureResources` starts a
-server's install a second time when the first attempt has not finished. Such a
-block skips that second install while `d.Replacing` is true, since ADR 0125
-rules out an install retry during a replacement.
+`"replacing": true` on a request tells the block that the request belongs to
+a replacement, and the block reads it as `d.Replacing`. The marker is for a
+block whose `EnsureResources` starts a server's install a second time when the
+first attempt has not finished. Such a block skips that second install while
+`d.Replacing` is true, since ADR 0125 rules out an install retry during a
+replacement.
 
 | What goes wrong | Status |
 |---|---|
