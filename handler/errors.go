@@ -22,11 +22,14 @@ type Refused struct {
 
 // Error renders as "refused:<class>: <detail>", the exact statusDetail shape on the wire.
 func (e *Refused) Error() string {
-	class := e.Class
-	if class == "" {
-		class = unclassifiedRefusal
+	return refusedPrefix + e.wireClass() + ": " + e.Detail
+}
+
+func (e *Refused) wireClass() string {
+	if e.Class == "" {
+		return unclassifiedRefusal
 	}
-	return refusedPrefix + class + ": " + e.Detail
+	return e.Class
 }
 
 // Refuse builds a *Refused whose Detail is formatted as fmt.Errorf formats.

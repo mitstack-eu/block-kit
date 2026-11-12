@@ -192,12 +192,31 @@ func (h *Handler) errorResponse(err error, secrets []string) (int, contract.Resp
 	return http.StatusInternalServerError, contract.Response{Error: safe.Scrub(err.Error(), secrets...)}
 }
 
-// scrubAroundClass scrubs text everywhere but in refused's class, a word the block's own code names and the platform reads back, and scrubs all of it when text does not hold refused as written.
+// scrubAroundClass scrubs text everywhere but in refused's class, a word the block's own code names and the platform reads back, and scrubs all of it when text does not hold refused as written or a secret reads across the class's edge.
 func scrubAroundClass(text string, refused *Refused, secrets []string) string {
 	before, after, found := strings.Cut(text, refused.Error())
 	if !found {
 		return safe.Scrub(text, secrets...)
 	}
-	masked := &Refused{Class: refused.Class, Detail: safe.Scrub(refused.Detail, secrets...)}
-	return safe.Scrub(before, secrets...) + masked.Error() + safe.Scrub(after, secrets...)
+	head := safe.Scrub(before, secrets...)
+	maskedRefusal := &Refused{Class: refused.Class, Detail: safe.Scrub(refused.Detail, secrets...)}
+	masked := head + maskedRefusal.Error() + safe.Scrub(after, secrets...)
+	classStart := len(head) + len(refusedPrefix)
+	if secretOutsideSpan(masked, classStart, classStart+len(refused.wireClass()), secrets) {
+		log.Printf("handler: a secret reads across the edge of refusal class %s, so the refusal is masked whole", safe.LogSafe(refused.wireClass(), secrets...))
+		return safe.Scrub(text, secrets...)
+	}
+	return masked
+}
+
+// secretOutsideSpan reports whether a secret Scrub would mask occurs in text anywhere but wholly inside text[start:end], since pieces scrubbed apart can join into a secret.
+func secretOutsideSpan(text string, start, end int, secrets []string) bool {
+	for _, secret := range secrets {
+		left := text[:min(len(text), start+len(secret)-1)]
+		right := text[min(len(text), max(0, end-len(secret)+1)):]
+		if safe.Scrub(left, secret) != left || safe.Scrub(right, secret) != right {
+			return true
+		}
+	}
+	return false
 }

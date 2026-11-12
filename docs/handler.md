@@ -347,7 +347,9 @@ args...)`, answers 400 with a `statusDetail` of `refused:<class>: <detail>`.
 The handler masks each secret the request carries in the detail and in any
 text your code wraps around the refusal. It leaves the class as your code wrote
 it, because the platform reads the class back, so keep a class a fixed word
-and never format a value into it.
+and never format a value into it. When a secret reads across the edge of the
+class, into the detail or the text around it, the handler masks the whole text,
+the class included, and logs the class it could not keep.
 The engine reads a refusal as permanent and stops retrying. Any other error
 answers 500, and the engine retries the call under the same idempotency key.
 
