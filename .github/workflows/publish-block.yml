@@ -905,7 +905,9 @@ jobs:
           container=$(docker create "${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST}")
           docker cp "$container:/usr/local/bin/opentofu-operator" "$RUNNER_TEMP/opentofu-operator"
           docker rm "$container" > /dev/null
-          KIT_VERSION=$(go version -m "$RUNNER_TEMP/opentofu-operator" | awk '$1 == "dep" && $2 == "github.com/mitstack-eu/block-kit" {print $3}')
+          # A go.mod among the files handed over could otherwise choose the Go
+          # that runs here.
+          KIT_VERSION=$(GOTOOLCHAIN=local go version -m "$RUNNER_TEMP/opentofu-operator" | awk '$1 == "dep" && $2 == "github.com/mitstack-eu/block-kit" {print $3}')
           if [ -z "$KIT_VERSION" ]; then
             echo "the operator binary in ${REGISTRY}/${{ inputs.ecr-repository }}@${IMAGE_DIGEST} names no block-kit module" >&2
             exit 1
