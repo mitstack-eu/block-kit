@@ -33,7 +33,10 @@ func kitModuleDir(t *testing.T) string {
 // kitGoMod carries the kit's own go.mod lines after its module line, so a fixture requires what the kit requires at the kit's Go version.
 func kitGoMod(t *testing.T) string {
 	t.Helper()
-	_, kit, _ := strings.Cut(readFile(t, filepath.Join(kitModuleDir(t), "go.mod")), "\nmodule github.com/mitstack-eu/block-kit\n")
+	_, kit, found := strings.Cut(readFile(t, filepath.Join(kitModuleDir(t), "go.mod")), "\nmodule github.com/mitstack-eu/block-kit\n")
+	if !found {
+		t.Fatal("the kit's go.mod names no module github.com/mitstack-eu/block-kit, so a fixture cannot carry its lines")
+	}
 	return "module fixture\n" + kit + "\nrequire github.com/mitstack-eu/block-kit v0.4.0\n\nreplace github.com/mitstack-eu/block-kit => " + kitModuleDir(t) + "\n"
 }
 

@@ -288,3 +288,23 @@ func TestVolumeRestore_KeepsEachEntrysModeAndOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenBao_FollowsNoRedirectSoItsTokenReachesNoOtherHost(t *testing.T) {
+	var tokens []string
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		tokens = append(tokens, r.Header.Get("X-Vault-Token"))
+	}))
+	t.Cleanup(other.Close)
+	store := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(store.Close)
+	state := continuity.OpenBao{Live: continuity.Endpoint{Addr: store.URL, Token: "bao-token-3c1"}}
+	var out bytes.Buffer
+
+	err := state.Export(context.Background(), &out)
+
+	if err == nil || len(tokens) != 0 {
+		t.Errorf("Export against a store that redirects = %v, and another host received the tokens %q; want an error and no request to that host", err, tokens)
+	}
+}
