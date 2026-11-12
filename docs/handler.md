@@ -282,11 +282,19 @@ The handler also sets `plannedReplacements` to true on that answer, for every
 block that implements `handler.ReplacementPlanner`, including one whose list
 comes back empty. You write no code for it. The engine needs it because an
 empty `replaces` alone cannot tell an upgrade that replaces nothing from a
-block that never looked. A block without the interface answers with the field
-left out, which the engine reads as "not planned". So does a block built on a
-kit release older than the field, and a `validate` naming one resource, which
-runs no planner. A validate answer from a planning block that replaces
-nothing reads:
+block that never looked.
+
+Three answers leave the field out, and the engine reads each as "not planned":
+the answer of a block without the interface, the answer of a block built on a
+kit release older than the field, and the answer to a `validate` naming one
+resource, which runs no planner.
+
+An empty list from `PlanReplacements` therefore tells the engine that the
+upgrade replaces nothing. When your planner cannot tell, for example because
+another apply holds the state it reads, return an error instead. The validate
+then answers that error and carries no `plannedReplacements`.
+
+A validate answer from a planning block that replaces nothing reads:
 
 ```json
 {"outputs": null, "absent": false, "plannedReplacements": true,
