@@ -505,8 +505,10 @@ host sends them:
 `dockerhost.NewestReport` reads the host's newest report and returns it as a
 `dockerhost.Report`. The kit reads the capacity strictly: all three keys must
 be present, and each must hold a whole number of zero or more. A capacity
-that fails this reading counts as none, and the report's `CapacityError`
-method names the key, as in `host.capacity.allocatable lacks memoryBytes`.
+that passes is a `dockerhost.Allocatable`, which the report's `Allocatable`
+method returns. One that fails counts as none, and the report's
+`CapacityError` method names the key, as in
+`host.capacity.allocatable lacks memoryBytes`.
 [Reading what the host last synced](#reading-what-the-host-last-synced) covers
 its arguments and the rest of what it returns.
 
@@ -587,10 +589,11 @@ report's body, such as the platform, reads it with
 `dockerhost.ReadReport(body)` instead, which fails only on a body that is not
 JSON. Each method below decodes its own part of the report, so a capacity or
 an agent the kit cannot read never stops your block reading the report's logs
-or releases. The report gives you seven things:
+or releases. The report gives you eight things:
 
-| Field or method | What it gives |
+| Method | What it gives |
 |---|---|
+| `report.Allocatable()` | The host's allocatable capacity as a `dockerhost.Allocatable`, and `false` when the report gives none or one the kit cannot read whole |
 | `report.CapacityError()` | The error the host sent under `host.capacity.error` in place of its allocatable capacity. hcloud-docker-host sends `nproc, free -b or df -B1 / printed nothing the report can read`, which names the three commands it reads its CPU, memory and disk with. When the report gives a capacity the kit cannot read whole, the method names the key that is missing, below zero or no whole number instead. The method returns an empty string when the report gives its whole capacity or names no error. `Capacity` and `CheckRoom` read the error through this method, so a page that shows a host's room, such as the platform's Room for apps, can quote the error a block waits on |
 | `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
 | `report.AppRelease(app, subscription)` | The app's newest release command as a `dockerhost.AppRelease`, described below |

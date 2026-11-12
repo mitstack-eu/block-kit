@@ -76,17 +76,17 @@ type reportedCapacity struct {
 const allocatablePath = "host.capacity.allocatable"
 
 // capacity reads host.capacity alone, and a report naming neither a capacity nor an error gives none with an empty unread.
-func (r Report) capacity() (allocatable Reservation, given bool, unread string) {
+func (r Report) capacity() (allocatable Allocatable, given bool, unread string) {
 	if len(r.body) == 0 {
-		return Reservation{}, false, ""
+		return Allocatable{}, false, ""
 	}
 	var parts reportedCapacity
 	if err := r.Decode(&parts); err != nil {
-		return Reservation{}, false, misread(err) + ", which no amount can be read from"
+		return Allocatable{}, false, misread(err) + ", which no amount can be read from"
 	}
 	reported := parts.Host.Capacity.Allocatable
 	if reported == nil {
-		return Reservation{}, false, parts.Host.Capacity.Error
+		return Allocatable{}, false, parts.Host.Capacity.Error
 	}
 	measures := []struct {
 		name   string
@@ -94,13 +94,13 @@ func (r Report) capacity() (allocatable Reservation, given bool, unread string) 
 	}{{"cpuMillis", reported.CPUMillis}, {"memoryBytes", reported.MemoryBytes}, {"diskBytes", reported.DiskBytes}}
 	for _, m := range measures {
 		if m.amount == nil {
-			return Reservation{}, false, allocatablePath + " lacks " + m.name
+			return Allocatable{}, false, allocatablePath + " lacks " + m.name
 		}
 		if *m.amount < 0 {
-			return Reservation{}, false, fmt.Sprintf("%s gives a negative %s, %d", allocatablePath, m.name, *m.amount)
+			return Allocatable{}, false, fmt.Sprintf("%s gives a negative %s, %d", allocatablePath, m.name, *m.amount)
 		}
 	}
-	return Reservation{CPUMillis: *reported.CPUMillis, MemoryBytes: *reported.MemoryBytes, DiskBytes: *reported.DiskBytes}, true, ""
+	return Allocatable{CPUMillis: *reported.CPUMillis, MemoryBytes: *reported.MemoryBytes, DiskBytes: *reported.DiskBytes}, true, ""
 }
 
 // misread names the field a decode stopped on by its path in the report.
@@ -110,6 +110,12 @@ func misread(err error) string {
 		return err.Error()
 	}
 	return fmt.Sprintf("%s holds a JSON %s", mistyped.Field, mistyped.Value)
+}
+
+// Allocatable is the capacity the report gives whole, given false when it gives none or one CapacityError explains.
+func (r Report) Allocatable() (allocatable Allocatable, given bool) {
+	allocatable, given, _ = r.capacity()
+	return allocatable, given
 }
 
 // CapacityError is why the report gives no allocatable capacity to size on, empty when it gives one whole or names no reason: the error the host sent in its place, or the measure of the capacity it sent that is missing, negative or no whole number.
