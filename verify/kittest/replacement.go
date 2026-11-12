@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/verify/internal/kitbinding"
 )
 
 // Replacement is a block served as for AssertBlock, the spec.continuity entry to replace, and the block's own view of the data that entry keeps.
@@ -36,11 +36,11 @@ func CheckReplacement(in Replacement) []string {
 	return problems
 }
 
-// AssertReplacement runs CheckReplacement, logs which stages ran, and fails tb with one error per problem.
+// AssertReplacement runs CheckReplacement, logs the unit with the stages that ran, and fails tb with one error per problem.
 func AssertReplacement(tb testing.TB, in Replacement) {
 	tb.Helper()
 	problems, ran := checkReplacement(in)
-	tb.Logf("kittest.AssertReplacement drill ran: %s", strings.Join(ran, ", "))
+	tb.Log(kitbinding.DrillRan(in.Unit, ran))
 	for _, p := range problems {
 		tb.Error(p)
 	}

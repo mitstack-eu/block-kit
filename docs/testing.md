@@ -317,8 +317,12 @@ resource "aws.ebs-volume": reads unhealthy after the restore: the volume is stil
 A value that comes back changed fails as `replacement changed datum`. A
 resource that reads unhealthy passes only if it turns healthy within the same
 ten seconds `AssertBlock` allows, since the engine observes a replaced
-resource until it reads present and healthy. The drill logs `kittest.AssertReplacement
-drill ran:` with the stages it ran. `kittest.CheckReplacement` returns the
+resource until it reads present and healthy. The drill logs one line that
+names its unit and the stages it ran, as in `kittest.AssertReplacement drill
+of "app-data" ran: subscribe, write, snapshot, replace, upgrade, restore,
+observe, read-back`. A block that hands several units over by snapshot calls
+`AssertReplacement` once for each, since blockverify reads those lines and
+fails a block that left one undrilled. `kittest.CheckReplacement` returns the
 problems as strings.
 
 ## Proving a re-driven subscribe resumes the work

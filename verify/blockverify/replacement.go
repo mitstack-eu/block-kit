@@ -7,16 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/verify/internal/kitbinding"
 )
 
 const (
 	replacementTestNeedle  = "func TestReplacementDrill("
 	replacementCheckNeedle = "kittest.AssertReplacement("
-	drillRanMarker         = "kittest.AssertReplacement drill ran:"
 )
 
 // testLogPrefix is the file and line go test puts before each line a test logs.
@@ -34,7 +33,8 @@ func replacementSuite(target string) SuiteResult {
 	if err != nil {
 		return SuiteResult{name, "fail", err.Error()}
 	}
-	if !slices.ContainsFunc(m.Block.Spec.Continuity, func(u contract.ManifestContinuity) bool { return u.Handover == contract.HandoverSnapshot }) {
+	units := snapshotUnits(m.Block.Spec)
+	if len(units) == 0 {
 		return SuiteResult{name, "skipped", "the manifest declares no state handed over by snapshot under spec.continuity, so there is nothing to replace and restore"}
 	}
 
@@ -52,18 +52,48 @@ func replacementSuite(target string) SuiteResult {
 	if !ok {
 		return SuiteResult{name, "fail", replacementProblemLine(output)}
 	}
-	_, ran, logged := strings.Cut(output, drillRanMarker)
-	if !logged {
+	drilled := kitbinding.DrilledUnits(output)
+	if len(drilled) == 0 {
 		return SuiteResult{name, "fail", "TestReplacementDrill passed without kittest.AssertReplacement logging its stages, so the drill ran no stage, as when the test skips before it"}
 	}
-	ran, _, _ = strings.Cut(ran, "\n")
-	return SuiteResult{name, "pass", fmt.Sprintf("TestReplacementDrill replaces the server and restores every datum; stages that ran: %s", strings.TrimSpace(ran))}
+	var undrilled []string
+	for _, unit := range units {
+		if _, ok := drilled[unit]; !ok {
+			undrilled = append(undrilled, fmt.Sprintf("%q", unit))
+		}
+	}
+	if len(undrilled) > 0 {
+		return SuiteResult{name, "fail", fmt.Sprintf(
+			"%s hands %s over by snapshot, but TestReplacementDrill ran no drill of it, so nothing proves that state survives a replacement",
+			target, strings.Join(undrilled, " and "))}
+	}
+	return SuiteResult{name, "pass", fmt.Sprintf("TestReplacementDrill replaces the server and restores every datum of %s; stages that ran: %s",
+		quotedList(units), drilled[units[0]])}
+}
+
+// snapshotUnits lists, in manifest order, the spec.continuity entries handed over by snapshot.
+func snapshotUnits(spec contract.ManifestSpec) []string {
+	var units []string
+	for _, u := range spec.Continuity {
+		if u.Handover == contract.HandoverSnapshot {
+			units = append(units, u.Name)
+		}
+	}
+	return units
+}
+
+func quotedList(names []string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = fmt.Sprintf("%q", n)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // replacementProblemLine picks the first problem the drill logged, and falls back to the failing line of the run.
 func replacementProblemLine(output string) string {
 	for _, l := range strings.Split(output, "\n") {
-		if testLogPrefix.MatchString(l) && !strings.Contains(l, drillRanMarker) {
+		if testLogPrefix.MatchString(l) && !strings.Contains(l, kitbinding.DrillRanPrefix) {
 			return testLogPrefix.ReplaceAllString(l, "")
 		}
 	}
