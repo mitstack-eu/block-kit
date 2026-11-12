@@ -488,7 +488,7 @@ With `--opentofu-only`, each suite answers as this table shows:
 | Suite | What it judges for an OpenTofu-only block |
 |---|---|
 | `trust-plumbing` | `manifest.yaml` exists and declares `contract: kit/v1`, a `.tf` or `.tofu` file sits at the root, and no `go.mod` or `.go` file sits anywhere in the tree, a Go test file included. These replace the Go rules on `go.mod`, the kit floor and the `handler` import. A block with Go code of its own runs without the flag |
-| `contract`, `secret-safety`, `guarded-client`, `teardown`, `resources` | `skipped`, since each judges a Go operator and the block's operator is opentofu-operator |
+| `contract`, `secret-safety`, `guarded-client`, `teardown`, `resources`, `replacement` | `skipped`, since each judges a Go operator and the block's operator is opentofu-operator |
 | `deliverable`, `manifest` | The same as for any block |
 
 To run it on your machine, add the flag to the command in [What blockverify

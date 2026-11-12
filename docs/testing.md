@@ -276,9 +276,11 @@ logs. `kittest.CheckNoSecretLeak` returns the problems as strings.
 A block that keeps data declares it under `spec.continuity`, as [The state a
 block keeps](manifest.md#the-state-a-block-keeps) explains, and carries it
 across a replacement of its server with the `snapshot` and `restore`
-operations. A replacement is an upgrade the user confirms that creates the
-block's server again with the same identity. A block whose manifest hands a
-unit over by `snapshot` proves the whole sequence with
+operations. A replacement is an upgrade the user confirms in which the block
+creates a resource that holds data again, such as its server, on the same
+subscription. A unit is one entry under `spec.continuity`, and a handover is
+the string a snapshot answers for the restore to read. A block whose manifest
+gives a unit `handover: snapshot` proves the whole sequence with
 `kittest.AssertReplacement` in a test named `TestReplacementDrill`, which
 blockverify's `replacement` suite requires. A block that declares no state, or
 only state handed over by `none`, writes no such test.
@@ -297,7 +299,58 @@ func TestReplacementDrill(t *testing.T) {
 |---|---|
 | `Block` | The same `kittest.Block` `AssertBlock` takes, so the drill serves your block through `handler.New` as the engine reaches it |
 | `Unit` | The name of a `spec.continuity` entry whose handover is `snapshot` |
-| `Data` | Your view of the data the unit keeps, a `kittest.DrillData` with `Write`, `Read` and `Replace`. `Replace` destroys the live state as a lost server would and leaves it empty. The drill reads the state after `Replace` and fails when a known value is still there, since a value that was never lost proves no restore |
+| `Data` | Your view of the data the unit keeps, a `kittest.DrillData`, shown below. `Replace` destroys the live state as a lost server would and leaves it empty. The drill reads the state after `Replace` and fails when a known value is still there, since a value that was never lost proves no restore |
+
+`kittest.DrillData` is three methods over the unit's live data, which the
+drill calls and your test implements:
+
+```go
+type DrillData interface {
+	Write(ctx context.Context, data map[string]string) error
+	Read(ctx context.Context) (map[string]string, error)
+	Replace(ctx context.Context) error
+}
+```
+
+For a unit kept as files in one directory, the `volumeData` of the example
+above writes each value as a file, reads the files back, and empties the
+directory:
+
+```go
+type volumeData struct{ dir string }
+
+func (v *volumeData) Write(_ context.Context, data map[string]string) error {
+	for name, value := range data {
+		if err := os.WriteFile(filepath.Join(v.dir, name), []byte(value), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *volumeData) Read(context.Context) (map[string]string, error) {
+	entries, err := os.ReadDir(v.dir)
+	if err != nil {
+		return nil, err
+	}
+	data := map[string]string{}
+	for _, e := range entries {
+		raw, err := os.ReadFile(filepath.Join(v.dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		data[e.Name()] = string(raw)
+	}
+	return data, nil
+}
+
+func (v *volumeData) Replace(context.Context) error {
+	if err := os.RemoveAll(v.dir); err != nil {
+		return err
+	}
+	return os.Mkdir(v.dir, 0o700)
+}
+```
 
 The drill subscribes the block and writes three known values through
 `Data.Write`. It sends a `snapshot` and keeps the handover the answer
