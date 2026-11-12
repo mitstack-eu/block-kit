@@ -576,7 +576,7 @@ refused through `handler.Refuse` with the class `host-binding`, so the
 platform shows the subscriber why. A platform that does not answer or a
 report that is not JSON returns a plain error. A reader that already holds a
 report's body, such as the platform, reads it with
-`dockerhost.ReadReport(body)` instead. The report gives you six things:
+`dockerhost.ReadReport(body)` instead. The report gives you eight things:
 
 | Field or method | What it gives |
 |---|---|
@@ -585,6 +585,8 @@ report's body, such as the platform, reads it with
 | `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
 | `report.AppRelease(app, subscription)` | The app's newest release command as a `dockerhost.AppRelease`, described below |
 | `report.ReleaseAgainst(app, subscription, asked)` | The same release command judged against the image the app's newest deploy asked for, described below |
+| `report.AppContainers(app)` | The containers the report lists under the app, each a `dockerhost.Container` that judges its own health, described below |
+| `report.AppHealth(app, subscription, causes)` | The health of the app's own containers as one answer, described below |
 | `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as each app's containers |
 
 `SyncedCommit` never reads the agent's log. The report carries only the log's
@@ -745,6 +747,56 @@ case release.FailedOnAsked():
 case release.AskedAbsent():
 	// no container runs release.AskedDigest
 }
+```
+
+### Judging a container's health
+
+A part whose app runs in a container reads that container from the host's
+newest report, so the page never shows the part ready while its app is down.
+Every reader judges a container by one rule, `container.Read()`, which the
+platform's deploy verdict also follows. The rule reads the state first and the
+health after it:
+
+| What the report shows | `Read()` answers |
+|---|---|
+| State `restarting`, `exited`, `dead` or `paused` | `dockerhost.ContainerNotRunning` |
+| State `running`, health `unhealthy` | `dockerhost.ContainerUnhealthy` |
+| State `running`, health `healthy`, or no health check (`none` or no field) | `dockerhost.ContainerHealthy` |
+| State `running`, health `starting`, or a state such as `created` | `dockerhost.ContainerStarting`, neither healthy nor failed |
+
+`reading.Failed()` holds for the two failed answers.
+
+`container.Unhealthy(causes)` turns a failed answer into the observation's
+`Unhealthy`, and answers nil otherwise. `causes` is a
+`dockerhost.ContainerCauses` naming the cause your catalogue type lists, word
+for word, for a container not running and for one reading unhealthy. The
+detail names the container and what it reads, such as
+`shop-web reads restarting`, and quotes none of its output. One failure then
+reads the same at every restart, so the platform re-drives it once and then
+waits naming the cause. The container's last lines stay in the part's logs.
+
+`report.AppHealth(app, subscription, causes)` judges the containers the
+report lists under the app with that subscription. It answers the first
+failed one's `Unhealthy`. While none has failed and one still starts, it
+answers why instead, and your observer reads unknown, so the verdict before it
+stands. A deploy whose new image is still starting therefore starts no
+re-drive, and a crash loop that alternates between restarting and starting
+keeps its one failure until a start runs healthy:
+
+```go
+var causes = dockerhost.ContainerCauses{
+	NotRunning: "the app's container is not running on the host",
+	Unhealthy:  "the app's container reads unhealthy on the host",
+}
+
+unhealthy, waits, err := report.AppHealth(app, d.SubscriptionID, causes)
+switch {
+case err != nil:
+	return contract.Observation{}, err
+case waits != "":
+	return contract.Observation{State: contract.Unknown, StatusDetail: waits}, nil
+}
+obs.Unhealthy = unhealthy
 ```
 
 ### Running a command in an app's container
@@ -1002,7 +1054,7 @@ An `Engine` names the rest:
 | `Entrypoint` | The container's entrypoint. It is given the variable names, as a `dockerhost.Names` map from each value to its variable. It writes a variable as `$NAME`, and the kit escapes each `$` for Compose |
 | `Command`, `Environment`, `Healthcheck` | The container's command, its fixed environment and its health check's test, as Compose takes them |
 | `Dump`, `Restore` | One command line each, given the variable names. The host splits `Dump` into words as a shell would, runs it in the container without a shell, and keeps what it writes to its output as the backup, so a line that reads a variable calls `sh -c` itself. A host that replaces a lost one runs `Restore` through `sh -c` in the new container, with the newest backup on its input |
-| `Trouble` | A regular expression. When the container stops or reads unhealthy, the newest output line it matches is quoted as the cause, and nil quotes none |
+| `Trouble` | A regular expression. While the database waits on a container that starts, or that is down before the database ever read active, the newest output line it matches is quoted in the wait, and nil quotes none |
 
 #### Removing the database and reading it
 
@@ -1013,9 +1065,12 @@ that backup is uploaded to the host's backup bucket.
 The observer reads the database present once the newest node report shows
 that the pull agent has applied a commit holding the database's files as main
 holds them, and that its container is running and past starting. A commit
-that changed only other files leaves the database current. A container that
-reads unhealthy, once the database has read active, is present but unhealthy, with `dockerhost.DatabaseUnhealthy`
-as its cause.
+that changed only other files leaves the database current. Once the database
+has read active, a container that stops running is present but unhealthy with
+`dockerhost.DatabaseNotRunning` as its cause, and one that reads unhealthy with
+`dockerhost.DatabaseUnhealthy`. Before that, either one waits, since a new
+database may restart while it sets itself up. `container.DatabaseHealth`
+holds this rule for a block that reads its database container itself.
 
 A block's test drives the `Database` against `dockerhosttest.Host`, a fake of
 the host's repository and its node report. Set `Database.GitHub` to the fake's
