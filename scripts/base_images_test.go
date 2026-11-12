@@ -1,46 +1,22 @@
 package scripts_test
 
-// base-images.sh pull reads the Dockerfile through GitHub's API, pulls and saves every image it names in the registry and lists them, and load loads them and prints one build context per image.
+// base-images.sh pull reads the Dockerfile through GitHub's API, pulls and saves every image it names in the registry, and lists them for the build.
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
 
 const (
-	handoverDocker = `#!/usr/bin/env bash
-echo "docker $*" >> "$STUB_LOG/docker"
-[ "$1" != "${STUB_FAIL:-}" ] || exit 1
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --output) echo "saved image" > "$2" ;;
-    --iidfile) echo "sha256:feed" > "$2" ;;
-  esac
-  shift
-done
-`
 	verifyRegistry = "123456789012.dkr.ecr.eu-central-1.amazonaws.com"
 	headCommit     = "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff"
 )
 
 var operatorImage = verifyRegistry + "/mitstack-opentofu-operator@sha256:" + strings.Repeat("ab", 32)
-
-func stubbedDocker(t *testing.T) (env []string, log string) {
-	t.Helper()
-	bin, log := t.TempDir(), t.TempDir()
-	writeFile(t, filepath.Join(bin, "docker"), handoverDocker)
-	return []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "STUB_LOG=" + log}, log
-}
-
-func dockerCalls(log string) string {
-	raw, _ := os.ReadFile(filepath.Join(log, "docker"))
-	return strings.TrimSpace(string(raw))
-}
 
 func dockerfileAPI(t *testing.T, status int, dockerfile string) (url string, calls *[]string) {
 	t.Helper()
@@ -100,7 +76,7 @@ func TestBaseImages_PullSavesEveryImageTheDockerfileNamesInTheRegistry(t *testin
 			if tc.fail != "" {
 				wantDocker = []string{"docker pull " + operatorImage}
 			}
-			if got := dockerCalls(log); got != strings.Join(wantDocker, "\n") {
+			if got := dockerCalls(t, log); got != strings.Join(wantDocker, "\n") {
 				t.Errorf("docker calls =\n%s\nwant\n%s", got, strings.Join(wantDocker, "\n"))
 			}
 			if got, err := os.ReadFile(filepath.Join(dir, "references")); tc.wantExit && (err != nil || string(got) != strings.Join(wantList, "")) {
@@ -108,103 +84,6 @@ func TestBaseImages_PullSavesEveryImageTheDockerfileNamesInTheRegistry(t *testin
 			}
 			if _, err := os.Stat(filepath.Join(dir, "images.tar")); (err == nil) != (len(tags) > 0) {
 				t.Errorf("images.tar stat err = %v, want it saved exactly when an image was pulled", err)
-			}
-		})
-	}
-}
-
-func TestBaseImages_LoadPrintsOneBuildContextForEachImageHandedOver(t *testing.T) {
-	cases := []struct {
-		name       string
-		references *string
-		fail       string
-		wantExit   bool
-		wantOut    string
-		wantDocker string
-	}{
-		{"an image handed over is loaded and named as the build context for its reference", ptr(operatorImage + " base-image:0\n"), "", true, "--build-context\n" + operatorImage + "=docker-image://base-image:0\n", "docker load --input DIR/images.tar"},
-		{"an empty list loads nothing and prints nothing", ptr(""), "", true, "", ""},
-		{"a directory holding no list fails, since the base image job handed nothing over", nil, "", false, "holds no references file", ""},
-		{"images that cannot be loaded fail the step and name no build context", ptr(operatorImage + " base-image:0\n"), "load", false, "", "docker load --input DIR/images.tar"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			env, log := stubbedDocker(t)
-			dir := t.TempDir()
-			if tc.references != nil {
-				writeFile(t, filepath.Join(dir, "references"), *tc.references)
-				writeFile(t, filepath.Join(dir, "images.tar"), "saved image\n")
-			}
-
-			out, exit := runBash(t, append(env, "STUB_FAIL="+tc.fail), "base-images.sh", "load", dir)
-
-			if (exit == 0) != tc.wantExit {
-				t.Fatalf("exit %d, output:\n%s\nwant success %v", exit, out, tc.wantExit)
-			}
-			if tc.wantExit && out != tc.wantOut || !tc.wantExit && (!strings.Contains(out, tc.wantOut) || strings.Contains(out, "--build-context")) {
-				t.Errorf("output = %q, want %q and, on a failure, no build context", out, tc.wantOut)
-			}
-			if got := strings.ReplaceAll(dockerCalls(log), dir, "DIR"); got != tc.wantDocker {
-				t.Errorf("docker calls = %q, want %q", got, tc.wantDocker)
-			}
-		})
-	}
-}
-
-func ptr(s string) *string { return &s }
-
-// A rerun whose base image job fails could otherwise build on the images an earlier attempt handed over.
-func TestPublishBlockWorkflow_TheOpenTofuJobStopsWhereTheBaseImageJobDidNotSucceed(t *testing.T) {
-	all := publishWorkflow(t)
-	const job, name = "opentofu-conformance", "Stop where the base image job did not succeed"
-	stop := stepOf(all, job, "name", name)
-	cases := []struct{ name, got, want string }{
-		{"the stop comes before the fetch of the base images", strconv.FormatBool(stepAt(all, job, "name", name) >= 0 && stepAt(all, job, "name", name) < stepAt(all, job, "name", "Fetch the base images")), "true"},
-		{"the stop runs for every result but success", all[stop+"if"], "needs.base-image.result != 'success'"},
-		{"the stop learns how the base image job ended", all[stop+"env.RESULT"], "${{ needs.base-image.result }}"},
-	}
-	checkFields(t, "publish-block.yml", "", cases)
-
-	out, exit := runNamed(t, job, name, t.TempDir(), "", "RESULT=failure")
-
-	if exit == 0 || !strings.Contains(out, "::error::the base image job ended failure") {
-		t.Errorf("exit %d, output:\n%s\nwant the step to fail naming how the base image job ended", exit, out)
-	}
-}
-
-func TestPublishBlockWorkflow_TheOpenTofuJobBuildsOnTheBaseImagesItWasHanded(t *testing.T) {
-	for _, tc := range []struct {
-		name, fail string
-		wantExit   bool
-		wantDocker string
-		wantOutput string
-	}{
-		{"the build reads each handed-over image as the context for its reference", "", true,
-			"docker load --input TEMP/base-images/images.tar\ndocker buildx build --build-context " + operatorImage + "=docker-image://base-image:0 --iidfile TEMP/block.iid -t block:c0ffee .", "id=sha256:feed\n"},
-		{"images that cannot be loaded fail the step before any build", "load", false, "docker load --input TEMP/base-images/images.tar", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			env, log := stubbedDocker(t)
-			temp, output := t.TempDir(), filepath.Join(t.TempDir(), "github-output")
-			script, err := os.ReadFile("base-images.sh")
-			if err != nil {
-				t.Fatalf("reading the kit's base-images.sh: %v", err)
-			}
-			writeFile(t, filepath.Join(temp, "block-kit", "scripts", "base-images.sh"), string(script))
-			writeFile(t, filepath.Join(temp, "base-images", "references"), operatorImage+" base-image:0\n")
-			writeFile(t, filepath.Join(temp, "base-images", "images.tar"), "saved image\n")
-			writeFile(t, output, "")
-
-			out, exit := runNamed(t, "opentofu-conformance", "Build the block image", t.TempDir(), "", append(env, "STUB_FAIL="+tc.fail, "RUNNER_TEMP="+temp, "GITHUB_SHA=c0ffee", "GITHUB_OUTPUT="+output)...)
-
-			if (exit == 0) != tc.wantExit {
-				t.Fatalf("exit %d, output:\n%s\nwant success %v", exit, out, tc.wantExit)
-			}
-			if got := strings.ReplaceAll(dockerCalls(log), temp, "TEMP"); got != tc.wantDocker {
-				t.Errorf("docker calls =\n%s\nwant\n%s", got, tc.wantDocker)
-			}
-			if got, _ := os.ReadFile(output); string(got) != tc.wantOutput {
-				t.Errorf("$GITHUB_OUTPUT = %q, want %q", got, tc.wantOutput)
 			}
 		})
 	}

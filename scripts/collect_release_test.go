@@ -73,7 +73,7 @@ func TestCollectRelease(t *testing.T) {
 			if tc.wantExit {
 				wantDocker, wantImage = "docker save --output "+filepath.Join(dir, "image.tar")+" block:c0ffee", "saved image\n"
 			}
-			if got := dockerCalls(log); got != wantDocker {
+			if got := dockerCalls(t, log); got != wantDocker {
 				t.Errorf("docker calls = %q, want %q", got, wantDocker)
 			}
 			if image, _ := os.ReadFile(filepath.Join(dir, "image.tar")); string(image) != wantImage {

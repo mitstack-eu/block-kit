@@ -21,10 +21,14 @@ exit "$STUB_TRIVY_EXIT"
 `
 	stubDocker = `#!/usr/bin/env bash
 echo "docker $1" >> "$STUB_LOG/docker"
+echo "docker $*" >> "$STUB_LOG/docker-calls"
+[ "$1" != "${STUB_FAIL:-}" ] || exit 1
 case "$1" in
   create) echo c0ffee ;;
   cp) cp -R "$STUB_IMAGE/${2#*:}" "$3" ;;
+  save) echo "saved image" > "$3" ;;
 esac
+for arg; do [ "${flag:-}" != --iidfile ] || echo sha256:feed > "$arg"; flag=$arg; done
 `
 	scanned = "block:test"
 )
@@ -46,6 +50,17 @@ func scanImage(t *testing.T, trivyExit, report, image, url string, env ...string
 	env = append(env, "PROVIDER_REGISTRY_URL="+url, "PROVIDER_SOURCE_URL="+url, "GOVULNCHECK_DB_URL=file://"+db)
 	out, exit = runBash(t, env, "scan-image.sh", scanned)
 	return out, exit, log
+}
+
+func stubbedDocker(t *testing.T) (env []string, log string) {
+	t.Helper()
+	bin, log := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(bin, "docker"), stubDocker)
+	return []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "STUB_LOG=" + log}, log
+}
+
+func dockerCalls(t *testing.T, log string) string {
+	return strings.TrimSpace(readLog(t, filepath.Join(log, "docker-calls")))
 }
 
 func readLog(t *testing.T, path string) string {

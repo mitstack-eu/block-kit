@@ -881,7 +881,7 @@ func TestWorkflow_KitVersionStepReadsTheKitPinFromGoMod(t *testing.T) {
 func TestWorkflow_AnOpenTofuBlocksKitVersionIsTheOneItsOperatorImageWasBuiltWith(t *testing.T) {
 	tmp := t.TempDir()
 	writeExecutable(t, filepath.Join(tmp, "docker"), "#!/bin/sh\necho docker \"$@\" >&2\n[ \"$1\" = create ] && echo c0ntainer\nexit 0\n")
-	writeExecutable(t, filepath.Join(tmp, "go"), "#!/bin/sh\nprintf '%s: go1.27.3\\n\\tdep\\tgithub.com/mitstack-eu/block-kit-extras\\tv9.9.9\\n\\tdep\\tgithub.com/mitstack-eu/block-kit\\tv0.5.1\\th1:x=\\n' \"$3\"\n")
+	writeExecutable(t, filepath.Join(tmp, "go"), "#!/bin/sh\n[ \"$GOTOOLCHAIN\" = local ] || { echo 'go: a go.mod in this directory may choose the toolchain' >&2; exit 1; }\nprintf '%s: go1.27.3\\n\\tdep\\tgithub.com/mitstack-eu/block-kit-extras\\tv9.9.9\\n\\tdep\\tgithub.com/mitstack-eu/block-kit\\tv0.5.1\\th1:x=\\n' \"$3\"\n")
 	writeExecutable(t, filepath.Join(tmp, "kit-version.sh"), strings.ReplaceAll(script(t, "publish", opentofuRecordSteps[0]).Run, "${{ inputs.ecr-repository }}", "repo"))
 	envFile := filepath.Join(tmp, "github-env")
 
@@ -889,7 +889,7 @@ func TestWorkflow_AnOpenTofuBlocksKitVersionIsTheOneItsOperatorImageWasBuiltWith
 
 	env, _ := os.ReadFile(envFile)
 	if got := keyValues(string(env))["KIT_VERSION"]; res.exitCode != 0 || got != "v0.5.1" || !strings.Contains(res.stderr, "docker create r/repo@"+testDigest) {
-		t.Errorf("exit %d, KIT_VERSION %q; want 0 and v0.5.1 read from the operator binary in r/repo@%s; output:\n%s", res.exitCode, got, testDigest, res.combined)
+		t.Errorf("exit %d, KIT_VERSION %q; want 0 and v0.5.1 read from the operator binary in r/repo@%s by the installed Go alone; output:\n%s", res.exitCode, got, testDigest, res.combined)
 	}
 }
 

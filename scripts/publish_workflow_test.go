@@ -666,3 +666,67 @@ func TestBlockChecksDoc_EveryCallerExampleGrantsPackagesRead(t *testing.T) {
 		t.Fatal("docs/block-checks.md shows no caller of publish-block.yml, so the check read nothing")
 	}
 }
+
+// A rerun whose base image job fails could otherwise build on the images an earlier attempt handed over.
+func TestPublishBlockWorkflow_TheOpenTofuJobStopsWhereTheBaseImageJobDidNotSucceed(t *testing.T) {
+	all := publishWorkflow(t)
+	const job, name = "opentofu-conformance", "Stop where the base image job did not succeed"
+	stop := stepOf(all, job, "name", name)
+	cases := []struct{ name, got, want string }{
+		{"the stop comes before the fetch of the base images", strconv.FormatBool(stepAt(all, job, "name", name) >= 0 && stepAt(all, job, "name", name) < stepAt(all, job, "name", "Fetch the base images")), "true"},
+		{"the stop runs for every result but success", all[stop+"if"], "needs.base-image.result != 'success'"},
+		{"the stop learns how the base image job ended", all[stop+"env.RESULT"], "${{ needs.base-image.result }}"},
+	}
+	checkFields(t, "publish-block.yml", "", cases)
+
+	out, exit := runNamed(t, job, name, t.TempDir(), "", "RESULT=failure")
+
+	if exit == 0 || !strings.Contains(out, "::error::the base image job ended failure") {
+		t.Errorf("exit %d, output:\n%s\nwant the step to fail naming how the base image job ended", exit, out)
+	}
+}
+
+func TestPublishBlockWorkflow_TheOpenTofuJobBuildsOnTheBaseImagesItWasHanded(t *testing.T) {
+	const load, build, handed = "docker load --input TEMP/base-images/images.tar", " --iidfile TEMP/block.iid -t block:c0ffee .", "id=sha256:feed\n"
+	list := []string{operatorImage + " base-image:0\n"}
+	for _, tc := range []struct {
+		name       string
+		references []string
+		fail       string
+		wantExit   bool
+		wantOut    string
+		wantDocker string
+		wantOutput string
+	}{
+		{"the build reads each handed-over image as the context for its reference", list, "", true, "", load + "\ndocker buildx build --build-context " + operatorImage + "=docker-image://base-image:0" + build, handed},
+		{"an empty list loads nothing and builds with no context", []string{}, "", true, "", "docker buildx build" + build, handed},
+		{"a directory holding no list fails before any build, since the base image job handed nothing over", nil, "", false, "holds no references file", "", ""},
+		{"images that cannot be loaded fail the step before any build", list, "load", false, "", load, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, log := stubbedDocker(t)
+			temp, output := t.TempDir(), filepath.Join(t.TempDir(), "github-output")
+			script, err := os.ReadFile("base-images.sh")
+			if err != nil {
+				t.Fatalf("reading the kit's base-images.sh: %v", err)
+			}
+			writeFile(t, filepath.Join(temp, "block-kit", "scripts", "base-images.sh"), string(script))
+			if tc.references != nil {
+				writeFile(t, filepath.Join(temp, "base-images", "references"), strings.Join(tc.references, ""))
+			}
+			writeFile(t, output, "")
+
+			out, exit := runNamed(t, "opentofu-conformance", "Build the block image", t.TempDir(), "", append(env, "STUB_FAIL="+tc.fail, "RUNNER_TEMP="+temp, "GITHUB_SHA=c0ffee", "GITHUB_OUTPUT="+output)...)
+
+			if (exit == 0) != tc.wantExit || !strings.Contains(out, tc.wantOut) {
+				t.Fatalf("exit %d, output:\n%s\nwant success %v and output naming %q", exit, out, tc.wantExit, tc.wantOut)
+			}
+			if got := strings.ReplaceAll(dockerCalls(t, log), temp, "TEMP"); got != tc.wantDocker {
+				t.Errorf("docker calls =\n%s\nwant\n%s", got, tc.wantDocker)
+			}
+			if got, _ := os.ReadFile(output); string(got) != tc.wantOutput {
+				t.Errorf("$GITHUB_OUTPUT = %q, want %q", got, tc.wantOutput)
+			}
+		})
+	}
+}
