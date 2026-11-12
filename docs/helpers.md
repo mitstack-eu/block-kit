@@ -140,9 +140,9 @@ repository is the GitHub `owner/name` the reader pulls:
 ```
 
 It returns an error when the platform answers anything but 202, cannot be
-reached, or the request carries no callback. Log that error and return as if
-the report had gone, never undoing or failing the commit, since the reader's
-own timer still takes it. `hostRepo.commit` in `helpers/dockerhost` reports
+reached, or the request carries no callback. Log that error and carry on with
+the commit, never undoing or failing it, since the reader's own timer still
+takes it. `hostRepo.commit` in `helpers/dockerhost` reports
 each commit it lands on a host's repository this way.
 
 ## Reading each thing once in a request
