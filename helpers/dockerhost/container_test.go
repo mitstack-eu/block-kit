@@ -4,6 +4,7 @@ package dockerhost_test
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -50,13 +51,17 @@ func appReport(t *testing.T, containers ...string) dockerhost.Report {
 	return newest(t, received(1, `{"host":{"apps":{"shop":[`+strings.Join(containers, ",")+`]}}}`))
 }
 
-func shopWeb(sub, state, health string) string {
-	return `{"container":"shop-web","subscription":"` + sub + `","state":"` + state + `","health":"` + health + `","logs":"12:01:03 NEEDED_KEY is not set\n"}`
+func listed(name, sub, state, health string) string {
+	return `{"container":"` + name + `","subscription":"` + sub + `","state":"` + state + `","health":"` + health + `","logs":"12:01:03 NEEDED_KEY is not set\n"}`
 }
+
+func shopWeb(sub, state, health string) string { return listed("shop-web", sub, state, health) }
 
 func TestReport_AppHealthJudgesTheSubscriptionsOwnContainers(t *testing.T) {
 	down := &contract.Unhealthy{Cause: appCauses.NotRunning, Detail: "shop-web reads restarting"}
 	const starting = "shop-web is still starting, so whether it serves cannot be read until its health check passes"
+	const replacement = "ff02de420708_shop-web"
+	const replaced = "shop-web is being replaced by " + replacement + ", so whether the app serves cannot be read until the replacement starts"
 	for _, tc := range []struct {
 		name       string
 		containers []string
@@ -69,6 +74,11 @@ func TestReport_AppHealthJudgesTheSubscriptionsOwnContainers(t *testing.T) {
 		{"its running container with no health check reads healthy and never waits", []string{shopWeb("sub_shop", "running", "none")}, nil, ""},
 		{"another subscription's restarting container leaves it healthy", []string{shopWeb("sub_shop", "running", "healthy"), shopWeb("sub_db_shop", "restarting", "unhealthy")}, nil, ""},
 		{"an app the report lists no container of reads healthy, as before its first deploy", nil, nil, ""},
+		{"its container a recreate stopped, beside the replacement Compose created, waits", []string{shopWeb("sub_shop", "exited", "healthy"), listed(replacement, "sub_shop", "created", "none")}, nil, replaced},
+		{"its container a recreate left dead, beside its replacement, waits", []string{shopWeb("sub_shop", "dead", "none"), listed(replacement, "sub_shop", "created", "none")}, nil, replaced},
+		{"its exited container with no replacement listed names it", []string{shopWeb("sub_shop", "exited", "none")}, &contract.Unhealthy{Cause: appCauses.NotRunning, Detail: "shop-web reads exited"}, ""},
+		{"a container whose name only ends in its name replaces nothing", []string{shopWeb("sub_shop", "exited", "none"), listed("old_shop-web", "sub_shop", "created", "none")},
+			&contract.Unhealthy{Cause: appCauses.NotRunning, Detail: "shop-web reads exited"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			unhealthy, waits, err := appReport(t, tc.containers...).AppHealth("shop", "sub_shop", appCauses)
@@ -108,6 +118,37 @@ func TestReport_AppHealthOfACrashLoopNamesOneUnchangedFailureAndASavedKeyClearsI
 
 			if !reflect.DeepEqual(answer, tc.last) || (len(failures) > 1 && !reflect.DeepEqual(failures[0], failures[len(failures)-1])) {
 				t.Errorf("the last answer that is not a wait = %+v, and the failures read %+v; want %+v, every failure the same line", answer, failures, tc.last)
+			}
+		})
+	}
+}
+
+func TestContainer_DatabaseHealthWaitsWhileItStartsOrARecreateReplacesItAndFailsOnceItHasReadActive(t *testing.T) {
+	logs := "ERROR 1045 (28000): Access denied for user 'app'\n"
+	replacement := dockerhost.Container{Name: "ff02de420708_shop-mariadb", State: "created", Logs: &logs}
+	for _, tc := range []struct {
+		name, state, health string
+		neverActive         bool
+		beside              []dockerhost.Container
+		unhealthy           *contract.Unhealthy
+		waits               string
+	}{
+		{"restarting after it read active", "restarting", "starting", false, nil,
+			&contract.Unhealthy{Cause: dockerhost.DatabaseNotRunning, Detail: "shop-mariadb reads restarting"}, ""},
+		{"unhealthy after it read active", "running", "unhealthy", false, nil, &contract.Unhealthy{Cause: dockerhost.DatabaseUnhealthy, Detail: "shop-mariadb reads unhealthy"}, ""},
+		{"restarting before it ever read active", "restarting", "starting", true, nil, nil, "shop-mariadb reads restarting: ERROR 1045 (28000): Access denied for user 'app'"},
+		{"still starting", "running", "starting", false, nil, nil, "shop-mariadb is still starting: ERROR 1045 (28000): Access denied for user 'app'"},
+		{"stopped by a recreate, beside its replacement", "exited", "none", false, []dockerhost.Container{replacement}, nil,
+			"shop-mariadb is being replaced by ff02de420708_shop-mariadb, so whether the database serves cannot be read until the replacement starts"},
+		{"running healthy", "running", "healthy", false, nil, nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := dockerhost.Container{Name: "shop-mariadb", State: tc.state, Health: tc.health, Logs: &logs}
+
+			unhealthy, waits := c.DatabaseHealth(tc.neverActive, regexp.MustCompile(`ERROR|Access denied`), append([]dockerhost.Container{c}, tc.beside...))
+
+			if !reflect.DeepEqual(unhealthy, tc.unhealthy) || waits != tc.waits {
+				t.Errorf("DatabaseHealth = %+v, %q; want %+v, %q", unhealthy, waits, tc.unhealthy, tc.waits)
 			}
 		})
 	}
