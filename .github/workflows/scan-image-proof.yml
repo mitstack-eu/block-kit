@@ -28,8 +28,8 @@ jobs:
       matrix:
         include:
           - provider: hashicorp/aws
-            version: 6.71.0
-            zip-sha256: fa881c390793ba47d0758fb5d4834dd8a0bb28bbc6eedea2ddc164f99e83186d
+            version: 6.73.0
+            zip-sha256: a61f8e114e5233e63b8d2b034b1ad59a220e532fa34aaaa63eec6bad73a0ca21
             exit: 0
           - provider: scaleway/scaleway
             version: 2.89.0
@@ -41,7 +41,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
       - name: Build an image holding the provider where the operator image keeps it
         env:
           PROVIDER: ${{ matrix.provider }}
