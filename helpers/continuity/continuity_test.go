@@ -209,3 +209,59 @@ func TestSnapshot_AsksForTheUploadLinkOnlyAfterTheStateIsExported(t *testing.T) 
 		t.Errorf("Snapshot ran %v; want %v, so a long export cannot outlive the link's lifetime", events, want)
 	}
 }
+
+func TestMintKeys_MintsAnIdentityOnlyForAUnitThatHoldsNone(t *testing.T) {
+	first, err := continuity.MintKeys(nil, "app-data", "vault")
+	if err != nil || len(first) != 2 {
+		t.Fatalf("MintKeys for two units with none held = %d secrets, %v; want two", len(first), err)
+	}
+
+	again, err := continuity.MintKeys(first, "app-data", "vault", "cache")
+
+	if err != nil || len(again) != 1 || again[continuity.KeyName("cache")] == "" {
+		t.Errorf("MintKeys with two of three held = %d secrets, %v; want only the one for cache, so a held key is never replaced", len(again), err)
+	}
+	for _, unit := range []string{"app-data", "vault"} {
+		if key := first[continuity.KeyName(unit)]; !strings.HasPrefix(key, "AGE-SECRET-KEY-1") {
+			t.Errorf("MintKeys put no age identity under %q", continuity.KeyName(unit))
+		}
+	}
+}
+
+func TestOwnSecretKeys_CarryASnapshotAndItsRestoreOnTheKeyMintKeysMinted(t *testing.T) {
+	own, err := continuity.MintKeys(nil, "app-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := volumeKind(t)
+	hook, s := newHook(t, k.state)
+	hook.Keys = continuity.OwnSecretKeys{OwnSecrets: own}
+	handover, err := hook.Snapshot(context.Background(), "app-data")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	k.lose()
+
+	err = hook.Restore(context.Background(), "app-data", handover)
+
+	if err != nil || !k.present() {
+		t.Errorf("Restore on the own-secret key returned %v, datum back = %v; want the datum back", err, k.present())
+	}
+	if len(s.puts) != 1 || bytes.Contains(s.puts[0], []byte(own[continuity.KeyName("app-data")])) {
+		t.Errorf("the snapshot sent %d uploads, and the upload may hold the restore key; want one upload without it", len(s.puts))
+	}
+}
+
+func TestOwnSecretKeys_NameTheOwnSecretAUnitHoldsNoKeyUnder(t *testing.T) {
+	keys := continuity.OwnSecretKeys{OwnSecrets: map[string]string{continuity.KeyName("vault"): "not-a-key"}}
+
+	_, missing := keys.Identity(context.Background(), "app-data")
+	_, malformed := keys.Recipient(context.Background(), "vault")
+
+	if missing == nil || !strings.Contains(missing.Error(), continuity.KeyName("app-data")) {
+		t.Errorf("Identity of a unit with no key = %v; want an error naming the own secret %q", missing, continuity.KeyName("app-data"))
+	}
+	if malformed == nil || strings.Contains(malformed.Error(), "not-a-key") {
+		t.Errorf("Recipient of a unit whose own secret is no key = %v; want an error that does not repeat the value", malformed)
+	}
+}

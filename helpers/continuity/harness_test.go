@@ -136,6 +136,7 @@ type fakeBao struct {
 	data        []byte
 	initialized bool
 	restarts    int
+	discards    int
 	srv         *httptest.Server
 }
 
@@ -180,6 +181,7 @@ func openBaoKind(t *testing.T) (kind, *fakeBao, *fakeBao) {
 		Live:    continuity.Endpoint{Addr: live.srv.URL, Token: "bao-token-3c1"},
 		Scratch: continuity.Endpoint{Addr: scratch.srv.URL, Token: "bao-token-3c1"},
 		Restart: func(context.Context) error { live.restarts++; return nil },
+		Discard: func(context.Context) error { scratch.discards++; return nil },
 	}
 	return kind{name: "openbao", state: state,
 		lose:    func() { live.data = nil },

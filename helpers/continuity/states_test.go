@@ -150,12 +150,47 @@ func TestOpenBaoVerify_FailsWhenTheScratchServerReportsItselfUninitialized(t *te
 		_, _ = w.Write([]byte(`{"initialized":false}`))
 	}))
 	t.Cleanup(srv.Close)
-	state := continuity.OpenBao{Scratch: continuity.Endpoint{Addr: srv.URL, Token: "bao-token-3c1"}}
+	discards := 0
+	state := continuity.OpenBao{Scratch: continuity.Endpoint{Addr: srv.URL, Token: "bao-token-3c1"},
+		Discard: func(context.Context) error { discards++; return nil }}
 
 	err := state.Verify(context.Background(), strings.NewReader("kv/orders="+datum))
 
 	if err == nil || !strings.Contains(err.Error(), "uninitialized") {
 		t.Errorf("Verify against an uninitialized scratch server = %v; want an error saying so", err)
+	}
+	if discards != 1 {
+		t.Errorf("Verify discarded the scratch copy %d times after a failed check; want once", discards)
+	}
+}
+
+func TestOpenBaoVerify_DiscardsTheScratchCopyAfterACheckThatPasses(t *testing.T) {
+	k, _, scratch := openBaoKind(t)
+	hook, _ := newHook(t, k.state)
+
+	if _, err := hook.Snapshot(context.Background(), "app-data"); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	if scratch.discards != 1 {
+		t.Errorf("the snapshot discarded the scratch copy %d times; want once, since the copy holds every secret of the live store", scratch.discards)
+	}
+}
+
+func TestOpenBaoVerify_RestoresNothingIntoAScratchItCannotDiscardAndReportsADiscardThatFails(t *testing.T) {
+	_, _, scratch := openBaoKind(t)
+	endpoint := continuity.Endpoint{Addr: scratch.srv.URL, Token: "bao-token-3c1"}
+
+	unset := continuity.OpenBao{Scratch: endpoint}.Verify(context.Background(), strings.NewReader("kv/orders="+datum))
+	held := scratch.snapshot()
+	failing := continuity.OpenBao{Scratch: endpoint, Discard: func(context.Context) error { return errors.New("the scratch pod would not delete") }}.
+		Verify(context.Background(), strings.NewReader("kv/orders="+datum))
+
+	if unset == nil || !strings.Contains(unset.Error(), "Discard") || held != "" {
+		t.Errorf("Verify with no Discard = %v and left %q in the scratch store; want an error naming Discard and nothing restored", unset, held)
+	}
+	if failing == nil || !strings.Contains(failing.Error(), "would not delete") {
+		t.Errorf("Verify whose Discard fails = %v; want an error carrying the discard's failure", failing)
 	}
 }
 
