@@ -42,17 +42,18 @@ func Audience(body []byte) string {
 
 // Sign returns the proof of body for platformOrigin, valid for ten minutes from now, for a node that holds its own key.
 func Sign(key ed25519.PrivateKey, kid string, body []byte, platformOrigin string, now time.Time) string {
-	input := segment(map[string]string{"alg": "EdDSA", "kid": kid, "typ": "JWT"}) + "." +
-		segment(map[string]any{"aud": []string{platformOrigin, Audience(body)}, "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(lifetime).Unix()})
-	return input + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(input)))
+	return signClaims(key, kid, map[string]any{"aud": []string{platformOrigin, Audience(body)}, "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(lifetime).Unix()})
 }
 
 const StreamAudience = "cluster-signals"
 
 // SignStream returns the ten-minute token that opens subject's commit stream on platformOrigin, naming StreamAudience.
 func SignStream(key ed25519.PrivateKey, kid, platformOrigin, subject string, now time.Time) string {
-	input := segment(map[string]string{"alg": "EdDSA", "kid": kid, "typ": "JWT"}) + "." +
-		segment(map[string]any{"aud": []string{platformOrigin, StreamAudience}, "sub": subject, "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(lifetime).Unix()})
+	return signClaims(key, kid, map[string]any{"aud": []string{platformOrigin, StreamAudience}, "sub": subject, "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(lifetime).Unix()})
+}
+
+func signClaims(key ed25519.PrivateKey, kid string, claims map[string]any) string {
+	input := segment(map[string]string{"alg": "EdDSA", "kid": kid, "typ": "JWT"}) + "." + segment(claims)
 	return input + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(input)))
 }
 
