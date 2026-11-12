@@ -139,10 +139,8 @@ func (db Database) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 	return obs, nil
 }
 
-// changedSince names the first of the database's files that differs between the commit the agent synced and main's
-// head, "" when none does, since a commit elsewhere in the repository leaves the database the host runs current.
-// DatabaseHealth judges a database's container: why the answer waits while it starts, or while it is down before the
-// database ever read active, quoting the last line trouble matches, and otherwise its Unhealthy by the database causes.
+// DatabaseHealth judges a database's container: why the answer waits while it starts, or while it is down or unhealthy
+// before the database ever read active, quoting the last line trouble matches, and otherwise its Unhealthy.
 func (c Container) DatabaseHealth(neverActive bool, trouble *regexp.Regexp) (*contract.Unhealthy, string) {
 	reading, quote := c.Read(), c.quote(trouble)
 	switch {
@@ -156,6 +154,8 @@ func (c Container) DatabaseHealth(neverActive bool, trouble *regexp.Regexp) (*co
 	return c.Unhealthy(ContainerCauses{NotRunning: DatabaseNotRunning, Unhealthy: DatabaseUnhealthy}), ""
 }
 
+// changedSince names the first of the database's files that differs between the commit the agent synced and main's
+// head, "" when none does, since a commit elsewhere in the repository leaves the database the host runs current.
 func (db Database) changedSince(ctx context.Context, repo *hostRepo, app, synced, head string) (string, error) {
 	for _, name := range db.landedFiles() {
 		then, heldThen, err := repo.client.ReadFileAt(ctx, repo.fullName, synced, appPath(app, name))

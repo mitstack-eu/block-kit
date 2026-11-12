@@ -94,8 +94,10 @@ func (r Report) AppHealth(app, sub string, causes ContainerCauses) (*contract.Un
 	}
 	waits := ""
 	for _, c := range containers {
+		if c.Subscription != sub {
+			continue
+		}
 		switch reading := c.Read(); {
-		case c.Subscription != sub:
 		case reading.Failed():
 			return c.Unhealthy(causes), "", nil
 		case reading == ContainerStarting && waits == "":
@@ -105,6 +107,7 @@ func (r Report) AppHealth(app, sub string, causes ContainerCauses) (*contract.Un
 	return nil, waits, nil
 }
 
+// AppContainers lists the containers the report holds under app, and fails the whole list when one entry cannot be read.
 func (r Report) AppContainers(app string) ([]Container, error) {
 	var listed struct {
 		Host struct {
