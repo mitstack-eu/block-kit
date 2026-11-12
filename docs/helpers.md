@@ -781,7 +781,16 @@ failed one's `Unhealthy`. While none has failed and one still starts, it
 answers why instead, and your observer reads unknown, so the verdict before it
 stands. A deploy whose new image is still starting therefore starts no
 re-drive, and a crash loop that alternates between restarting and starting
-keeps its one failure until a start runs healthy:
+keeps its one failure until a start runs healthy.
+
+A deploy recreates the container, and the report can catch the old one
+stopped. Compose first creates the replacement under a name that puts the
+first 12 characters of the old container's id before the old name, such as
+`ff02de420708_shop-web`, and then stops the old one. The host sends a report as
+soon as a container stops, so that report lists the old container `exited` or
+`dead` beside its replacement. `container.Replacement(listed)` finds that
+replacement, and `AppHealth` waits while it is listed, so a deploy reads no
+failure. A block calls `AppHealth` this way:
 
 ```go
 var causes = dockerhost.ContainerCauses{
@@ -1069,8 +1078,9 @@ that changed only other files leaves the database current. Once the database
 has read active, a container that stops running is present but unhealthy with
 `dockerhost.DatabaseNotRunning` as its cause, and one that reads unhealthy with
 `dockerhost.DatabaseUnhealthy`. Before that, either one waits, since a new
-database may restart while it sets itself up. `container.DatabaseHealth`
-holds this rule for a block that reads its database container itself.
+database may restart while it sets itself up. The database also waits while a
+recreate replaces its container. `container.DatabaseHealth` holds this rule for
+a block that reads its database container itself.
 
 A block's test drives the `Database` against `dockerhosttest.Host`, a fake of
 the host's repository and its node report. Set `Database.GitHub` to the fake's
