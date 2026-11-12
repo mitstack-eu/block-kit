@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,10 @@ const (
 	maxAnswerBytes = 64 << 10
 	askTimeout     = 10 * time.Second
 	redacted       = "[REDACTED]"
+	// maxWaitSeconds is the longest Retry-After a time.Duration can hold.
+	maxWaitSeconds    = math.MaxInt64 / int64(time.Second)
+	unreadableMessage = "the answer is not the route's JSON"
+	withheldMessage   = "the route's message is withheld, since it holds an address"
 )
 
 // Platform is where a node asks for a lease and the bearer the route knows it by, the report token the node received at enrolment.
@@ -38,7 +43,7 @@ type Answer struct {
 	ExpiresAt  time.Time
 }
 
-// Refusal is an answer of the route that grants no lease, and RetryAfter is the wait a 503 names, zero when the answer names none.
+// Refusal is an answer of the route that grants no lease, and RetryAfter is the wait a 503 names, zero when the answer names none it can hold.
 type Refusal struct {
 	Status     int
 	Resource   string
@@ -62,7 +67,6 @@ type askBody struct {
 type answerBody struct {
 	Credential json.RawMessage `json:"credential"`
 	ExpiresAt  *time.Time      `json:"expiresAt"`
-	Error      string          `json:"error"`
 }
 
 // Ask asks the route once for a credential of resource shaped by want, a value that marshals to a JSON object or nil, and leaves it to the caller when to ask again after a *Refusal.
@@ -76,17 +80,16 @@ func (p Platform) Ask(ctx context.Context, resource string, want any) (Answer, e
 		return Answer{}, fmt.Errorf("lease of %q: %w", resource, err)
 	}
 	defer resp.Body.Close()
-	raw, err := bounded.Read(resp, "lease of "+strconv.Quote(resource), maxAnswerBytes)
-	if err != nil {
-		return Answer{}, err
+	raw, readErr := bounded.Read(resp, "lease of "+strconv.Quote(resource), maxAnswerBytes)
+	if resp.StatusCode != http.StatusOK {
+		return Answer{}, &Refusal{Status: resp.StatusCode, Resource: resource, Message: p.message(raw), RetryAfter: p.retryAfter(resp)}
+	}
+	if readErr != nil {
+		return Answer{}, readErr
 	}
 	var answer answerBody
-	decodeErr := json.Unmarshal(raw, &answer)
-	if resp.StatusCode != http.StatusOK {
-		return Answer{}, p.refusal(resp, resource, answer.Error)
-	}
-	if decodeErr != nil {
-		return Answer{}, fmt.Errorf("lease of %q: the platform's answer is not JSON", resource)
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		return Answer{}, fmt.Errorf("lease of %q: the platform's answer is not the JSON of a lease", resource)
 	}
 	return p.usable(resource, answer)
 }
@@ -125,26 +128,33 @@ func (p Platform) now() time.Time {
 	return time.Now()
 }
 
-// refusal redacts the bearer from the route's message, so an answer that repeats it cannot carry it into a log.
-func (p Platform) refusal(resp *http.Response, resource, message string) *Refusal {
-	if message == "" {
-		message = "no reason given"
+// message passes on the route's own message only when it holds no address, with the bearer redacted, so a refusal cannot carry a secret into a log.
+func (p Platform) message(raw []byte) string {
+	var body struct {
+		Error string `json:"error"`
 	}
-	return &Refusal{
-		Status:     resp.StatusCode,
-		Resource:   resource,
-		Message:    strings.ReplaceAll(message, p.Token, redacted),
-		RetryAfter: retryAfter(resp),
+	if json.Unmarshal(raw, &body) != nil || body.Error == "" {
+		return unreadableMessage
 	}
+	if strings.Contains(body.Error, "://") {
+		return withheldMessage
+	}
+	return strings.ReplaceAll(body.Error, p.Token, redacted)
 }
 
-// retryAfter reads the seconds form of Retry-After, the form the route sends.
-func retryAfter(resp *http.Response) time.Duration {
-	seconds, err := strconv.Atoi(resp.Header.Get("Retry-After"))
-	if err != nil || seconds < 0 {
-		return 0
+// retryAfter reads both forms of Retry-After, seconds and a date, as the wait from now.
+func (p Platform) retryAfter(resp *http.Response) time.Duration {
+	header := resp.Header.Get("Retry-After")
+	if seconds, err := strconv.ParseInt(header, 10, 64); err == nil {
+		if seconds < 0 || seconds > maxWaitSeconds {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
 	}
-	return time.Duration(seconds) * time.Second
+	if at, err := http.ParseTime(header); err == nil && at.After(p.now()) {
+		return at.Sub(p.now())
+	}
+	return 0
 }
 
 func (p Platform) usable(resource string, answer answerBody) (Answer, error) {

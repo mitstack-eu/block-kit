@@ -231,20 +231,23 @@ expiry.
 | 409, when the provider's block does not list `lease` | A `*lease.Refusal` with `Status` 409 |
 | 502, when the provider refused or failed to mint | A `*lease.Refusal` with `Status` 502 and the route's fixed message |
 | 503, when the provider has no outputs yet | A `*lease.Refusal` with `Status` 503 and, in `RetryAfter`, the wait the answer names |
+| Any other status, or a refusal whose body is not the route's own, as a proxy in front of the platform answers | A `*lease.Refusal` with that status and a fixed message |
 | 200 with an expiry that has passed, or with no credential or expiry | An error naming what the answer lacks |
 
 `Ask` sends one request and waits in no loop of its own. After a 503 your
 program decides when to ask again, such as on its next scheduled run, and
 `RetryAfter` is how long the platform asks it to wait. Read a refusal's fields
 with `errors.As`. An error's text names the resource, the status and the
-platform's message, and never the token:
+platform's message. It never holds the token, and a message that holds an
+address is withheld:
 
 ```text
 lease of "scaleway.cockpit": the platform answered 503: lease is not available yet; retry later (Retry-After 30s)
 ```
 
 `Platform.HTTPClient` is optional. Without one, `Ask` waits ten seconds at most
-and follows no redirect, so the token reaches no other host.
+and follows no redirect, so the token reaches no other host. A client of your
+own brings its own timeout.
 
 ## Running a script on a server
 
