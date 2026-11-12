@@ -1061,6 +1061,17 @@ hyphens, an origin that is not https, and a time that is not a whole number
 written without leading zeros, since each is written into the proof's JSON. It
 also refuses a key file that holds no Ed25519 key.
 
+The `stream` mode prints the token a Docker host opens its commit stream with,
+byte for byte what `reportproof.SignStream` makes. The token lasts ten
+minutes. Its audience names the platform's origin and
+`reportproof.StreamAudience`, the stream, and its subject names the host's own
+subscription. The mode refuses a subject of anything but letters, digits, dots,
+colons, underscores and hyphens:
+
+```bash
+bash sign.sh stream /var/lib/mitstack/report.key docker-host https://api.mitstack.dev sub_host0123456789 "$(date +%s)"
+```
+
 ### How a proof is checked
 
 Your block does not call `Verify`. It is the check the receiving side runs:
