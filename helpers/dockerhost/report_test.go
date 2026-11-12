@@ -375,6 +375,34 @@ func TestReadReport_FailsABodyThatIsNotAReport(t *testing.T) {
 	}
 }
 
+func TestReport_CapacityErrorIsTheReasonAReportGivesInPlaceOfItsAllocatableCapacity(t *testing.T) {
+	const unread = "nproc, free -b or df -B1 / printed nothing the report can read"
+	const allocatable = `"allocatable":{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}`
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "a report whose capacity is the error object gives that error", body: `{"host":{"capacity":{"error":"` + unread + `"}}}`, want: unread},
+		{name: "a report with no capacity gives no error", body: `{"host":{}}`},
+		{name: "a report giving its allocatable capacity gives no error", body: `{"host":{"capacity":{` + allocatable + `}}}`},
+		{name: "a report giving its allocatable capacity beside an error gives no error", body: `{"host":{"capacity":{` + allocatable + `,"error":"` + unread + `"}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report, err := dockerhost.ReadReport([]byte(tc.body))
+			if err != nil {
+				t.Fatalf("ReadReport(%s) = %v; want the report read", tc.body, err)
+			}
+
+			got := report.CapacityError()
+
+			if got != tc.want {
+				t.Errorf("CapacityError() of %s = %q; want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestReport_AppReleaseFailsAReleaseItCannotRead(t *testing.T) {
 	_, err := newest(t, received(39, `{"host":{"releases":{"shop":{"exitCode":"one"}}}}`)).AppRelease("shop", "sub_shop")
 
