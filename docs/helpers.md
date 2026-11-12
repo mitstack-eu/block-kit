@@ -1194,7 +1194,7 @@ it:
 ```go
 func (b *block) hook(d contract.Desired) continuity.Hook {
 	return continuity.Hook{
-		Links: platformLinks{},                                    // yours, see below
+		Links: platformLinks{},                                    // a test supplies this for now, see below
 		Keys:  continuity.OwnSecretKeys{OwnSecrets: d.OwnSecrets}, // the unit's key, kept in the block's own secrets
 		State: continuity.Volume{Dir: "/var/lib/app"},
 	}
@@ -1216,8 +1216,10 @@ several units picks the `State` by `unit`, since each unit keeps its own data.
 The hook runs in the block's own process, so that process must reach the data:
 the directory of a `Volume`, or the address of an OpenBao store.
 
-`Links` is the one interface you write. It hands the hook a presigned link for
-one upload and one for each download:
+`Links` is the one interface a hook needs from outside the kit, and no block
+can supply it against the platform yet, as the paragraph after the interface
+explains. It hands the hook a presigned link for one upload and one for each
+download:
 
 ```go
 type Links interface {
@@ -1327,9 +1329,10 @@ them from its `EnsureResourcesOwning`, which runs on a subscribe and on an
 upgrade, so the key exists before the first snapshot reads it. `MintKeys`
 returns only the keys it minted, which is what the answer needs. The unit
 named here is the one `Snapshot` and `Restore` are called with. A subscription
-that has run neither since the block gained the hooks holds no key, and a
-snapshot of it fails naming the own secret that is missing, until an upgrade
-mints it:
+that has run neither a subscribe nor an upgrade since the block gained the
+hooks holds no key, and a snapshot of it fails naming the own secret that is
+missing. A replacement takes its snapshot before its own upgrade, so such a
+subscription needs an ordinary upgrade first, which mints the key:
 
 ```go
 func (b *block) EnsureResourcesOwning(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, map[string]string, error) {
