@@ -3,9 +3,12 @@ package dockerhost_test
 // A Runner commits one run request per run id into the app's directory of the host's repository, naming the host's server and a deadline 15 minutes on, and answers pending until the host's newest report lists the run, then finished or failed as the report says.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -177,6 +180,61 @@ func TestRunner_CommitsNothingWhenTheSameRunIdIsSentAgain(t *testing.T) {
 	wantPending(t, again)
 	if e.host.Head() != committed {
 		t.Error("the re-sent run moved main's head, want nothing committed again for the same run id")
+	}
+}
+
+func (e *runEnv) runReporting(t *testing.T, platform *dockerhosttest.Platform, req contract.RunRequest) error {
+	t.Helper()
+	_, err := e.runner.Run(platform.Context(context.Background()), runDesired(nil), req)
+	return err
+}
+
+func TestRunner_ReportsTheCommitOfItsRequestOnceNamingTheHostsRepositoryWithTheCallbackToken(t *testing.T) {
+	e := newRunEnv(t)
+	platform := dockerhosttest.NewPlatform(t)
+
+	err := e.runReporting(t, platform, asked(runID))
+
+	wantPending(t, err)
+	want := []dockerhosttest.CommitReport{{Repository: dbRepo, Commit: e.host.Head(), Bearer: dockerhosttest.CallbackToken}}
+	if got := platform.Reports(); !reflect.DeepEqual(got, want) {
+		t.Errorf("commit reports = %+v, want %+v, one for the commit the run landed", got, want)
+	}
+}
+
+func TestRunner_ReportsNothingWhenTheSameRunIdIsSentAgainAndNothingIsCommitted(t *testing.T) {
+	e := newRunEnv(t)
+	platform := dockerhosttest.NewPlatform(t)
+	wantPending(t, e.runReporting(t, platform, asked(runID)))
+
+	err := e.runReporting(t, platform, asked(runID))
+
+	wantPending(t, err)
+	if got := platform.Reports(); len(got) != 1 {
+		t.Errorf("commit reports = %+v, want the first run's one alone, since the second committed nothing", got)
+	}
+}
+
+func TestRunner_KeepsItsCommitAndAnswersPendingWhenThePlatformAnswers503ToItsReportAndLogsTheFailure(t *testing.T) {
+	e := newRunEnv(t)
+	platform := dockerhosttest.NewPlatform(t)
+	platform.Status = http.StatusServiceUnavailable
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	before := e.host.Head()
+
+	err := e.runReporting(t, platform, asked(runID))
+
+	wantPending(t, err)
+	if e.host.Head() == before {
+		t.Error("main's head did not move, want the run request committed though its report failed")
+	}
+	if got := platform.Reports(); len(got) != 1 {
+		t.Errorf("commit reports = %+v, want one request and no retry", got)
+	}
+	if line := logged.String(); !strings.Contains(line, e.host.Head()) || !strings.Contains(line, "503") || strings.Contains(line, dockerhosttest.CallbackToken) {
+		t.Errorf("log = %q, want a line naming the commit and the 503, carrying no token", line)
 	}
 }
 
