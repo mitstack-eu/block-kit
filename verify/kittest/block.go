@@ -196,6 +196,11 @@ func newBlockServer(cfg handler.Config) (*blockServer, error) {
 }
 
 func (s *blockServer) send(operation string, d contract.Desired) (int, contract.Response, error) {
+	return s.sendUnit(operation, "", d)
+}
+
+// sendUnit also names the spec.continuity entry a snapshot or a restore is for, and carries d.Replacing as the marker of a request sent during a replacement.
+func (s *blockServer) sendUnit(operation, unit string, d contract.Desired) (int, contract.Response, error) {
 	now := time.Now()
 	obo, err := webhook.MintOBO(s.signer.Private, s.signer.Kid,
 		webhook.OBOClaims{Audience: s.audience, OrgID: d.OrgID, AppID: d.AppID, SubscriptionID: d.SubscriptionID}, 5*time.Minute, now)
@@ -210,6 +215,7 @@ func (s *blockServer) send(operation string, d contract.Desired) (int, contract.
 		CloudIdentity: d.CloudIdentity, CreatedAt: now, Nonce: freshToken(), PriorOutputs: d.PriorOutputs,
 		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
 		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity, ResourceUnsubscribing: d.ResourceUnsubscribing,
+		Unit: unit, Replacing: d.Replacing,
 	})
 	if err != nil {
 		return 0, contract.Response{}, err
@@ -303,6 +309,8 @@ type blockCheck struct {
 	failedWaits map[string]bool
 	// holdsNothing holds each scaffold contribution with a landing record for which the check wrote no file onto main and main holds no file the record created, so GitHub holds nothing of it for a lister to list.
 	holdsNothing map[string]bool
+	// afterRestore makes a resource settle only once it reads healthy, as the engine observes a replaced resource.
+	afterRestore bool
 }
 
 // unitNames lists the names a guard reads, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
@@ -618,7 +626,8 @@ func (c *blockCheck) proveDroppedAbsent(operation string, dropped map[string]con
 
 func (c *blockCheck) settled(resp contract.Response) bool {
 	for _, name := range unitNames(c.spec, resp.Resources) {
-		if o := resp.Resources[name].Observe; o == nil || o.State != contract.Present {
+		o := resp.Resources[name].Observe
+		if o == nil || o.State != contract.Present || (c.afterRestore && o.Unhealthy != nil) {
 			return false
 		}
 	}
@@ -628,8 +637,13 @@ func (c *blockCheck) settled(resp contract.Response) bool {
 func (c *blockCheck) unsettled(operation string, resp contract.Response) {
 	named := false
 	for _, name := range unitNames(c.spec, resp.Resources) {
-		if o := resp.Resources[name].Observe; o != nil && o.State != contract.Present {
+		o := resp.Resources[name].Observe
+		switch {
+		case o != nil && o.State != contract.Present:
 			c.resourceProblem(name, "observed %s after %s and validates for %s, want present", o.State, operation, settleBudget)
+			named = true
+		case o != nil && c.afterRestore && o.Unhealthy != nil:
+			c.resourceProblem(name, "reads unhealthy after the restore: %s (%s)", o.Unhealthy.Cause, o.Unhealthy.Detail)
 			named = true
 		}
 	}
