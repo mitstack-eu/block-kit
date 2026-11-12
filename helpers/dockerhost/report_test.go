@@ -408,6 +408,7 @@ func TestReport_CapacityErrorIsTheReasonAReportGivesInPlaceOfItsAllocatableCapac
 		{name: "a report with no capacity gives no error", body: `{"host":{}}`},
 		{name: "a report giving its allocatable capacity gives no error", body: `{"host":{"capacity":{` + allocatable + `}}}`, given: true},
 		{name: "a report giving its allocatable capacity beside an error gives no error", body: `{"host":{"capacity":{` + allocatable + `,"error":"` + unread + `"}}}`, given: true},
+		{name: "a whole capacity beside a key the kit does not read is given", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680,"gpus":1}}}}`, given: true},
 		{name: "a whole capacity beside an error that is no text is given", body: `{"host":{"capacity":{` + allocatable + `,"error":5}}}`, given: true},
 		{name: "an error that is no text is quoted as the host sent it", body: `{"host":{"capacity":{"error":{"code":5}}}}`, want: `{"code":5}`},
 		{name: "a report that is no object names the report", body: `[]`, want: "the report holds a JSON array, which no amount can be read from"},
