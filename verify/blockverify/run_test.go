@@ -233,6 +233,7 @@ func TestRun_OpenTofuOnly(t *testing.T) {
 				"guarded-client": skipped,
 				"teardown":       skipped,
 				"resources":      skipped,
+				"replacement":    skipped,
 				"deliverable":    {status: "pass"},
 				"manifest":       {status: "pass"},
 			}},

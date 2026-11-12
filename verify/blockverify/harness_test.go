@@ -285,6 +285,7 @@ var suitesByName = map[string]func(target, base, changed string) SuiteResult{
 	"guarded-client": func(d, _, _ string) SuiteResult { return guardedClientSuite(d) },
 	"teardown":       func(d, _, _ string) SuiteResult { return teardownSuite(d) },
 	"resources":      func(d, _, _ string) SuiteResult { return resourcesSuite(d) },
+	"replacement":    func(d, _, _ string) SuiteResult { return replacementSuite(d) },
 	"deliverable":    func(d, _, _ string) SuiteResult { return deliverableSuite(d) },
 	"manifest":       func(d, b, c string) SuiteResult { return manifestSuite(d, b, c, "") },
 }
