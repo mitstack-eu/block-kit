@@ -129,7 +129,7 @@ func (r Report) Allocatable() (Allocatable, bool) {
 	return allocatable, given
 }
 
-// CapacityError is why the report gives no allocatable capacity to size on, empty when it gives one whole or names no reason: the error the host sent in its place, or the measure of the capacity it sent that is missing, negative or no whole number.
+// CapacityError is why the report gives no allocatable capacity to size on, empty when it gives one whole or names no reason.
 func (r Report) CapacityError() string {
 	_, _, unread := r.capacity()
 	return unread
