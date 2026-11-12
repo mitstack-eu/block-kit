@@ -281,8 +281,8 @@ tag.
 
 When a run pushes the image and then fails before its record is pushed,
 re-run only that run's failed jobs, within one day. The `publish` job
-completes a missing record only with the image the pushing attempt was
-handed, and the run keeps that hand-over for one day. A rerun of every job
+completes a missing record only with the image that was handed to the attempt
+that pushed, and the run keeps that hand-over for one day. A rerun of every job
 builds the image again, and the `publish` job refuses to complete the record
 with that build, because the record signs the verdict of the image already
 published. After that day, raise `spec.version` and release again.
@@ -379,11 +379,11 @@ each push to `main` that workflow does three things with the token:
 ### How the publish job scans the image
 
 The `publish` job runs the kit's `scripts/scan-image.sh` on the image the
-conformance job built, before any push. The script runs the image scanner Trivy 0.76.0,
-checked by its sha256, from an empty directory with every `TRIVY_` variable
-unset, so no ignore file or setting can silence a finding. Any finding that
-has a fixed version, at any severity, stops the job, with the one exception
-below. An error of Trivy's own stops the job too.
+conformance job built, before any push. The script runs the image scanner
+Trivy 0.76.0, checked by its sha256, from an empty directory with every
+`TRIVY_` variable unset, so no ignore file or setting can silence a finding.
+Any finding that has a fixed version, at any severity, stops the job, with the
+one exception below. An error of Trivy's own stops the job too.
 
 A pull request runs the same scan before merge, so a finding the publish job
 would refuse fails `block / conformance` first. The conformance job for your
@@ -518,14 +518,15 @@ go run github.com/mitstack-eu/block-kit/verify/blockverify@<tag> --standalone --
 ```
 
 The operator image is private, and the verify role that pulls it takes
-GitHub's identity token. So a job of its own, `base image`, pulls the
+GitHub's identity token. A job of its own, `base image`, therefore pulls the
 operator image your `Dockerfile` names and hands it to the conformance job as
 a file. That job runs none of your block's code: it reads the `Dockerfile` as
-text through GitHub's API. So write the operator image's name in the
-`Dockerfile` in full, with its tag or digest and no variable inside it, or
-the job fails naming it. The conformance job builds your block's image once
-on the image it was handed and runs three checks inside it, and on a pull
-request it then scans the image as the publish job does:
+text through GitHub's API. Write the operator image's name there in full,
+with its tag or digest and no variable inside it, or the job fails naming it.
+
+The conformance job builds your block's image once on the image it was handed
+and runs three checks inside it, and on a pull request it then scans the image
+as the publish job does:
 
 | Check | What it runs |
 |---|---|

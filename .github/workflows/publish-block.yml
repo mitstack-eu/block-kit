@@ -82,10 +82,10 @@
 # refuses every finding that has a fixed version. On a pull request, whichever
 # conformance job runs builds the image, pushes it nowhere and scans it, so a
 # finding fails the conformance check before merge. On a push to the default
-# branch, the publish job scans the image it was handed before any push. No other
-# event scans the image. The one finding the script accepts is GO-2026-5932 in
-# an OpenTofu provider binary that scripts/go-2026-5932-exception.sh proves
-# free of openpgp code.
+# branch, the publish job scans the image it was handed before any push. No
+# other event scans the image. The one finding the script accepts is
+# GO-2026-5932 in an OpenTofu provider binary that
+# scripts/go-2026-5932-exception.sh proves free of openpgp code.
 name: publish-block
 
 on:
