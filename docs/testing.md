@@ -387,7 +387,9 @@ of "app-data" ran: subscribe, write, snapshot, replace, upgrade, restore,
 observe, read-back`. A block that hands several units over by snapshot calls
 `AssertReplacement` once for each, since blockverify reads those lines and
 fails a block that left one undrilled. `kittest.CheckReplacement` returns the
-problems as strings.
+problems as strings. A block whose `Snapshot` and `Restore` call the kit's
+shared hooks, which [The continuity hooks](helpers.md#the-continuity-hooks)
+describes, passes the drill as the kit's own fixture does.
 
 ## Proving a re-driven subscribe resumes the work
 

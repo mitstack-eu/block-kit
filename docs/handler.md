@@ -923,6 +923,9 @@ replacement.
 | The block returns a `handler.Refuse` | 400, with the block's own refusal class and no handover |
 | The block returns any other error, or a handover that is empty or repeats a secret the request carried | 500, with no handover |
 
+The kit's shared hooks do this work for a volume and an OpenBao store, as
+[The continuity hooks](helpers.md#the-continuity-hooks) explains.
+
 ## Serving a subscription's logs
 
 The console's Troubleshoot panel and MCP's `get_app_logs` show a part's recent
