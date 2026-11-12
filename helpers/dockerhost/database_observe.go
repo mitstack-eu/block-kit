@@ -121,7 +121,7 @@ func (db Database) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 	if !ok {
 		return unknown("the host synced main's head %s, and its newest node report shows no %s", snap.head, name), nil
 	}
-	unhealthy, waits := c.DatabaseHealth(r.Desired.NeverActive, db.Engine.Trouble)
+	unhealthy, waits := c.DatabaseHealth(r.Desired.NeverActive, db.Engine.Trouble, report.Host.Apps[t.app])
 	if waits != "" {
 		return unknown("the host synced main's head %s, and %s", snap.head, waits), nil
 	}
@@ -139,11 +139,14 @@ func (db Database) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 	return obs, nil
 }
 
-// DatabaseHealth judges a database's container: why the answer waits while it starts, or while it is down or unhealthy
-// before the database ever read active, quoting the last line trouble matches, and otherwise its Unhealthy.
-func (c Container) DatabaseHealth(neverActive bool, trouble *regexp.Regexp) (*contract.Unhealthy, string) {
+// DatabaseHealth judges a database's container among those listed beside it: why the answer waits while it starts or
+// is being replaced, or while it is down or unhealthy before the database ever read active, and otherwise its Unhealthy.
+func (c Container) DatabaseHealth(neverActive bool, trouble *regexp.Regexp, listed []Container) (*contract.Unhealthy, string) {
 	reading, quote := c.Read(), c.quote(trouble)
+	o, replaced := c.Replacement(listed)
 	switch {
+	case replaced:
+		return nil, c.replacedBy(o, "the database")
 	case reading == ContainerStarting && c.State == stateRunning:
 		return nil, c.Name + " is still starting" + quote
 	case reading == ContainerStarting, reading == ContainerNotRunning && neverActive:

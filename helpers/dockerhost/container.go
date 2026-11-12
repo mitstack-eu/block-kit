@@ -58,8 +58,7 @@ type ContainerCauses struct {
 	NotRunning, Unhealthy string
 }
 
-// Unhealthy names the container's failure by its type's causes and what it reads, and quotes no output, so one failure
-// reads the same at every restart; it is nil while the container starts or runs healthy.
+// Unhealthy quotes no output, so one failure reads the same at every restart and is re-driven once.
 func (c Container) Unhealthy(causes ContainerCauses) *contract.Unhealthy {
 	switch c.Read() {
 	case ContainerNotRunning:
@@ -85,8 +84,23 @@ func (c Container) quote(trouble *regexp.Regexp) string {
 	return ""
 }
 
-// AppHealth judges the containers of subscription sub that the report lists under app: the first failed one's
-// Unhealthy, or else why the answer waits while one still starts, so the verdict before it stands.
+var replacedID = regexp.MustCompile(`^[0-9a-f]{12}$`)
+
+// Replacement finds the container Compose created, named by c's id prefix and c's name, before it stopped c to replace it.
+func (c Container) Replacement(listed []Container) (Container, bool) {
+	for _, o := range listed {
+		if id, found := strings.CutSuffix(o.Name, "_"+c.Name); found && replacedID.MatchString(id) {
+			return o, true
+		}
+	}
+	return Container{}, false
+}
+
+func (c Container) replacedBy(o Container, what string) string {
+	return c.Name + " is being replaced by " + o.Name + ", so whether " + what + " serves cannot be read until the replacement starts"
+}
+
+// AppHealth answers why it waits while a container starts or is replaced, so the verdict before it stands.
 func (r Report) AppHealth(app, sub string, causes ContainerCauses) (*contract.Unhealthy, string, error) {
 	containers, err := r.AppContainers(app)
 	if err != nil {
@@ -97,7 +111,10 @@ func (r Report) AppHealth(app, sub string, causes ContainerCauses) (*contract.Un
 		if c.Subscription != sub {
 			continue
 		}
+		o, replaced := c.Replacement(containers)
 		switch reading := c.Read(); {
+		case replaced:
+			waits = c.replacedBy(o, "the app")
 		case reading.Failed():
 			return c.Unhealthy(causes), "", nil
 		case reading == ContainerStarting && waits == "":
