@@ -2,6 +2,7 @@
 package handler_test
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"strings"
@@ -84,6 +85,39 @@ func TestRefusedClass(t *testing.T) {
 		if got := handler.RefusedClass(detail); got != want {
 			t.Errorf("RefusedClass(%q) = %q, want %q", detail, got, want)
 		}
+	}
+}
+
+func TestServe_ARefusalKeepsTheClassItsBlockChoseAndMasksEachSecretInTheTextAroundIt(t *testing.T) {
+	const detail = "the host runs amd64 and the image is arm64"
+	appSecretHost := map[string]any{"appSecrets": map[string]any{"DB_HOST": "host"}}
+	for _, tc := range []struct {
+		name, wantError, wantDetail string
+		err                         error
+		secrets                     map[string]any
+	}{
+		{name: "an app secret spelling a word of the class is masked in the detail alone", err: handler.Refuse(handler.ClassHostCannotRun, detail),
+			secrets: appSecretHost, wantDetail: "refused:host-cannot-run: the [REDACTED] runs amd64 and the image is arm64"},
+		{name: "a wrapped refusal masks the secret in its wrapping too", err: fmt.Errorf("ensure on the host: %w", handler.Refuse(handler.ClassHostCannotRun, detail)),
+			secrets: appSecretHost, wantDetail: "refused:host-cannot-run: the [REDACTED] runs amd64 and the image is arm64",
+			wantError: "ensure on the [REDACTED]: refused:host-cannot-run: the [REDACTED] runs amd64 and the image is arm64"},
+		{name: "a secret equal to a word of the detail is masked wherever it stands there", err: handler.Refuse(handler.ClassHostCannotRun, "cannot pull: the host cannot read what it cannot"),
+			secrets: map[string]any{"secretInputs": map[string]any{"registryUser": "cannot"}}, wantDetail: "refused:host-cannot-run: [REDACTED] pull: the host [REDACTED] read what it [REDACTED]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := newFakeEventsServer(t)
+			wantError := cmp.Or(tc.wantError, tc.wantDetail)
+
+			status, raw := newHarness(t, &kittest.FakeResource{EnsureErr: tc.err}).post(tc.secrets, map[string]any{"eventsCallback": map[string]any{"url": events.URL, "token": "events-tok"}})
+
+			resp := decodeResponse(t, raw)
+			if class := handler.RefusedClass(resp.StatusDetail); status != http.StatusBadRequest || class != handler.ClassHostCannotRun || resp.StatusDetail != tc.wantDetail || resp.Error != wantError {
+				t.Errorf("answered %d, class %q, statusDetail %q, error %q\nwant 400, class %q, statusDetail %q, error %q", status, class, resp.StatusDetail, resp.Error, handler.ClassHostCannotRun, tc.wantDetail, wantError)
+			}
+			if got := events.recorded(); len(got) != 1 || got[0].Detail != wantError {
+				t.Errorf("events = %+v, want one failed event whose detail reads %q", got, wantError)
+			}
+		})
 	}
 }
 

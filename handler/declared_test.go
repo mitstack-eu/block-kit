@@ -34,6 +34,35 @@ func TestDeclared_AValidateAnswersTheIdentityItsObserverReadAndItsUnhealthyCause
 	}
 }
 
+func TestDeclared_AnUnhealthyCauseReadsWholeOnlyWhenTheResourcesTypeListsItUnderFailures(t *testing.T) {
+	const token = "ghp_unlisted-cause-leak-41c9"
+	listing := []func(*handler.Config){func(c *handler.Config) {
+		c.Types = contract.TypeSnapshot{Version: 1, Types: []contract.SnapshotType{{ID: "aws.iam-role", Failures: []contract.SnapshotFailure{{Class: "permanent", Cause: "container-not-running"}}}}}
+	}}
+	for _, tc := range []struct {
+		name, cause, want string
+		config            []func(*handler.Config)
+	}{
+		{name: "a listed cause beside an app secret spelling one of its words reads whole", cause: "container-not-running", want: "container-not-running", config: listing},
+		{name: "a cause the type does not list stays masked", cause: "the role lacks permission for " + token, want: "the role lacks permission for [REDACTED]", config: listing},
+		{name: "a block passing no type snapshot masks its cause as before", cause: "container-not-running", want: "[REDACTED]-not-running"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obs := asObservers(blockObservers(standingCloud()))
+			obs["a"] = fixed(contract.Observation{State: contract.Present, Unhealthy: &contract.Unhealthy{Cause: tc.cause, Detail: "shop-web's container reads exited"}})
+			fields := githubToken(token)
+			fields["appSecrets"] = map[string]any{"APP_ROLE": "container"}
+
+			_, resp := serveBlock(t, blockCall{r: &blockResource{}, obs: obs, op: "validate", fields: fields, config: tc.config})
+
+			want := contract.Unhealthy{Cause: tc.want, Detail: "shop-web's [REDACTED] reads exited"}
+			if got := resp.Resources["a"].Observe; got == nil || got.Unhealthy == nil || *got.Unhealthy != want {
+				t.Errorf("a observe = %+v, want unhealthy %+v", got, want)
+			}
+		})
+	}
+}
+
 func githubToken(token string) map[string]any {
 	return map[string]any{"secrets": map[string]any{"github": map[string]any{"token": token}}}
 }
