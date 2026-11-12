@@ -3,11 +3,13 @@ package continuity_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,12 +17,15 @@ import (
 
 	"github.com/mitstack-eu/block-kit/helpers/age"
 	"github.com/mitstack-eu/block-kit/helpers/continuity"
+	"github.com/mitstack-eu/block-kit/helpers/lease"
 )
 
 const (
-	datum     = "row-4f9a-the-customers-order"
-	signature = "sig-secret-7f3"
-	query     = "X-Amz-Signature=" + signature
+	datum         = "row-4f9a-the-customers-order"
+	signature     = "sig-secret-7f3"
+	query         = "X-Amz-Signature=" + signature
+	reportToken   = "report-token-sentinel-9b2e"
+	storeResource = "scaleway.snapshot-bucket"
 )
 
 var takenAt = time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
@@ -100,6 +105,81 @@ func newHook(t *testing.T, state continuity.State) (continuity.Hook, *store) {
 	}
 	s := newStore(t)
 	return continuity.Hook{Links: links{base: s.srv.URL}, Keys: keys{id: id}, State: state, Clock: func() time.Time { return takenAt }}, s
+}
+
+type leaseAsk struct {
+	bearer, resource string
+	want             continuity.LinkWant
+}
+
+// leaseRoute is the platform's lease route with a snapshot store's provider behind it, minting a link into store for each ask it does not refuse.
+type leaseRoute struct {
+	srv     *httptest.Server
+	store   *store
+	mu      sync.Mutex
+	asks    []leaseAsk
+	uploads int
+	// refuse and expired are keyed by the use an ask names, and tamper changes a minted link before it is answered.
+	refuse  map[string]int
+	expired map[string]bool
+	tamper  func(*continuity.Link)
+}
+
+func (l *leaseRoute) serve(w http.ResponseWriter, r *http.Request) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var body struct {
+		Resource string          `json:"resource"`
+		Want     json.RawMessage `json:"want"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	want, err := continuity.ParseLinkWant(body.Want)
+	if err != nil || r.Method != http.MethodPost || r.URL.Path != "/v1/cluster-leases" {
+		http.Error(w, `{"error":"not a lease of a snapshot link"}`, http.StatusBadRequest)
+		return
+	}
+	l.asks = append(l.asks, leaseAsk{bearer: r.Header.Get("Authorization"), resource: body.Resource, want: want})
+	if status := l.refuse[want.Use]; status != 0 {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, `{"error":"the route refused the `+want.Use+` link"}`)
+		return
+	}
+	link := continuity.Link{URL: l.store.srv.URL + "/" + want.Ref + "?" + query}
+	if want.Use == continuity.LinkUpload {
+		l.uploads++
+		link.Ref = want.Unit + "/" + strconv.Itoa(l.uploads)
+		link.URL = l.store.srv.URL + "/" + link.Ref + "?" + query
+	}
+	if l.tamper != nil {
+		l.tamper(&link)
+	}
+	expiresAt := takenAt.Add(2 * time.Hour)
+	if l.expired[want.Use] {
+		expiresAt = takenAt.Add(-time.Hour)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"credential": link, "expiresAt": expiresAt.Format(time.RFC3339)})
+}
+
+func (l *leaseRoute) uses() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var uses []string
+	for _, ask := range l.asks {
+		uses = append(uses, ask.want.Use)
+	}
+	return uses
+}
+
+func newLeasedHook(t *testing.T, state continuity.State) (continuity.Hook, *leaseRoute) {
+	t.Helper()
+	hook, s := newHook(t, state)
+	l := &leaseRoute{store: s, refuse: map[string]int{}, expired: map[string]bool{}}
+	l.srv = httptest.NewServer(http.HandlerFunc(l.serve))
+	t.Cleanup(l.srv.Close)
+	platform := lease.Platform{BaseURL: l.srv.URL, Token: reportToken, Clock: func() time.Time { return takenAt }}
+	hook.Links = continuity.LeasedLinks{Platform: platform, Resource: storeResource}
+	return hook, l
 }
 
 // kind is one shared hook with a fixture holding datum, a way to lose it and a way to see it back.

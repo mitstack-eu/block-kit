@@ -649,7 +649,10 @@ credential the caller. It calls the subscription whose operator manages the
 resource the provider. A subscription is one customer's running copy of a
 block.
 
-The caller asks the platform, and the platform asks the provider's operator for
+The caller asks the platform, which a program on a node does through
+`helpers/lease`, as
+[Asking the platform for a lease](helpers.md#asking-the-platform-for-a-lease)
+describes. The platform asks the provider's operator for
 the credential with the `lease` operation, a signed call to the operator's
 `/hook` like any other lifecycle call. The call goes to the provider, so the
 request's `subscriptionId`, and the subscription its OBO token names, are the

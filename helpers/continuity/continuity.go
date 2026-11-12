@@ -22,8 +22,8 @@ const transferTimeout = 30 * time.Minute
 
 // Link is a presigned URL, and Ref names the stored object an upload link writes.
 type Link struct {
-	URL string
-	Ref string
+	URL string `json:"url"`
+	Ref string `json:"ref,omitempty"`
 }
 
 // Links hands out the presigned links, so a hook never holds a storage key.
