@@ -753,9 +753,8 @@ case release.AskedAbsent():
 
 A part whose app runs in a container reads that container from the host's
 newest report, so the page never shows the part ready while its app is down.
-Every reader judges a container by one rule, `container.Read()`, which the
-platform's deploy verdict also follows. The rule reads the state first and the
-health after it:
+Every reader judges a container by one rule, `container.Read()`. The rule
+reads the state first and the health after it:
 
 | What the report shows | `Read()` answers |
 |---|---|
@@ -770,16 +769,20 @@ health after it:
 `Unhealthy`, and answers nil otherwise. `causes` is a
 `dockerhost.ContainerCauses` naming the cause your catalogue type lists, word
 for word, for a container not running and for one reading unhealthy. The
-detail names the container and what it reads, such as
+catalogue type is the platform's description of what your block creates, and
+your block's `type-snapshot.json` copies it. The platform refuses a cause it
+does not list. The detail names the container and what it reads, such as
 `shop-web reads restarting`, and quotes none of its output. One failure then
-reads the same at every restart, so the platform re-drives it once and then
-waits naming the cause. The container's last lines stay in the part's logs.
+reads the same at every restart. The platform applies the block again once for
+an unhealthy cause, a re-drive, and then waits naming the cause while that
+cause and its detail stay the same. The container's last lines stay in the
+part's logs.
 
 `report.AppHealth(app, subscription, causes)` judges the containers the
 report lists under the app with that subscription. It answers the first
 failed one's `Unhealthy`. While none has failed and one still starts, it
-answers why instead, and your observer reads unknown, so the verdict before it
-stands. A deploy whose new image is still starting therefore starts no
+answers why instead, and your observer reads unknown. The platform then keeps
+the healthy or unhealthy verdict it last recorded for the part. A deploy whose new image is still starting therefore starts no
 re-drive, and a crash loop that alternates between restarting and starting
 keeps its one failure until a start runs healthy.
 
@@ -790,7 +793,14 @@ first 12 characters of the old container's id before the old name, such as
 soon as a container stops, so that report lists the old container `exited` or
 `dead` beside its replacement. `container.Replacement(listed)` finds that
 replacement, and `AppHealth` waits while it is listed, so a deploy reads no
-failure. A block calls `AppHealth` this way:
+failure.
+
+Two cases still read as starting. A container whose start failed stays
+`created` with no further event, so its part waits, though the deploy run that
+started it fails. A crash-looping container with no health check reads
+`running` and healthy in a report taken between restarts, since the report
+carries no restart count. So render a health check for every container your
+block runs. A block calls `AppHealth` this way:
 
 ```go
 var causes = dockerhost.ContainerCauses{
@@ -1074,13 +1084,17 @@ that backup is uploaded to the host's backup bucket.
 The observer reads the database present once the newest node report shows
 that the pull agent has applied a commit holding the database's files as main
 holds them, and that its container is running and past starting. A commit
-that changed only other files leaves the database current. Once the database
-has read active, a container that stops running is present but unhealthy with
+that changed only other files leaves the database current.
+
+A database has read active once its subscription has been active, which the
+platform tells the block by sending a request without `neverActive`. From then
+on, a container that stops running is present but unhealthy with
 `dockerhost.DatabaseNotRunning` as its cause, and one that reads unhealthy with
 `dockerhost.DatabaseUnhealthy`. Before that, either one waits, since a new
 database may restart while it sets itself up. The database also waits while a
-recreate replaces its container. `container.DatabaseHealth` holds this rule for
-a block that reads its database container itself.
+recreate replaces its container, as "Judging a container's health" describes.
+`container.DatabaseHealth` holds this rule for a block that reads its database
+container itself.
 
 A block's test drives the `Database` against `dockerhosttest.Host`, a fake of
 the host's repository and its node report. Set `Database.GitHub` to the fake's
