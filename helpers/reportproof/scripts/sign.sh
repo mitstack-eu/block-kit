@@ -12,13 +12,14 @@ b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
 # signed prints the compact JWS of the claims JSON it is given; input stays global, since the EXIT trap reads it.
 signed() {
-  local header claims
+  local header claims sig
   header=$(printf '{"alg":"EdDSA","kid":"%s","typ":"JWT"}' "$kid" | b64url)
   claims=$(printf '%s' "$1" | b64url)
   input=$(mktemp)
   trap 'rm -f "$input"' EXIT
   printf '%s.%s' "$header" "$claims" >"$input"
-  printf '%s.%s.%s' "$header" "$claims" "$(openssl pkeyutl -sign -inkey "$key" -rawin -in "$input" | b64url)"
+  sig=$(openssl pkeyutl -sign -inkey "$key" -rawin -in "$input" | b64url)
+  printf '%s.%s.%s' "$header" "$claims" "$sig"
 }
 
 check_origin_and_time() {

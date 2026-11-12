@@ -126,7 +126,7 @@ func (g *hostRepo) commit(ctx context.Context, head, message string, changes map
 	return nil
 }
 
-// report never fails the commit, since the agent's own pull takes it within a minute.
+// report never fails the commit, since the agent's own timed pull takes it anyway.
 func (g *hostRepo) report(ctx context.Context, commit string) {
 	if err := events.ReportCommit(ctx, g.fullName, commit); err != nil {
 		log.Printf("dockerhost: the host's agent takes %s at its next pull, since the platform was not told of it: %v", commit, err)

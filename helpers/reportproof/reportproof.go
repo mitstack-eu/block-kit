@@ -29,7 +29,7 @@ const lifetime = 10 * time.Minute
 //go:embed scripts/token-request.sh
 var TokenRequestScript string
 
-// SignScript prints, with openssl alone, what KeySet, Sign and SignStream make for a host's own Ed25519 key.
+// SignScript prints, with no Go on the host, what KeySet, Sign and SignStream make for a host's own Ed25519 key.
 //
 //go:embed scripts/sign.sh
 var SignScript string
