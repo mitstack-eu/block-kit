@@ -53,13 +53,13 @@ func TestNewestReport_AnswersTheCommitAndCapacityOfTheNewestReport(t *testing.T)
 	)
 
 	commit, err := r.SyncedCommit()
-	capacity, capacityErr := dockerhost.Capacity(r, true, "shop")
+	allocatable, given := r.Allocatable()
 
 	if err != nil || commit != synced {
 		t.Errorf("SyncedCommit = %q, %v; want the newest report's %s", commit, err, synced)
 	}
-	if capacityErr != nil || capacity.CPUMillis != 3500 || capacity.MemoryBytes != 7516192768 || capacity.DiskBytes != 75161927680 {
-		t.Errorf("Capacity = %+v, %v; want the newest report's 3500 millicores, 7516192768 memory bytes and 75161927680 disk bytes", capacity, capacityErr)
+	if want := (dockerhost.Allocatable{CPUMillis: 3500, MemoryBytes: 7516192768, DiskBytes: 75161927680}); !given || allocatable != want {
+		t.Errorf("Allocatable = %+v, given %v; want the newest report's %+v", allocatable, given, want)
 	}
 	var body struct {
 		Host struct{ Agent struct{ Output string } }
@@ -399,14 +399,15 @@ func TestReport_CapacityErrorIsTheReasonAReportGivesInPlaceOfItsAllocatableCapac
 	const unread = "nproc, free -b or df -B1 / printed nothing the report can read"
 	const allocatable = `"allocatable":{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}`
 	for _, tc := range []struct {
-		name string
-		body string
-		want string
+		name  string
+		body  string
+		want  string
+		given bool
 	}{
 		{name: "a report whose capacity is the error object gives that error", body: `{"host":{"capacity":{"error":"` + unread + `"}}}`, want: unread},
 		{name: "a report with no capacity gives no error", body: `{"host":{}}`},
-		{name: "a report giving its allocatable capacity gives no error", body: `{"host":{"capacity":{` + allocatable + `}}}`},
-		{name: "a report giving its allocatable capacity beside an error gives no error", body: `{"host":{"capacity":{` + allocatable + `,"error":"` + unread + `"}}}`},
+		{name: "a report giving its allocatable capacity gives no error", body: `{"host":{"capacity":{` + allocatable + `}}}`, given: true},
+		{name: "a report giving its allocatable capacity beside an error gives no error", body: `{"host":{"capacity":{` + allocatable + `,"error":"` + unread + `"}}}`, given: true},
 		{name: "a null capacity beside an error gives that error", body: `{"host":{"capacity":{"allocatable":null,"error":"` + unread + `"}}}`, want: unread},
 		{name: "a capacity without its CPU names cpuMillis", body: `{"host":{"capacity":{"allocatable":{"memoryBytes":1,"diskBytes":1}}}}`, want: "host.capacity.allocatable lacks cpuMillis"},
 		{name: "a capacity without its memory names memoryBytes", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"diskBytes":1}}}}`, want: "host.capacity.allocatable lacks memoryBytes"},
@@ -424,9 +425,13 @@ func TestReport_CapacityErrorIsTheReasonAReportGivesInPlaceOfItsAllocatableCapac
 			}
 
 			got := report.CapacityError()
+			allocatable, given := report.Allocatable()
 
 			if got != tc.want {
 				t.Errorf("CapacityError() of %s = %q; want %q", tc.body, got, tc.want)
+			}
+			if given != tc.given || !given && allocatable != (dockerhost.Allocatable{}) {
+				t.Errorf("Allocatable() of %s = %+v, given %v; want given %v, and no amount when it is not", tc.body, allocatable, given, tc.given)
 			}
 		})
 	}

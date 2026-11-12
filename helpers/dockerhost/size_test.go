@@ -52,7 +52,7 @@ func TestParseSize_RefusesAnAmountItCannotReadOrOfNothing(t *testing.T) {
 }
 
 func TestFree_IsWhatTheHostCanGiveLessWhatTheOthersHold(t *testing.T) {
-	allocatable := dockerhost.Reservation{CPUMillis: 3500, MemoryBytes: 7 * gib, DiskBytes: 140 * gib}
+	allocatable := dockerhost.Allocatable{CPUMillis: 3500, MemoryBytes: 7 * gib, DiskBytes: 140 * gib}
 	others := dockerhost.Reservation{CPUMillis: 1000, MemoryBytes: 2 * gib, DiskBytes: 10 * gib}
 
 	got := dockerhost.Free(allocatable, others)
@@ -140,8 +140,8 @@ func TestCapacity_GivesTheReportsCapacityAndWaitsNamingAMeasureItLacks(t *testin
 				}
 				return
 			}
-			if err != nil || got.CPUMillis != 3500 || got.MemoryBytes != 7*gib || got.DiskBytes != 70*gib {
-				t.Errorf("Capacity(%s) = %+v, %v; want 3500 millicores, 7 GiB of memory and 70 GiB of disk", tc.allocatable, got, err)
+			if want := (dockerhost.Allocatable{CPUMillis: 3500, MemoryBytes: 7 * gib, DiskBytes: 70 * gib}); err != nil || got != want {
+				t.Errorf("Capacity(%s) = %+v, %v; want %+v", tc.allocatable, got, err, want)
 			}
 		})
 	}
