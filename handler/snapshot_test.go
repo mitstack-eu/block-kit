@@ -84,8 +84,29 @@ func TestSnapshot_PublishesNoHandoverWhenTheBlocksCheckFails(t *testing.T) {
 
 	status, resp := serveContinuity(t, block, snapshotManifest, "snapshot", map[string]any{"unit": "app-data"})
 
-	if status == http.StatusOK || resp.Outputs[handoverKey] != "" || !strings.Contains(resp.Error, "scratch restore") {
-		t.Errorf("a failed check answered status %d, outputs %v, error %q; want a failure naming the check and no handover", status, resp.Outputs, resp.Error)
+	if status != http.StatusInternalServerError || resp.Outputs[handoverKey] != "" || !strings.Contains(resp.Error, "scratch restore") {
+		t.Errorf("a failed check answered status %d, outputs %v, error %q; want 500 naming the check and no handover", status, resp.Outputs, resp.Error)
+	}
+}
+
+func TestSnapshot_Answers500AndNoHandoverForAHandoverThatIsEmptyOrRepeatsARequestSecret(t *testing.T) {
+	cases := []struct{ label, handover string }{
+		{"an empty handover returned with no error", ""},
+		{"a handover that repeats a secret the request carried", guardSecret},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			block := newSnapshottingBlock(tc.handover)
+
+			status, resp := serveContinuity(t, block, snapshotManifest, "snapshot", map[string]any{"unit": "app-data", "secrets": guardSecrets()})
+
+			if status != http.StatusInternalServerError || resp.Outputs[handoverKey] != "" {
+				t.Errorf("%s: status %d, outputs %v; want 500 and no %s output", tc.label, status, resp.Outputs, handoverKey)
+			}
+			if strings.Contains(resp.Error, guardSecret) {
+				t.Errorf("%s: the answer's error repeats the request's secret: %q", tc.label, resp.Error)
+			}
+		})
 	}
 }
 
