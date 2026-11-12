@@ -72,7 +72,8 @@ func (h *Handler) dispatchDeclared(ctx context.Context, operation string, d cont
 		resources = []namedResource{nr}
 	}
 
-	run := &declaredRun{h: h, d: d, secrets: secrets, connectionSecrets: d.SecretValues().Connections, resources: resources, outcomes: map[string]contract.ResourceOutcome{}, started: h.now()}
+	run := &declaredRun{h: h, d: d, secrets: secrets, connectionSecrets: d.SecretValues().Connections,
+		resources: resources, outcomes: map[string]contract.ResourceOutcome{}, started: h.now()}
 	status, resp := run.serveBlock(ctx, operation)
 	if operation == "validate" && ctx.Err() != nil {
 		run.logEnded()
