@@ -188,17 +188,20 @@ token, err := tokens.Get(ctx)
 
 ## Asking the platform for a lease
 
-A lease is one short-lived credential that the owner of a resource mints for a
-caller, such as a signed upload link for a bucket.
+A lease is one short-lived credential for a resource, such as a signed upload
+link for a storage bucket. The resource's provider, the block whose
+subscription created the resource and manages it, mints the lease for the
+caller that asks.
 [Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential)
-describes the block that mints one. `helpers/lease` is the asking side. This
+describes the provider's side. `helpers/lease` is the asking side. This
 section is for a block author whose block runs a program on its node, the
 machine that reports to mitstack, and that program needs such a credential.
 
-The node asks with its report token. The platform answers that token once,
-when the node enrols, and the node keeps it on its own disk. The platform knows
-the node's subscription by the token, so the program runs where the token is.
-An operator holds no report token, since the platform keeps only a digest of it
+The node asks with its report token, the secret it also sends its reports
+with. The node receives that token once, in the platform's answer when it
+enrols, and keeps it on its own disk: a Docker host in a file, a cluster in a
+Kubernetes Secret. Only the node holds the token, so the program that asks for
+a lease runs on the node. An operator holds no report token, since the platform keeps only a digest of it
 and sends none in a lifecycle call.
 [ADR 0124](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0124-a-block-or-host-leases-a-short-lived-credential-from-a-resources-provider-through-one-platform-route-and-one-kit-operation.md)
 holds the reasoning. The program hands the helper the platform's address and
@@ -230,7 +233,7 @@ expiry.
 | 404, when the node's block neither requires nor provides the resource | A `*lease.Refusal` with `Status` 404 |
 | 409, when the provider's block does not list `lease` | A `*lease.Refusal` with `Status` 409 |
 | 502, when the provider refused or failed to mint | A `*lease.Refusal` with `Status` 502 and the route's fixed message |
-| 503, when the provider has no outputs yet | A `*lease.Refusal` with `Status` 503 and, in `RetryAfter`, the wait the answer names |
+| 503, when the provider is not ready, such as while its subscription is still being built, or when the platform has paused its engine | A `*lease.Refusal` with `Status` 503 and, in `RetryAfter`, the wait the answer names |
 | Any other status, or a refusal whose body is not the route's own, as a proxy in front of the platform answers | A `*lease.Refusal` with that status and a fixed message |
 | 200 with an expiry that has passed, or with no credential or expiry | An error naming what the answer lacks |
 
@@ -1282,9 +1285,12 @@ handover is the string a snapshot publishes for the restore to read.
 A `continuity.Hook` joins three parts. A `State` knows how to read one kind of
 data out and back in, and the two ready-made ones below are the ones to use.
 `Links` hands out the presigned upload and download links, each an address
-that carries its own signature and so needs no storage key. `Keys` hands out
-the age keys: a public key the snapshot is encrypted to, and the restore key,
-the private half that decrypts it. The `Hook` itself does the rest:
+that carries its own signature and so needs no storage key. `Keys`, a
+`continuity.Keys`, hands out the age keys: a public key the snapshot is
+encrypted to, and the restore key, the private half that decrypts it. The
+kit's own `Keys` is `continuity.OwnSecretKeys`, which
+[Where the age keys are kept](#where-the-age-keys-are-kept) describes. The
+`Hook` itself does the rest:
 
 ```go
 hook := continuity.Hook{
@@ -1292,7 +1298,7 @@ hook := continuity.Hook{
 		Platform: lease.Platform{BaseURL: "https://api.mitstack.dev", Token: reportToken},
 		Resource: "scaleway.snapshot-bucket",
 	},
-	Keys:  keys, // the unit's age keys
+	Keys:  keys, // a continuity.Keys holding the unit's age keys
 	State: continuity.Volume{Dir: "/var/lib/app"},
 }
 
@@ -1363,8 +1369,10 @@ to a download link, and adds nothing to either.
 and the report token it asks with, and `Resource` is the reference your
 manifest uses for the snapshot store your block requires or provides. Each
 `Upload` and each `Download` is one lease. A snapshot asks for its upload link
-once the export is ready and for a download link for its scratch check, and a
-restore asks for one download link. `LeasedLinks` keeps no link between calls,
+once it has read the data out and encrypted it. It then asks for one download
+link, to read the stored copy back and check it, as
+[What a snapshot and a restore do](#what-a-snapshot-and-a-restore-do)
+describes. A restore asks for one download link. `LeasedLinks` keeps no link between calls,
 so a snapshot that follows a refused upload asks for a new link. When the
 lease route refuses, the snapshot or the restore fails with the error
 [Asking the platform for a lease](#asking-the-platform-for-a-lease) lists,
