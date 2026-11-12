@@ -1180,9 +1180,12 @@ same way. This section is for a block writer who keeps a volume or an OpenBao
 store. A hook is the code that takes one snapshot or restores it, and a
 handover is the string a snapshot publishes for the restore to read.
 
-A `continuity.Hook` joins four things. A `State` knows how to read one kind of
-data out and back in, `Links` hands out the presigned upload and download
-links, `Keys` hands out the age keys, and the `Hook` itself does the rest. Your
+A `continuity.Hook` joins three parts. A `State` knows how to read one kind of
+data out and back in, and the two ready-made ones below are the ones to use.
+`Links` hands out the presigned upload and download links, each an address
+that carries its own signature and so needs no storage key. `Keys` hands out
+the age keys: a public key the snapshot is encrypted to, and the restore key,
+the private half that decrypts it. The `Hook` itself does the rest. Your
 block's `Snapshot` and `Restore`, which
 [Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
 describes, build one from the request's `contract.Desired`, here `d`, and call
@@ -1208,10 +1211,13 @@ func (b *block) Restore(ctx context.Context, d contract.Desired, unit, handover 
 
 `unit` is the name of the manifest's `spec.continuity` entry, such as
 `app-data`. `hook.Snapshot` returns the handover string, and `hook.Restore`
-takes the same string back, which the restore request carries.
+takes the same string back, which the restore request carries. A block with
+several units picks the `State` by `unit`, since each unit keeps its own data.
+The hook runs in the block's own process, so that process must reach the data:
+the directory of a `Volume`, or the address of an OpenBao store.
 
 `Links` is the one interface you write. It hands the hook a presigned link for
-one upload and one for each download, as ADR 0125 point 11 plans:
+one upload and one for each download:
 
 ```go
 type Links interface {
@@ -1227,7 +1233,17 @@ type Link struct {
 
 `Upload` answers the link to upload to and, in `Ref`, the name of the object
 that link writes. The handover carries that `Ref`, and `Download` receives it
-back and answers a link to read the same object.
+back and answers a link to read the same object. `URL` is a complete address:
+the hook sends one `PUT` with the ciphertext to an upload link and one `GET`
+to a download link, and adds nothing to either. Have each `Upload` name a
+new object, so a snapshot never overwrites an earlier one.
+
+The links are a credential that the bucket's owner mints, which
+[Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential)
+describes from the side of the block that mints one. The kit has no helper
+yet by which a block asks the platform for such a link. Until it has, a block has
+no `Links` to use against the platform, and the hooks run only with a `Links`
+a test supplies, as the kit's own tests do.
 
 `hook.Snapshot` runs these steps in order, and fails at the first that does not
 hold:
@@ -1250,8 +1266,10 @@ digest or size differs, decrypts it and gives the bytes to `State.Import`. A
 hook holds no storage key, so the bucket's credentials never reach it. The
 links come from the `Links` you pass, and an error from the hook never carries
 a link or its query string, since the signature in a link is a credential. No
-plain text of the data leaves the process: the upload sees ciphertext, and the
-restore key stays outside the bucket.
+plain text of the data goes to the bucket: the upload sees ciphertext, and the
+restore key stays outside the bucket. The scratch check does handle plain
+data, in a scratch directory for a `Volume` and in the `Scratch` store for
+OpenBao.
 
 | State | What it keeps | How `Verify` checks it |
 |---|---|---|
@@ -1265,34 +1283,53 @@ runs as root. A process that is not allowed fails the scratch check, so the
 snapshot publishes no handover it could not restore. Two limits are yours to
 handle. The snapshot records the entries under `Dir` and not `Dir` itself, so
 a restore creates a missing `Dir` with mode 0755 and the restoring process as
-its owner. `Volume` also copies the files one by one while nothing stops other
-writers, so stop what writes to the directory before a snapshot.
+its owner. Create `Dir` with the mode and owner it needs before your `Restore`
+calls the hook. `Volume` also copies the files one by one while nothing stops
+other writers, so your `Snapshot` stops what writes to the directory before it
+calls the hook.
 
 `Live` and `Scratch` are each a `continuity.Endpoint{Addr, Token, Client}`:
 the address of an OpenBao server, a token allowed to read and restore its
 snapshot, and an optional HTTP client. `Live` is the store the block keeps,
-and `Scratch` is a throwaway store used only for the check. `Restart` and
-`Discard` are each a `func(ctx context.Context) error` you supply: `Restart`
-restarts every member of `Live`, and `Discard` removes the scratch copy. With
-no `Client`, an endpoint follows no redirect, so the token reaches no other
-host.
+which on a restore is the store of the new server. `Scratch` is a second
+OpenBao server your block provides only for the check. `Restart` and `Discard`
+are each a `func(ctx context.Context) error` you supply. `Restart` restarts
+every member of `Live` and returns once they are back, since nothing checks
+the store after it. `Discard` removes what the check put into `Scratch`, such
+as by deleting that server. With no `Client`, an endpoint follows no redirect,
+so the token reaches no other host.
+
+```go
+State: continuity.OpenBao{
+	Live:    continuity.Endpoint{Addr: liveAddr, Token: liveToken},
+	Scratch: continuity.Endpoint{Addr: scratchAddr, Token: scratchToken},
+	Restart: b.restartStore,   // yours
+	Discard: b.deleteScratch,  // yours
+},
+```
 
 `OpenBao.Verify` calls `Discard` whatever the check found, and refuses to
 restore into a `Scratch` that has none, because the scratch copy holds every
 secret of the live store. The check itself proves two things: the scratch
 instance accepted the snapshot, and it still reports itself initialised. It
-does not prove that the restored data unseals. `OpenBao.Import` calls
-`Restart` after the force restore, since ADR 0125 has a restored store unseal
-once every member restarts.
+does not prove that the restored data unseals, which is OpenBao's step of
+decrypting its storage with its seal key. `OpenBao.Import` calls `Restart`
+after the force restore, since
+[ADR 0125](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0125-a-confirmed-upgrade-replaces-a-stateful-server-through-a-recorded-handover-with-keys-from-a-per-subscription-escrow-and-two-drills-that-keep-it-working.md)
+has a restored store unseal once every member restarts.
 
 `continuity.OwnSecretKeys` keeps each unit's key in the block's own secrets,
 which [What the answer carries](handler.md#what-the-answer-carries) describes,
 so the restore key never sits in the bucket. `continuity.MintKeys` returns an
 age identity for each unit that holds none yet, under the name
 `continuity.KeyName(unit)`, and never replaces a held one. A block returns
-them from its `EnsureResourcesOwning`, which runs on the subscribe, so the key
-exists before the first snapshot reads it. The unit named here is the one
-`Snapshot` and `Restore` are called with:
+them from its `EnsureResourcesOwning`, which runs on a subscribe and on an
+upgrade, so the key exists before the first snapshot reads it. `MintKeys`
+returns only the keys it minted, which is what the answer needs. The unit
+named here is the one `Snapshot` and `Restore` are called with. A subscription
+that has run neither since the block gained the hooks holds no key, and a
+snapshot of it fails naming the own secret that is missing, until an upgrade
+mints it:
 
 ```go
 func (b *block) EnsureResourcesOwning(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, map[string]string, error) {
