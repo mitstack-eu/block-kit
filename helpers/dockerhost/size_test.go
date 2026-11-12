@@ -117,38 +117,35 @@ func reportOf(d contract.Desired, reports ...observe.NodeReport) func(*testing.T
 	}
 }
 
-// giving reads a host's newest report whose allocatable capacity is the JSON allocatable.
+const wholeCapacity = `{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}`
+
 func giving(allocatable string) func(*testing.T) (dockerhost.Report, bool) {
 	return reportOf(contract.Desired{}, received(39, `{"host":{"capacity":{"allocatable":`+allocatable+`}}}`))
 }
 
-func TestCapacity_GivesTheReportsCapacityAndWaitsNamingAMeasureItLacks(t *testing.T) {
-	for _, tc := range []struct {
-		name, allocatable, lacks string
-	}{
-		{name: "a complete capacity is given as the report gives it", allocatable: `{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}`},
-		{name: "a capacity without its memory waits naming memoryBytes", allocatable: `{"cpuMillis":4000,"diskBytes":75161927680}`, lacks: "host.capacity.allocatable lacks memoryBytes"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			report, found := giving(tc.allocatable)(t)
+func TestCapacity_GivesTheCapacityTheReportStatesWhole(t *testing.T) {
+	report, found := giving(wholeCapacity)(t)
 
-			got, err := dockerhost.Capacity(report, found, "shop")
+	got, err := dockerhost.Capacity(report, found, "shop")
 
-			if tc.lacks != "" {
-				if !waitsForSignal(err) || !strings.Contains(err.Error(), tc.lacks) {
-					t.Errorf("Capacity(%s) = %+v, %v; want a wait for the next report naming %q", tc.allocatable, got, err, tc.lacks)
-				}
-				return
-			}
-			if want := (dockerhost.Allocatable{CPUMillis: 3500, MemoryBytes: 7 * gib, DiskBytes: 70 * gib}); err != nil || got != want {
-				t.Errorf("Capacity(%s) = %+v, %v; want %+v", tc.allocatable, got, err, want)
-			}
-		})
+	if want := (dockerhost.Allocatable{CPUMillis: 3500, MemoryBytes: 7 * gib, DiskBytes: 70 * gib}); err != nil || got != want {
+		t.Errorf("Capacity(%s) = %+v, %v; want %+v", wholeCapacity, got, err, want)
+	}
+}
+
+func TestCapacity_WaitsNamingTheMeasureTheReportsCapacityLacks(t *testing.T) {
+	const withoutMemory = `{"cpuMillis":4000,"diskBytes":75161927680}`
+	report, found := giving(withoutMemory)(t)
+
+	got, err := dockerhost.Capacity(report, found, "shop")
+
+	if want := "host.capacity.allocatable lacks memoryBytes"; !waitsForSignal(err) || !strings.Contains(err.Error(), want) {
+		t.Errorf("Capacity(%s) = %+v, %v; want a wait for the next report naming %q", withoutMemory, got, err, want)
 	}
 }
 
 func TestCheckRoom_WaitsForTheHostsCapacityReportRefusesAnAbsentOrFullHostAndPassesWhatFits(t *testing.T) {
-	reporting := giving(`{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}`)
+	reporting := giving(wholeCapacity)
 	others := dockerhost.Reservation{CPUMillis: 3000, MemoryBytes: 6 * gib}
 	small := dockerhost.Ask{Part: "shop", Kind: "app", Size: dockerhost.Reservation{CPUMillis: 500, MemoryBytes: 512 * mib}}
 	large := dockerhost.Ask{Part: "shop", Kind: "app", Size: dockerhost.Reservation{CPUMillis: 1000, MemoryBytes: 512 * mib}}
