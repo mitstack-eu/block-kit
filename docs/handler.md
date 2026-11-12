@@ -296,7 +296,8 @@ upgrade replaces nothing. When your planner cannot tell, for example because
 another call of your block holds a lock on what it reads, return an error instead. The validate
 then answers that error and carries no `plannedReplacements`.
 
-A validate answer from a planning block that replaces nothing reads:
+An empty list goes out with no `replaces` key at all, so a validate answer
+from a planning block that replaces nothing reads:
 
 ```json
 {"outputs": null, "absent": false, "plannedReplacements": true,
