@@ -59,7 +59,6 @@ func answersFresh(operation string) bool {
 	return false
 }
 
-// requestContext carries req's events envelope, through which the block emits events and reads platform routes as the request it serves.
 func requestContext(ctx context.Context, req contract.Request) context.Context {
 	var callback *events.Callback
 	if req.EventsCallback != nil {

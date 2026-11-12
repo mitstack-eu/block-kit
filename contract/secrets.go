@@ -7,16 +7,13 @@ import (
 
 // SecretValues is every secret value a request carries, kept apart by where the request carries it, so each reader names the parts it reads.
 type SecretValues struct {
-	// Connections are the values of every connection's secret group.
 	Connections  []string
 	SecretInputs []string
 	AppSecrets   []string
 	OwnSecrets   []string
-	// Credentials are the request's own, which no Desired carries: an entered credential, the OBO token and the events callback's token.
-	Credentials []string
+	Credentials  []string
 }
 
-// All lists the values of every part, for a reader that keeps each of them out of what it writes.
 func (v SecretValues) All() []string {
 	return slices.Concat(v.Connections, v.SecretInputs, v.AppSecrets, v.OwnSecrets, v.Credentials)
 }
@@ -35,7 +32,6 @@ func (d Desired) SecretValues() SecretValues {
 	}
 }
 
-// SecretValues lists the secret values r's Desired carries and r's own credentials.
 func (r Request) SecretValues() SecretValues {
 	values := r.Desired().SecretValues()
 	credentials := append(slices.Collect(maps.Values(r.EnteredCredential)), r.OBO)
