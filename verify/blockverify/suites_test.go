@@ -311,6 +311,8 @@ func TestReplacementSuite(t *testing.T) {
 			status: "fail", detail: []string{"TestReplacementDrill", "ran no stage"}},
 		{name: "a block that keeps every datum and reads healthy passes, naming the drill and its unit", dir: replacementBlock("keeps"),
 			status: "pass", detail: []string{"TestReplacementDrill", `"app-data"`}},
+		{name: "a block built on the shared hooks passes, naming the drill and its unit", dir: replacementBlock("hooks"),
+			status: "pass", detail: []string{"TestReplacementDrill", `"app-data"`}},
 		{name: "a block that drills one of its two units handed over by snapshot fails, naming the other",
 			dir: replacementBlock("keeps", with(manifestFile, replaced(t, source(t, "replacement-manifest.yaml"), "  lifecycle:\n",
 				"    - name: vault\n      kind: openbao\n      stateful: true\n      handover: snapshot\n  lifecycle:\n"))),

@@ -5,7 +5,12 @@ package kittest_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -13,6 +18,8 @@ import (
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/helpers/age"
+	"github.com/mitstack-eu/block-kit/helpers/continuity"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
@@ -228,6 +235,95 @@ func TestCheckReplacement_NamesAUnitTheManifestDoesNotHandOverBySnapshot(t *test
 			wantProblemNaming(t, kittest.CheckReplacement(in), fmt.Sprintf("%q", unit), "handover snapshot")
 		})
 	}
+}
+
+// objectStore keeps the objects a hook uploads behind plain links, as a bucket does behind presigned ones.
+type objectStore struct {
+	srv     *httptest.Server
+	mu      sync.Mutex
+	objects map[string][]byte
+}
+
+func newObjectStore(t *testing.T) *objectStore {
+	t.Helper()
+	s := &objectStore{objects: map[string][]byte{}}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if r.Method == http.MethodPut {
+			s.objects[r.URL.Path], _ = io.ReadAll(r.Body)
+			return
+		}
+		_, _ = w.Write(s.objects[r.URL.Path])
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+func (s *objectStore) Upload(_ context.Context, unit string) (continuity.Link, error) {
+	return continuity.Link{URL: s.srv.URL + "/" + unit + "/snapshot", Ref: unit + "/snapshot"}, nil
+}
+
+func (s *objectStore) Download(_ context.Context, _, ref string) (continuity.Link, error) {
+	return continuity.Link{URL: s.srv.URL + "/" + ref}, nil
+}
+
+type ageKeys struct{ id *age.Identity }
+
+func (k ageKeys) Recipient(context.Context, string) (string, error) {
+	return k.id.Recipient().String(), nil
+}
+func (k ageKeys) Identity(context.Context, string) (string, error) { return k.id.String(), nil }
+
+// dirState is the drill's view of a volume directory.
+type dirState struct{ dir string }
+
+func (s dirState) Write(_ context.Context, data map[string]string) error {
+	for name, value := range data {
+		if err := os.WriteFile(filepath.Join(s.dir, name), []byte(value), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s dirState) Read(context.Context) (map[string]string, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		raw, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		out[e.Name()] = string(raw)
+	}
+	return out, nil
+}
+
+func (s dirState) Replace(context.Context) error {
+	if err := os.RemoveAll(s.dir); err != nil {
+		return err
+	}
+	return os.Mkdir(s.dir, 0o700)
+}
+
+func TestCheckReplacement_PassesABlockBuiltOnTheSharedHooks(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "volume")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id, err := age.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := continuity.Hook{Links: newObjectStore(t), Keys: ageKeys{id}, State: continuity.Volume{Dir: dir}}
+	_, in := newStateBlock(t, nil, func(*atomic.Bool) carrier { return hook }, false)
+	in.Data = dirState{dir}
+
+	wantNoProblems(t, kittest.CheckReplacement(in))
 }
 
 // stubbornState is a memState whose Replace leaves the data in place.
