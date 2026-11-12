@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
-# Prints the key set or the Mitstack-Report-Proof of a host that holds its own Ed25519 key, byte for byte what KeySet
-# and Sign make for that key, so a host with openssl and no Go signs its reports as a Go node does.
+# Prints the key set, the Mitstack-Report-Proof or the commit stream token of a host that holds its own Ed25519 key,
+# byte for byte what KeySet, Sign and SignStream make for that key, so a host with openssl and no Go signs as a Go
+# node does.
 # Usage: sign.sh keyset KEY_FILE KID
 #        sign.sh proof KEY_FILE KID PLATFORM_ORIGIN BODY_FILE NOW
-# KEY_FILE is a PEM key from openssl genpkey -algorithm ed25519, and NOW is the Unix time the proof is minted at.
+#        sign.sh stream KEY_FILE KID PLATFORM_ORIGIN SUBJECT NOW
+# KEY_FILE is a PEM key from openssl genpkey -algorithm ed25519, and NOW is the Unix time the token is minted at.
 set -euo pipefail
 
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+# signed prints the compact JWS of the claims JSON it is given; input stays global, since the EXIT trap reads it.
+signed() {
+  local header claims
+  header=$(printf '{"alg":"EdDSA","kid":"%s","typ":"JWT"}' "$kid" | b64url)
+  claims=$(printf '%s' "$1" | b64url)
+  input=$(mktemp)
+  trap 'rm -f "$input"' EXIT
+  printf '%s.%s' "$header" "$claims" >"$input"
+  printf '%s.%s.%s' "$header" "$claims" "$(openssl pkeyutl -sign -inkey "$key" -rawin -in "$input" | b64url)"
+}
+
+check_origin_and_time() {
+  [[ $1 =~ ^https://[A-Za-z0-9.:-]+$ ]] || { echo "sign: origin $1 is not an https origin" >&2; exit 2; }
+  [[ $2 =~ ^(0|[1-9][0-9]{0,17})$ ]] || { echo "sign: time $2 is not a whole number of seconds as Sign takes it" >&2; exit 2; }
+}
 
 mode=${1:-} key=${2:-} kid=${3:-}
 [[ $kid =~ ^[A-Za-z0-9._-]+$ ]] || { echo "sign: kid $kid is not letters, digits, dots, underscores and hyphens" >&2; exit 2; }
@@ -23,19 +41,19 @@ keyset)
 proof)
   [[ $# -eq 6 ]] || { echo "sign: proof takes KEY_FILE KID PLATFORM_ORIGIN BODY_FILE NOW" >&2; exit 2; }
   origin=$4 body=$5 now=$6
-  [[ $origin =~ ^https://[A-Za-z0-9.:-]+$ ]] || { echo "sign: origin $origin is not an https origin" >&2; exit 2; }
-  [[ $now =~ ^(0|[1-9][0-9]{0,17})$ ]] || { echo "sign: time $now is not a whole number of seconds as Sign takes it" >&2; exit 2; }
+  check_origin_and_time "$origin" "$now"
   digest=$(sha256sum "$body" | cut -d' ' -f1)
-  header=$(printf '{"alg":"EdDSA","kid":"%s","typ":"JWT"}' "$kid" | b64url)
-  claims=$(printf '{"aud":["%s","report-sha256:%s"],"exp":%d,"iat":%d,"nbf":%d}' "$origin" "$digest" $((now + 600)) "$now" "$now" | b64url)
-  input=$(mktemp)
-  trap 'rm -f "$input"' EXIT
-  printf '%s.%s' "$header" "$claims" >"$input"
-  signature=$(openssl pkeyutl -sign -inkey "$key" -rawin -in "$input" | b64url)
-  printf '%s.%s.%s' "$header" "$claims" "$signature"
+  signed "$(printf '{"aud":["%s","report-sha256:%s"],"exp":%d,"iat":%d,"nbf":%d}' "$origin" "$digest" $((now + 600)) "$now" "$now")"
+  ;;
+stream)
+  [[ $# -eq 6 ]] || { echo "sign: stream takes KEY_FILE KID PLATFORM_ORIGIN SUBJECT NOW" >&2; exit 2; }
+  origin=$4 subject=$5 now=$6
+  check_origin_and_time "$origin" "$now"
+  [[ $subject =~ ^[A-Za-z0-9._:-]+$ ]] || { echo "sign: subject $subject is not letters, digits, dots, colons, underscores and hyphens" >&2; exit 2; }
+  signed "$(printf '{"aud":["%s","cluster-signals"],"exp":%d,"iat":%d,"nbf":%d,"sub":"%s"}' "$origin" $((now + 600)) "$now" "$now" "$subject")"
   ;;
 *)
-  echo "sign: mode $mode is neither keyset nor proof" >&2
+  echo "sign: mode $mode is neither keyset, proof nor stream" >&2
   exit 2
   ;;
 esac

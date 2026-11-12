@@ -47,6 +47,17 @@ func Sign(key ed25519.PrivateKey, kid string, body []byte, platformOrigin string
 	return input + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(input)))
 }
 
+// StreamAudience names the platform's commit stream in a stream token's audience, beside the platform's origin.
+const StreamAudience = "cluster-signals"
+
+// SignStream returns the token that opens subject's commit stream on platformOrigin, valid for ten minutes from now,
+// for a node that holds its own key.
+func SignStream(key ed25519.PrivateKey, kid, platformOrigin, subject string, now time.Time) string {
+	input := segment(map[string]string{"alg": "EdDSA", "kid": kid, "typ": "JWT"}) + "." +
+		segment(map[string]any{"aud": []string{platformOrigin, StreamAudience}, "sub": subject, "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(lifetime).Unix()})
+	return input + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(input)))
+}
+
 // KeySet is the key set a node that signs with Sign reports as its jwks member, holding key under kid.
 func KeySet(kid string, key ed25519.PublicKey) []byte {
 	set, _ := json.Marshal(map[string][]map[string]string{"keys": {{
