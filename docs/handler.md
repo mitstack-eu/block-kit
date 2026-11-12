@@ -257,9 +257,11 @@ observer that reports no identity leaves the one it was handed on the outcome.
 The handler refuses an identity holding one of the request's secrets, as it
 refuses such an output.
 
-An observer that reads records the provider writes over time, such as
-`observe.NodeReported` reading node reports, counts only records made after
-`Desired.VerbAt`, so a record older than the call cannot settle it. After
+An observer may read records the provider writes over time, such as
+`observe.NodeReported`, which reads node reports: the state a Docker host or a
+cluster node pushes to mitstack on its own. Such an observer counts only
+records made after `Desired.VerbAt`, the time of the call a record must
+answer, so a record older than the call cannot settle it. After
 `EnsureResources` or `Delete`, the handler sets `VerbAt` to its clock once the
 call returned. On a `validate` it is the request's `settlesAt`, the time of the
 call the validate settles, and otherwise the request's `createdAt`.
