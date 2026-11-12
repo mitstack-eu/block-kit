@@ -1270,48 +1270,65 @@ func TestBlockLevel_UnsubscribeObservesAContributionUnlessTheBlocksDeleteSucceed
 	}
 }
 
-func TestBlockLevel_ScrubsAndRefusesARequestSecretInWhatTheBlockAnswers(t *testing.T) {
+func TestBlockLevel_ScrubsEveryRequestSecretAndRefusesAConnectionSecretInWhatTheBlockAnswers(t *testing.T) {
 	const token = "ghp_block-level-leak-3e9d7c21"
+	places := []struct {
+		name, field string
+		carried     map[string]any
+		refused     bool
+	}{
+		{"a connection secret", "secrets", map[string]any{"github": map[string]any{"token": token}}, true},
+		{"a secret input", "secretInputs", map[string]any{"apiKey": token}, false},
+		{"an app secret", "appSecrets", map[string]any{"APP_URL": token}, false},
+		{"an own secret", "ownSecrets", map[string]any{"gatewayCaKey": token}, false},
+	}
 	cases := []struct {
 		label  string
 		op     string
 		obs    contract.Observation
 		delete map[string]string
-		status int
+		output bool
 	}{
-		{"a resource's statusDetail is scrubbed", "validate", contract.Observation{State: contract.Present, StatusDetail: "role assumed with " + token}, nil, http.StatusOK},
-		{"an observed output carrying it is refused", "validate", contract.Observation{State: contract.Present, Outputs: map[string]string{"leaked": token}}, nil, http.StatusBadRequest},
-		{"a subscribe's observed output carrying it is refused", "subscribe", contract.Observation{State: contract.Present, Outputs: map[string]string{"leaked": token}}, nil, http.StatusBadRequest},
-		{"an observed identity carrying it is refused, as an output is", "validate", contract.Observation{State: contract.Present, Identity: map[string]string{"roleName": token}}, nil, http.StatusBadRequest},
-		{"a delete output carrying it is refused", "unsubscribe", contract.Observation{}, map[string]string{"leaked": token}, http.StatusBadRequest},
+		{"in a resource's statusDetail", "validate", contract.Observation{State: contract.Present, StatusDetail: "role assumed with " + token}, nil, false},
+		{"in an observed output", "validate", contract.Observation{State: contract.Present, Outputs: map[string]string{"leaked": token}}, nil, true},
+		{"in a subscribe's observed output", "subscribe", contract.Observation{State: contract.Present, Outputs: map[string]string{"leaked": token}}, nil, true},
+		{"in an observed identity, guarded as an output is", "validate", contract.Observation{State: contract.Present, Identity: map[string]string{"roleName": token}}, nil, true},
+		{"in a delete output", "unsubscribe", contract.Observation{}, map[string]string{"leaked": token}, true},
 	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			cloud := standingCloud()
-			obs := asObservers(blockObservers(cloud))
-			if tc.obs.State != "" {
-				obs["a"] = fixed(tc.obs)
-			}
-			fields := recordedAll()
-			fields["secrets"] = map[string]any{"github": map[string]any{"token": token}}
-
-			status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud, deleteOutputs: tc.delete}, obs: obs, op: tc.op, fields: fields})
-
-			kittest.AssertNoSecret(t, "the answer", resp.Error+resp.StatusDetail, token)
-			if tc.status == http.StatusOK {
-				if o := resp.Resources["a"].Observe; status != http.StatusOK || o == nil || o.StatusDetail != "role assumed with [REDACTED]" {
-					t.Errorf("status %d, a observe = %+v; want 200 with its statusDetail scrubbed of the request secret", status, o)
+	for _, place := range places {
+		for _, tc := range cases {
+			t.Run(place.name+" "+tc.label, func(t *testing.T) {
+				cloud := standingCloud()
+				obs := asObservers(blockObservers(cloud))
+				if tc.obs.State != "" {
+					obs["a"] = fixed(tc.obs)
 				}
-				return
-			}
-			wantRefusal(t, status, resp, "secret-in-output")
-			if resp.Absent != nil && *resp.Absent {
-				t.Error("absent = true, want no absence claimed beside a refused output")
-			}
-			if o := resp.Resources["a"].Observe; tc.op != "unsubscribe" && (o == nil || o.Error == "") {
-				t.Errorf("a observe = %+v, want the refusal recorded under it", o)
-			}
-		})
+				fields := recordedAll()
+				fields[place.field] = place.carried
+
+				status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud, deleteOutputs: tc.delete}, obs: obs, op: tc.op, fields: fields})
+
+				kittest.AssertNoSecret(t, "the answer", resp.Error+resp.StatusDetail, token)
+				switch {
+				case !tc.output:
+					if o := resp.Resources["a"].Observe; status != http.StatusOK || o == nil || o.StatusDetail != "role assumed with [REDACTED]" {
+						t.Errorf("status %d, a observe = %+v; want 200 with its statusDetail scrubbed of the request secret", status, o)
+					}
+				case !place.refused:
+					if status != http.StatusOK {
+						t.Errorf("status %d, statusDetail %q; want 200, since the guard refuses only a value equal to a connection secret", status, resp.StatusDetail)
+					}
+				default:
+					wantRefusal(t, status, resp, "secret-in-output")
+					if resp.Absent != nil && *resp.Absent {
+						t.Error("absent = true, want no absence claimed beside a refused output")
+					}
+					if o := resp.Resources["a"].Observe; tc.op != "unsubscribe" && (o == nil || o.Error == "") {
+						t.Errorf("a observe = %+v, want the refusal recorded under it", o)
+					}
+				}
+			})
+		}
 	}
 }
 

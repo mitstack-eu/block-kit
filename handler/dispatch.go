@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/events"
@@ -18,7 +20,7 @@ import (
 //
 // A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource and unit, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue or a lease skips it because a replayed credential may have expired, and a run skips it because each send reads the host's newest report.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
-	secrets := h.secretsFor(req)
+	secrets := req.SecretValues().All()
 	ctx := requestContext(r.Context(), req)
 
 	run := func() (int, []byte, bool) {
@@ -57,7 +59,6 @@ func answersFresh(operation string) bool {
 	return false
 }
 
-// requestContext carries req's events envelope, through which the block emits events and reads platform routes as the request it serves.
 func requestContext(ctx context.Context, req contract.Request) context.Context {
 	var callback *events.Callback
 	if req.EventsCallback != nil {
@@ -150,18 +151,10 @@ func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secret
 }
 
 // refuseSecretValues is never handed SecretOutputs, where a secret is returned on purpose, and matches exact values so a value merely containing a secret is left alone.
-func refuseSecretValues(field string, values map[string]string, secrets map[string]map[string]string) error {
+func refuseSecretValues(field string, values map[string]string, secrets []string) error {
 	for key, value := range values {
-		for _, group := range secrets {
-			for _, secretValue := range group {
-				// An empty secret value is an unset optional secret and must not combine with an empty output into a false refusal.
-				if secretValue == "" {
-					continue
-				}
-				if value == secretValue {
-					return Refuse("secret-in-output", "%s %q carries a secret value", field, key)
-				}
-			}
+		if slices.Contains(secrets, value) {
+			return Refuse("secret-in-output", "%s %q carries a secret value", field, key)
 		}
 	}
 	return nil
@@ -189,8 +182,8 @@ func (h *Handler) errorResponse(err error, secrets []string) (int, contract.Resp
 			log.Printf("handler: block returned a refusal with no class: %s", safe.LogSafe(refused.Detail, secrets...))
 		}
 		return http.StatusBadRequest, contract.Response{
-			Error:        safe.Scrub(err.Error(), secrets...),
-			StatusDetail: safe.Scrub(refused.Error(), secrets...),
+			Error:        scrubAroundClass(err.Error(), refused, secrets),
+			StatusDetail: scrubAroundClass(refused.Error(), refused, secrets),
 		}
 	}
 
@@ -198,31 +191,32 @@ func (h *Handler) errorResponse(err error, secrets []string) (int, contract.Resp
 	return http.StatusInternalServerError, contract.Response{Error: safe.Scrub(err.Error(), secrets...)}
 }
 
-// secretsFor collects every literal secret a request carries so all can be scrubbed from the response body and logs.
-func (h *Handler) secretsFor(req contract.Request) []string {
-	var out []string
-	for _, group := range req.Secrets {
-		for _, v := range group {
-			out = append(out, v)
+// scrubAroundClass scrubs text everywhere but in refused's class, a word the block's own code names and the platform reads back, and scrubs all of it when text does not hold refused as written or a secret reads across the class's edge.
+func scrubAroundClass(text string, refused *Refused, secrets []string) string {
+	before, after, found := strings.Cut(text, refused.Error())
+	if !found {
+		return safe.Scrub(text, secrets...)
+	}
+	head := safe.Scrub(before, secrets...)
+	maskedRefusal := &Refused{Class: refused.Class, Detail: safe.Scrub(refused.Detail, secrets...)}
+	masked := head + maskedRefusal.Error() + safe.Scrub(after, secrets...)
+	classStart := len(head) + len(refusedPrefix)
+	if secretOutsideSpan(masked, classStart, classStart+len(refused.wireClass()), secrets) {
+		log.Printf("handler: a secret reads across the edge of refusal class %s, so the refusal is masked whole", safe.LogSafe(refused.wireClass(), secrets...))
+		return safe.Scrub(text, secrets...)
+	}
+	return masked
+}
+
+// secretOutsideSpan reports whether a secret Scrub would mask occurs in text anywhere but wholly inside text[start:end], since pieces scrubbed apart can join into a secret.
+func secretOutsideSpan(text string, start, end int, secrets []string) bool {
+	for _, secret := range secrets {
+		// A match starting before start ends by start+len-1, and a match ending after end starts at end-len+1 or later.
+		left := text[:min(len(text), start+len(secret)-1)]
+		right := text[min(len(text), max(0, end-len(secret)+1)):]
+		if safe.Scrub(left, secret) != left || safe.Scrub(right, secret) != right {
+			return true
 		}
 	}
-	for _, v := range req.SecretInputs {
-		out = append(out, v)
-	}
-	for _, v := range req.AppSecrets {
-		out = append(out, v)
-	}
-	for _, v := range req.OwnSecrets {
-		out = append(out, v)
-	}
-	for _, v := range req.EnteredCredential {
-		out = append(out, v)
-	}
-	if req.OBO != "" {
-		out = append(out, req.OBO)
-	}
-	if req.EventsCallback != nil && req.EventsCallback.Token != "" {
-		out = append(out, req.EventsCallback.Token)
-	}
-	return out
+	return false
 }
