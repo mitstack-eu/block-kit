@@ -32,7 +32,7 @@ func (h *Handler) serveSubscriptionLogs(w http.ResponseWriter, r *http.Request) 
 		h.writeError(w, http.StatusBadRequest, fmt.Sprintf("/logs serves the operation %s alone, got %q", contract.OperationLogs, req.Operation))
 		return
 	}
-	secrets := h.secretsFor(req)
+	secrets := req.SecretValues().All()
 	lines, err := h.readSubscriptionLogs(requestContext(r.Context(), req), req.Desired())
 	if err != nil {
 		status, resp := h.errorResponse(err, secrets)

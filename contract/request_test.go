@@ -929,3 +929,31 @@ func TestHandoverOutputKey_NamesTheUnitItHandsOver(t *testing.T) {
 		}
 	}
 }
+
+func TestRequest_SecretValuesKeepsEachSecretApartByWhereTheRequestCarriesIt(t *testing.T) {
+	req := contract.Request{
+		Secrets:           map[string]map[string]string{"github": {"token": "ghs-token", "owner": "acme-co", "unset": ""}, "db": {"password": "db-password"}},
+		SecretInputs:      map[string]string{"apiKey": "input-key"},
+		AppSecrets:        map[string]string{"APP_KEY": "app-key", "APP_URL": ""},
+		OwnSecrets:        map[string]string{"caKey": "own-ca-key"},
+		EnteredCredential: map[string]string{"token": "entered-token"},
+		OBO:               "obo-token",
+		EventsCallback:    &contract.EventsCallback{URL: "https://events.example", Token: "events-token"},
+	}
+
+	fromRequest, fromDesired := req.SecretValues(), req.Desired().SecretValues()
+
+	want := contract.SecretValues{
+		Connections: []string{"acme-co", "db-password", "ghs-token"}, SecretInputs: []string{"input-key"}, AppSecrets: []string{"app-key"},
+		OwnSecrets: []string{"own-ca-key"}, Credentials: []string{"entered-token", "events-token", "obo-token"},
+	}
+	if !reflect.DeepEqual(fromRequest, want) {
+		t.Errorf("Request.SecretValues() = %+v\nwant %+v, each part sorted and no empty value", fromRequest, want)
+	}
+	if want.Credentials = nil; !reflect.DeepEqual(fromDesired, want) {
+		t.Errorf("Desired.SecretValues() = %+v\nwant %+v, every part but the request's own credentials", fromDesired, want)
+	}
+	if all := fromRequest.All(); !slices.Equal(all, slices.Concat(want.Connections, want.SecretInputs, want.AppSecrets, want.OwnSecrets, []string{"entered-token", "events-token", "obo-token"})) {
+		t.Errorf("All() = %q, want every part's values", all)
+	}
+}

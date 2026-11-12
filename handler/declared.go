@@ -6,6 +6,7 @@ import (
 	"log"
 	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -71,7 +72,8 @@ func (h *Handler) dispatchDeclared(ctx context.Context, operation string, d cont
 		resources = []namedResource{nr}
 	}
 
-	run := &declaredRun{h: h, d: d, secrets: secrets, resources: resources, outcomes: map[string]contract.ResourceOutcome{}, started: h.now()}
+	run := &declaredRun{h: h, d: d, secrets: secrets, connectionSecrets: d.SecretValues().Connections,
+		resources: resources, outcomes: map[string]contract.ResourceOutcome{}, started: h.now()}
 	status, resp := run.serveBlock(ctx, operation)
 	if operation == "validate" && ctx.Err() != nil {
 		run.logEnded()
@@ -137,6 +139,9 @@ type declaredRun struct {
 	deleteKept    map[string][]contract.Kept
 	// healthCheck is set on a validate, the only verb whose kit observation may be a full read and whose observations answer findings.
 	healthCheck bool
+
+	// connectionSecrets are the values an output or an identity is refused for, since an app secret such as APP_URL may rightly equal an output.
+	connectionSecrets []string
 
 	resourceSecretOutputs map[string]map[string]string
 	ownSecrets            map[string]string
@@ -251,7 +256,7 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	}
 
 	outputs = mergeOutputs(outputs, r.deleteOutputs)
-	if err := refuseSecretValues("output", outputs, r.d.Secrets); err != nil {
+	if err := refuseSecretValues("output", outputs, r.connectionSecrets); err != nil {
 		status, resp := r.h.errorResponse(err, r.secrets)
 		resp.Resources = r.outcomes
 		return status, resp
@@ -501,12 +506,12 @@ func (r *declaredRun) fullRead(ctx context.Context, name string, t contract.Snap
 	return obs, nil
 }
 
-// observed refuses outputs or an identity carrying a request secret rather than reporting them, and keeps the identity the observer was handed when it reports none.
+// observed refuses outputs or an identity carrying a connection secret rather than reporting them, and keeps the identity the observer was handed when it reports none.
 func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*contract.CallOutcome, error) {
-	if err := refuseSecretValues("output", obs.Outputs, r.d.Secrets); err != nil {
+	if err := refuseSecretValues("output", obs.Outputs, r.connectionSecrets); err != nil {
 		return nil, err
 	}
-	if err := refuseSecretValues("identity key", obs.Identity, r.d.Secrets); err != nil {
+	if err := refuseSecretValues("identity key", obs.Identity, r.connectionSecrets); err != nil {
 		return nil, err
 	}
 	ref := r.refs[nr.name]
@@ -516,7 +521,7 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 	}
 	var unhealthy *contract.Unhealthy
 	if u := obs.Unhealthy; u != nil {
-		unhealthy = &contract.Unhealthy{Cause: safe.Scrub(u.Cause, r.secrets...), Detail: safe.Scrub(u.Detail, r.secrets...)}
+		unhealthy = &contract.Unhealthy{Cause: r.answeredCause(ref.Type, u.Cause), Detail: safe.Scrub(u.Detail, r.secrets...)}
 	}
 	var removing *contract.Removing
 	if m := obs.Removing; m != nil {
@@ -546,6 +551,15 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 		WaitingOnPerson: waiting,
 		Findings:        findings,
 	}, nil
+}
+
+// answeredCause leaves a cause whole when the type snapshot lists it under typ's failures, the one source naming it a cause word rather than a secret, and scrubs any other cause.
+func (r *declaredRun) answeredCause(typ, cause string) string {
+	t, _ := r.h.types.Lookup(typ)
+	if slices.ContainsFunc(t.Failures, func(f contract.SnapshotFailure) bool { return f.Cause == cause }) {
+		return cause
+	}
+	return safe.Scrub(cause, r.secrets...)
 }
 
 // fail answers as errorResponse classifies err, carrying every resource outcome recorded so far.
