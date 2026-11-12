@@ -587,7 +587,7 @@ report's body, such as the platform, reads it with
 | `report.ReleaseAgainst(app, subscription, asked)` | The same release command judged against the image the app's newest deploy asked for, described below |
 | `report.AppContainers(app)` | The containers the report lists under the app, each a `dockerhost.Container` that judges its own health, described below |
 | `report.AppHealth(app, subscription, causes)` | The health of the app's own containers as one answer, described below |
-| `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as each app's containers |
+| `report.Decode(&v)` | The report's whole body decoded into your own struct, for fields only your block reads, such as the host's volumes |
 
 `SyncedCommit` never reads the agent's log. The report carries only the log's
 last 20 lines, and a deploy's image pulls can fill them all. When the report
@@ -751,10 +751,14 @@ case release.AskedAbsent():
 
 ### Judging a container's health
 
-A part whose app runs in a container reads that container from the host's
-newest report, so the page never shows the part ready while its app is down.
-Every reader judges a container by one rule, `container.Read()`. The rule
-reads the state first and the health after it:
+A part is one piece of an app that a block's subscription creates, such as
+the app's container or its database, and the console lists each part on the
+app's page. The Docker host sends a node report each time one of its
+containers starts, stops or changes health, and the report lists each
+container's state and health. A block reads its part's container from the
+host's newest report, so the console never shows the part ready while its app
+is down. Every reader judges a container by one rule, `container.Read()`. The
+rule reads the state first and the health after it:
 
 | What the report shows | `Read()` answers |
 |---|---|
@@ -763,44 +767,49 @@ reads the state first and the health after it:
 | State `running`, health `healthy`, or no health check (`none` or no field) | `dockerhost.ContainerHealthy` |
 | State `running`, health `starting`, or a state such as `created` | `dockerhost.ContainerStarting`, neither healthy nor failed |
 
-`reading.Failed()` holds for the two failed answers.
+`reading.Failed()`, on the value `Read()` returns, holds for the two failed
+answers.
 
 `container.Unhealthy(causes)` turns a failed answer into the observation's
 `Unhealthy`, and answers nil otherwise. `causes` is a
 `dockerhost.ContainerCauses` naming the cause your catalogue type lists, word
 for word, for a container not running and for one reading unhealthy. The
 catalogue type is the platform's description of what your block creates, and
-your block's `type-snapshot.json` copies it. The platform refuses a cause it
-does not list. The detail names the container and what it reads, such as
-`shop-web reads restarting`, and quotes none of its output. One failure then
-reads the same at every restart. The platform applies the block again once for
-an unhealthy cause, a re-drive, and then waits naming the cause while that
-cause and its detail stay the same. The container's last lines stay in the
-part's logs.
+your block's `type-snapshot.json` copies it. The kit's test harness,
+`kittest`, which your block's tests run, fails on a cause the type does not
+list. The detail names the container and what it reads, such as
+`shop-web reads restarting`, and quotes none of its output. One failure then reads the
+same at every restart. The platform applies the block again once for an
+unhealthy cause, a re-drive, and then waits naming the cause while that cause
+and its detail stay the same. The container's last lines stay in the part's
+logs.
 
-`report.AppHealth(app, subscription, causes)` judges the containers the
-report lists under the app with that subscription. It answers the first
-failed one's `Unhealthy`. While none has failed and one still starts, it
-answers why instead, and your observer reads unknown. The platform then keeps
-the healthy or unhealthy verdict it last recorded for the part. A deploy whose new image is still starting therefore starts no
-re-drive, and a crash loop that alternates between restarting and starting
-keeps its one failure until a start runs healthy.
+`report.AppHealth(app, subscription, causes)` judges the containers the report
+lists under the app with that subscription. It answers the first failed one's
+`Unhealthy`. While none has failed and one still starts, it answers why
+instead, and your observer reads unknown. The platform then keeps the healthy
+or unhealthy verdict it last recorded for the part. A deploy whose new image
+is still starting therefore starts no re-drive, and a crash loop that
+alternates between restarting and starting keeps its one failure until a start
+runs healthy.
 
 A deploy recreates the container, and the report can catch the old one
 stopped. Compose first creates the replacement under a name that puts the
 first 12 characters of the old container's id before the old name, such as
-`ff02de420708_shop-web`, and then stops the old one. The host sends a report as
-soon as a container stops, so that report lists the old container `exited` or
-`dead` beside its replacement. `container.Replacement(listed)` finds that
-replacement, and `AppHealth` waits while it is listed, so a deploy reads no
-failure.
+`ff02de420708_shop-web`, and then stops the old one. The host sends a report
+as soon as a container stops, so that report lists the old container `exited`
+or `dead` beside its replacement. `container.Replacement(listed)`, given the
+app's containers from `report.AppContainers(app)`, finds that replacement, and
+`AppHealth` waits while it is listed, so a deploy reads no failure.
 
-Two cases still read as starting. A container whose start failed stays
+Two cases hide a failure from this rule. A container whose start failed stays
 `created` with no further event, so its part waits, though the deploy run that
 started it fails. A crash-looping container with no health check reads
 `running` and healthy in a report taken between restarts, since the report
-carries no restart count. So render a health check for every container your
-block runs. A block calls `AppHealth` this way:
+carries no restart count. So give every container your block runs a health
+check in the compose file it writes. A block calls `AppHealth` this way, where
+`app` is the app's name, `d` is the request's `contract.Desired` and `obs` is
+the observation the observer builds:
 
 ```go
 var causes = dockerhost.ContainerCauses{
@@ -1073,7 +1082,7 @@ An `Engine` names the rest:
 | `Entrypoint` | The container's entrypoint. It is given the variable names, as a `dockerhost.Names` map from each value to its variable. It writes a variable as `$NAME`, and the kit escapes each `$` for Compose |
 | `Command`, `Environment`, `Healthcheck` | The container's command, its fixed environment and its health check's test, as Compose takes them |
 | `Dump`, `Restore` | One command line each, given the variable names. The host splits `Dump` into words as a shell would, runs it in the container without a shell, and keeps what it writes to its output as the backup, so a line that reads a variable calls `sh -c` itself. A host that replaces a lost one runs `Restore` through `sh -c` in the new container, with the newest backup on its input |
-| `Trouble` | A regular expression. While the database waits on a container that starts, or that is down before the database ever read active, the newest output line it matches is quoted in the wait, and nil quotes none |
+| `Trouble` | A regular expression. While the database waits on a container that starts, or that is down before the database ever read active, the newest output line it matches is quoted in the status detail of that wait, and nil quotes none. A failure's detail quotes no output |
 
 #### Removing the database and reading it
 
