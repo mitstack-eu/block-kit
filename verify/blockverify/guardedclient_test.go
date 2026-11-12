@@ -3,7 +3,6 @@ package main
 // A capability operator that answers verify-connection reaches its vendor through the kit's guarded client, and keeps the entered credential out of every answer and log.
 
 import (
-	"os"
 	"testing"
 )
 
@@ -11,26 +10,18 @@ const capabilityOperatorDir = "testdata/capability-verify-connection"
 
 func capabilityOperator(opts ...option) dirFunc {
 	return fixture(func(t *testing.T) map[string]string {
-		return map[string]string{"go.mod": kitGoMod(t)}
+		return map[string]string{"go.mod": kitGoMod(t), "go.sum": kitGoSum(t)}
 	}, append([]option{withDir(capabilityOperatorDir)}, opts...)...)
 }
 
 func operatorSource(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile(capabilityOperatorDir + "/operator.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(raw)
+	return readFile(t, capabilityOperatorDir+"/operator.go")
 }
 
 func operatorTestSource(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile(capabilityOperatorDir + "/operator_test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(raw)
+	return readFile(t, capabilityOperatorDir+"/operator_test.go")
 }
 
 func editOperator(t *testing.T, pairs ...string) option {

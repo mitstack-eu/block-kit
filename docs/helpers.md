@@ -23,6 +23,8 @@ package has [a page of its own](gitops.md).
 | `helpers/redundancy` | Removes or replaces one member of a redundant set, such as a gateway or an etcd member |
 | `helpers/tools` | Copies a tool onto a machine or a runner while it runs, such as age onto a Docker host or k3s onto a node |
 | `helpers/signin` | Builds the sign-in companion, a program a Docker host runs to open an app only to its org's members, as [Opening an app only to its org's members](#opening-an-app-only-to-its-orgs-members) describes. A block reads only its constants, such as `signin.ContainerName` |
+| `helpers/age` | Encrypts or decrypts a file in the age v1 format with an X25519 key, so the public `age` tool opens what a block wrote |
+| `helpers/continuity` | Keeps state that must survive a replacement of its server, such as a volume or an OpenBao store, and serves the `snapshot` and `restore` operations |
 | `capabilities/aws/cloudid` | Creates its resources in the org's AWS account |
 | `capabilities/aws/apphostname` | Points an app's hostname in mitstack's apps zone at the app's host |
 | `capabilities/aws/adopt` | Retries a subscribe that may find its own AWS resources already made, judging each by the kit's subscription tag |
@@ -1168,6 +1170,187 @@ bytes under a digest, and `reg.RefuseTokens(status)` refuses the pull token as
 a private package does, so a test can prove what your block does when a copy
 fails.
 
+## The continuity hooks
+
+A block that keeps data declares it under `spec.continuity` and serves the
+`snapshot` and `restore` operations, as [The state a block keeps](manifest.md#the-state-a-block-keeps)
+and [Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
+explain. `helpers/continuity` holds the part every such block would write the
+same way. This section is for a block writer who keeps a volume or an OpenBao
+store. A hook is the code that takes one snapshot or restores it, and a
+handover is the string a snapshot publishes for the restore to read.
+
+A `continuity.Hook` joins three parts. A `State` knows how to read one kind of
+data out and back in, and the two ready-made ones below are the ones to use.
+`Links` hands out the presigned upload and download links, each an address
+that carries its own signature and so needs no storage key. `Keys` hands out
+the age keys: a public key the snapshot is encrypted to, and the restore key,
+the private half that decrypts it. The `Hook` itself does the rest. Your
+block's `Snapshot` and `Restore`, which
+[Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
+describes, build one from the request's `contract.Desired`, here `d`, and call
+it:
+
+```go
+func (b *block) hook(d contract.Desired) continuity.Hook {
+	return continuity.Hook{
+		Links: platformLinks{},                                    // a test supplies this for now, see below
+		Keys:  continuity.OwnSecretKeys{OwnSecrets: d.OwnSecrets}, // the unit's key, kept in the block's own secrets
+		State: continuity.Volume{Dir: "/var/lib/app"},
+	}
+}
+
+func (b *block) Snapshot(ctx context.Context, d contract.Desired, unit string) (string, error) {
+	return b.hook(d).Snapshot(ctx, unit)
+}
+
+func (b *block) Restore(ctx context.Context, d contract.Desired, unit, handover string) error {
+	return b.hook(d).Restore(ctx, unit, handover)
+}
+```
+
+`unit` is the name of the manifest's `spec.continuity` entry, such as
+`app-data`. `hook.Snapshot` returns the handover string, and `hook.Restore`
+takes the same string back, which the restore request carries. A block with
+several units picks the `State` by `unit`, since each unit keeps its own data.
+The hook runs in the block's own process, so that process must reach the data:
+the directory of a `Volume`, or the address of an OpenBao store.
+
+`Links` is the one interface a hook needs from outside the kit, and no block
+can supply it against the platform yet, as the paragraph after the interface
+explains. It hands the hook a presigned link for one upload and one for each
+download:
+
+```go
+type Links interface {
+	Upload(ctx context.Context, unit string) (Link, error)
+	Download(ctx context.Context, unit, ref string) (Link, error)
+}
+
+type Link struct {
+	URL string
+	Ref string
+}
+```
+
+`Upload` answers the link to upload to and, in `Ref`, the name of the object
+that link writes. The handover carries that `Ref`, and `Download` receives it
+back and answers a link to read the same object. `URL` is a complete address:
+the hook sends one `PUT` with the ciphertext to an upload link and one `GET`
+to a download link, and adds nothing to either. Have each `Upload` name a
+new object, so a snapshot never overwrites an earlier one.
+
+The links are a credential that the bucket's owner mints, which
+[Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential)
+describes from the side of the block that mints one. The kit has no helper
+yet by which a block asks the platform for such a link. Until it has, a block has
+no `Links` to use against the platform, and the hooks run only with a `Links`
+a test supplies, as the kit's own tests do.
+
+`hook.Snapshot` runs these steps in order, and fails at the first that does not
+hold:
+
+1. It reads the unit's data out of the `State` and encrypts it with age, using
+   only the public key, into a temporary file that holds ciphertext alone. It
+   refuses a `State` that exports nothing, before anything is uploaded.
+2. It asks `Links` for the upload link only now, so a long export cannot
+   outlive the link, and uploads the file with a `Content-Length`, since a
+   presigned upload refuses a chunked body.
+3. It downloads the stored object through a download link, decrypts it with
+   the restore key and gives it to `State.Verify`, which restores it into a
+   scratch copy, checks the copy and discards it.
+4. Only after the check passes does it return the handover, a JSON string
+   holding the object's reference, the ciphertext's SHA-256 and size, and the
+   time of the snapshot.
+
+`hook.Restore` parses the handover, downloads the object, refuses one whose
+digest or size differs, decrypts it and gives the bytes to `State.Import`. A
+hook holds no storage key, so the bucket's credentials never reach it. The
+links come from the `Links` you pass, and an error from the hook never carries
+a link or its query string, since the signature in a link is a credential. No
+plain text of the data goes to the bucket: the upload sees ciphertext, and the
+restore key stays outside the bucket. The scratch check does handle plain
+data, in a scratch directory for a `Volume` and in the `Scratch` store for
+OpenBao.
+
+| State | What it keeps | How `Verify` checks it |
+|---|---|---|
+| `continuity.Volume{Dir}` | The directories and regular files under a directory, each with its mode and owner, as a tar archive that ends with each file's path and SHA-256 | Extracts the archive into a scratch directory, refusing a path that leaves it, rehashes every file, and gives each entry its mode and owner back |
+| `continuity.OpenBao{Live, Scratch, Restart, Discard}` | An OpenBao store, through its raft snapshot routes | Force-restores the snapshot into the `Scratch` instance, requires its health route to read initialised, and calls `Discard` |
+
+`Volume` refuses a `Dir` that is not a directory itself, such as a link to the
+volume, since a walk of a link visits nothing. A restore gives each entry its
+recorded owner back, which needs a process allowed to do so, such as one that
+runs as root. A process that is not allowed fails the scratch check, so the
+snapshot publishes no handover it could not restore. Two limits are yours to
+handle. The snapshot records the entries under `Dir` and not `Dir` itself, so
+a restore creates a missing `Dir` with mode 0755 and the restoring process as
+its owner. Create `Dir` with the mode and owner it needs before your `Restore`
+calls the hook. `Volume` also copies the files one by one while nothing stops
+other writers, so your `Snapshot` stops what writes to the directory before it
+calls the hook.
+
+`Live` and `Scratch` are each a `continuity.Endpoint{Addr, Token, Client}`:
+the address of an OpenBao server, a token allowed to read and restore its
+snapshot, and an optional HTTP client. `Live` is the store the block keeps,
+which on a restore is the store of the new server. `Scratch` is a second
+OpenBao server your block provides only for the check. `Restart` and `Discard`
+are each a `func(ctx context.Context) error` you supply. `Restart` restarts
+every member of `Live` and returns once they are back, since nothing checks
+the store after it. `Discard` removes what the check put into `Scratch`, such
+as by deleting that server. With no `Client`, an endpoint follows no redirect,
+so the token reaches no other host.
+
+```go
+State: continuity.OpenBao{
+	Live:    continuity.Endpoint{Addr: liveAddr, Token: liveToken},
+	Scratch: continuity.Endpoint{Addr: scratchAddr, Token: scratchToken},
+	Restart: b.restartStore,   // yours
+	Discard: b.deleteScratch,  // yours
+},
+```
+
+`OpenBao.Verify` calls `Discard` whatever the check found, and refuses to
+restore into a `Scratch` that has none, because the scratch copy holds every
+secret of the live store. The check itself proves two things: the scratch
+instance accepted the snapshot, and it still reports itself initialised. It
+does not prove that the restored data unseals, which is OpenBao's step of
+decrypting its storage with its seal key. `OpenBao.Import` calls `Restart`
+after the force restore, since
+[ADR 0125](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0125-a-confirmed-upgrade-replaces-a-stateful-server-through-a-recorded-handover-with-keys-from-a-per-subscription-escrow-and-two-drills-that-keep-it-working.md)
+has a restored store unseal once every member restarts.
+
+`continuity.OwnSecretKeys` keeps each unit's key in the block's own secrets,
+which [What the answer carries](handler.md#what-the-answer-carries) describes,
+so the restore key never sits in the bucket. `continuity.MintKeys` returns an
+age identity for each unit that holds none yet, under the name
+`continuity.KeyName(unit)`, and never replaces a held one. A block returns
+them from its `EnsureResourcesOwning`, which runs on a subscribe and on an
+upgrade, so the key exists before the first snapshot reads it. `MintKeys`
+returns only the keys it minted, which is what the answer needs. The unit
+named here is the one `Snapshot` and `Restore` are called with. A subscription
+that has run neither a subscribe nor an upgrade since the block gained the
+hooks holds no key, and a snapshot of it fails naming the own secret that is
+missing. A replacement takes its snapshot before its own upgrade, so such a
+subscription needs an ordinary upgrade first, which mints the key:
+
+```go
+func (b *block) EnsureResourcesOwning(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, map[string]string, error) {
+	keys, err := continuity.MintKeys(d.OwnSecrets, "app-data")
+	if err != nil {
+		return nil, nil, err
+	}
+	created, err := b.ensure(ctx, d) // your own ensure
+	return created, keys, err
+}
+```
+
+`helpers/age` is the encryption underneath. It writes and reads the age v1
+format with an X25519 recipient, so the public `age` tool opens a snapshot with
+the restore key. It seals with the ChaCha20-Poly1305 of `golang.org/x/crypto`,
+the one module the kit requires beyond the standard library, and a test reads
+files made by the reference age implementation.
+
 ## Removing a member of a redundant set
 
 This section is for the author of a block whose step removes or replaces one
@@ -1749,8 +1932,7 @@ supplies, creates it on the vSwitch. Whether the hand-off succeeds or fails,
 the install deletes the short-lived server and the rescue key, restores the
 firewall and resets the server into its disk.
 
-The kit's module holds no SSH client, since it takes no dependency beyond the
-standard library. `Installer.Dial` opens the session, and the module
+The kit's module holds no SSH client. `Installer.Dial` opens the session, and the module
 `github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/rescuessh`
 provides one: `rescuessh.Config{Script: script}.Dial` accepts only a host key
 Robot named, and any key when Robot named none, and it runs nothing but the

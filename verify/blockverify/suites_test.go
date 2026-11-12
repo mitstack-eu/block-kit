@@ -222,11 +222,7 @@ func resourcesBlock(manifestSource, misbehave, container string) dirFunc {
 }
 
 func withTypeSnapshot(t *testing.T, files map[string]string) {
-	raw, err := os.ReadFile(filepath.Join(kitModuleDir(t), "contract", "testdata", "type-snapshot.json"))
-	if err != nil {
-		t.Fatalf("reading the platform's type snapshot fixture: %v", err)
-	}
-	files["type-snapshot.json"] = string(raw)
+	files["type-snapshot.json"] = readFile(t, filepath.Join(kitModuleDir(t), "contract", "testdata", "type-snapshot.json"))
 }
 
 func kitObservedBlock(ownObserver string) dirFunc {
@@ -309,7 +305,7 @@ func TestReplacementSuite(t *testing.T) {
 			dir: moduleBlock(stateful, withSource("block_test.go", "replacement-block_test.go"), withTypeSnapshot,
 				with("replacement_test.go", "package main\n\nimport \"testing\"\n\nfunc TestReplacementDrill(t *testing.T) {\n\tt.Skip(\"not yet\")\n\tassertReplacement(t, \"keeps\")\n}\n")),
 			status: "fail", detail: []string{"TestReplacementDrill", "ran no stage"}},
-		{name: "a block that keeps every datum and reads healthy passes, naming the drill and its unit", dir: replacementBlock("keeps"),
+		{name: "a block built on the shared hooks passes, naming the drill and its unit", dir: replacementBlock("hooks"),
 			status: "pass", detail: []string{"TestReplacementDrill", `"app-data"`}},
 		{name: "a block that drills one of its two units handed over by snapshot fails, naming the other",
 			dir: replacementBlock("keeps", with(manifestFile, replaced(t, source(t, "replacement-manifest.yaml"), "  lifecycle:\n",

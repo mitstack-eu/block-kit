@@ -373,11 +373,7 @@ func TestNeedsCredentialRefreshChangesNoSuiteStatus(t *testing.T) {
 
 func readFixtureManifest(t *testing.T, dir string) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", dir, manifestFile))
-	if err != nil {
-		t.Fatalf("reading the fixture: %v", err)
-	}
-	return string(raw)
+	return readFile(t, filepath.Join("testdata", dir, manifestFile))
 }
 
 func awsAppInfraGolden(t *testing.T) string {
