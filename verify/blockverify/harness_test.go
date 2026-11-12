@@ -30,38 +30,21 @@ func kitModuleDir(t *testing.T) string {
 	return dir
 }
 
-// kitGoMod requires the kit on this checkout and, as go mod tidy leaves a block, what the kit's own go.mod requires at the kit's Go version.
+// kitGoMod carries the kit's own go.mod lines after its module line, so a fixture requires what the kit requires at the kit's Go version.
 func kitGoMod(t *testing.T) string {
 	t.Helper()
-	goLine, requires := "", []string{"github.com/mitstack-eu/block-kit v0.4.0"}
-	for _, line := range strings.Split(kitModuleFile(t, "go.mod"), "\n") {
-		line, _, _ = strings.Cut(line, "//")
-		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require "))
-		switch {
-		case len(fields) == 2 && fields[0] == "go":
-			goLine = line
-		case len(fields) == 2 && strings.Contains(fields[0], "/"):
-			requires = append(requires, fields[0]+" "+fields[1]+" // indirect")
-		}
-	}
-	if goLine == "" {
-		t.Fatal("the kit's go.mod has no go line")
-	}
-	return "module fixture\n\n" + goLine + "\n\nrequire (\n\t" + strings.Join(requires, "\n\t") + "\n)\n\n" +
-		"replace github.com/mitstack-eu/block-kit => " + kitModuleDir(t) + "\n"
+	_, kit, _ := strings.Cut(readFile(t, filepath.Join(kitModuleDir(t), "go.mod")), "\nmodule github.com/mitstack-eu/block-kit\n")
+	return "module fixture\n" + kit + "\nrequire github.com/mitstack-eu/block-kit v0.4.0\n\nreplace github.com/mitstack-eu/block-kit => " + kitModuleDir(t) + "\n"
 }
 
-// kitGoSum is the kit's own go.sum, which holds the sum of every module a kit package imports.
-func kitGoSum(t *testing.T) string {
-	t.Helper()
-	return kitModuleFile(t, "go.sum")
-}
+// kitGoSum holds the sum of every module a kit package imports.
+func kitGoSum(t *testing.T) string { return readFile(t, filepath.Join(kitModuleDir(t), "go.sum")) }
 
-func kitModuleFile(t *testing.T, name string) string {
+func readFile(t *testing.T, path string) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(kitModuleDir(t), name))
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("reading the kit's %s: %v", name, err)
+		t.Fatalf("reading %s: %v", path, err)
 	}
 	return string(raw)
 }

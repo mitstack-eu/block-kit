@@ -18,7 +18,6 @@ import (
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
-	"github.com/mitstack-eu/block-kit/helpers/age"
 	"github.com/mitstack-eu/block-kit/helpers/continuity"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
@@ -268,13 +267,6 @@ func (s *objectStore) Download(_ context.Context, _, ref string) (continuity.Lin
 	return continuity.Link{URL: s.srv.URL + "/" + ref}, nil
 }
 
-type ageKeys struct{ id *age.Identity }
-
-func (k ageKeys) Recipient(context.Context, string) (string, error) {
-	return k.id.Recipient().String(), nil
-}
-func (k ageKeys) Identity(context.Context, string) (string, error) { return k.id.String(), nil }
-
 // dirState is the drill's view of a volume directory.
 type dirState struct{ dir string }
 
@@ -315,11 +307,11 @@ func TestCheckReplacement_PassesABlockBuiltOnTheSharedHooks(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	id, err := age.GenerateIdentity()
+	own, err := continuity.MintKeys(nil, "app-data")
 	if err != nil {
 		t.Fatal(err)
 	}
-	hook := continuity.Hook{Links: newObjectStore(t), Keys: ageKeys{id}, State: continuity.Volume{Dir: dir}}
+	hook := continuity.Hook{Links: newObjectStore(t), Keys: continuity.OwnSecretKeys{OwnSecrets: own}, State: continuity.Volume{Dir: dir}}
 	_, in := newStateBlock(t, nil, func(*atomic.Bool) carrier { return hook }, false)
 	in.Data = dirState{dir}
 
