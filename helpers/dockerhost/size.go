@@ -82,9 +82,9 @@ func Capacity(report Report, found bool, part string) (Reservation, error) {
 	case report.absence != nil:
 		return Reservation{}, handler.Refuse(classHostAbsent, "the platform's %s read the host's %s absent, so %s cannot be placed on it; give the app a running host",
 			report.absence.Observer, report.absence.Resource, part)
-	case found && report.Allocatable == nil && report.capacityError != "":
+	case found && report.CapacityError() != "":
 		return Reservation{}, handler.WaitForSignal("the host's newest node report gives no allocatable capacity but the error %q, so %s waits for a report that gives it before it is sized",
-			report.capacityError, part)
+			report.CapacityError(), part)
 	case !found || report.Allocatable == nil:
 		return Reservation{}, handler.WaitForSignal("the host has sent no node report giving its allocatable capacity yet, so %s waits for that capacity report before it is sized", part)
 	}
