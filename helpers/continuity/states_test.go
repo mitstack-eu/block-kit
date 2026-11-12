@@ -38,12 +38,11 @@ func archive(t *testing.T, digests map[string]string, entries ...entry) []byte {
 	tw := tar.NewWriter(&buf)
 	type file struct {
 		Path   string `json:"path"`
-		Mode   int    `json:"mode"`
 		SHA256 string `json:"sha256"`
 	}
 	var files []file
 	for _, e := range entries {
-		hdr := &tar.Header{Name: e.name, Typeflag: e.typeflag, Mode: 0o644, Size: int64(len(e.body))}
+		hdr := &tar.Header{Name: e.name, Typeflag: e.typeflag, Mode: 0o644, Size: int64(len(e.body)), Uid: os.Getuid(), Gid: os.Getgid()}
 		if e.typeflag == tar.TypeSymlink {
 			hdr.Linkname, hdr.Size = "/etc/passwd", 0
 		}
@@ -56,7 +55,7 @@ func archive(t *testing.T, digests map[string]string, entries ...entry) []byte {
 			if !ok {
 				sum = digest(e.body)
 			}
-			files = append(files, file{e.name, 0o644, sum})
+			files = append(files, file{e.name, sum})
 		}
 	}
 	manifest, _ := json.Marshal(map[string]any{"files": files})
