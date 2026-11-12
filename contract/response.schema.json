@@ -49,7 +49,7 @@
       "items": { "type": "string" }
     },
     "plannedReplacements": {
-      "description": "On a validate, true when the block planned its replacements, so an empty or absent replaces means its upgrade replaces nothing. The kit's handler sets it for every block whose resource implements ReplacementPlanner. Omitted or false means nobody planned the replacements, which a block on a kit release older than this field also answers.",
+      "description": "On a validate, true when the block planned its replacements, so an empty or absent replaces means its upgrade replaces nothing. Omitted or false means the replacements were not planned, as in an answer from a block with no planner, from a block on a kit release older than this field, or to a validate naming one resource.",
       "type": "boolean"
     },
     "outputs": {
