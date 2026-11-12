@@ -3,6 +3,7 @@ package contract_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"slices"
@@ -510,6 +511,92 @@ spec:
       reads:
         - region
 `
+
+func continuityOf(t *testing.T, entries string) []byte {
+	t.Helper()
+	return edit(t, betaManifest, "  version: 1.0.0\n", "  version: 1.0.0\n  continuity:\n"+entries)
+}
+
+func TestParseManifest_V1BetaReadsEachPieceOfStateUnderContinuity(t *testing.T) {
+	cases := []struct {
+		label string
+		raw   []byte
+		want  []contract.ManifestContinuity
+	}{
+		{"a state with a name, a kind, stateful and a snapshot handover",
+			continuityOf(t, "    - name: app-data\n      kind: postgres\n      stateful: true\n      handover: snapshot\n"),
+			[]contract.ManifestContinuity{{Name: "app-data", Kind: "postgres", Stateful: true, Handover: contract.HandoverSnapshot}}},
+		{"a state whose handover is stated as none",
+			continuityOf(t, "    - name: gateway\n      kind: server\n      stateful: false\n      handover: none\n"),
+			[]contract.ManifestContinuity{{Name: "gateway", Kind: "server", Stateful: false, Handover: contract.HandoverNone}}},
+		{"a state the user would miss whose handover is none, which the parser accepts",
+			continuityOf(t, "    - name: uploads\n      kind: volume\n      stateful: true\n      handover: none\n"),
+			[]contract.ManifestContinuity{{Name: "uploads", Kind: "volume", Stateful: true, Handover: contract.HandoverNone}}},
+		{"two states read in the order written",
+			continuityOf(t, "    - name: vault\n      kind: openbao\n      stateful: true\n      handover: snapshot\n"+
+				"    - name: cache\n      kind: volume\n      stateful: false\n      handover: none\n"),
+			[]contract.ManifestContinuity{
+				{Name: "vault", Kind: "openbao", Stateful: true, Handover: contract.HandoverSnapshot},
+				{Name: "cache", Kind: "volume", Stateful: false, Handover: contract.HandoverNone}}},
+		{"an empty list, which declares that the block keeps no state", edit(t, betaManifest, "  version: 1.0.0\n", "  version: 1.0.0\n  continuity: []\n"), nil},
+		{"a manifest without the section", []byte(betaManifest), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			b := parseBeta(t, tc.raw)
+
+			wantField(t, "spec.continuity", len(b.Spec.Continuity), len(tc.want))
+			for i, w := range tc.want {
+				wantField(t, fmt.Sprintf("spec.continuity[%d]", i), b.Spec.Continuity[i], w)
+			}
+		})
+	}
+}
+
+func TestParseManifest_V1BetaRefusesAStateEntryNamingWhatIsWrong(t *testing.T) {
+	entry := func(lines ...string) []byte { return continuityOf(t, "    - "+strings.Join(lines, "\n      ")+"\n") }
+	cases := []struct {
+		label string
+		raw   []byte
+		wants []string
+	}{
+		{"an entry that leaves out its handover", entry("name: app-data", "kind: postgres", "stateful: true"),
+			[]string{"spec.continuity[0].handover", "required"}},
+		{"an entry that leaves out its name", entry("kind: postgres", "stateful: true", "handover: snapshot"),
+			[]string{"spec.continuity[0].name", "required"}},
+		{"an entry that leaves out its kind", entry("name: app-data", "stateful: true", "handover: snapshot"),
+			[]string{"spec.continuity[0].kind", "required"}},
+		{"an entry that leaves out stateful", entry("name: app-data", "kind: postgres", "handover: snapshot"),
+			[]string{"spec.continuity[0].stateful", "required"}},
+		{"an entry with an empty handover", entry("name: app-data", "kind: postgres", "stateful: true", `handover: ""`),
+			[]string{"spec.continuity[0].handover", "must not be empty"}},
+		{"an entry with a handover the kit does not know", entry("name: app-data", "kind: postgres", "stateful: true", "handover: detach"),
+			[]string{"spec.continuity[0].handover", `"detach"`, "none", "snapshot"}},
+		{"an entry with a stateful that is not a boolean", entry("name: app-data", "kind: postgres", `stateful: "yes"`, "handover: none"),
+			[]string{"spec.continuity[0].stateful"}},
+		{"an entry with a field no entry has", entry("name: app-data", "kind: postgres", "stateful: true", "handover: none", "handoverOutput: dataSnapshotId"),
+			[]string{"spec.continuity[0].handoverOutput", "is not a field"}},
+		{"an entry whose name holds a space", entry(`name: "app data"`, "kind: postgres", "stateful: true", "handover: snapshot"),
+			[]string{"spec.continuity[0].name", `"app data"`, "lowercase kebab case"}},
+		{"an entry whose name holds a capital", entry("name: App-Data", "kind: postgres", "stateful: true", "handover: snapshot"),
+			[]string{"spec.continuity[0].name", `"App-Data"`, "lowercase kebab case"}},
+		{"an entry whose name holds a dot", entry("name: app-data.v2", "kind: postgres", "stateful: true", "handover: none"),
+			[]string{"spec.continuity[0].name", `"app-data.v2"`, "lowercase kebab case"}},
+		{"an entry whose name ends in a hyphen", entry("name: app-data-", "kind: postgres", "stateful: true", "handover: none"),
+			[]string{"spec.continuity[0].name", `"app-data-"`, "lowercase kebab case"}},
+		{"a second entry that repeats a name",
+			continuityOf(t, "    - name: app-data\n      kind: postgres\n      stateful: true\n      handover: snapshot\n"+
+				"    - name: app-data\n      kind: volume\n      stateful: true\n      handover: none\n"),
+			[]string{"spec.continuity[1].name", `"app-data"`, "spec.continuity[0]"}},
+		{"a section that is not a list", edit(t, betaManifest, "  version: 1.0.0\n", "  version: 1.0.0\n  continuity: postgres\n"),
+			[]string{"spec.continuity", "list"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			requireRefusedNaming(t, tc.raw, tc.wants...)
+		})
+	}
+}
 
 func TestParseManifest_RefusesAManifestInTheOldVersion(t *testing.T) {
 	for label, raw := range map[string]string{

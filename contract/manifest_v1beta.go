@@ -64,7 +64,28 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 			return nil, fmt.Errorf("spec.provides[%d]: %q is marked many, and an entry marked many is never provided, since a binding names one resource", i, p)
 		}
 	}
+	if err := checkContinuity(b.Spec.Continuity); err != nil {
+		return nil, err
+	}
 	return b, nil
+}
+
+// checkContinuity refuses a handover the kit does not carry, and a name used twice or outside kebab case, since a snapshot names its unit and its output key by it.
+func checkContinuity(units []ManifestContinuity) error {
+	seen := make(map[string]int, len(units))
+	for i, u := range units {
+		if !isKebab(u.Name) {
+			return fmt.Errorf("spec.continuity[%d].name: %q is not a state name in lowercase kebab case", i, u.Name)
+		}
+		if !slices.Contains(Handovers, u.Handover) {
+			return fmt.Errorf("spec.continuity[%d].handover: %q is not one of %s", i, u.Handover, strings.Join(Handovers, ", "))
+		}
+		if j, ok := seen[u.Name]; ok {
+			return fmt.Errorf("spec.continuity[%d].name: %q names spec.continuity[%d] too, and a state's name appears once in a block", i, u.Name, j)
+		}
+		seen[u.Name] = i
+	}
+	return nil
 }
 
 type manifestEntry struct {

@@ -66,9 +66,10 @@ without it, naming the key's path.
 | `spec.resources` | Yes | The resources the block creates, by exact type |
 | `spec.provides` | No | The names of the resources the block offers the rest of the app |
 | `spec.receivesAppSecrets` | No | `true` sends the block every secret the app holds, under `Desired.AppSecrets`, for a block that hands them to the app's own runtime |
+| `spec.continuity` | No | The state the block keeps, each entry with a `name`, a `kind`, a `stateful` flag and a `handover`, as [The state a block keeps](#the-state-a-block-keeps) explains |
 | `spec.observability` | No | Refused by the platform, which takes the metric series of each resource from its type |
 | `spec.lifecycle.endpoint` | Yes | The HTTPS address of the operator's `/hook` route |
-| `spec.lifecycle.operations` | Yes | The lifecycle calls the operator answers, usually all four, plus `logs` for a block that serves each subscription's own lines, as [Serving a subscription's logs](handler.md#serving-a-subscriptions-logs) explains, and `lease`, an operation the platform sends only to a block that lists it, for a block that mints a short-lived credential of a resource it provides, as [Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential) explains, and `run`, sent only to a block that lists it, for a block that runs a builder's one-off command in the app's container, as [Running a one-off command](handler.md#running-a-one-off-command) explains |
+| `spec.lifecycle.operations` | Yes | The lifecycle calls the operator answers, usually all four, plus `logs` for a block that serves each subscription's own lines, as [Serving a subscription's logs](handler.md#serving-a-subscriptions-logs) explains, and `lease`, an operation the platform sends only to a block that lists it, for a block that mints a short-lived credential of a resource it provides, as [Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential) explains, and `run`, sent only to a block that lists it, for a block that runs a builder's one-off command in the app's container, as [Running a one-off command](handler.md#running-a-one-off-command) explains, and `snapshot` with `restore`, the two operations of a block that keeps state it hands over by snapshot, as [Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state) explains |
 | `spec.lifecycle.contract` | Yes | `kit/v1`, the lifecycle contract this kit serves and blockverify judges |
 | `spec.lifecycle.needsCredentialRefresh` | No | `true` asks the platform for a periodic `validate`, as [The lifecycle keys](#the-lifecycle-keys) explains |
 | `spec.lifecycle.settleBudget` | No | How long the platform waits for the block's resources to settle (reach the state a call asked for) |
@@ -83,7 +84,7 @@ to 240. It refuses a `spec.version` that is not strict semver, such as
 `v1.2.0`, a `spec.releaseClass` outside the three above, and a
 `correctness-fix` with no `spec.releaseNote`. It refuses an endpoint that is
 not HTTPS, an operation outside `subscribe`, `unsubscribe`, `upgrade`,
-`validate`, `rotate`, `logs`, `verify-connection`, `lease` and `run`, an operation listed twice, `subscribe` without
+`validate`, `rotate`, `logs`, `verify-connection`, `lease`, `run`, `snapshot` and `restore`, an operation listed twice, `subscribe` without
 `unsubscribe`, any `spec.observability`, and a type the platform does not
 serve. blockverify judges the types against the block's `type-snapshot.json`,
 and compares that copy with the snapshot the platform serves, as
@@ -207,6 +208,54 @@ a `validate` and an `unsubscribe` carry the same secrets as a `subscribe`. The
 parser refuses a
 verb other than `validate` or `unsubscribe`, and a value that is not a list of
 names.
+
+## The state a block keeps
+
+A block that keeps data declares it under `spec.continuity`, so that a
+replacement of its server can carry the data across. This section is for a
+block writer whose block keeps a database, a secrets store or a volume. A
+replacement is an upgrade the user confirms in which the block creates a
+resource that holds data again, such as its server, on the same subscription.
+A unit is one entry under `spec.continuity`. A snapshot copies a unit's data
+out before the old server goes, a restore puts it onto the new one, and a
+handover is the output a snapshot publishes for the restore to read. A block
+that keeps no state leaves the key out, and its manifest parses as it always
+did. An empty list, `continuity: []`, parses the same way as no key.
+
+```yaml
+spec:
+  continuity:
+    - name: app-data
+      kind: postgres
+      stateful: true
+      handover: snapshot
+    - name: gateway
+      kind: server
+      stateful: false
+      handover: none
+  lifecycle:
+    operations: [subscribe, unsubscribe, upgrade, validate, snapshot, restore]
+    # the other lifecycle keys are left out here
+```
+
+Each entry holds four keys, and the parser refuses an entry that leaves one
+out, naming its path, as in `spec.continuity[0].handover is required`.
+
+| Key | What it says |
+|---|---|
+| `name` | The unit a snapshot and a restore name, unique in the block and in lowercase kebab case, such as `app-data` |
+| `kind` | A free label for what the state is, such as `postgres`, `openbao` or `volume`. The parser requires it and holds it to no list |
+| `stateful` | `true` when the user would miss the contents, `false` for state that can be rebuilt. The kit requires the key and gives it no effect of its own, so the parser accepts `stateful: true` with `handover: none`, which declares data that nothing carries across a replacement |
+| `handover` | `snapshot` when the snapshot and restore operations carry the state across, or `none` when nothing does. The key is required either way, so a block says which it is |
+
+The parser also refuses a `handover` other than `none` and `snapshot`, a
+`name` used twice, and a `name` that is not lowercase letters and digits in
+groups joined by single hyphens. `contract.CheckManifest` refuses an entry whose handover is
+`snapshot` while the operations leave out `snapshot` or `restore`, and refuses
+either operation when no entry hands over by snapshot. A block answers the two
+operations through `handler.Snapshotter`, as
+[Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
+explains.
 
 ## The sections of a capability manifest
 

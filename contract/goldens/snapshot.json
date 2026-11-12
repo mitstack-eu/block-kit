@@ -1,0 +1,17 @@
+{
+  "operation": "snapshot",
+  "subscriptionId": "sub_a1b2c3d4e5",
+  "idempotencyKey": "sub_a1b2c3d4e5:snapshot:k1f2a3b4",
+  "blockId": "blk_hcloud_k3s_cluster",
+  "blockVersion": "1.0.0",
+  "orgId": "org_acme",
+  "appId": "app_webapp01",
+  "params": {
+    "appName": "myapp"
+  },
+  "obo": "eyJvcmdfaWQiOiJvcmdfYWNtZSJ9.c2lnbmF0dXJlLXBsYWNlaG9sZGVy",
+  "createdAt": "2026-07-15T21:15:06Z",
+  "nonce": "n0nce-snapshot-0005",
+  "unit": "app-data",
+  "replacing": true
+}

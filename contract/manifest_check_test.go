@@ -43,6 +43,49 @@ func TestCheckManifest_GivesEachRowOfTheSharedTableItsVerdict(t *testing.T) {
 	}
 }
 
+func TestCheckManifest_HoldsSnapshotAndRestoreToTheStateTheManifestDeclares(t *testing.T) {
+	var accepted contract.ManifestVerdict
+	for _, row := range verdictRows(t) {
+		if row.Name == "accepted.yaml" {
+			accepted = row
+		}
+	}
+	if accepted.Manifest == nil {
+		t.Fatal("the verdict table has no accepted.yaml row")
+	}
+	const ops = "operations: [subscribe, unsubscribe, upgrade, validate]"
+	const unit = "  continuity:\n    - name: app-data\n      kind: postgres\n      stateful: true\n      handover: snapshot\n"
+	manifest := func(operations string, withState bool) []byte {
+		raw := strings.Replace(string(accepted.Manifest), ops, "operations: ["+operations+"]", 1)
+		if withState {
+			raw = strings.Replace(raw, "  lifecycle:\n", unit+"  lifecycle:\n", 1)
+		}
+		return []byte(raw)
+	}
+	cases := []struct {
+		label      string
+		operations string
+		unit       bool
+		want       string
+	}{
+		{"a snapshot handover with both operations listed", "subscribe, unsubscribe, snapshot, restore", true, ""},
+		{"a snapshot handover with restore unlisted", "subscribe, unsubscribe, snapshot", true, "to list restore"},
+		{"a snapshot handover with snapshot unlisted", "subscribe, unsubscribe, restore", true, "to list snapshot"},
+		{"snapshot and restore listed with no state declared", "subscribe, unsubscribe, snapshot, restore", false, "spec.continuity"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			row := contract.ManifestVerdict{Name: tc.label, Manifest: manifest(tc.operations, tc.unit)}
+
+			got := checkRow(t, row, contract.CheckOptions{})
+
+			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+				t.Errorf("CheckManifest(%s) refused %q; want a refusal naming %q (empty for accepted)", tc.label, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCheckManifest_AcceptsAnHTTPEndpointOnlyWhenAllowed(t *testing.T) {
 	var insecure contract.ManifestVerdict
 	for _, row := range verdictRows(t) {

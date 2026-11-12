@@ -128,6 +128,7 @@ type ManifestSpec struct {
 	// Provides names entries of Resources.
 	Provides           []string               `json:"provides,omitempty"`
 	Lifecycle          ManifestLifecycle      `json:"lifecycle"`
+	Continuity         []ManifestContinuity   `json:"continuity,omitempty"`
 	Observability      *ManifestObservability `json:"observability,omitempty"`
 	ReceivesAppSecrets bool                   `json:"receivesAppSecrets,omitempty"`
 
@@ -137,6 +138,21 @@ type ManifestSpec struct {
 	Kinds        []string              `json:"kinds,omitempty"`
 	Reach        *ManifestReach        `json:"reach,omitempty"`
 	Docs         *ManifestDocs         `json:"docs,omitempty"`
+}
+
+const (
+	HandoverNone     = "none"
+	HandoverSnapshot = "snapshot"
+)
+
+var Handovers = []string{HandoverNone, HandoverSnapshot}
+
+// ManifestContinuity is one piece of state a block keeps, whose Handover is none when nothing carries it across a replacement and snapshot when the snapshot and restore operations do.
+type ManifestContinuity struct {
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Stateful bool   `json:"stateful"`
+	Handover string `json:"handover"`
 }
 
 type ManifestRequirement struct {

@@ -33,10 +33,10 @@ func GenerateManifestSchema() ([]byte, error) {
 	doc["$id"] = manifestSchemaID
 	doc["title"] = "mitstack block manifest " + ManifestAPIVersion
 	doc["description"] = "A block manifest under " + ManifestAPIVersion + ": its requirements by exact type, " +
-		"the resources it creates by exact type, the resources it provides, its lifecycle and its observability. " +
+		"the resources it creates by exact type, the resources it provides, the state it keeps, its lifecycle and its observability. " +
 		"Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice " +
 		"or holding a slash, a requirement reference used twice, an entry listing several types without a name, " +
-		"and a provides entry that names no resource or one marked many."
+		"a provides entry that names no resource or one marked many, a state name used twice or outside lowercase kebab case, and a handover other than none or snapshot."
 	doc["$defs"] = map[string]any{
 		"typeId": map[string]any{
 			"description": "A resource type id: a community type <capability>.<name>, or an org's private type @<org>/<capability>.<name>, in lowercase kebab case.",

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// OutputKey must match every spec.continuity handoverOutput, and ParamKey matches it so the platform projects one onto the other with no mapping.
+// OutputKey names the output that carries the snapshot's id, and ParamKey matches it so the platform projects one onto the other with no mapping.
 const (
 	OutputKey = "dataSnapshotId"
 	ParamKey  = "dataSnapshotId"
