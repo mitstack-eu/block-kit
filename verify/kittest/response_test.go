@@ -17,6 +17,8 @@ var invalidGoldenField = map[string]string{
 	"invalid-secret-outputs-not-strings": "secretOutputs",
 	"invalid-own-secrets-not-strings":    "ownSecrets",
 
+	"invalid-planned-replacements-not-bool": "plannedReplacements",
+
 	"invalid-resource-secret-outputs-not-object":       "resourceSecretOutputs",
 	"invalid-resource-secret-outputs-entry-not-object": "resourceSecretOutputs",
 	"invalid-resource-secret-outputs-value-not-string": "resourceSecretOutputs",

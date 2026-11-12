@@ -680,6 +680,43 @@ func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBl
 	}
 }
 
+func TestBlockLevel_ValidateSaysWhetherTheBlockPlannedItsReplacements(t *testing.T) {
+	cases := []struct {
+		label        string
+		block        func(cloud *fakeCloud) handler.Resource
+		wantPlanned  bool
+		wantReplaces []string
+	}{
+		{"a block whose resource implements ReplacementPlanner and plans a replacement answers planned beside the replacement",
+			func(cloud *fakeCloud) handler.Resource {
+				return planningBlock{blockResource: &blockResource{cloud: cloud}, replaces: []string{"b"}}
+			}, true, []string{"b"}},
+		{"a block whose resource implements ReplacementPlanner and plans none answers planned with nothing replaced",
+			func(cloud *fakeCloud) handler.Resource {
+				return planningBlock{blockResource: &blockResource{cloud: cloud}}
+			},
+			true, nil},
+		{"a block whose resource does not implement ReplacementPlanner answers not planned",
+			func(cloud *fakeCloud) handler.Resource { return &blockResource{cloud: cloud} },
+			false, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			cloud := standingCloud()
+
+			status, resp := serveBlock(t, blockCall{r: tc.block(cloud), obs: asObservers(blockObservers(cloud)), op: "validate", fields: recordedAll()})
+
+			wantOK(t, status, resp)
+			if resp.PlannedReplacements != tc.wantPlanned {
+				t.Errorf("validate answered plannedReplacements = %v, want %v", resp.PlannedReplacements, tc.wantPlanned)
+			}
+			if !slices.Equal(resp.Replaces, tc.wantReplaces) {
+				t.Errorf("validate answered replaces = %q, want %q", resp.Replaces, tc.wantReplaces)
+			}
+		})
+	}
+}
+
 // The engine observes by the type it recorded, which an older manifest may list and the current one not, so that type reaches the declared observer rather than a refusal or a type observer.
 func TestBlockLevel_ObservesOneResourceThroughItsDeclaredObserverByTheTypeAndIdentityTheRequestOrRecordNames(t *testing.T) {
 	recordedBAsVPC := recordedAll()
