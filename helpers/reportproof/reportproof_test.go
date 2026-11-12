@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -246,54 +245,17 @@ func TestSignScript_PrintsTheProofThatSignMakesAndVerifyAccepts(t *testing.T) {
 	}
 }
 
-func TestSignStream_NamesThePlatformTheStreamAndTheSubjectForTenMinutes(t *testing.T) {
-	key := newKey(t)
-	now := time.Unix(1793400000, 0)
-
-	token := reportproof.SignStream(key, hostKid, platform, "sub_host0123456789", now)
-
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		t.Fatalf("SignStream = %q, want a compact JWS", token)
-	}
-	if !ed25519.Verify(key.Public().(ed25519.PublicKey), []byte(parts[0]+"."+parts[1]), mustDecode(t, parts[2])) {
-		t.Error("the stream token's signature does not verify under the key that signed it")
-	}
-	var header, claims map[string]any
-	if err := json.Unmarshal(mustDecode(t, parts[0]), &header); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(mustDecode(t, parts[1]), &claims); err != nil {
-		t.Fatal(err)
-	}
-	wantHeader := map[string]any{"alg": "EdDSA", "kid": hostKid, "typ": "JWT"}
-	wantClaims := map[string]any{"aud": []any{platform, reportproof.StreamAudience}, "sub": "sub_host0123456789",
-		"iat": float64(now.Unix()), "nbf": float64(now.Unix()), "exp": float64(now.Add(10 * time.Minute).Unix())}
-	if !reflect.DeepEqual(header, wantHeader) || !reflect.DeepEqual(claims, wantClaims) {
-		t.Errorf("SignStream header %v claims %v, want %v and %v", header, claims, wantHeader, wantClaims)
-	}
-}
-
-func mustDecode(t *testing.T, segment string) []byte {
-	t.Helper()
-	raw, err := base64.RawURLEncoding.DecodeString(segment)
-	if err != nil {
-		t.Fatalf("decoding %q: %v", segment, err)
-	}
-	return raw
-}
-
-func TestSignScript_PrintsTheStreamTokenThatSignStreamMakes(t *testing.T) {
+func TestSignStreamAndSignScript_MakeOneTenMinuteTokenNamingThePlatformTheStreamAndTheSubject(t *testing.T) {
 	keyPath, key := opensslKey(t)
 	now := time.Now().Truncate(time.Second)
+	want := signed(key, map[string]any{"alg": "EdDSA", "kid": hostKid, "typ": "JWT"}, map[string]any{"aud": []string{platform, reportproof.StreamAudience},
+		"sub": "sub_host0123456789", "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(10 * time.Minute).Unix()})
 
-	got, err := runSignScript(t, "stream", keyPath, hostKid, platform, "sub_host0123456789", strconv.FormatInt(now.Unix(), 10))
+	fromGo := reportproof.SignStream(key, hostKid, platform, "sub_host0123456789", now)
+	fromScript, err := runSignScript(t, "stream", keyPath, hostKid, platform, "sub_host0123456789", strconv.FormatInt(now.Unix(), 10))
 
-	if err != nil {
-		t.Fatalf("sign.sh stream: %v", err)
-	}
-	if want := reportproof.SignStream(key, hostKid, platform, "sub_host0123456789", now); got != want {
-		t.Errorf("sign.sh stream printed\n%s\nwant what SignStream makes:\n%s", got, want)
+	if fromGo != want || fromScript != want || err != nil {
+		t.Errorf("SignStream made\n%s\nand sign.sh stream printed\n%s (%v)\nwant\n%s", fromGo, fromScript, err, want)
 	}
 }
 
@@ -343,18 +305,12 @@ func TestSignScript_FailsAndPrintsNoTokenWhenOpensslCannotSign(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "openssl"), []byte(failing), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := filepath.Join(t.TempDir(), "sign.sh")
-	if err := os.WriteFile(script, []byte(reportproof.SignScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 	for _, args := range [][]string{
 		{"proof", keyPath, hostKid, platform, bodyPath, "1793400000"},
 		{"stream", keyPath, hostKid, platform, "sub_host0123456789", "1793400000"},
 	} {
-		cmd := exec.Command("bash", append([]string{script}, args...)...)
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
-
-		out, err := cmd.Output()
+		out, err := runSignScript(t, args...)
 
 		if err == nil || len(out) > 0 {
 			t.Errorf("sign.sh %s with a failing openssl signer printed %q, error %v; want no token and an error", args[0], out, err)
