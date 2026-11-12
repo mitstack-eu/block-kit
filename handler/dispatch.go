@@ -212,6 +212,7 @@ func scrubAroundClass(text string, refused *Refused, secrets []string) string {
 // secretOutsideSpan reports whether a secret Scrub would mask occurs in text anywhere but wholly inside text[start:end], since pieces scrubbed apart can join into a secret.
 func secretOutsideSpan(text string, start, end int, secrets []string) bool {
 	for _, secret := range secrets {
+		// A match starting before start ends by start+len-1, and a match ending after end starts at end-len+1 or later.
 		left := text[:min(len(text), start+len(secret)-1)]
 		right := text[min(len(text), max(0, end-len(secret)+1)):]
 		if safe.Scrub(left, secret) != left || safe.Scrub(right, secret) != right {
