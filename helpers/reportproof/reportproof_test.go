@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -245,6 +246,57 @@ func TestSignScript_PrintsTheProofThatSignMakesAndVerifyAccepts(t *testing.T) {
 	}
 }
 
+func TestSignStream_NamesThePlatformTheStreamAndTheSubjectForTenMinutes(t *testing.T) {
+	key := newKey(t)
+	now := time.Unix(1793400000, 0)
+
+	token := reportproof.SignStream(key, hostKid, platform, "sub_host0123456789", now)
+
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("SignStream = %q, want a compact JWS", token)
+	}
+	if !ed25519.Verify(key.Public().(ed25519.PublicKey), []byte(parts[0]+"."+parts[1]), mustDecode(t, parts[2])) {
+		t.Error("the stream token's signature does not verify under the key that signed it")
+	}
+	var header, claims map[string]any
+	if err := json.Unmarshal(mustDecode(t, parts[0]), &header); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(mustDecode(t, parts[1]), &claims); err != nil {
+		t.Fatal(err)
+	}
+	wantHeader := map[string]any{"alg": "EdDSA", "kid": hostKid, "typ": "JWT"}
+	wantClaims := map[string]any{"aud": []any{platform, reportproof.StreamAudience}, "sub": "sub_host0123456789",
+		"iat": float64(now.Unix()), "nbf": float64(now.Unix()), "exp": float64(now.Add(10 * time.Minute).Unix())}
+	if !reflect.DeepEqual(header, wantHeader) || !reflect.DeepEqual(claims, wantClaims) {
+		t.Errorf("SignStream header %v claims %v, want %v and %v", header, claims, wantHeader, wantClaims)
+	}
+}
+
+func mustDecode(t *testing.T, segment string) []byte {
+	t.Helper()
+	raw, err := base64.RawURLEncoding.DecodeString(segment)
+	if err != nil {
+		t.Fatalf("decoding %q: %v", segment, err)
+	}
+	return raw
+}
+
+func TestSignScript_PrintsTheStreamTokenThatSignStreamMakes(t *testing.T) {
+	keyPath, key := opensslKey(t)
+	now := time.Now().Truncate(time.Second)
+
+	got, err := runSignScript(t, "stream", keyPath, hostKid, platform, "sub_host0123456789", strconv.FormatInt(now.Unix(), 10))
+
+	if err != nil {
+		t.Fatalf("sign.sh stream: %v", err)
+	}
+	if want := reportproof.SignStream(key, hostKid, platform, "sub_host0123456789", now); got != want {
+		t.Errorf("sign.sh stream printed\n%s\nwant what SignStream makes:\n%s", got, want)
+	}
+}
+
 func TestSignScript_RefusesAnArgumentItCannotSignAsSignWould(t *testing.T) {
 	keyPath, _ := opensslKey(t)
 	bodyPath := filepath.Join(t.TempDir(), "report.json")
@@ -262,6 +314,10 @@ func TestSignScript_RefusesAnArgumentItCannotSignAsSignWould(t *testing.T) {
 		{"a time that is not a whole number", []string{"proof", keyPath, hostKid, platform, bodyPath, "now"}},
 		{"a time written with a leading zero", []string{"proof", keyPath, hostKid, platform, bodyPath, "0100"}},
 		{"a time past what Sign's int64 holds", []string{"proof", keyPath, hostKid, platform, bodyPath, "99999999999999999999"}},
+		{"a stream subject carrying a quote", []string{"stream", keyPath, hostKid, platform, `sub_"1`, "1793400000"}},
+		{"a stream origin that is not https", []string{"stream", keyPath, hostKid, "http://api.test.local", "sub_1", "1793400000"}},
+		{"a stream time that is not a whole number", []string{"stream", keyPath, hostKid, platform, "sub_1", "now"}},
+		{"a stream with no subject", []string{"stream", keyPath, hostKid, platform, "1793400000"}},
 		{"an unknown mode", []string{"verify", keyPath, hostKid}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
