@@ -90,21 +90,17 @@ func TestSnapshot_PublishesNoHandoverWhenTheBlocksCheckFails(t *testing.T) {
 }
 
 func TestSnapshot_Answers500AndNoHandoverForAHandoverThatIsEmptyOrRepeatsARequestSecret(t *testing.T) {
-	cases := []struct{ label, handover string }{
-		{"an empty handover returned with no error", ""},
-		{"a handover that repeats a secret the request carried", guardSecret},
-	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			block := newSnapshottingBlock(tc.handover)
+	for label, handover := range map[string]string{"an empty handover returned with no error": "", "a handover that repeats a secret the request carried": guardSecret} {
+		t.Run(label, func(t *testing.T) {
+			block := newSnapshottingBlock(handover)
 
 			status, resp := serveContinuity(t, block, snapshotManifest, "snapshot", map[string]any{"unit": "app-data", "secrets": guardSecrets()})
 
 			if status != http.StatusInternalServerError || resp.Outputs[handoverKey] != "" {
-				t.Errorf("%s: status %d, outputs %v; want 500 and no %s output", tc.label, status, resp.Outputs, handoverKey)
+				t.Errorf("%s: status %d, outputs %v; want 500 and no %s output", label, status, resp.Outputs, handoverKey)
 			}
 			if strings.Contains(resp.Error, guardSecret) {
-				t.Errorf("%s: the answer's error repeats the request's secret: %q", tc.label, resp.Error)
+				t.Errorf("%s: the answer's error repeats the request's secret: %q", label, resp.Error)
 			}
 		})
 	}
@@ -160,9 +156,8 @@ func TestRestore_ReachesTheBlockForEachUnitSentUnderOneIdempotencyKey(t *testing
 	x := newHarness(t, block, withManifest(twoUnits), func(cfg *handler.Config) { cfg.Observers = asObservers(blockObservers(newFakeCloud())) })
 
 	for _, unit := range []string{"app-data", "gateway"} {
-		status, raw := x.postContext(context.Background(), map[string]any{"operation": "restore"}, map[string]any{
-			"unit": unit, "idempotencyKey": "sub-1:restore:rep_01",
-			"priorOutputs": map[string]any{contract.HandoverOutputKey(unit): "hnd_" + unit}})
+		status, raw := x.postContext(context.Background(), map[string]any{"operation": "restore"},
+			map[string]any{"unit": unit, "idempotencyKey": "sub-1:restore:rep_01", "priorOutputs": map[string]any{contract.HandoverOutputKey(unit): "hnd_" + unit}})
 		if status != http.StatusOK {
 			t.Fatalf("restore of %s: status %d, body %s; want 200", unit, status, raw)
 		}
@@ -177,23 +172,14 @@ func TestRestore_ReachesTheBlockForEachUnitSentUnderOneIdempotencyKey(t *testing
 }
 
 func TestUpgrade_HandsTheBlockTheReplacementMarkerOnlyOnARequestThatCarriesIt(t *testing.T) {
-	cases := []struct {
-		label  string
-		fields map[string]any
-		want   bool
-	}{
-		{"an upgrade sent during a replacement", map[string]any{"replacing": true}, true},
-		{"an upgrade sent outside a replacement", nil, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			block := newSnapshottingBlock("hnd_0001")
+	for label, fields := range map[string]map[string]any{"an upgrade sent during a replacement": {"replacing": true}, "an upgrade sent outside a replacement": nil} {
+		t.Run(label, func(t *testing.T) {
+			block, want := newSnapshottingBlock("hnd_0001"), fields != nil
 
-			status, resp := serveContinuity(t, block, snapshotManifest, "upgrade", tc.fields)
+			status, resp := serveContinuity(t, block, snapshotManifest, "upgrade", fields)
 
-			if len(block.desired) != 1 || block.desired[0].Replacing != tc.want {
-				t.Errorf("%s (status %d, error %q) reached Ensure with %d calls and replacing %v; want one call with replacing %v, so the block knows whether to send an install retry",
-					tc.label, status, resp.Error, len(block.desired), len(block.desired) == 1 && block.desired[0].Replacing, tc.want)
+			if len(block.desired) != 1 || block.desired[0].Replacing != want {
+				t.Errorf("%s (status %d, error %q) reached Ensure with desired %+v; want one call with replacing %v, so the block knows whether to send an install retry", label, status, resp.Error, block.desired, want)
 			}
 		})
 	}
@@ -205,8 +191,7 @@ func TestSnapshotAndRestore_AnswerABlocksOwnRefusalAs400WithNoHandover(t *testin
 			block := newSnapshottingBlock("hnd_0001")
 			block.err = handler.Refuse("volume-detached", "the volume of %q is not attached", "app-data")
 
-			status, resp := serveContinuity(t, block, snapshotManifest, op,
-				map[string]any{"unit": "app-data", "priorOutputs": map[string]string{handoverKey: "hnd_0001"}})
+			status, resp := serveContinuity(t, block, snapshotManifest, op, map[string]any{"unit": "app-data", "priorOutputs": map[string]string{handoverKey: "hnd_0001"}})
 
 			if status != http.StatusBadRequest || !strings.Contains(resp.Error, "refused:volume-detached") || resp.Outputs[handoverKey] != "" {
 				t.Errorf("a %s the block refuses: status %d, error %q, outputs %v; want 400 naming refused:volume-detached and no handover", op, status, resp.Error, resp.Outputs)
