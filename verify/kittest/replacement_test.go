@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -269,5 +270,16 @@ func TestCheckReplacement_FailsEveryDatumOfABlockThatKeepsTheDrillsMapAndRestore
 
 	for _, datum := range []string{`"alpha"`, `"beta"`, `"gamma"`} {
 		wantProblemNaming(t, problems, "replacement lost datum", datum)
+	}
+}
+
+func TestAssertReplacement_LogsTheUnitItDrilledWithTheStagesItRan(t *testing.T) {
+	_, in := memoryBlock(t, "", false)
+
+	tb := runAndCollect(func(tb testing.TB) { kittest.AssertReplacement(tb, in) })
+
+	want := `kittest.AssertReplacement drill of "app-data" ran: subscribe, write, snapshot, replace, upgrade, restore, observe, read-back`
+	if tb.failed || !slices.Contains(tb.logs, want) {
+		t.Errorf("AssertReplacement failed = %v and logged %q; want it to pass and log %q, so blockverify can tell which unit was drilled", tb.failed, tb.logs, want)
 	}
 }

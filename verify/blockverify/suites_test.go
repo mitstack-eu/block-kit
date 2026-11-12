@@ -276,13 +276,13 @@ func TestResourcesSuite(t *testing.T) {
 	})
 }
 
-func replacementBlock(mode string) dirFunc {
-	return moduleBlock(
+func replacementBlock(mode string, opts ...option) dirFunc {
+	return moduleBlock(append([]option{
 		withSource(manifestFile, "replacement-manifest.yaml"),
 		withSource("block_test.go", "replacement-block_test.go"),
 		withTypeSnapshot,
 		with("replacement_test.go", "package main\n\nimport \"testing\"\n\nfunc TestReplacementDrill(t *testing.T) {\n\tassertReplacement(t, \""+mode+"\")\n}\n"),
-	)
+	}, opts...)...)
 }
 
 func TestReplacementSuite(t *testing.T) {
@@ -309,7 +309,11 @@ func TestReplacementSuite(t *testing.T) {
 			dir: moduleBlock(stateful, withSource("block_test.go", "replacement-block_test.go"), withTypeSnapshot,
 				with("replacement_test.go", "package main\n\nimport \"testing\"\n\nfunc TestReplacementDrill(t *testing.T) {\n\tt.Skip(\"not yet\")\n\tassertReplacement(t, \"keeps\")\n}\n")),
 			status: "fail", detail: []string{"TestReplacementDrill", "ran no stage"}},
-		{name: "a block that keeps every datum and reads healthy passes, naming the drill", dir: replacementBlock("keeps"),
-			status: "pass", detail: []string{"TestReplacementDrill"}},
+		{name: "a block that keeps every datum and reads healthy passes, naming the drill and its unit", dir: replacementBlock("keeps"),
+			status: "pass", detail: []string{"TestReplacementDrill", `"app-data"`}},
+		{name: "a block that drills one of its two units handed over by snapshot fails, naming the other",
+			dir: replacementBlock("keeps", with(manifestFile, replaced(t, source(t, "replacement-manifest.yaml"), "  lifecycle:\n",
+				"    - name: vault\n      kind: openbao\n      stateful: true\n      handover: snapshot\n  lifecycle:\n"))),
+			status: "fail", detail: []string{"TestReplacementDrill", `"vault"`}},
 	})
 }
