@@ -87,8 +87,10 @@ the checksum the registry publishes, and runs `scripts/scan-image.sh` on both.
 It expects GO-2026-5932 accepted in each and refused nowhere.
 
 The AWS scan is expected to pass. When an advisory with a fix reaches that AWS
-release, its job fails until the matrix row moves to a release built on the
-fix. The Scaleway release also carries x/net and
+release, its job fails. The repair is to move the AWS row of the `matrix` in
+`scan-image-proof.yml` to a release built on the fix, with the `shasum` the
+registry publishes for it, and to leave the scan as it is. The Scaleway release
+also carries x/net and
 standard-library findings that have fixes, which the scan refuses as it should,
 so its scan is expected to exit 1. Once a Scaleway release clears them, that
 job fails until its matrix row moves to the new release. To repeat the proof
@@ -100,22 +102,31 @@ Actions tab, which its `workflow_dispatch` trigger allows.
 `.github/workflows/publish-block.yml` names the Go release once, as the default
 of its `go-version` input. A block's CI installs that release when its `ci.yml`
 passes no `go-version` of its own. The kit's other workflows name the same
-release in each `setup-go` step, and so do the two Dockerfiles that build Go,
+release in each step that installs Go with the `actions/setup-go` action. So
+do the two Dockerfiles that compile a Go program on a `golang` image,
 `helpers/tools/Dockerfile` and `examples/hetzner-firewall/Dockerfile`.
 
 `scripts/go_release_agreement_test.go` reads the default and fails each place
-that names another release, with its file and line:
+that names another release:
 
 ```sh
 go test ./scripts/ -run TestGoRelease_
 ```
 
-To move the kit to a new release, change the default, run the suite, and
-change each place it names. Give both Dockerfiles the digest that
-`docker buildx imagetools inspect golang:<release>-alpine` prints, because
-Docker builds from the digest and ignores a tag that disagrees with it. The
-`go` line of the kit's `go.mod` stays where it is, since it is the oldest Go a
-block importing the kit may build on.
+Each failure names one place by file and line, as in this one:
+
+```text
+.github/workflows/ci.yml:22 names Go 1.26.10; publish-block.yml installs Go "1.26.11" by default
+```
+
+To move the kit to a new release, such as 1.26.12, change the default, run the
+suite, and change each line it prints. For both Dockerfiles, run
+`docker buildx imagetools inspect golang:1.26.12-alpine` and copy the value of
+its `Digest:` line after the tag, as `golang:1.26.12-alpine@sha256:...`. Docker
+builds from the digest and ignores a tag that disagrees with it, so a stale
+digest keeps the old Go under a new tag. The `go` line of the kit's `go.mod`
+stays where it is, since it is the oldest Go a block importing the kit may
+build on.
 
 ## Release
 
