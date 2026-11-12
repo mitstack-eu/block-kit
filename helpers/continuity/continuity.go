@@ -96,15 +96,15 @@ func (h Hook) Snapshot(ctx context.Context, unit string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("snapshot of %q: reading the keys: %w", unit, err)
 	}
-	up, err := h.Links.Upload(ctx, unit)
-	if err != nil {
-		return "", fmt.Errorf("snapshot of %q: getting an upload link: %w", unit, err)
-	}
 	spool, sum, err := h.encryptToSpool(ctx, recipient)
 	if err != nil {
 		return "", fmt.Errorf("snapshot of %q: exporting: %w", unit, err)
 	}
 	defer discard(spool)
+	up, err := h.Links.Upload(ctx, unit)
+	if err != nil {
+		return "", fmt.Errorf("snapshot of %q: getting an upload link: %w", unit, err)
+	}
 	if err := putObject(ctx, h.client(), up.URL, spool); err != nil {
 		return "", fmt.Errorf("snapshot of %q: uploading: %w", unit, err)
 	}
