@@ -215,3 +215,21 @@ func TestHandlerImportFiles_UnreadableDirectoryIsAnError(t *testing.T) {
 		t.Errorf("error = %q, want it to name the directory it could not read", err)
 	}
 }
+
+func TestDrilledUnits_ReadsEachUnitADrillLoggedAndNothingElse(t *testing.T) {
+	output := strings.Join([]string{
+		"=== RUN   TestReplacementDrill",
+		"    block_test.go:12: " + kitbinding.DrillRan("app-data", []string{"subscribe", "write", "read-back"}),
+		"    block_test.go:19: " + kitbinding.DrillRan("vault", nil),
+		"    block_test.go:21: " + kitbinding.DrillRanPrefix + "gateway ran: subscribe",
+		"    block_test.go:22: " + kitbinding.DrillRanPrefix + `"cache" stopped`,
+		"--- PASS: TestReplacementDrill (0.01s)",
+	}, "\n")
+
+	got := kitbinding.DrilledUnits(output)
+
+	want := map[string]string{"app-data": "subscribe, write, read-back", "vault": ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DrilledUnits(%q) = %v; want %v, with the unquoted unit and the line that names no stages left out", output, got, want)
+	}
+}
