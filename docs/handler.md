@@ -122,7 +122,7 @@ and `d.Instances` read the same on every call.
 | `PriorOutputs`, `CloudIdentity` | The outputs the last call recorded, and the short-lived AWS web identity of the org's cloud account, nil when it has none |
 | `VerbAt` | The time an observer reads after, which the next section explains |
 | `NeverActive` | `true` only when the engine has proved the subscription holds no user data |
-| `Replacing` | `true` on a request that carries `"replacing": true`, the marker of a replacement of the block's server, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
+| `Replacing` | `true` on a request that carries `"replacing": true`, the marker of a replacement, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
 
 The platform runs an observer of its own, outside your block, which asks a
 provider whether a resource still exists. When it reads a resource absent, the
@@ -416,8 +416,10 @@ The engine sets `idempotencyKey` once per call and keeps it across every retry
 of that call. The handler keeps a settled answer for an hour, keyed by
 subscription and idempotency key, and replays it to a later delivery of the
 same key. A delivery that arrives while the same key is still running waits
-for it and receives the same answer. A snapshot or a restore is also keyed by
-its unit, so one key that names two units reaches your code once for each.
+for it and receives the same answer. A `snapshot` or a `restore`, which
+[Snapshotting and restoring state](#snapshotting-and-restoring-state)
+explains, is also keyed by its unit, the `spec.continuity` entry it names. Two
+units sent under one key therefore each reach your code.
 
 The cache stores only a settled answer: a 2xx or a 400 refusal. It never
 stores a 500, so a retry reaches your code again. It never stores a
@@ -432,8 +434,8 @@ The request's events callback is a URL and token the platform includes so the
 operator can report back. A `subscribe`, `upgrade` or `unsubscribe` sends
 `progress` with its status detail while it is pending or still present,
 `completed` once it settles, and `failed` on an error answer. A `snapshot` or
-a `restore` sends `completed` on a 2xx answer and `failed` on any other. A
-`validate` and an `issue` send none. An unsubscribe therefore completes only
+a `restore` sends `completed` on a 2xx answer, and `failed` on a refusal or an
+error. A `validate` and an `issue` send none. An unsubscribe therefore completes only
 after its teardown is observed absent.
 
 ## Work that outlasts one call
@@ -841,24 +843,30 @@ event for one, since the platform records the run itself.
 
 ## Snapshotting and restoring state
 
-A block that keeps data carries it across a replacement of its server with two
-operations, `snapshot` and `restore`. A replacement is an upgrade the user
-confirms that creates the block's server again with the same identity. This
-section is for a block writer whose manifest declares state under
-`spec.continuity`, as [The state a block keeps](manifest.md#the-state-a-block-keeps)
-explains. A unit is one entry of that declaration, and a handover is the output
-a snapshot publishes for the restore to read.
+A block that keeps data carries it across a replacement with two operations,
+`snapshot` and `restore`. A replacement is an upgrade the user confirms in
+which the block creates a resource that holds data again, such as a
+`hetzner.server`, on the same subscription. This section is for a block writer
+whose manifest declares state under `spec.continuity`, as
+[The state a block keeps](manifest.md#the-state-a-block-keeps) explains. A
+unit is one entry of that declaration. A handover is the string a snapshot
+answers, which names where the snapshot is so that the restore can find it.
 
-The two operations serve the replacement that
 [ADR 0125](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0125-a-confirmed-upgrade-replaces-a-stateful-server-through-a-recorded-handover-with-keys-from-a-per-subscription-escrow-and-two-drills-that-keep-it-working.md)
-sets out in four stages. A `snapshot` takes the data out of the old server
-before it goes. The reinstall is an ordinary `upgrade`, which reaches your
-`Ensure` as any upgrade does and creates the new server. A `restore` puts the
-data back, and the platform then observes each replaced resource until it
-reads present and healthy. A block lists both operations under
-`spec.lifecycle.operations` and implements `handler.Snapshotter`, and
-`handler.New` refuses a manifest that lists them over a `Resource` that does
-not:
+sets out a replacement as four stages, in this order:
+
+1. The platform sends `snapshot` for a unit, and the block copies the unit's
+   data out of the old resource.
+2. The platform sends an ordinary `upgrade`, called the reinstall. It reaches
+   your `EnsureResources` as any upgrade does, and the block creates the new
+   resource.
+3. The platform sends `restore` for the unit, and the block puts the data back.
+4. The platform observes each replaced resource until it reads present and its
+   observation carries no `Unhealthy` cause.
+
+A block lists both operations under `spec.lifecycle.operations` and implements
+`handler.Snapshotter`, and `handler.New` refuses a manifest that lists them
+over a `Resource` that does not:
 
 ```go
 type Snapshotter interface {
@@ -867,41 +875,47 @@ type Snapshotter interface {
 }
 ```
 
-Both calls name one unit in the request's `unit`, and the handler refuses a
-unit the manifest does not hand over by snapshot before the block runs. A
-snapshot takes a copy of the unit's data, restores it into a scratch copy,
-checks that copy, and returns the handover only when the check passes. That
-check is the block's own work: the handler publishes whatever handover the
-block returns without an error, and answers a snapshot that returns an error
-with that error and no handover. It publishes the handover as the answer's output
-`contract.HandoverOutputKey(unit)`, which is `handover.` followed by the unit's
-name. A restore reads the handover from the request's `priorOutputs` under the
-same key.
+Both calls name one unit in the request's `unit`. The handler refuses a unit
+whose manifest entry does not say `handover: snapshot`, before the block runs.
+
+Your `Snapshot` copies the unit's data to a place outside the resource that is
+about to be replaced. It then restores that copy into a throwaway place, such
+as a temporary database or directory, and checks it there, for example that a
+known query answers. It returns the handover when the check passes and an
+error when it does not. That check is the block's own work: the handler
+publishes whatever handover the block returns without an error, and answers a
+snapshot that returns an error with that error and no handover.
 
 The handover is a string your block chooses. The handler publishes it as the
-unit's output, and passes the string it finds in `priorOutputs` to `Restore`
-unchanged. It names where the snapshot is, such as an object's reference with
-its digest, so that your `Restore` alone can find the data again. It holds no
-secret, since it travels as an output, and the handler refuses one that
-repeats a secret the request carried.
+answer's output `contract.HandoverOutputKey(unit)`, which is `handover.`
+followed by the unit's name. On a restore it reads the string the request
+carries in `priorOutputs` under the same key, and passes it to `Restore`
+unchanged. The string names where the snapshot is, such as an object's
+reference with its digest, so that your `Restore` alone can find the data
+again. It holds no secret, since it travels as an output.
 
-This request asks for a snapshot of the unit `app-data`:
+This request asks for a snapshot of the unit `app-data`, cut to the fields a
+snapshot adds, and the answer carries the handover:
 
 ```json
 {"operation": "snapshot", "subscriptionId": "sub_a1b2c3d4e5", "unit": "app-data", "replacing": true}
 ```
 
+```json
+{"outputs": {"handover.app-data": "hnd_0001"}}
+```
+
 A request that is part of a replacement carries `"replacing": true`, on the
-snapshot, the upgrade that reinstalls and the restore alike, and the block
-reads it as `d.Replacing`. A block that retries its server's install when
-the first attempt looks stuck must not do so while `d.Replacing` is true, since
-a second install over a server that holds the data being restored would
-destroy it.
+snapshot, the reinstall and the restore alike, and the block reads it as
+`d.Replacing`. The marker is for a block whose `EnsureResources` starts a
+server's install a second time when the first attempt has not finished. Such a
+block skips that second install while `d.Replacing` is true, since ADR 0125
+rules out an install retry during a replacement.
 
 | What goes wrong | Status |
 |---|---|
 | The manifest does not list `snapshot` and `restore` | 400, `refused:snapshot-not-listed` |
-| The unit is not a `spec.continuity` entry handed over by snapshot | 400, `refused:unknown-unit` |
+| The unit's manifest entry does not say `handover: snapshot`, or the manifest has no such unit | 400, `refused:unknown-unit` |
 | A restore carries no handover under the unit's output key | 400, `refused:no-handover` |
 | The block returns a `handler.Refuse` | 400, with the block's own refusal class and no handover |
 | The block returns any other error, or a handover that is empty or repeats a secret the request carried | 500, with no handover |

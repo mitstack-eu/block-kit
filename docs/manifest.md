@@ -215,10 +215,11 @@ A block that keeps data declares it under `spec.continuity`, so that a
 replacement of its server can carry the data across. This section is for a
 block writer whose block keeps a database, a secrets store or a volume. A
 replacement is an upgrade the user confirms that creates the block's server
-again with the same identity, and a handover is the output a snapshot
-publishes for the restore to read. A block that keeps no state leaves the key
-out, and its manifest parses as it always did. An empty list, `continuity: []`,
-parses the same way as no key.
+again with the same identity. A snapshot copies a unit's data out before the
+old server goes, a restore puts it onto the new one, and a handover is the
+output a snapshot publishes for the restore to read. A block that keeps no
+state leaves the key out, and its manifest parses as it always did. An empty
+list, `continuity: []`, parses the same way as no key.
 
 ```yaml
 spec:
@@ -233,6 +234,7 @@ spec:
       handover: none
   lifecycle:
     operations: [subscribe, unsubscribe, upgrade, validate, snapshot, restore]
+    # the other lifecycle keys are left out here
 ```
 
 Each entry holds four keys, and the parser refuses an entry that leaves one
@@ -241,8 +243,8 @@ out, naming its path, as in `spec.continuity[0].handover is required`.
 | Key | What it says |
 |---|---|
 | `name` | The unit a snapshot and a restore name, unique in the block and in lowercase kebab case, such as `app-data` |
-| `kind` | What the state is, such as `postgres`, `openbao` or `volume` |
-| `stateful` | `true` when the user would miss the contents, `false` for state that can be rebuilt |
+| `kind` | A free label for what the state is, such as `postgres`, `openbao` or `volume`. The parser requires it and holds it to no list |
+| `stateful` | `true` when the user would miss the contents, `false` for state that can be rebuilt. The kit requires the key and gives it no effect of its own |
 | `handover` | `snapshot` when the snapshot and restore operations carry the state across, or `none` when nothing does. The key is required either way, so a block says which it is |
 
 The parser also refuses a `handover` other than `none` and `snapshot`, a
