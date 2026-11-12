@@ -127,6 +127,20 @@ without its `/v1/webhooks/operator-events` path, and the callback's token. A
 block calls another platform route with that base URL and token, acting for
 the call it serves, as `observe.NodeReportsClient` does to read node reports.
 
+`events.ReportCommit(ctx, repository, commit)` tells the platform that a commit
+landed on a repository a cluster or a Docker host reads. The reader then pulls
+it at once instead of at its next timed read. It posts one request to
+`POST /v1/gitops-commits` with the callback's token, and sends nothing again:
+
+```json
+{"repository": "acme/docker-host-sub-host0123456789", "commit": "2d266ec0449adf437f9226b938817a45da1ed95c"}
+```
+
+It returns an error when the platform answers anything but 202, cannot be
+reached, or the request carries no callback. Log that error and keep the
+commit, since the reader's timed read still takes it. `helpers/dockerhost`
+reports each commit it lands on a host's repository this way.
+
 ## Reading each thing once in a request
 
 The handler gives every request a cache, so a block's passes over the same
