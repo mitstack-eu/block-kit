@@ -15,6 +15,7 @@ package has [a page of its own](gitops.md).
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/reqcache` | Wants a read repeated within one request to cost one call, for a source of its own that cannot change under the request |
 | `helpers/credrefresh` | Holds a short-lived credential across calls |
+| `helpers/lease` | Runs a program on its node that needs a short-lived credential of a resource the block requires or provides, such as a snapshot's upload link |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
 | `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, sizes and observes an app on one, or runs an app's database on one |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
@@ -184,6 +185,66 @@ tokens := credrefresh.New(func(ctx context.Context) (string, time.Time, error) {
 })
 token, err := tokens.Get(ctx)
 ```
+
+## Asking the platform for a lease
+
+A lease is one short-lived credential that the owner of a resource mints for a
+caller, such as a signed upload link for a bucket.
+[Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential)
+describes the block that mints one. `helpers/lease` is the asking side. This
+section is for a block author whose block runs a program on its node, the
+machine that reports to mitstack, and that program needs such a credential.
+
+The node asks with its report token. The platform answers that token once,
+when the node enrols, and the node keeps it on its own disk. The platform knows
+the node's subscription by the token, so the program runs where the token is.
+An operator holds no report token, since the platform keeps only a digest of it
+and sends none in a lifecycle call.
+[ADR 0124](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0124-a-block-or-host-leases-a-short-lived-credential-from-a-resources-provider-through-one-platform-route-and-one-kit-operation.md)
+holds the reasoning. The program hands the helper the platform's address and
+the token:
+
+```go
+platform := lease.Platform{BaseURL: "https://api.mitstack.dev", Token: reportToken}
+answer, err := platform.Ask(ctx, "scaleway.cockpit", map[string]string{"signals": "metrics,logs"})
+```
+
+`Ask` sends one `POST /v1/cluster-leases` with the token as its bearer and
+this body:
+
+```json
+{"resource": "scaleway.cockpit", "want": {"signals": "metrics,logs"}}
+```
+
+`resource` is the reference your manifest uses for a resource the block
+requires or provides: its exact type, or its name where two share a type.
+`want` is nil or any value that encodes as a JSON object, which the platform
+forwards to the provider unread. `answer.Credential` holds the provider's
+credential as raw JSON for your code to decode, and `answer.ExpiresAt` its
+expiry.
+
+| The route answers | `Ask` returns |
+|---|---|
+| 200 with a credential that has not expired | The `lease.Answer` |
+| 401, for an unknown token or a subscription being removed | A `*lease.Refusal` with `Status` 401 |
+| 404, when the node's block neither requires nor provides the resource | A `*lease.Refusal` with `Status` 404 |
+| 409, when the provider's block does not list `lease` | A `*lease.Refusal` with `Status` 409 |
+| 502, when the provider refused or failed to mint | A `*lease.Refusal` with `Status` 502 and the route's fixed message |
+| 503, when the provider has no outputs yet | A `*lease.Refusal` with `Status` 503 and, in `RetryAfter`, the wait the answer names |
+| 200 with an expiry that has passed, or with no credential or expiry | An error naming what the answer lacks |
+
+`Ask` sends one request and waits in no loop of its own. After a 503 your
+program decides when to ask again, such as on its next scheduled run, and
+`RetryAfter` is how long the platform asks it to wait. Read a refusal's fields
+with `errors.As`. An error's text names the resource, the status and the
+platform's message, and never the token:
+
+```text
+lease of "scaleway.cockpit": the platform answered 503: lease is not available yet; retry later (Retry-After 30s)
+```
+
+`Platform.HTTPClient` is optional. Without one, `Ask` waits ten seconds at most
+and follows no redirect, so the token reaches no other host.
 
 ## Running a script on a server
 
@@ -1220,41 +1281,62 @@ data out and back in, and the two ready-made ones below are the ones to use.
 `Links` hands out the presigned upload and download links, each an address
 that carries its own signature and so needs no storage key. `Keys` hands out
 the age keys: a public key the snapshot is encrypted to, and the restore key,
-the private half that decrypts it. The `Hook` itself does the rest. Your
-block's `Snapshot` and `Restore`, which
-[Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
-describes, build one from the request's `contract.Desired`, here `d`, and call
-it:
+the private half that decrypts it. The `Hook` itself does the rest:
 
 ```go
-func (b *block) hook(d contract.Desired) continuity.Hook {
-	return continuity.Hook{
-		Links: platformLinks{},                                    // a test supplies this for now, see below
-		Keys:  continuity.OwnSecretKeys{OwnSecrets: d.OwnSecrets}, // the unit's key, kept in the block's own secrets
-		State: continuity.Volume{Dir: "/var/lib/app"},
-	}
+hook := continuity.Hook{
+	Links: continuity.LeasedLinks{ // asks the platform for each link
+		Platform: lease.Platform{BaseURL: "https://api.mitstack.dev", Token: reportToken},
+		Resource: "scaleway.snapshot-bucket",
+	},
+	Keys:  keys, // the unit's age keys
+	State: continuity.Volume{Dir: "/var/lib/app"},
 }
 
-func (b *block) Snapshot(ctx context.Context, d contract.Desired, unit string) (string, error) {
-	return b.hook(d).Snapshot(ctx, unit)
-}
+handover, err := hook.Snapshot(ctx, "app-data")
 
-func (b *block) Restore(ctx context.Context, d contract.Desired, unit, handover string) error {
-	return b.hook(d).Restore(ctx, unit, handover)
-}
+// Later, on the server that replaced the first:
+err = hook.Restore(ctx, "app-data", handover)
 ```
 
-`unit` is the name of the manifest's `spec.continuity` entry, such as
-`app-data`. `hook.Snapshot` returns the handover string, and `hook.Restore`
-takes the same string back, which the restore request carries. A block with
-several units picks the `State` by `unit`, since each unit keeps its own data.
-The hook runs in the block's own process, so that process must reach the data:
-the directory of a `Volume`, or the address of an OpenBao store.
+`app-data` is the unit, the name of the manifest's `spec.continuity` entry.
+`hook.Snapshot` returns the handover string, and `hook.Restore` takes the same
+string back, which the restore request carries. A block with several units
+picks the `State` by unit, since each unit keeps its own data.
 
-`Links` is the one interface a hook needs from outside the kit, and no block
-can supply it against the platform yet, as the paragraph after the interface
-explains. It hands the hook a presigned link for one upload and one for each
-download:
+### Where a hook runs
+
+A hook runs in the process that calls it, and that process needs three things
+within reach: the data, the unit's age keys and the links. The data is the
+directory of a `Volume` or the address of an OpenBao store.
+`continuity.LeasedLinks` gets the links from the platform with a node's report
+token, as [Asking the platform for a lease](#asking-the-platform-for-a-lease)
+explains. A hook built on it therefore runs in a program on the node, where
+the data is. The snapshot is then encrypted before it leaves the node, as
+[ADR 0125](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0125-a-confirmed-upgrade-replaces-a-stateful-server-through-a-recorded-handover-with-keys-from-a-per-subscription-escrow-and-two-drills-that-keep-it-working.md)
+asks. An operator holds no report token, so a hook that an operator's
+`Snapshot` calls in its own process cannot use `LeasedLinks`.
+
+The kit ships the hook, the two states, `LeasedLinks` and the key helpers
+below. It ships no program for the node, and it leaves two steps to your
+block:
+
+1. Your operator's `Snapshot` and `Restore`, which
+   [Snapshotting and restoring state](handler.md#snapshotting-and-restoring-state)
+   describes, start the program on the node and return its answer. The
+   handover your `Snapshot` answers is the string that program's
+   `hook.Snapshot` returned.
+2. The unit's age keys reach the node. The platform hands a block's own
+   secrets to its operator alone, so a key kept there is not on the node until
+   your block puts it there.
+
+The kit holds no helper for either step, and no decision record sets how a
+block takes them.
+
+### How a hook gets its links
+
+`Links` is the one interface a hook needs from outside its own process. It
+hands the hook a presigned link for one upload and one for each download:
 
 ```go
 type Links interface {
@@ -1272,15 +1354,60 @@ type Link struct {
 that link writes. The handover carries that `Ref`, and `Download` receives it
 back and answers a link to read the same object. `URL` is a complete address:
 the hook sends one `PUT` with the ciphertext to an upload link and one `GET`
-to a download link, and adds nothing to either. Have each `Upload` name a
-new object, so a snapshot never overwrites an earlier one.
+to a download link, and adds nothing to either.
 
-The links are a credential that the bucket's owner mints, which
+`continuity.LeasedLinks` is the kit's own `Links`. `Platform` is the address
+and the report token it asks with, and `Resource` is the reference your
+manifest uses for the snapshot store your block requires or provides. Each
+`Upload` and each `Download` is one lease. A snapshot asks for its upload link
+once the export is ready and for a download link for its scratch check, and a
+restore asks for one download link. `LeasedLinks` keeps no link between calls,
+so a snapshot that follows a refused upload asks for a new link. When the
+lease route refuses, the snapshot or the restore fails with the error
+[Asking the platform for a lease](#asking-the-platform-for-a-lease) lists,
+and the snapshot publishes no handover.
+
+The want and the credential of a snapshot link are defined once, in
+`helpers/continuity`, for the hook and for the block that provides the store.
+`LeasedLinks` sends a `continuity.LinkWant`, as in these two requests:
+
+```json
+{"resource": "scaleway.snapshot-bucket", "want": {"use": "upload", "unit": "app-data"}}
+```
+
+```json
+{"resource": "scaleway.snapshot-bucket", "want": {"use": "download", "unit": "app-data", "ref": "sub_a1b2c3d4e5/app-data/0001"}}
+```
+
+The block that provides the store mints the links in its `Lease`, which
 [Leasing a short-lived credential](handler.md#leasing-a-short-lived-credential)
-describes from the side of the block that mints one. The kit has no helper
-yet by which a block asks the platform for such a link. Until it has, a block has
-no `Links` to use against the platform, and the hooks run only with a `Links`
-a test supplies, as the kit's own tests do.
+describes. It reads the want with `continuity.ParseLinkWant(l.Want)`, which
+refuses a want no hook sends, and answers a `continuity.Link` as the lease's
+credential:
+
+```go
+func (b *block) Lease(ctx context.Context, d contract.Desired, l contract.LeaseRequest) (contract.Lease, error) {
+	want, err := continuity.ParseLinkWant(l.Want)
+	if err != nil {
+		return contract.Lease{}, err
+	}
+	link, expiresAt, err := b.sign(ctx, d, l.Caller.SubscriptionID, want) // yours
+	if err != nil {
+		return contract.Lease{}, err
+	}
+	credential, err := json.Marshal(link)
+	return contract.Lease{Credential: credential, ExpiresAt: expiresAt}, err
+}
+```
+
+That credential reads `{"url": "https://...", "ref": "sub_a1b2c3d4e5/app-data/0001"}`
+for an upload link, and holds `url` alone for a download link. The provider
+names the object of each upload itself: a new one for every ask, so a snapshot
+never overwrites an earlier one, under the caller's subscription id from
+`l.Caller`. It signs a download only for a `ref` under that same id, since the
+platform fills `l.Caller` from its own records and the caller writes `want`.
+
+### What a snapshot and a restore do
 
 `hook.Snapshot` runs these steps in order, and fails at the first that does not
 hold:
@@ -1355,9 +1482,13 @@ after the force restore, since
 [ADR 0125](https://github.com/mitstack-eu/mitstack/blob/main/docs/adr/0125-a-confirmed-upgrade-replaces-a-stateful-server-through-a-recorded-handover-with-keys-from-a-per-subscription-escrow-and-two-drills-that-keep-it-working.md)
 has a restored store unseal once every member restarts.
 
+### Where the age keys are kept
+
 `continuity.OwnSecretKeys` keeps each unit's key in the block's own secrets,
 which [What the answer carries](handler.md#what-the-answer-carries) describes,
-so the restore key never sits in the bucket. `continuity.MintKeys` returns an
+so the restore key never sits in the bucket. A hook on a node reads them only
+once your block has brought them there, the second step under
+[Where a hook runs](#where-a-hook-runs). `continuity.MintKeys` returns an
 age identity for each unit that holds none yet, under the name
 `continuity.KeyName(unit)`, and never replaces a held one. A block returns
 them from its `EnsureResourcesOwning`, which runs on a subscribe and on an
