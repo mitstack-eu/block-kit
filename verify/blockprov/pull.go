@@ -104,11 +104,10 @@ func (c *ociClient) record(tag string) ([]byte, error) {
 
 // get reads rawURL whole, with accept as its Accept header where one is given.
 func (c *ociClient) get(rawURL, accept string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	req, err := c.request(http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("building GET %s: %w", rawURL, err)
+		return nil, err
 	}
-	req.SetBasicAuth(c.username, c.password)
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}

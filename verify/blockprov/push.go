@@ -144,6 +144,17 @@ func drainAndClose(body io.ReadCloser) {
 }
 
 func (c *ociClient) do(method, rawURL string, body []byte, contentType string) (*http.Response, error) {
+	req, err := c.request(method, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return c.http.Do(req)
+}
+
+func (c *ociClient) request(method, rawURL string, body []byte) (*http.Request, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -153,10 +164,7 @@ func (c *ociClient) do(method, rawURL string, body []byte, contentType string) (
 		return nil, fmt.Errorf("building %s %s: %w", method, rawURL, err)
 	}
 	req.SetBasicAuth(c.username, c.password)
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	return c.http.Do(req)
+	return req, nil
 }
 
 func (c *ociClient) uploadBlob(data []byte) (digest string, err error) {
