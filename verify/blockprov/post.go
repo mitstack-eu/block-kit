@@ -70,7 +70,7 @@ func runPost(args []string, stdout io.Writer) int {
 	return 0
 }
 
-// recordRoute refuses an address that carries a user or password, since Go would send them as a credential beside the record.
+// recordRoute refuses a user or password, which Go would send as a credential beside the record, and a query, which the log would print.
 func recordRoute(platform string) (string, error) {
 	address, err := url.Parse(platform)
 	if err != nil || (address.Scheme != "http" && address.Scheme != "https") || address.Host == "" {
@@ -78,6 +78,9 @@ func recordRoute(platform string) (string, error) {
 	}
 	if address.User != nil {
 		return "", errors.New("--platform carries a user or a password, and the record is the only credential the post sends")
+	}
+	if address.RawQuery != "" || address.ForceQuery || address.Fragment != "" {
+		return "", errors.New("--platform carries a query or a fragment, where an address is a scheme, a host and at most a path")
 	}
 	return address.JoinPath(blockReleasesPath).String(), nil
 }

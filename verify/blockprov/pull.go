@@ -7,12 +7,20 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/verify/provenance"
 )
 
-// pulledMaxBytes bounds a manifest and a record read back, each of which is tens of kilobytes.
-const pulledMaxBytes = 1 << 20
+const (
+	// pulledMaxBytes bounds a manifest and a record read back, each of which is tens of kilobytes.
+	pulledMaxBytes = 1 << 20
+	// defaultPullTimeout bounds each of the two reads, since the publish job sets no limit of its own.
+	defaultPullTimeout = time.Minute
+)
+
+var sha256DigestForm = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 func runPull(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
@@ -23,6 +31,7 @@ func runPull(args []string, stdout io.Writer) int {
 	username := fs.String("username", "", "registry basic auth username")
 	passwordEnv := fs.String("password-env", "", "environment variable holding the registry basic auth password")
 	outPath := fs.String("out", "", "path the record is written to")
+	timeout := fs.Duration("timeout", defaultPullTimeout, "how long to wait for each of the registry's two answers")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stdout, err)
 		return 2
@@ -42,7 +51,7 @@ func runPull(args []string, stdout io.Writer) int {
 		repo:     *repo,
 		username: *username,
 		password: password,
-		http:     http.DefaultClient,
+		http:     &http.Client{Timeout: *timeout},
 	}
 	tag := recordTag(*imageDigest)
 	record, err := client.record(tag)
@@ -80,6 +89,9 @@ func (c *ociClient) record(tag string) ([]byte, error) {
 	}
 
 	digest := manifest.Layers[0].Digest
+	if !sha256DigestForm.MatchString(digest) {
+		return nil, fmt.Errorf("%s names its record %q, which is no sha256 digest", tag, digest)
+	}
 	record, err := c.get(c.base+"/v2/"+c.repo+"/blobs/"+digest, "")
 	if err != nil {
 		return nil, fmt.Errorf("reading the record %s: %w", digest, err)

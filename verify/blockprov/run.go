@@ -21,7 +21,8 @@ Usage:
                     --image-digest sha256:... --username <user> \
                     (--password <pass> | --password-env <ENV_VAR>)
   blockprov pull    --registry <host> --repo <name> --image-digest sha256:... \
-                    --username <user> --password-env <ENV_VAR> --out <record.json>
+                    --username <user> --password-env <ENV_VAR> --out <record.json> \
+                    [--timeout <duration>]
   blockprov post    --record <record.json> --platform <https://address> \
                     [--summary <file>] [--timeout <duration>]
 `

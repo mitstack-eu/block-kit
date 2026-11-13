@@ -658,12 +658,18 @@ them. Fix what the line names and re-run the run's failed jobs. The rerun
 finds the record beside the image and builds none, reads that record back and
 posts it, and the platform answers a record it already holds as stored. Like
 any rerun of the `publish` job, it also starts your publisher again at the
-tag.
+tag. The `publish` job needs the files the conformance job handed it, which
+the run keeps for one day, so after that day re-run every job of the run.
 
 A later push that keeps `spec.version` did not build the image, so it posts
-nothing and says so in the step's log. The record beside the image is the
-earlier run's, and the platform checks a record against the signing keys
-GitHub serves today, which may no longer hold that run's key.
+nothing and says so in the step's log and in the run's summary. The record
+beside the image is the earlier run's, and the platform checks a record
+against the signing keys GitHub serves today, which may no longer hold that
+run's key. To post that record, re-run the run that built the image, as
+above.
+
+The post is a step of the `publish` job, so a caller that names no
+`ecr-repository` publishes nothing and posts nothing.
 
 `runPost` in `verify/blockprov/post.go` sends the record and reads the answer,
 and `runPull` in `verify/blockprov/pull.go` reads the record back. The step is

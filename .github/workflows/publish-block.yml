@@ -1010,7 +1010,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$BUILT" = "false" ]; then
-            echo "This commit did not build the published image, so this run posts no record."
+            echo "This commit did not build the published image, so this run posts no record." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           ECR_PASSWORD=$(aws ecr get-login-password --region ${{ inputs.aws-region }})
