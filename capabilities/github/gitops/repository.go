@@ -261,13 +261,13 @@ var secretGroupIdentifiers = map[secretGroupKey]bool{
 // SecretValues returns the secret inputs, app secrets and connection secrets of d.SecretValues except secretGroupIdentifiers, for CommitManifests to refuse.
 func SecretValues(d contract.Desired) []string {
 	values := d.SecretValues()
-	credentials := slices.DeleteFunc(values.Connections, func(v string) bool { return isSecretGroupIdentifier(d, v) })
-	return slices.Concat(values.SecretInputs, values.AppSecrets, credentials)
+	connectionSecrets := slices.DeleteFunc(values.Connections, func(v string) bool { return isSecretGroupIdentifier(d, v) })
+	return slices.Concat(values.SecretInputs, values.AppSecrets, connectionSecrets)
 }
 
 func isSecretGroupIdentifier(d contract.Desired, value string) bool {
-	for k := range secretGroupIdentifiers {
-		if d.Secrets[k.group][k.key] == value {
+	for identifier := range secretGroupIdentifiers {
+		if d.Secrets[identifier.group][identifier.key] == value {
 			return true
 		}
 	}
