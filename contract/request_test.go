@@ -204,6 +204,7 @@ func TestDecodeRequest_RefusesAMalformedFieldNamingIt(t *testing.T) {
 		{"settlesAt not a time", func(m map[string]any) { m["settlesAt"] = "yesterday" }, []string{`"settlesAt"`}},
 		{"settlesAt a number", func(m map[string]any) { m["settlesAt"] = 1752613200 }, []string{`"settlesAt"`}},
 		{"neverActive a string", func(m map[string]any) { m["neverActive"] = "true" }, []string{`"neverActive"`}},
+		{"settling a string", func(m map[string]any) { m["settling"] = "true" }, []string{`"settling"`}},
 		{"own secrets not strings", func(m map[string]any) { m["ownSecrets"] = map[string]any{"gatewayCaKey": 7} }, []string{`"ownSecrets`}},
 		{"cloudIdentity without provider", without("provider"), []string{"cloudIdentity.provider"}},
 		{"cloudIdentity without roleArn", without("roleArn"), []string{"cloudIdentity.roleArn"}},
@@ -303,6 +304,14 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 			want := map[string]string{"gatewayCaKey": "own-secret-not-a-real-key"}
 			wantField(t, "OwnSecrets, Desired().OwnSecrets", []map[string]string{req.OwnSecrets, d.OwnSecrets}, []map[string]string{want, want})
 		}},
+		{"a validate the engine marks as settling a verb is decoded as settling", func(m map[string]any) { m["operation"], m["settling"] = "validate", true },
+			func(t *testing.T, req contract.Request, d contract.Desired) {
+				wantField(t, "Settling", req.Settling, true)
+			}},
+		{"a validate without the marker settles no verb", func(m map[string]any) { m["operation"], m["settlesAt"] = "validate", settles },
+			func(t *testing.T, req contract.Request, d contract.Desired) {
+				wantField(t, "Settling", req.Settling, false)
+			}},
 		{"a validate settles at its settlesAt", func(m map[string]any) { m["operation"], m["settlesAt"] = "validate", settles },
 			func(t *testing.T, req contract.Request, d contract.Desired) {
 				if !d.VerbAt.Equal(settlesAt) {
@@ -466,6 +475,8 @@ func TestRequestMarshal_EncodesEachResourceFieldUnderItsWireNameOnlyWhenSet(t *t
 		{"no unsubscribing marker when unset", contract.Request{}, "resourceUnsubscribing", nil},
 		{"no resource type when unset", contract.Request{}, "resourceType", nil},
 		{"no never-active key when it may have been active", contract.Request{}, "neverActive", nil},
+		{"the settling marker, on the validate that settles a verb", contract.Request{Operation: "validate", Settling: true}, "settling", true},
+		{"no settling key on a validate that settles no verb", contract.Request{Operation: "validate"}, "settling", nil},
 		{"no recorded resources when unset", contract.Request{}, "recordedResources", nil},
 		{"no requirement types when unset", contract.Request{}, "requirementTypes", nil},
 		{"no resource key at all for a validate naming no resource", contract.Request{Operation: "validate"}, "resource", nil},
@@ -562,6 +573,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 				t.Errorf("properties.resourceUnsubscribing type = %v, want boolean", schemaTypes(prop))
 			}
 		}},
+		{"settling", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "boolean") {
+				t.Errorf("properties.settling type = %v, want boolean", schemaTypes(prop))
+			}
+		}},
 		{"ownSecrets", func(t *testing.T, prop map[string]any) {
 			objectOfStrings(t, doc, prop, "properties.ownSecrets")
 		}},
@@ -633,11 +649,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_16_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_17_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.16.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.16.0: it adds the operations snapshot and restore, a minor change from 1.15.0, which added run", doc["version"])
+	if doc["version"] != "1.17.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.17.0: it adds the optional field settling, a minor change from 1.16.0, which added the operations snapshot and restore", doc["version"])
 	}
 }
 
