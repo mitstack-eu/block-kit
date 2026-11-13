@@ -1136,10 +1136,66 @@ recreate replaces its container, as "Judging a container's health" describes.
 container itself.
 
 A block's test drives the `Database` against `dockerhosttest.Host`, a fake of
-the host's repository and its node report. Set `Database.GitHub` to the fake's
-`GitHub` and `Database.Reports` to the fake itself. The fake's fields set what
-its next node report holds, such as a silent host, a lagging agent or a
-container's state.
+the host's repository and of the node report, the signed status the host sends
+the platform. The fake's fields set what its next node report holds, such as a
+silent host, a lagging agent or a container's state.
+`dockerhosttest.NewDatabase(t, db)` serves the block's own `Database` from a
+fresh fake at a fixed clock. It fails the test on a request to the host whose
+GitHub token is not `dockerhosttest.Token`, the token every subscription the
+harness builds carries. The `dockerhosttest.Database` it answers gives a
+block's tests these:
+
+| Name | What a test gets |
+|---|---|
+| `Desired(app, params)` | The app's subscription, with its host and bucket requirements met by the fake |
+| `dockerhosttest.Requirements()` | The same two requirements, as `kittest.Block` takes them |
+| `Land(t, desired)` | A subscribe that fails the test unless the database lands |
+| `Compose`, `BackupLine` | The app's compose file, and one `key=value` line of its backup file |
+| `Observe` | What the platform reads of the database: its state and its outputs |
+| `Process` | The database served as a newly started operator |
+| `ListTagged` | Each app whose compose file carries a subscription's label, which `kittest.AssertBlock` reads to find what a subscription made |
+| `Lose` | An app's files removed from the host, as a person deleting them by hand would, for `kittest.AssertBlock` |
+| `Breaking(faults)` | The database with each write to the host made a side effect that `kittest.AssertTeardownAfterBrokenSetup` may break |
+| `Holds` | Every file on the host but its README, which `kittest.AssertTeardownAfterBrokenSetup` reads after the teardown |
+
+`dockerhosttest.AssertDatabase(t, db)` runs the scenarios every database block
+holds against the block's own `Database`, each as a subtest named for what it
+proves:
+
+- Each app lands on its own network with no published port and its volume at
+  its disk.
+- The password stays on the host, and the app's directory holds the
+  database's four files alone, so no file hands the app its connection.
+- The outputs carry the connection and the password's secret name, and no
+  password.
+- A reservation past the host's free CPU, memory or disk is refused, and
+  nothing is written.
+- An upgrade keeps the volume, its size and its mount.
+- Nothing is removed until the final backup reads uploaded.
+
+The block's own tests then check only what its engine owns, such as its image,
+its data directory, its dump and restore lines, and its port.
+
+`dockerhosttest.Create(t, service, network, env...)` makes a `Container`,
+without starting it, under the local Docker daemon. `service` is one service
+of a compose file the `Database` rendered, such as
+`d.Compose(t, "shop").Services["postgres"]`. `network` is a Docker network to
+join, or empty for the default one, and each `env` is a `NAME=value` the test
+sets, such as the password the host would generate. The container runs the
+service as the host would, with its labels and environment, on a volume of its
+own. It leaves out the service's restart policy, so a
+test that stops the container decides itself when it starts again. A block's
+tests use it to run their real engine through these, and each wait fails the
+test after four minutes:
+
+| Name | What it does |
+|---|---|
+| `dockerhosttest.Scratch(t, what)` | A fresh Docker name whose container, volume and network are removed when the test ends |
+| `dockerhosttest.Docker(stdin, args...)` | One docker command, answering its output |
+| `Container.Must(args...)` | One docker command that fails the test on an error |
+| `Container.WaitForLine(text)` | A wait on the container's own output, followed as Docker streams it, for a line holding `text` |
+| `Container.WaitHealthy()` | A wait on Docker's health events for the container to read healthy |
+| `Container.Exec(line, stdin)` | A shell line run in the container, as the host runs a backup file's line |
 
 ## Reporting whether an app answers
 

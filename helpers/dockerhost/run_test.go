@@ -42,7 +42,7 @@ func newRunEnv(t *testing.T, processes ...string) *runEnv {
 	if len(processes) == 0 {
 		processes = []string{"web"}
 	}
-	host := dockerhosttest.New(t, dbRepo, dbHostSub, runBlock, "web")
+	host := dockerhosttest.New(t, dockerhosttest.Repo, dockerhosttest.Sub, runBlock, "web")
 	host.Set(map[string]string{runApp + "/" + runBlock + ".compose.yaml": "services: {}\n"})
 	return &runEnv{host: host, runner: dockerhost.Runner{
 		Block: runBlock, Processes: processes, Reports: host, GitHub: host.GitHub, Now: func() time.Time { return runPressed },
@@ -50,7 +50,7 @@ func newRunEnv(t *testing.T, processes ...string) *runEnv {
 }
 
 func runDesired(host map[string]string) contract.Desired {
-	binding := map[string]string{"clusterRepoUrl": "https://github.com/" + dbRepo, "subscriptionId": dbHostSub, "execKind": "git-pull", "execTarget": runServer}
+	binding := map[string]string{"clusterRepoUrl": "https://github.com/" + dockerhosttest.Repo, "subscriptionId": dockerhosttest.Sub, "execKind": "git-pull", "execTarget": runServer}
 	for k, v := range host {
 		if v == "" {
 			delete(binding, k)
@@ -61,7 +61,7 @@ func runDesired(host map[string]string) contract.Desired {
 	return contract.Desired{
 		Identity: contract.Identity{SubscriptionID: "sub_slice_shop", BlockID: runBlock, OrgID: "org_0123456789ab", AppID: "app_shop"},
 		Params:   map[string]string{"appName": runApp},
-		Secrets:  map[string]map[string]string{"github": {"token": dbToken, "owner": dbOwner}},
+		Secrets:  map[string]map[string]string{"github": {"token": dockerhosttest.Token, "owner": dockerhosttest.Owner}},
 		Bindings: map[string]map[string]string{"host": binding},
 	}
 }
@@ -196,7 +196,7 @@ func TestRunner_ReportsTheCommitOfItsRequestOnceNamingTheHostsRepositoryWithTheC
 	err := e.runReporting(t, platform, asked(runID))
 
 	wantPending(t, err)
-	want := []dockerhosttest.CommitReport{{Repository: dbRepo, Commit: e.host.Head(), Bearer: dockerhosttest.CallbackToken}}
+	want := []dockerhosttest.CommitReport{{Repository: dockerhosttest.Repo, Commit: e.host.Head(), Bearer: dockerhosttest.CallbackToken}}
 	if got := platform.Reports(); !reflect.DeepEqual(got, want) {
 		t.Errorf("commit reports = %+v, want %+v, one for the commit the run landed", got, want)
 	}

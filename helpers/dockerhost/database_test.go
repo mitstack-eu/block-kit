@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 	"github.com/mitstack-eu/block-kit/contract"
@@ -24,10 +23,6 @@ import (
 
 const (
 	dbBlock    = "docker-store"
-	dbOwner    = "acme"
-	dbRepo     = dbOwner + "/docker-host-sub-host0123456789"
-	dbHostSub  = "sub_host0123456789"
-	dbToken    = "ghs_github-token-sentinel-9b2c"
 	storeImage = "example.org/store:2.1@sha256:0f9e"
 )
 
@@ -37,25 +32,13 @@ var (
 	_ handler.Observer         = dockerhost.Database{}
 )
 
-type dbEnv struct {
-	host *dockerhosttest.Host
-	db   dockerhost.Database
+func storeDB() dockerhost.Database {
+	return dockerhost.Database{Block: dbBlock, Type: "example.store-database", Engine: storeEngine()}
 }
 
-func newDBEnv(t *testing.T) *dbEnv {
+func newDBEnv(t *testing.T) *dockerhosttest.Database {
 	t.Helper()
-	host := dockerhosttest.New(t, dbRepo, dbHostSub, dbBlock, "store")
-	t.Cleanup(func() {
-		for _, r := range host.Requests() {
-			if r.Authorization != "Bearer "+dbToken {
-				t.Errorf("%s %s carried Authorization %q; want the GitHub connection's token", r.Method, r.Path, r.Authorization)
-			}
-		}
-	})
-	return &dbEnv{host: host, db: dockerhost.Database{
-		Block: dbBlock, Type: "example.store-database", Engine: storeEngine(),
-		Reports: host, GitHub: host.GitHub, Now: func() time.Time { return time.Unix(1793620800, 0) },
-	}}
+	return dockerhosttest.NewDatabase(t, storeDB())
 }
 
 func storeEngine() dockerhost.Engine {
@@ -70,45 +53,6 @@ func storeEngine() dockerhost.Engine {
 	}
 }
 
-func dbDesired(app string, params map[string]string) contract.Desired {
-	p := map[string]string{"appName": app}
-	maps.Copy(p, params)
-	return contract.Desired{
-		Identity: contract.Identity{SubscriptionID: "sub_db_" + app, BlockID: dbBlock, OrgID: "org_0123456789ab", AppID: "app_" + app},
-		Params:   p,
-		Secrets:  map[string]map[string]string{"github": {"token": dbToken, "owner": dbOwner}},
-		Bindings: map[string]map[string]string{
-			"host":   {"clusterRepoUrl": "https://github.com/" + dbRepo, "subscriptionId": dbHostSub},
-			"bucket": {"bucket": "docker-host-sub-host0123456789-backups"},
-		},
-	}
-}
-
-func (e *dbEnv) land(t *testing.T, d contract.Desired) {
-	t.Helper()
-	if _, err := e.db.EnsureResources(context.Background(), d); err != nil {
-		t.Fatalf("EnsureResources(%s) = %v, want the database landed", d.Params["appName"], err)
-	}
-}
-
-func (e *dbEnv) compose(t *testing.T, app string) dockerhost.Compose {
-	t.Helper()
-	var c dockerhost.Compose
-	if err := json.Unmarshal([]byte(e.host.Main()[app+"/"+dbBlock+".compose.yaml"]), &c); err != nil {
-		t.Fatalf("%s's compose file does not parse: %v", app, err)
-	}
-	return c
-}
-
-func (e *dbEnv) observe(t *testing.T, d contract.Desired) contract.Observation {
-	t.Helper()
-	obs, err := e.db.Observers()[dockerhost.DatabaseResource].ObserveResource(context.Background(), contract.ResourceRef{Name: dockerhost.DatabaseResource, Desired: d})
-	if err != nil {
-		t.Fatalf("ObserveResource = %v", err)
-	}
-	return obs
-}
-
 func refused(err error) string {
 	var r *handler.Refused
 	if errors.As(err, &r) {
@@ -117,83 +61,35 @@ func refused(err error) string {
 	return ""
 }
 
-func waits(err error) bool {
-	var w *handler.Waiting
-	return errors.As(err, &w)
+func TestDatabase_HoldsEveryDatabaseScenario(t *testing.T) {
+	dockerhosttest.AssertDatabase(t, storeDB())
 }
 
-func keyLines(content string) map[string]string {
-	out := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(content), "\n") {
-		if name, value, ok := strings.Cut(line, "="); ok {
-			out[name] = value
-		}
-	}
-	return out
-}
-
-func TestDatabase_LandsTwoAppsEachOnItsOwnNetworkWithNoPublishedPortAndItsVolumeAtItsDisk(t *testing.T) {
+func TestDatabase_ReservesAndLimitsTheContainerToItsSizesWithNoSwapBeyondItsMemory(t *testing.T) {
 	e := newDBEnv(t)
 
-	e.land(t, dbDesired("shop", map[string]string{"dbCpu": "250m", "dbMemory": "1Gi", "dbDisk": "2Gi"}))
-	e.land(t, dbDesired("blog", nil))
+	e.Land(t, e.Desired("shop", map[string]string{"dbCpu": "250m", "dbMemory": "1Gi", "dbDisk": "2Gi"}))
 
-	for app, disk := range map[string]string{"shop": "2GiB", "blog": "1GiB"} {
-		c := e.compose(t, app)
-		s, ok := c.Services["store"]
-		if !ok || len(c.Services) != 1 {
-			t.Fatalf("%s's compose file holds %v; want the store service alone", app, slices.Collect(maps.Keys(c.Services)))
-		}
-		if len(s.Ports) != 0 || c.Network("default") != "app-"+app || !slices.Equal(s.Networks, []string{"default"}) {
-			t.Errorf("%s's database publishes %v on %v named %q; want no port on the app's own network app-%s", app, s.Ports, s.Networks, c.Network("default"), app)
-		}
-		if got := c.Volumes["store-data"].Labels["eu.mitstack.size"]; got != disk || !slices.Equal(s.Volumes, []string{"store-data:/data"}) {
-			t.Errorf("%s's volume is %v sized %q; want store-data at /data sized %s", app, s.Volumes, got, disk)
-		}
-		if s.Image != storeImage || s.ContainerName != app+"-store" || s.Labels["mitstack.dev/subscription"] != "sub_db_"+app {
-			t.Errorf("%s's database runs %q as %q labelled %v; want the engine's image as %s-store labelled with its subscription", app, s.Image, s.ContainerName, s.Labels, app)
-		}
-	}
 	var got dockerhost.Reservation
-	if err := json.Unmarshal([]byte(e.host.Main()["shop/reservations/"+dbBlock+".json"]), &got); err != nil || got != (dockerhost.Reservation{CPUMillis: 250, MemoryBytes: gib, DiskBytes: 2 * gib}) {
+	if err := json.Unmarshal([]byte(e.Main()["shop/reservations/"+dbBlock+".json"]), &got); err != nil || got != (dockerhost.Reservation{CPUMillis: 250, MemoryBytes: gib, DiskBytes: 2 * gib}) {
 		t.Errorf("shop's reservation reads %+v, %v; want 250 millicores, 1 GiB and 2 GiB of disk", got, err)
 	}
-	if s := e.compose(t, "shop").Services["store"]; s.CPUs != "0.25" || s.MemLimit != gib || s.MemswapLimit != gib {
+	if s := e.Compose(t, "shop").Services["store"]; s.CPUs != "0.25" || s.MemLimit != gib || s.MemswapLimit != gib {
 		t.Errorf("shop's limits are %s CPUs and %d bytes, swap %d; want 0.25 and 1 GiB with no swap beyond", s.CPUs, s.MemLimit, s.MemswapLimit)
 	}
 }
 
-func TestDatabase_KeepsThePasswordOnTheHostWritesNoGivesFileAndLeavesTheAppsOwnVariablesAlone(t *testing.T) {
+func TestDatabase_LeavesTheAppsOwnVariablesAloneAndEscapesItsEntrypointForCompose(t *testing.T) {
 	e := newDBEnv(t)
-	e.host.Set(map[string]string{"shop/env.names": "DB_HOST=secret:db-host\n"})
+	e.Set(map[string]string{"shop/env.names": "DB_HOST=secret:db-host\n"})
 
-	e.land(t, dbDesired("shop", nil))
+	e.Land(t, e.Desired("shop", nil))
 
-	if got, want := slices.Sorted(maps.Keys(e.host.Under("shop"))), slices.Sorted(slices.Values(append(landedFiles("shop"), "shop/env.names"))); !slices.Equal(got, want) {
-		t.Errorf("shop holds %v; want the database's files beside the app's env.names, and no gives file", got)
+	if got := e.Main()["shop/env.names"]; got != "DB_HOST=secret:db-host\n" {
+		t.Errorf("the app's own env.names reads %q after the database landed; want it as the app wrote it", got)
 	}
-	envNames := keyLines(e.host.Main()["shop/"+dbBlock+".env.names"])
-	if want := map[string]string{"DB_PASSWORD": "generated:" + dbBlock + ":password"}; !maps.Equal(envNames, want) {
-		t.Errorf("the database's env.names lists %v; want %v, the password the host generates and keeps", envNames, want)
-	}
-	if got := e.compose(t, "shop").Services["store"].Entrypoint; !slices.Equal(got, []string{"sh", "-c", `exec store --user=app --password="$$DB_PASSWORD"`}) {
+	if got := e.Compose(t, "shop").Services["store"].Entrypoint; !slices.Equal(got, []string{"sh", "-c", `exec store --user=app --password="$$DB_PASSWORD"`}) {
 		t.Errorf("the entrypoint is %q; want the engine's with each $ escaped for Compose", got)
-	}
-	backup := keyLines(e.host.Main()["shop/"+dbBlock+".backup"])
-	if want := map[string]string{"service": "store", "command": "store dump --db=app", "restore": "store load --db=app", "every": "24h"}; !maps.Equal(backup, want) {
-		t.Errorf("the backup file lists %v; want %v", backup, want)
-	}
-}
-
-func TestDatabase_OutputsTheFourValuesAndThePasswordsSecretNameAndNoPassword(t *testing.T) {
-	e := newDBEnv(t)
-	e.land(t, dbDesired("shop", nil))
-
-	obs := e.observe(t, dbDesired("shop", nil))
-
-	want := map[string]string{"host": "shop-store", "port": "7000", "dbName": "app", "username": "app", "passwordSecret": "generated:" + dbBlock + ":password"}
-	if obs.State != contract.Present || !maps.Equal(obs.Outputs, want) {
-		t.Errorf("ObserveResource = %s with outputs %v; want present with %v", obs.State, obs.Outputs, want)
 	}
 }
 
@@ -201,26 +97,24 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name, class, says string
 		params            map[string]string
-		before            func(*testing.T, *dbEnv)
+		before            func(*testing.T, *dockerhosttest.Database)
 		edit              func(*contract.Desired)
 	}{
 		{name: "a disk that does not parse", class: "invalid-param", says: `params["dbDisk"] is "lots"`, params: map[string]string{"dbDisk": "lots"}},
 		{name: "memory past what the host has free", class: "host-full", says: "the host has 2.5 vCPU, 512 MiB and 69 GiB of disk free",
 			params: map[string]string{"dbMemory": "1Gi"},
-			before: func(_ *testing.T, e *dbEnv) {
-				e.host.Set(map[string]string{"blog/reservations/docker-app-slice.json": `{"cpuMillis":1000,"memoryBytes":6979321856,"diskBytes":1073741824}`})
+			before: func(_ *testing.T, e *dockerhosttest.Database) {
+				e.Set(map[string]string{"blog/reservations/docker-app-slice.json": `{"cpuMillis":1000,"memoryBytes":6979321856,"diskBytes":1073741824}`})
 			}},
-		{name: "CPU past what the host has free", class: "host-full", says: "asks for 4 vCPU", params: map[string]string{"dbCpu": "4"}},
-		{name: "disk past what the host has free", class: "host-full", says: "asks for 0.5 vCPU, 512 MiB and 71 GiB of disk", params: map[string]string{"dbDisk": "71Gi"}},
 		{name: "a host that takes no backups", class: "host-takes-no-backups", says: "the host holds no backup public key",
-			before: func(_ *testing.T, e *dbEnv) { e.host.BackupError = "the host holds no backup public key" }},
+			before: func(_ *testing.T, e *dockerhosttest.Database) { e.BackupError = "the host holds no backup public key" }},
 		{name: "a host that has sent no report", says: "no node report giving its allocatable capacity",
-			before: func(_ *testing.T, e *dbEnv) { e.host.Silent = true }},
+			before: func(_ *testing.T, e *dockerhosttest.Database) { e.Silent = true }},
 		{name: "an app whose database another subscription holds", class: "app-taken", says: "belongs to the subscription sub_db_other",
-			before: func(t *testing.T, e *dbEnv) {
-				other := dbDesired("shop", nil)
+			before: func(t *testing.T, e *dockerhosttest.Database) {
+				other := e.Desired("shop", nil)
 				other.SubscriptionID = "sub_db_other"
-				e.land(t, other)
+				e.Land(t, other)
 			}},
 		{name: "a request without the GitHub connection", class: "missing-github-access", says: "the GitHub connection is missing",
 			edit: func(d *contract.Desired) { d.Secrets = nil }},
@@ -242,19 +136,19 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 			if tc.before != nil {
 				tc.before(t, e)
 			}
-			held := e.host.Under("shop")
-			d := dbDesired("shop", tc.params)
+			held := e.Under("shop")
+			d := e.Desired("shop", tc.params)
 			if tc.edit != nil {
 				tc.edit(&d)
 			}
 
-			var resource handler.Resource = e.db
+			var resource handler.Resource = e.DB
 			err := resource.Ensure(context.Background(), d)
 
 			if err == nil || refused(err) != tc.class || !strings.Contains(err.Error(), tc.says) {
 				t.Errorf("Ensure = %v; want a %q refusal naming %q", err, tc.class, tc.says)
 			}
-			if got := e.host.Under("shop"); !maps.Equal(got, held) {
+			if got := e.Under("shop"); !maps.Equal(got, held) {
 				t.Errorf("a refused subscribe left shop holding %v; want it as it was, %v", slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(held)))
 			}
 		})
@@ -263,48 +157,48 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 
 func TestDatabase_LandsOnTheHostRepositoryOfAnOwnerTheRequestCarriesOnlyInTheGitHubConfig(t *testing.T) {
 	e := newDBEnv(t)
-	d := dbDesired("shop", nil)
-	d.Secrets = map[string]map[string]string{"github": {"token": dbToken}}
-	d.Instances = map[string]contract.InstanceConfig{"github": {Config: map[string]string{"owner": dbOwner}}}
+	d := e.Desired("shop", nil)
+	d.Secrets = map[string]map[string]string{"github": {"token": dockerhosttest.Token}}
+	d.Instances = map[string]contract.InstanceConfig{"github": {Config: map[string]string{"owner": dockerhosttest.Owner}}}
 
-	_, err := e.db.EnsureResources(context.Background(), d)
+	_, err := e.DB.EnsureResources(context.Background(), d)
 
 	if err != nil {
-		t.Fatalf("EnsureResources with the owner %q only in the GitHub config = %v; want the database landed on %s", dbOwner, err, dbRepo)
+		t.Fatalf("EnsureResources with the owner %q only in the GitHub config = %v; want the database landed on %s", dockerhosttest.Owner, err, dockerhosttest.Repo)
 	}
-	if _, landed := e.host.Main()["shop/"+dbBlock+".compose.yaml"]; !landed {
-		t.Errorf("%s holds %v; want shop's compose file landed on it", dbRepo, slices.Sorted(maps.Keys(e.host.Main())))
+	if _, landed := e.Main()["shop/"+dbBlock+".compose.yaml"]; !landed {
+		t.Errorf("%s holds %v; want shop's compose file landed on it", dockerhosttest.Repo, slices.Sorted(maps.Keys(e.Main())))
 	}
-	for _, r := range e.host.Writes() {
-		if !strings.HasPrefix(r.Path, "/repos/"+dbRepo+"/") {
-			t.Errorf("%s %s wrote outside the host repository; want every write under /repos/%s/", r.Method, r.Path, dbRepo)
+	for _, r := range e.Writes() {
+		if !strings.HasPrefix(r.Path, "/repos/"+dockerhosttest.Repo+"/") {
+			t.Errorf("%s %s wrote outside the host repository; want every write under /repos/%s/", r.Method, r.Path, dockerhosttest.Repo)
 		}
 	}
 }
 
 func TestDatabase_WaitsForTheHostsNextReportWhileItGivesNoCapacityAndWritesNothing(t *testing.T) {
 	e := newDBEnv(t)
-	e.host.Silent = true
+	e.Silent = true
 
-	_, err := e.db.EnsureResources(context.Background(), dbDesired("shop", nil))
+	_, err := e.DB.EnsureResources(context.Background(), e.Desired("shop", nil))
 
 	if !waitsForSignal(err) || !strings.Contains(err.Error(), "shop's database waits for that capacity report") {
 		t.Errorf("EnsureResources on a host that has sent no report = %v; want a wait for its next report naming the capacity report", err)
 	}
-	if got := e.host.Under("shop"); len(got) != 0 {
+	if got := e.Under("shop"); len(got) != 0 {
 		t.Errorf("a waiting subscribe left shop holding %v; want nothing", slices.Sorted(maps.Keys(got)))
 	}
 }
 
 func TestDatabase_UpgradeKeepsTheVolumesDiskAndAnUnchangedOneWritesNothing(t *testing.T) {
 	e := newDBEnv(t)
-	e.land(t, dbDesired("shop", map[string]string{"dbDisk": "2Gi"}))
-	writes := len(e.host.Writes())
+	e.Land(t, e.Desired("shop", map[string]string{"dbDisk": "2Gi"}))
+	writes := len(e.Writes())
 
-	e.land(t, dbDesired("shop", map[string]string{"dbDisk": "2Gi"}))
-	_, err := e.db.EnsureResources(context.Background(), dbDesired("shop", map[string]string{"dbDisk": "3Gi"}))
+	e.Land(t, e.Desired("shop", map[string]string{"dbDisk": "2Gi"}))
+	_, err := e.DB.EnsureResources(context.Background(), e.Desired("shop", map[string]string{"dbDisk": "3Gi"}))
 
-	if got := len(e.host.Writes()); got != writes {
+	if got := len(e.Writes()); got != writes {
 		t.Errorf("an unchanged upgrade made %d writes; want none", got-writes)
 	}
 	if refused(err) != "disk-fixed" || !strings.Contains(err.Error(), `keep params["dbDisk"] at 2Gi`) {
@@ -315,64 +209,55 @@ func TestDatabase_UpgradeKeepsTheVolumesDiskAndAnUnchangedOneWritesNothing(t *te
 func TestDatabase_GivesUpWhenMainMovesUnderEachOfThreeAttempts(t *testing.T) {
 	e := newDBEnv(t)
 	moves := 0
-	e.host.BeforeWrite(func(method, _ string) error {
+	e.BeforeWrite(func(method, _ string) error {
 		if method == "PATCH" {
 			moves++
-			e.host.Set(map[string]string{"other/compose.yaml": strings.Repeat("x", moves)})
+			e.Set(map[string]string{"other/compose.yaml": strings.Repeat("x", moves)})
 		}
 		return nil
 	})
 
-	_, err := e.db.EnsureResources(context.Background(), dbDesired("shop", nil))
+	_, err := e.DB.EnsureResources(context.Background(), e.Desired("shop", nil))
 
 	if !errors.Is(err, ghapi.ErrNotFastForward) || moves != 3 {
 		t.Errorf("EnsureResources under a main moving at each commit = %v after %d attempts; want it to give up after 3", err, moves)
 	}
 }
 
-func TestDatabase_UnsubscribeRemovesTheFilesOnlyOnceTheFinalBackupIsUploaded(t *testing.T) {
+func TestDatabase_UnsubscribeAsksForTheFinalBackupByItsTimeNamesAFailureAndKeepsTheAppsOwnFiles(t *testing.T) {
 	ctx := context.Background()
 	e := newDBEnv(t)
-	e.land(t, dbDesired("shop", nil))
-	e.host.Set(map[string]string{"shop/compose.yaml": "services: {}\n"})
-	e.host.Volumes["shop"] = true
-	e.host.BackupResult = ""
+	e.Land(t, e.Desired("shop", nil))
+	e.Set(map[string]string{"shop/compose.yaml": "services: {}\n"})
+	e.Volumes["shop"] = true
+	e.BackupResult = ""
 
-	_, asked := e.db.Delete(ctx, dbDesired("shop", nil))
-	_, pending := e.db.Delete(ctx, dbDesired("shop", nil))
-
-	if !waits(asked) || !waits(pending) || strings.TrimSpace(e.host.Main()["shop/"+dbBlock+".backup-request"]) != "final-1793620800" {
-		t.Fatalf("Delete = %v, then %v, holding the request %q; want both waiting on the final backup final-1793620800",
-			asked, pending, e.host.Main()["shop/"+dbBlock+".backup-request"])
+	_, _ = e.DB.Delete(ctx, e.Desired("shop", nil))
+	if got := strings.TrimSpace(e.Main()["shop/"+dbBlock+".backup-request"]); got != "final-1793620800" {
+		t.Fatalf("the backup request reads %q; want final-1793620800, named for the clock's time", got)
 	}
-	e.host.BackupResult = "failed: the store answered 403"
-	if _, err := e.db.Delete(ctx, dbDesired("shop", nil)); err == nil || waits(err) || !strings.Contains(err.Error(), "the store answered 403") {
+	e.BackupResult = "failed: the store answered 403"
+	if _, err := e.DB.Delete(ctx, e.Desired("shop", nil)); err == nil || !strings.Contains(err.Error(), "the store answered 403") {
 		t.Errorf("Delete after a failed final backup = %v; want a failure naming the host's reason", err)
 	}
-	if got, want := slices.Sorted(maps.Keys(e.host.Under("shop"))), append(landedFiles("shop"), "shop/compose.yaml", "shop/"+dbBlock+".backup-request"); !slices.Equal(got, slices.Sorted(slices.Values(want))) {
-		t.Errorf("a failed final backup left shop holding %v; want everything kept, %v", got, want)
-	}
-	e.host.BackupResult = dockerhosttest.Uploaded
-	if _, err := e.db.Delete(ctx, dbDesired("shop", nil)); err != nil {
-		t.Fatalf("Delete once the backup is uploaded = %v", err)
-	}
-	if got := slices.Collect(maps.Keys(e.host.Under("shop"))); !slices.Equal(got, []string{"shop/compose.yaml"}) {
-		t.Errorf("shop holds %v after the unsubscribe; want only the app's own compose file", got)
+	e.BackupResult = dockerhosttest.Uploaded
+	if _, err := e.DB.Delete(ctx, e.Desired("shop", nil)); err != nil || !slices.Equal(slices.Collect(maps.Keys(e.Under("shop"))), []string{"shop/compose.yaml"}) {
+		t.Errorf("Delete once the backup is uploaded = %v leaving %v; want only the app's own compose file", err, slices.Collect(maps.Keys(e.Under("shop"))))
 	}
 }
 
 func TestDatabase_UnsubscribeRemovesADatabaseTheHostNeverMadeAVolumeForAndLeavesAnotherSubscriptions(t *testing.T) {
 	ctx := context.Background()
 	e := newDBEnv(t)
-	e.land(t, dbDesired("shop", nil))
-	other := dbDesired("shop", nil)
+	e.Land(t, e.Desired("shop", nil))
+	other := e.Desired("shop", nil)
 	other.SubscriptionID = "sub_db_other"
 
-	if _, err := e.db.Delete(ctx, other); err != nil || !slices.Equal(slices.Sorted(maps.Keys(e.host.Under("shop"))), landedFiles("shop")) {
-		t.Errorf("another subscription's Delete = %v leaving %v; want shop's database left whole", err, slices.Sorted(maps.Keys(e.host.Under("shop"))))
+	if _, err := e.DB.Delete(ctx, other); err != nil || !slices.Equal(slices.Sorted(maps.Keys(e.Under("shop"))), landedFiles("shop")) {
+		t.Errorf("another subscription's Delete = %v leaving %v; want shop's database left whole", err, slices.Sorted(maps.Keys(e.Under("shop"))))
 	}
-	if _, err := e.db.Delete(ctx, dbDesired("shop", nil)); err != nil || len(e.host.Under("shop")) != 0 {
-		t.Errorf("Delete of a database with no volume = %v leaving %v; want it removed with no backup", err, e.host.Under("shop"))
+	if _, err := e.DB.Delete(ctx, e.Desired("shop", nil)); err != nil || len(e.Under("shop")) != 0 {
+		t.Errorf("Delete of a database with no volume = %v leaving %v; want it removed with no backup", err, e.Under("shop"))
 	}
 }
 
@@ -387,14 +272,14 @@ func TestDatabase_UnsubscribeKeepsTheDatabaseWhileTheHostCannotShowAFinalBackup(
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newDBEnv(t)
-			e.land(t, dbDesired("shop", nil))
-			e.host.Volumes["shop"] = true
-			host(e.host)
+			e.Land(t, e.Desired("shop", nil))
+			e.Volumes["shop"] = true
+			host(e.Host)
 
-			_, err := e.db.Delete(context.Background(), dbDesired("shop", nil))
+			_, err := e.DB.Delete(context.Background(), e.Desired("shop", nil))
 
-			if err == nil || !slices.Equal(slices.Sorted(maps.Keys(e.host.Under("shop"))), landedFiles("shop")) {
-				t.Errorf("Delete = %v leaving %v; want an error or a wait with shop's database kept whole", err, slices.Sorted(maps.Keys(e.host.Under("shop"))))
+			if err == nil || !slices.Equal(slices.Sorted(maps.Keys(e.Under("shop"))), landedFiles("shop")) {
+				t.Errorf("Delete = %v leaving %v; want an error or a wait with shop's database kept whole", err, slices.Sorted(maps.Keys(e.Under("shop"))))
 			}
 		})
 	}
@@ -402,10 +287,10 @@ func TestDatabase_UnsubscribeKeepsTheDatabaseWhileTheHostCannotShowAFinalBackup(
 
 func TestDatabase_SubscriptionLogsReadsTheDatabaseContainersOwnLines(t *testing.T) {
 	e := newDBEnv(t)
-	e.land(t, dbDesired("shop", nil))
-	e.host.Containers["shop"] = map[string]any{"subscription": "sub_db_shop", "logs": "LOG: ready\n"}
+	e.Land(t, e.Desired("shop", nil))
+	e.Containers["shop"] = map[string]any{"subscription": "sub_db_shop", "logs": "LOG: ready\n"}
 
-	lines, err := e.db.SubscriptionLogs(context.Background(), dbDesired("shop", nil))
+	lines, err := e.DB.SubscriptionLogs(context.Background(), e.Desired("shop", nil))
 
 	if err != nil || !slices.Equal(lines, []string{"shop-store | LOG: ready"}) {
 		t.Errorf("SubscriptionLogs = %q, %v; want the container's line led by its name", lines, err)
@@ -481,27 +366,27 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 		t.Run(tc.name, func(t *testing.T) {
 			e := newDBEnv(t)
 			if tc.land {
-				landed := dbDesired("shop", nil)
+				landed := e.Desired("shop", nil)
 				if tc.other {
 					landed.SubscriptionID = "sub_db_other"
 				}
-				e.land(t, landed)
+				e.Land(t, landed)
 			}
 			if tc.host != nil {
-				tc.host(e.host)
+				tc.host(e.Host)
 			}
 			if tc.engine != nil {
-				tc.engine(&e.db.Engine)
+				tc.engine(&e.DB.Engine)
 			}
 
-			d := dbDesired("shop", nil)
+			d := e.Desired("shop", nil)
 			d.NeverActive = tc.neverActive
 			if tc.recorded {
 				d.Bindings["host"]["clusterRepoUrl"] = ""
-				d.RecordedResources = map[string]contract.RecordedResource{dockerhost.DatabaseResource: {Identity: map[string]string{"repo": dbRepo}}}
+				d.RecordedResources = map[string]contract.RecordedResource{dockerhost.DatabaseResource: {Identity: map[string]string{"repo": dockerhosttest.Repo}}}
 			}
 
-			obs := e.observe(t, d)
+			obs := e.Observe(t, d)
 
 			detail := obs.StatusDetail
 			if obs.Unhealthy != nil {
@@ -520,14 +405,14 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 
 func TestDatabase_AContextMarkedReadOnlyLandsNothingOnTheHostRepository(t *testing.T) {
 	e := newDBEnv(t)
-	before := len(e.host.Requests())
+	before := len(e.Requests())
 
-	_, err := e.db.EnsureResources(contract.WithReadOnly(context.Background()), dbDesired("shop", nil))
+	_, err := e.DB.EnsureResources(contract.WithReadOnly(context.Background()), e.Desired("shop", nil))
 
 	if !errors.Is(err, contract.ErrReadOnly) {
 		t.Errorf("EnsureResources for a read-only context = %v, want an error wrapping contract.ErrReadOnly", err)
 	}
-	for _, r := range e.host.Requests()[before:] {
+	for _, r := range e.Requests()[before:] {
 		if r.Method != "GET" {
 			t.Errorf("a read-only context sent %s %s to the host repository, want nothing but reads", r.Method, r.Path)
 		}

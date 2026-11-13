@@ -216,16 +216,10 @@ func (s *blockServer) sendRequest(operation, unit string, settling bool, d contr
 	if err != nil {
 		return 0, contract.Response{}, err
 	}
-	body, err := json.Marshal(contract.Request{
-		Operation: operation, SubscriptionID: d.SubscriptionID, IdempotencyKey: freshToken(),
-		BlockID: d.BlockID, BlockVersion: d.BlockVersion, OrgID: d.OrgID, AppID: d.AppID,
-		Params: d.Params, Instances: d.Instances, Secrets: d.Secrets, OBO: obo,
-		SecretInputs: d.SecretInputs, AppSecrets: d.AppSecrets, Bindings: d.Bindings, BindingsAll: d.BindingsAll, Absences: d.Absences,
-		CloudIdentity: d.CloudIdentity, CreatedAt: now, Nonce: freshToken(), PriorOutputs: d.PriorOutputs,
-		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
-		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity, ResourceUnsubscribing: d.ResourceUnsubscribing,
-		Unit: unit, Replacing: d.Replacing, Settling: settling,
-	})
+	req := requestFor(operation, d)
+	req.IdempotencyKey, req.OBO, req.CreatedAt, req.Nonce = freshToken(), obo, now, freshToken()
+	req.Unit, req.Settling = unit, settling
+	body, err := json.Marshal(req)
 	if err != nil {
 		return 0, contract.Response{}, err
 	}
@@ -233,6 +227,37 @@ func (s *blockServer) sendRequest(operation, unit string, settling bool, d contr
 	s.h.ServeHTTP(rec, s.signer.hookRequest("/hook", body))
 	resp, err := contract.DecodeResponse(rec.Body.Bytes())
 	return rec.Code, resp, err
+}
+
+// RequestBody is the engine's request for operation on d as a LeakRequest's Body, which the harness wraps in its envelope.
+func RequestBody(t testing.TB, operation string, d contract.Desired) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(requestFor(operation, d))
+	var body map[string]any
+	if err == nil {
+		err = json.Unmarshal(raw, &body)
+	}
+	if err != nil {
+		t.Fatalf("RequestBody(%s): the request does not read back as a body: %v", operation, err)
+	}
+	for _, envelope := range []string{"idempotencyKey", "obo", "createdAt", "nonce"} {
+		delete(body, envelope)
+	}
+	return body
+}
+
+// requestFor is the engine's request for operation on d, before its envelope of key, token, time and nonce.
+func requestFor(operation string, d contract.Desired) contract.Request {
+	return contract.Request{
+		Operation: operation, SubscriptionID: d.SubscriptionID,
+		BlockID: d.BlockID, BlockVersion: d.BlockVersion, OrgID: d.OrgID, AppID: d.AppID,
+		Params: d.Params, Instances: d.Instances, Secrets: d.Secrets,
+		SecretInputs: d.SecretInputs, AppSecrets: d.AppSecrets, Bindings: d.Bindings, BindingsAll: d.BindingsAll, Absences: d.Absences,
+		CloudIdentity: d.CloudIdentity, PriorOutputs: d.PriorOutputs,
+		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
+		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity, ResourceUnsubscribing: d.ResourceUnsubscribing,
+		Replacing: d.Replacing,
+	}
 }
 
 type blockRun struct {

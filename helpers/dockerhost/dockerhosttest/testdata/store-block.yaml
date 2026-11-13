@@ -1,0 +1,30 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: docker-store
+  name: Docker Store
+  owner: mitstack
+spec:
+  version: 0.1.0
+  releaseClass: feature
+  releaseNote: >-
+    0.1.0: docker-store runs one app's store on the org's Docker host.
+  description: >-
+    Runs one app's store on the org's Docker host, its password kept on the
+    host and backed up off the host.
+  requires:
+    - name: host
+      type: hetzner.docker-host
+    - name: bucket
+      type: hetzner.backup-bucket
+  resources:
+    - name: database
+      type: example.store-database
+  provides: [database]
+  lifecycle:
+    endpoint: https://api.mitstack.test/operators/docker-store/hook
+    operations: [subscribe, unsubscribe, upgrade, validate, logs]
+    contract: kit/v1
+    verbConnections:
+      validate: [github]
+      unsubscribe: [github]
