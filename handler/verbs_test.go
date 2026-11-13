@@ -95,6 +95,7 @@ func TestServe_ARefusalKeepsTheClassItsBlockChoseAndMasksEachSecretInTheTextArou
 		name, wantError, wantDetail, wantClass, wantLog string
 		err                                             error
 		secrets                                         map[string]any
+		hidden                                          []string
 	}{
 		{name: "an app secret spelling a word of the class is masked in the detail alone", err: handler.Refuse(handler.ClassHostCannotRun, detail),
 			secrets: appSecretHost, wantDetail: "refused:host-cannot-run: the [REDACTED] runs amd64 and the image is arm64"},
@@ -104,7 +105,7 @@ func TestServe_ARefusalKeepsTheClassItsBlockChoseAndMasksEachSecretInTheTextArou
 		{name: "a secret equal to a word of the detail is masked wherever it stands there", err: handler.Refuse(handler.ClassHostCannotRun, "cannot pull: the host cannot read what it cannot"),
 			secrets: map[string]any{"secretInputs": map[string]any{"registryUser": "cannot"}}, wantDetail: "refused:host-cannot-run: [REDACTED] pull: the host [REDACTED] read what it [REDACTED]"},
 		{name: "an app secret that starts another shows no part of either in the answer, the event or the log line of a refusal with no class", err: handler.Refuse("", "no route to quartz.lagoon.example.test"),
-			secrets: map[string]any{"appSecrets": map[string]any{"TENANT": "quartz", "TENANT_HOST": "quartz.lagoon"}}, wantClass: "unclassified", wantDetail: "refused:unclassified: no route to [REDACTED].example.test", wantLog: " handler: block returned a refusal with no class: no route to [REDACTED].example.test\n"},
+			secrets: map[string]any{"appSecrets": map[string]any{"TENANT": "quartz", "TENANT_HOST": "quartz.lagoon"}}, wantClass: "unclassified", wantDetail: "refused:unclassified: no route to [REDACTED].example.test", wantLog: " handler: block returned a refusal with no class: no route to [REDACTED].example.test\n", hidden: []string{"quartz", "lagoon"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			events, logged := newFakeEventsServer(t), captureLog(t)
@@ -122,6 +123,7 @@ func TestServe_ARefusalKeepsTheClassItsBlockChoseAndMasksEachSecretInTheTextArou
 			if got := logged.String(); !strings.HasSuffix(got, tc.wantLog) || strings.Count(got, "\n") != strings.Count(tc.wantLog, "\n") {
 				t.Errorf("log = %q, want it to hold only a line ending %q", got, tc.wantLog)
 			}
+			kittest.AssertNoSecret(t, "response body", string(raw), tc.hidden...)
 		})
 	}
 }
