@@ -99,6 +99,7 @@ func TestSanitising(t *testing.T) {
 		{"Scrub redacts every occurrence of a secret", safe.Scrub, "token=ghp_secretvalue and again ghp_secretvalue", []string{"ghp_secretvalue"}, "token=[REDACTED] and again [REDACTED]"},
 		{"Scrub keeps newlines, which is LogValue's job", safe.Scrub, "secret\nvalue", []string{"secret"}, "[REDACTED]\nvalue"},
 		{"Scrub ignores a secret too short to redact safely", safe.Scrub, "the instance is up", []string{"up"}, "the instance is up"},
+		{"Scrub redacts a secret that overlaps its own next occurrence as one stretch", safe.Scrub, "key tatata ends", []string{"tata"}, "key [REDACTED] ends"},
 		{"Scrub redacts a web-identity token inside an STS error", safe.Scrub,
 			stsPrefix + "InvalidIdentityToken: Incorrect token audience in " + stsToken + " (WebIdentityToken=" + stsToken + ")", []string{stsToken},
 			stsPrefix + "InvalidIdentityToken: Incorrect token audience in [REDACTED] (WebIdentityToken=[REDACTED])"},
@@ -124,7 +125,6 @@ func TestScrub_ShowsNoPartOfASecretWhateverOrderTheSecretsArriveIn(t *testing.T)
 		{"a secret that ends another", "dial north-quartz-lagoon.example.test", "dial [REDACTED].example.test", []string{"lagoon", "north-quartz-lagoon"}},
 		{"a secret in the middle of another", "dial north-quartz-lagoon.example.test", "dial [REDACTED].example.test", []string{"quartz", "north-quartz-lagoon"}},
 		{"two secrets of one length that overlap", "dial amber-quartz-basin.example.test", "dial [REDACTED].example.test", []string{"amber-quartz", "quartz-basin"}},
-		{"a secret that overlaps its own next occurrence", "key tatata ends", "key [REDACTED] ends", []string{"tata"}},
 		{"two secrets side by side keep a marker each", "dial amberquartz.example.test", "dial [REDACTED][REDACTED].example.test", []string{"amber", "quartz"}},
 	}
 	for _, tc := range cases {
