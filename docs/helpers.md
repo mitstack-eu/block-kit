@@ -855,24 +855,30 @@ redirect by its own status without following it. It exits 1 for an answer of
 prints one line saying which. Given no URL or more than one, it prints its
 usage and exits 2.
 
-A block runs it by mounting the tools image's probe directory into the
-container at the same path, and naming the probe in exec form, so no shell
-runs. In the compose file a block writes, that reads:
+A block names the probe in exec form, so no shell runs, with the probe's path
+inside the container in place of `<probe>`:
 
 ```json
-"volumes": [{"type": "image", "source": "<tools.Image>", "target": "/mitstack-probe",
-  "read_only": true, "image": {"subpath": "mitstack-probe"}}],
-"healthcheck": {"test": ["CMD", "/mitstack-probe/mitstack-probe", "http://127.0.0.1:8080/"]}
+"healthcheck": {"test": ["CMD", "<probe>", "http://127.0.0.1:8080/"]}
 ```
 
-In place of `<tools.Image>`, a block writes `tools.Image` from the kit release
-it builds on, which names the tools image by tag and digest, as
-[Copying a tool out of an image by digest](#copying-a-tool-out-of-an-image-by-digest)
-says. On the kit's main branch `tools.Image` is empty, so build on a release.
+Do not mount the tools image into the app's container with a Compose image
+mount, since on a Docker host it fails in two ways:
 
-An image mount needs Docker Engine 28 or later, and Compose 2.36 or later reads
-it. On an older engine Compose refuses the whole file and leaves the running
-container as it was, with the health check it had before.
+1. Docker 29.1.3, the release Ubuntu 24.04 ships, names an image mount's
+   directory after the image reference. A reference pinned by digest makes
+   that name longer than Linux allows, so the container is never created and
+   Compose prints `mkdir …: file name too long`. Docker 29.1.4 fixed this.
+2. On the overlay2 storage driver, which Docker 29.1.3 runs under
+   userns-remap, an image mount does not survive a restart of the Docker
+   daemon, as [moby issue 50999](https://github.com/moby/moby/issues/50999)
+   reports. With a subpath the container fails to start after the restart, and
+   a later `docker compose up` with the same file cannot start it either.
+   Without one the container starts with the mount empty, so its health check
+   fails from then on.
+
+A reboot restarts the daemon, so the second failure can stop an app that was
+serving.
 
 ### Running a command in an app's container
 
@@ -1405,7 +1411,7 @@ registry's HTTP API downloads only the layer it needs.
 | `tools.K3sInstaller` | `/k3s/install.sh` | The k3s installer at k3s-io/k3s commit `2d0f82fa2f933cd227fe38e1482558ce4769f464` |
 | `tools.KubeBenchConfig` | `/kube-bench/cfg/config.yaml` and `/kube-bench/cfg/k3s-cis-1.11/` with `config.yaml`, `master.yaml`, `etcd.yaml`, `controlplane.yaml`, `node.yaml` and `policies.yaml` | kube-bench's config at commit `e278a5915a982f2756026de6e2f9ca77077ef9f9`, since its releases stop at k3s-cis-1.9 |
 | `tools.CopyScriptPath` | `/copy-tool/copy-tool.sh` | The helper itself, for an image build to copy with `COPY --from` |
-| `tools.ProbePath` | `/mitstack-probe/mitstack-probe` | The health probe an app's container runs from an image mount, as [Checking an app's answer from inside its container](#checking-an-apps-answer-from-inside-its-container) shows, built from `cmd/mitstack-probe` |
+| `tools.ProbePath` | `/mitstack-probe/mitstack-probe` | The health probe an app's container runs, as [Checking an app's answer from inside its container](#checking-an-apps-answer-from-inside-its-container) says, built from `cmd/mitstack-probe` |
 
 A tool whose publisher ships an image comes from that image instead, named by
 digest, such as k3s from `registry.rancher.com/rancher/k3s-upgrade` at
