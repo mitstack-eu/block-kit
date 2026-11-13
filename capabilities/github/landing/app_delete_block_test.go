@@ -100,7 +100,7 @@ func TestBlockLevel_AnUnsubscribeTheAppsDeleteSendsLeavesTheLandedFilesClosesIts
 			status, resp := unsubscribeForAppDelete(t, landingBlock{github: client(f), record: rec})
 
 			if status != http.StatusOK || resp.Absent == nil || !*resp.Absent {
-				t.Fatalf("status = %d, absent = %v (%s), want 200 and absent", status, resp.Absent, resp.StatusDetail)
+				t.Fatalf("status = %d, absent = %v (%s), want 200 and absent", status, resp.Absent != nil && *resp.Absent, resp.StatusDetail)
 			}
 			var writes []string
 			for _, w := range f.Writes()[mark:] {
