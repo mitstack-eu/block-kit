@@ -72,6 +72,8 @@ type Request struct {
 	SettlesAt         *time.Time                  `json:"settlesAt,omitempty"`
 	NeverActive       bool                        `json:"neverActive,omitempty"`
 
+	Settling bool `json:"settling,omitempty"`
+
 	IssueAppID string `json:"issueAppId,omitempty"`
 
 	Unit      string `json:"unit,omitempty"`
