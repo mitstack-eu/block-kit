@@ -35,7 +35,7 @@ jobs:
       - name: Build the tools image and check every file it holds
         run: |
           docker build --platform linux/amd64 -f helpers/tools/Dockerfile -t block-kit-tools:ci .
-          TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -count=1 -run '^TestToolsImage_(HoldsEveryFileAtItsPinInALayerOfItsOwn|RunsTheSignInCompanion)$' ./helpers/tools
+          TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -count=1 -run '^TestToolsImage_(HoldsEveryFileAtItsPinInALayerOfItsOwn|RunsTheSignInCompanion|RunsTheProbe)$' ./helpers/tools
       # A Docker host's edge runs caddy:2, so the sign-in route is proven
       # against the image hosts pull rather than a pinned one.
       - name: Run the sign-in route in a real caddy

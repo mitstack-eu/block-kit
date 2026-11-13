@@ -2,15 +2,19 @@
 
 package tools_test
 
-// The tools image TOOLS_IMAGE names holds every file at its pin with each tool in a layer of its own, and copy-tool.sh copies each out of a published one through Docker and over the registry's HTTP API, where it reads that one layer.
+// The tools image TOOLS_IMAGE names holds every file at its pin with each tool in a layer of its own, and copy-tool.sh copies each out of a published one through Docker and over the registry's HTTP API, where it reads that one layer, and the image runs its sign-in companion and its probe.
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -49,6 +53,9 @@ func TestToolsImage_HoldsEveryFileAtItsPinInALayerOfItsOwn(t *testing.T) {
 			t.Errorf("%s in %s has sha256 %x (%v); want the pin %s", f.Path, image, sum, err, f.SHA256)
 		}
 		held[toolOf(f)] = true
+	}
+	for _, built := range []string{tools.SignInPath, tools.ProbePath} {
+		held[toolOf(tools.File{Path: built})] = true
 	}
 
 	if layers := docker(t, "image", "inspect", "-f", "{{len .RootFS.Layers}}", image); layers != strconv.Itoa(len(held)) {
@@ -94,5 +101,28 @@ func TestToolsImage_RunsTheSignInCompanion(t *testing.T) {
 
 	if !strings.HasPrefix(out, "mitstack-signin ") {
 		t.Errorf("%s -version in %s printed %q; want it to name itself", tools.SignInPath, image, out)
+	}
+}
+
+func TestToolsImage_RunsTheProbe(t *testing.T) {
+	image := os.Getenv("TOOLS_IMAGE")
+	if runtime.GOOS+"/"+runtime.GOARCH != "linux/amd64" {
+		t.Fatalf("the probe copied out of %s is a linux/amd64 program, so this test runs on linux/amd64, not %s/%s", image, runtime.GOOS, runtime.GOARCH)
+	}
+	app := httptest.NewServer(http.RedirectHandler("http://127.0.0.1:9/", http.StatusFound))
+	t.Cleanup(app.Close)
+	copied, id := filepath.Join(t.TempDir(), "mitstack-probe"), docker(t, "create", "--entrypoint", tools.ProbePath, image)
+	t.Cleanup(func() { docker(t, "rm", id) })
+	docker(t, "cp", id+":"+tools.ProbePath, copied)
+
+	refused, err := exec.Command("docker", "run", "--rm", "--network", "none", "--entrypoint", tools.ProbePath, image, "http://127.0.0.1:9/").CombinedOutput()
+	redirected, redirectErr := exec.Command(copied, app.URL+"/").CombinedOutput()
+
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || !strings.Contains(string(refused), "connection refused") {
+		t.Errorf("%s in %s exited %v, printing %q; want 1 and the refused connection named", tools.ProbePath, image, err, refused)
+	}
+	if redirectErr != nil || !strings.Contains(string(redirected), "302 Found") {
+		t.Errorf("%s copied out of %s exited %v on a 302, printing %q; want 0 and the answer named", tools.ProbePath, image, redirectErr, redirected)
 	}
 }

@@ -109,7 +109,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const toolsImageTest = "go test -tags toolsimage -count=1 -run '^TestToolsImage_' ./helpers/tools"
 	const cutPinned = `bash scripts/release-block-kit.sh --tools-image "$TOOLS_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"`
 	const buildToolsImage = "docker build --platform linux/amd64 -f helpers/tools/Dockerfile -t block-kit-tools:ci .\n" +
-		"TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -count=1 -run '^TestToolsImage_(HoldsEveryFileAtItsPinInALayerOfItsOwn|RunsTheSignInCompanion)$' ./helpers/tools"
+		"TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -count=1 -run '^TestToolsImage_(HoldsEveryFileAtItsPinInALayerOfItsOwn|RunsTheSignInCompanion|RunsTheProbe)$' ./helpers/tools"
 	raw, err := os.ReadFile("../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatalf("reading ci.yml: %v", err)

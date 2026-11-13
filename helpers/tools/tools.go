@@ -11,8 +11,11 @@ const Image = ""
 
 const CopyScriptPath = "/copy-tool/copy-tool.sh"
 
-// SignInPath is the sign-in companion in the tools image, which a Docker host runs from the image as a container.
-const SignInPath = "/mitstack-signin/mitstack-signin"
+// The programs in the tools image: a Docker host runs the sign-in companion as a container, and an app's container runs the health probe from an image mount of its directory at the same path.
+const (
+	SignInPath = "/mitstack-signin/mitstack-signin"
+	ProbePath  = "/mitstack-probe/mitstack-probe"
+)
 
 //go:embed tools.sha256 scripts/copy-tool.sh
 var embedded embed.FS
