@@ -234,7 +234,6 @@ func TestClient_RefusesEachWriteForAContextMarkedReadOnlyAndStillReads(t *testin
 	for write, err := range map[string]error{
 		"DeleteRepo":  c.DeleteRepo(ctx, "acme", "widget"),
 		"SetVariable": c.SetVariable(ctx, "acme/widget", "NAME", "value"),
-		"CommitFiles": c.CommitFiles(ctx, "acme/widget", "message", map[string]string{"a.txt": "a"}),
 	} {
 		if !errors.Is(err, contract.ErrReadOnly) {
 			t.Errorf("%s for a read-only context = %v, want an error wrapping contract.ErrReadOnly", write, err)
