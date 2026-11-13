@@ -2028,8 +2028,10 @@ its repositories as `repository_selection: "all"`, which means every
 repository of the owner, with one of the same owner. Any read that fails,
 such as a 403, a 5xx, a rate limit or a missing token, reads unknown, and
 `Remove` then waits with no write sent. During an unsubscribe marked
-`appDeleting`, the observer reads the landing absent without reading main, so
-the teardown of an app's delete ends with the files still on main.
+`appDeleting`, the observer does not read main. It reads the landing present
+while a branch under `mitstack/<subscription>/` is left, and absent once none
+is, so the teardown of an app's delete ends with the files still on main and
+no branch or removal pull request of the subscription left.
 
 During an unsubscribe, a present answer also reads the subscription's open
 removal pull request. While a check main requires is queued, running or failed

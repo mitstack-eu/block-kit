@@ -256,7 +256,7 @@ func requestFor(operation string, d contract.Desired) contract.Request {
 		CloudIdentity: d.CloudIdentity, PriorOutputs: d.PriorOutputs,
 		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
 		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity, ResourceUnsubscribing: d.ResourceUnsubscribing,
-		Replacing: d.Replacing,
+		AppDeleting: d.AppDeleting, Replacing: d.Replacing,
 	}
 }
 

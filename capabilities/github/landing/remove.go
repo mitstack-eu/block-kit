@@ -318,22 +318,33 @@ func (a api) merge(ctx context.Context, pr openPull, title, message string) erro
 
 // deleteBranches deletes every branch under the subscription's prefix, a branch already gone included.
 func (a api) deleteBranches(ctx context.Context, subscription string) error {
-	prefix := BranchPrefix(subscription)
-	var refs []struct {
-		Ref string `json:"ref"`
-	}
-	if err := a.repos(ctx, http.MethodGet, "/git/matching-refs/heads/"+strings.TrimSuffix(prefix, "/"), nil, &refs); err != nil {
+	names, err := a.branches(ctx, subscription)
+	if err != nil {
 		return err
 	}
-	for _, r := range refs {
-		name, ok := strings.CutPrefix(r.Ref, "refs/heads/")
-		if !ok || !strings.HasPrefix(name, prefix) {
-			continue
-		}
+	for _, name := range names {
 		err := a.repos(ctx, http.MethodDelete, "/git/refs/heads/"+name, nil, nil)
 		if err != nil && statusOf(err) != http.StatusUnprocessableEntity {
 			return err
 		}
 	}
 	return nil
+}
+
+// branches names every branch under the subscription's prefix.
+func (a api) branches(ctx context.Context, subscription string) ([]string, error) {
+	prefix := BranchPrefix(subscription)
+	var refs []struct {
+		Ref string `json:"ref"`
+	}
+	if err := a.repos(ctx, http.MethodGet, "/git/matching-refs/heads/"+strings.TrimSuffix(prefix, "/"), nil, &refs); err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, r := range refs {
+		if name, ok := strings.CutPrefix(r.Ref, "refs/heads/"); ok && strings.HasPrefix(name, prefix) {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
