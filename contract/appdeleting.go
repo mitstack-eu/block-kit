@@ -4,7 +4,6 @@ import "context"
 
 type appDeletingKey struct{}
 
-// WithAppDeleting marks ctx as serving a request the platform sends while it deletes the whole app.
 func WithAppDeleting(ctx context.Context) context.Context {
 	return context.WithValue(ctx, appDeletingKey{}, true)
 }
