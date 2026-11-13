@@ -38,6 +38,22 @@ type LeakRequest struct {
 	Fails bool
 }
 
+// RequestBody is the engine's request for operation on d as a LeakRequest's Body, which the harness wraps in its envelope.
+func RequestBody(operation string, d contract.Desired) map[string]any {
+	raw, err := json.Marshal(requestFor(operation, d))
+	var body map[string]any
+	if err == nil {
+		err = json.Unmarshal(raw, &body)
+	}
+	if err != nil {
+		panic(fmt.Sprintf("kittest: a contract.Request does not round-trip through JSON: %v", err))
+	}
+	for _, envelope := range []string{"idempotencyKey", "obo", "createdAt", "nonce"} {
+		delete(body, envelope)
+	}
+	return body
+}
+
 // CheckNoSecretLeak drives f and returns one problem per leak and per check that would hold having read nothing.
 func CheckNoSecretLeak(f SecretLeak) []string {
 	run, ok := driveLeak(f)

@@ -47,7 +47,7 @@ func New(t testing.TB, repo, sub, block, service string) *Host {
 		BackupResult: Uploaded,
 		Containers:   map[string]map[string]any{},
 	}
-	h.Seed(map[string]string{"README.md": "The host's repository.\n"})
+	h.Seed(map[string]string{readme: "The host's repository.\n"})
 	return h
 }
 
