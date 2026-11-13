@@ -4,8 +4,11 @@ package main
 
 import (
 	"cmp"
+	"encoding/base64"
 	"io"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -622,7 +625,7 @@ func TestWorkflow_TheProbeAnswerDecidesWhichWriteStepsRun(t *testing.T) {
 	}
 }
 
-func runStepBody(t *testing.T, name string, env map[string]string) string {
+func renderStep(t *testing.T, name string) string {
 	t.Helper()
 	literals := map[string]string{
 		"inputs.block-id":       "postgres-db",
@@ -632,7 +635,7 @@ func runStepBody(t *testing.T, name string, env map[string]string) string {
 		"github.server_url":     "https://github.com",
 		"github.run_id":         "42",
 	}
-	body := regexp.MustCompile(`\$\{\{\s*([^}]+?)\s*\}\}`).ReplaceAllStringFunc(script(t, "publish", name).Run, func(s string) string {
+	return regexp.MustCompile(`\$\{\{\s*([^}]+?)\s*\}\}`).ReplaceAllStringFunc(script(t, "publish", name).Run, func(s string) string {
 		key := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(s, "${{"), "}}"))
 		v, ok := literals[key]
 		if !ok {
@@ -640,6 +643,11 @@ func runStepBody(t *testing.T, name string, env map[string]string) string {
 		}
 		return v
 	})
+}
+
+func runStepBody(t *testing.T, name string, env map[string]string) string {
+	t.Helper()
+	body := renderStep(t, name)
 	tmp := t.TempDir()
 	argvFile := filepath.Join(tmp, "blockprov-argv")
 	writeExecutable(t, filepath.Join(tmp, "blockprov"), "#!/bin/sh\necho \"$@\" >> \""+argvFile+"\"\n")
@@ -756,7 +764,7 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 			"actions/setup-go", "Configure AWS credentials", "Checkout block-kit", "Build blockprov", "Move the kit out of the working directory", "Log in to ECR",
 			"Fetch what the release signs", "Probe the version tag and its provenance record", "Refuse a version tagged at another commit", "Scan and push the image", completesOnlyTheHandedImage,
 			"Determine the kit version pinned in go.mod", "Determine the kit version the operator image was built with",
-			"blockprov build", "Fetch ECR password", "blockprov push", "Tag the release at the commit it built", "Start the block's publisher at the release tag",
+			"blockprov build", "Fetch ECR password", "blockprov push", "Tag the release at the commit it built", "Start the block's publisher at the release tag", postStep,
 		}},
 	} {
 		t.Run(tc.job, func(t *testing.T) {
@@ -1178,6 +1186,197 @@ func TestWorkflow_APublishingPushHandsTheReleaseToThePublishJob(t *testing.T) {
 			struct{ name, got, want string }{job + " uploads the directory the collection wrote", all[handed+".with.path"], "${{ runner.temp }}/block-release"},
 			struct{ name, got, want string }{job + " replaces the release an earlier attempt of the run handed over", all[handed+".with.overwrite"], "true"},
 			struct{ name, got, want string }{job + " uploads the publisher workflow too, which sits under a hidden directory", all[handed+".with.include-hidden-files"], "true"})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("publish-block.yml: got %q, want %q", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+const (
+	postStep       = "Post the record to the platform the caller names"
+	runAsBlockprov = "BLOCKPROV_TEST_RUNS_AS_THE_TOOL"
+)
+
+// TestMain lets a step body under test call this package's own Run as its blockprov, through a shim that starts the test binary again.
+func TestMain(m *testing.M) {
+	if os.Getenv(runAsBlockprov) == "1" {
+		os.Exit(Run(os.Args[1:], os.Stdout))
+	}
+	os.Exit(m.Run())
+}
+
+type postRun struct {
+	scriptResult
+	summary  string
+	registry *ociServer
+}
+
+func runPostStep(t *testing.T, platform, built string, env ...string) postRun {
+	t.Helper()
+	registry := newOCIServer(t)
+	pushSampleRecord(t, registry, testDigest)
+	registry.lastAuthHeader = ""
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("finding the test binary: %v", err)
+	}
+	tmp := t.TempDir()
+	writeExecutable(t, filepath.Join(tmp, "blockprov"), "#!/bin/sh\n"+runAsBlockprov+"=1 exec \""+self+"\" \"$@\"\n")
+	writeExecutable(t, filepath.Join(tmp, "aws"), "#!/bin/sh\n[ \"$1 $2\" = \"ecr get-login-password\" ] && echo stub-ecr-password\n")
+	writeExecutable(t, filepath.Join(tmp, "step.sh"), renderStep(t, postStep))
+	summary := filepath.Join(tmp, "summary.md")
+	vars := []string{"RUNNER_TEMP=" + tmp, "PATH=" + tmp + ":" + os.Getenv("PATH"), "REGISTRY=" + registry.URL, "IMAGE_DIGEST=" + testDigest, "GITHUB_STEP_SUMMARY=" + summary}
+	filled := map[string]string{"${{ inputs.record-api-url }}": platform, "${{ steps.existing.outputs.built }}": built}
+	for name, expr := range script(t, "publish", postStep).Env {
+		value, ok := filled[expr]
+		if !ok {
+			t.Fatalf("step %q sets %s to %s, which this test has no value for", postStep, name, expr)
+		}
+		vars = append(vars, name+"="+value)
+	}
+
+	res := runBash(t, filepath.Join(tmp, "step.sh"), tmp, append(vars, env...)...)
+
+	written, _ := os.ReadFile(summary)
+	return postRun{res, string(written), registry}
+}
+
+func admission(action string) string {
+	return `{"action":"` + action + `","blockId":"sample-block","imageDigest":"` + testDigest + `","manifestSha256":"` + strings.Repeat("ef", 32) + `","version":"1.2.0"}` + "\n"
+}
+
+// Each answer is one the platform's record route gives, in the JSON it gives it in.
+func TestWorkflow_ThePostStepEndsTheJobAsThePlatformAnswers(t *testing.T) {
+	const capReached = "the block's daily release cap is reached: sample-block has 5 releases admitted in the last day, and its cap is 5, which MITSTACK_BLOCK_RELEASES_PER_DAY sets"
+	for _, tc := range []struct {
+		name     string
+		status   int
+		answer   string
+		wantExit int
+		wantLine string
+	}{
+		{"a platform that stores the record ends the job green", http.StatusCreated, admission("stored"), 0,
+			"%s stored the release record of sample-block 1.2.0."},
+		{"a platform that already holds the record, as on a rerun, ends the job green", http.StatusOK, admission("already-stored"), 0,
+			"%s already holds the release record of sample-block 1.2.0 and stored nothing new."},
+		{"a platform that refuses the record fails the job naming the refused check", http.StatusForbidden, `{"error":"binding: no binding under blocks/public names the block \"sample-block\""}` + "\n", 1,
+			`%s answered HTTP 403 and stored no release record: binding: no binding under blocks/public names the block "sample-block"`},
+		{"a block at its daily cap fails the job naming the cap", http.StatusTooManyRequests, `{"error":"` + capReached + `"}` + "\n", 1,
+			"%s answered HTTP 429 and stored no release record: " + capReached},
+		{"a platform that cannot be reached fails the job naming its address", 0, "", 1,
+			"%s gave no answer, so the release record is not known to be stored: "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			platform, requests := fakePlatform(t, tc.status, nil, tc.answer)
+			wantRequests := 1
+			if tc.status == 0 {
+				unreachable := httptest.NewServer(http.NotFoundHandler())
+				unreachable.Close()
+				platform, wantRequests = unreachable.URL, 0
+			}
+
+			run := runPostStep(t, platform, "true")
+
+			want := strings.Replace(tc.wantLine, "%s", platform, 1)
+			if run.exitCode != tc.wantExit || !strings.Contains(run.combined, "blockprov post: "+want) {
+				t.Errorf("exit %d, output:\n%s\nwant exit %d and the line %q", run.exitCode, run.combined, tc.wantExit, "blockprov post: "+want)
+			}
+			if !strings.HasPrefix(run.summary, want) {
+				t.Errorf("the run's summary = %q, want it to open with the platform's answer %q", run.summary, want)
+			}
+			sent := requests()
+			if len(sent) != wantRequests {
+				t.Fatalf("the platform got %d requests, want %d, with no second try", len(sent), wantRequests)
+			}
+			if wantRequests == 1 && (sent[0].method != http.MethodPost || sent[0].path != "/v1/block-releases" || sent[0].body != sampleRecord) {
+				t.Errorf("the platform got %s %s with body %q, want POST /v1/block-releases with the record beside the image, %q", sent[0].method, sent[0].path, sent[0].body, sampleRecord)
+			}
+		})
+	}
+}
+
+// The job holds a registry password, the run's token, the request token of its identity token and, where the caller passes it, a platform token, and the platform is sent none of them.
+func TestWorkflow_ThePostCarriesTheRecordAndNoCredential(t *testing.T) {
+	platform, requests := fakePlatform(t, http.StatusCreated, nil, admission("stored"))
+	held := map[string]string{"MITSTACK_API_TOKEN": "mitstack_pat_sealed", "GITHUB_TOKEN": "ghs_the_runs_token", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "id-token-request-token"}
+	var env []string
+	for name, secret := range held {
+		env = append(env, name+"="+secret)
+	}
+
+	run := runPostStep(t, platform, "true", env...)
+
+	sent := requests()
+	if run.exitCode != 0 || len(sent) != 1 {
+		t.Fatalf("exit %d with %d requests to the platform, want 0 and 1; output:\n%s", run.exitCode, len(sent), run.combined)
+	}
+	if want := "Basic " + base64.StdEncoding.EncodeToString([]byte("AWS:stub-ecr-password")); run.registry.lastAuthHeader != want {
+		t.Errorf("the registry got Authorization %q, want %q, the password the step holds while it posts", run.registry.lastAuthHeader, want)
+	}
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie"} {
+		if got := sent[0].header.Values(name); len(got) != 0 {
+			t.Errorf("the post carries %s %q, want no such header", name, got)
+		}
+	}
+	held["the registry password"] = "stub-ecr-password"
+	for what, secret := range held {
+		for name, values := range sent[0].header {
+			if strings.Contains(strings.Join(values, " "), secret) {
+				t.Errorf("the post's %s header carries %s", name, what)
+			}
+		}
+		if strings.Contains(sent[0].body, secret) {
+			t.Errorf("the post's body carries %s", what)
+		}
+	}
+	if sent[0].body != sampleRecord {
+		t.Errorf("the post's body = %q, want the record alone, %q", sent[0].body, sampleRecord)
+	}
+}
+
+// A later push that keeps the version signs nothing, and the record beside the image is another run's, whose signing key GitHub may have retired.
+func TestWorkflow_ACommitThatDidNotBuildTheImagePostsNoRecord(t *testing.T) {
+	platform, requests := fakePlatform(t, http.StatusCreated, nil, admission("stored"))
+
+	run := runPostStep(t, platform, "false")
+
+	if run.exitCode != 0 || !strings.Contains(run.stdout, "posts no record") || !strings.Contains(run.summary, "posts no record") {
+		t.Errorf("exit %d, stdout %q, summary %q; want 0 and a line saying the run posts no record, in the log and in the run's summary", run.exitCode, run.stdout, run.summary)
+	}
+	if sent := requests(); len(sent) != 0 || run.registry.lastAuthHeader != "" {
+		t.Errorf("the platform got %d requests and the registry was read with %q, want neither called", len(sent), run.registry.lastAuthHeader)
+	}
+}
+
+func TestWorkflow_ACallerNamingNoPlatformRunsNoStepThatReadsBackOrPostsARecord(t *testing.T) {
+	all := allFields(t)
+	steps := publishSteps(t)
+	post := stepPath(all, "publish", postStep)
+	const input = "on.workflow_call.inputs.record-api-url"
+	var others []string
+	for path, value := range all {
+		if strings.HasPrefix(path, post+".") || strings.HasPrefix(path, input) {
+			continue
+		}
+		for _, mark := range []string{"record-api-url", `blockprov" post`, `blockprov" pull`} {
+			if strings.Contains(value, mark) {
+				others = append(others, path)
+			}
+		}
+	}
+	slices.Sort(others)
+	i := indexOf(steps, postStep)
+	cases := []struct{ name, got, want string }{
+		{"a caller may leave the platform out", all[input+".required"], "false"},
+		{"a caller that leaves it out names no platform", all[input+".default"], "''"},
+		{"the post step runs only for a caller that names a platform", ifOf(all[post+".if"]), "inputs.record-api-url != ''"},
+		{"no other step, job or expression reads the input, reads a record back or posts one", strings.Join(others, ", "), ""},
+		{"the post comes after the record is pushed and after everything a release does without it",
+			strconv.FormatBool(i > indexOf(steps, "blockprov push") && i > indexOf(steps, releaseSteps[2]) && i == len(steps)-1), "true"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

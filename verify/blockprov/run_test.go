@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -263,6 +265,24 @@ func newOCIServer(t *testing.T) *ociServer {
 			s.manifestTag = parts[len(parts)-1]
 			s.mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/manifests/"):
+			s.mu.Lock()
+			body, tag := s.manifestBody, s.manifestTag
+			s.mu.Unlock()
+			if body == nil || path.Base(r.URL.Path) != tag {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write(body)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/blobs/"):
+			s.mu.Lock()
+			blob, ok := s.blobs[path.Base(r.URL.Path)]
+			s.mu.Unlock()
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write(blob)
 		default:
 			http.NotFound(w, r)
 		}
@@ -341,6 +361,171 @@ func TestRun_Push_FailsLoudlyOnNon2xxFromRegistry(t *testing.T) {
 	}
 }
 
+const (
+	sampleRecord = `{"payload":{"blockId":"sample-block"},"token":"tok"}`
+	sampleRepo   = "mitstack-postgres-db"
+)
+
+func pushSampleRecord(t *testing.T, srv *ociServer, imageDigest string) {
+	t.Helper()
+	recordPath := writeFile(t, t.TempDir(), "record.json", sampleRecord)
+	stdout, exit := runBlockprov(t, "push", "--record", recordPath, "--registry", srv.URL, "--repo", sampleRepo,
+		"--image-digest", imageDigest, "--username", "AWS", "--password", "ecr-password")
+	if exit != 0 {
+		t.Fatalf("pushing the sample record: exit %d\n%s", exit, stdout)
+	}
+}
+
+func pullSampleRecord(t *testing.T, registry, out string, flags ...string) (stdout string, exitCode int) {
+	t.Helper()
+	t.Setenv("ECR_PASSWORD", "ecr-password")
+	return runBlockprov(t, append([]string{"pull", "--registry", registry, "--repo", sampleRepo, "--image-digest", testDigest,
+		"--username", "AWS", "--password-env", "ECR_PASSWORD", "--out", out}, flags...)...)
+}
+
+func silentServer(t *testing.T) (address string) {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	return srv.URL
+}
+
+func TestRun_Pull_ReadsBackTheRecordPushedBesideTheImage(t *testing.T) {
+	srv := newOCIServer(t)
+	pushSampleRecord(t, srv, testDigest)
+	srv.lastAuthHeader = ""
+	out := filepath.Join(t.TempDir(), "record.json")
+
+	stdout, exit := pullSampleRecord(t, srv.URL, out)
+
+	got, _ := os.ReadFile(out)
+	if exit != 0 || string(got) != sampleRecord {
+		t.Fatalf("pull = exit %d, record %q; want 0 and the pushed record %q\nstdout:\n%s", exit, got, sampleRecord, stdout)
+	}
+	if want := "Basic " + base64.StdEncoding.EncodeToString([]byte("AWS:ecr-password")); srv.lastAuthHeader != want {
+		t.Errorf("Authorization header = %q, want HTTP Basic for AWS:ecr-password", srv.lastAuthHeader)
+	}
+}
+
+func TestRun_Pull_WritesNoRecordItCannotReadBackWhole(t *testing.T) {
+	sum := sha256.Sum256([]byte(sampleRecord))
+	recordDigest := "sha256:" + hex.EncodeToString(sum[:])
+	for _, tc := range []struct {
+		name    string
+		spoil   func(*ociServer)
+		wantOut string
+	}{
+		{"no record is tagged beside the image, so the failure names the tag", func(s *ociServer) { s.manifestBody = nil }, testRecordTag},
+		{"the tag holds an artifact of another type, so the failure names that type", func(s *ociServer) {
+			s.manifestBody = bytes.ReplaceAll(s.manifestBody, []byte(provenance.ArtifactType), []byte("application/vnd.example.other"))
+		}, "application/vnd.example.other"},
+		{"the registry answers other bytes than the record's digest names, so the failure names the digest", func(s *ociServer) { s.blobs[recordDigest] = []byte("another record") }, recordDigest},
+		{"the manifest names its layer by something that is no sha256 digest, so no such path is read", func(s *ociServer) {
+			s.manifestBody = bytes.ReplaceAll(s.manifestBody, []byte(recordDigest), []byte("../manifests/latest"))
+		}, `"../manifests/latest", which is no sha256 digest`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newOCIServer(t)
+			pushSampleRecord(t, srv, testDigest)
+			tc.spoil(srv)
+			out := filepath.Join(t.TempDir(), "record.json")
+
+			stdout, exit := pullSampleRecord(t, srv.URL, out)
+
+			if exit != 1 || !strings.Contains(stdout, tc.wantOut) {
+				t.Errorf("pull = exit %d, stdout %q; want exit 1 naming %q", exit, stdout, tc.wantOut)
+			}
+			if _, err := os.Stat(out); !os.IsNotExist(err) {
+				t.Errorf("os.Stat(record) = %v, want no record written", err)
+			}
+		})
+	}
+}
+
+func TestRun_Pull_ARegistryThatNeverAnswersFailsAtTheTimeoutNamingTheTag(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "record.json")
+
+	stdout, exit := pullSampleRecord(t, silentServer(t), out, "--timeout", "50ms")
+
+	if exit != 1 || !strings.Contains(stdout, testRecordTag) {
+		t.Errorf("pull = exit %d, stdout %q; want exit 1 naming the tag %s it could not read", exit, stdout, testRecordTag)
+	}
+}
+
+type platformRequest struct {
+	method, path string
+	header       http.Header
+	body         string
+}
+
+func fakePlatform(t *testing.T, status int, header http.Header, answer string) (address string, requests func() []platformRequest) {
+	t.Helper()
+	var mu sync.Mutex
+	var sent []platformRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		sent = append(sent, platformRequest{r.Method, r.URL.Path, r.Header.Clone(), string(body)})
+		mu.Unlock()
+		for name, values := range header {
+			w.Header()[name] = values
+		}
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, answer)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, func() []platformRequest {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(sent)
+	}
+}
+
+func TestRun_Post_AnAnswerThatDoesNotSayStoredFailsAfterOneRequest(t *testing.T) {
+	elsewhere, followed := fakePlatform(t, http.StatusCreated, nil, `{"action":"stored"}`)
+	for _, tc := range []struct {
+		name     string
+		status   int
+		header   http.Header
+		answer   string
+		wantLine string
+	}{
+		{"a 200 that is no admission, as a proxy's page is", http.StatusOK, nil, "<html>welcome</html>",
+			"blockprov post: %s answered HTTP 200 without saying the release record is stored: <html>welcome</html>\n"},
+		{"a failure whose body is no JSON prints the body on one line", http.StatusBadGateway, nil, "bad\ngateway\n",
+			"blockprov post: %s answered HTTP 502 and stored no release record: bad gateway\n"},
+		{"a redirect is not followed, so the record reaches the named address alone", http.StatusPermanentRedirect, http.Header{"Location": {elsewhere + "/v1/block-releases"}}, "",
+			"blockprov post: %s answered HTTP 308 and stored no release record: a redirect to " + elsewhere + "/v1/block-releases, which is not followed\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			platform, requests := fakePlatform(t, tc.status, tc.header, tc.answer)
+			recordPath := writeFile(t, t.TempDir(), "record.json", sampleRecord)
+
+			stdout, exit := runBlockprov(t, "post", "--record", recordPath, "--platform", platform)
+
+			if want := strings.Replace(tc.wantLine, "%s", platform, 1); exit != 1 || stdout != want {
+				t.Errorf("post = exit %d, stdout %q; want exit 1 and %q", exit, stdout, want)
+			}
+			if got := len(requests()) + len(followed()); got != 1 {
+				t.Errorf("the named address and the one it redirects to got %d requests, want 1 to the named address", got)
+			}
+		})
+	}
+}
+
+func TestRun_Post_APlatformThatNeverAnswersFailsAtTheTimeoutNamingItsAddress(t *testing.T) {
+	platform := silentServer(t)
+	recordPath := writeFile(t, t.TempDir(), "record.json", sampleRecord)
+
+	stdout, exit := runBlockprov(t, "post", "--record", recordPath, "--platform", platform, "--timeout", "50ms")
+
+	if want := "blockprov post: " + platform + " gave no answer, so the release record is not known to be stored: "; exit != 1 || !strings.HasPrefix(stdout, want) {
+		t.Errorf("post = exit %d, stdout %q; want exit 1 starting %q", exit, stdout, want)
+	}
+}
+
 func TestRun_UsageErrorsExitTwo(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -351,6 +536,11 @@ func TestRun_UsageErrorsExitTwo(t *testing.T) {
 		{"build missing required flags", []string{"build", "--manifest", "/nonexistent"}},
 		{"verify missing required flags", []string{"verify", "--record", "/nonexistent"}},
 		{"push missing required flags", []string{"push", "--record", "/nonexistent"}},
+		{"pull missing required flags", []string{"pull", "--out", "/nonexistent"}},
+		{"post naming no platform", []string{"post", "--record", "/nonexistent", "--platform", ""}},
+		{"post to an address that carries a user and a password", []string{"post", "--record", "/nonexistent", "--platform", "https://user:secret@api.example"}},
+		{"post to an address that is no http or https address", []string{"post", "--record", "/nonexistent", "--platform", "api.example"}},
+		{"post to an address that carries a query, which the log would print", []string{"post", "--record", "/nonexistent", "--platform", "https://api.example/?token=secret"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, exit := runBlockprov(t, tc.args...)

@@ -78,6 +78,17 @@
 # `publish` refuses to complete the record with it. A tag that already has
 # its record ends green with no writes.
 #
+# A caller that names a platform in `record-api-url` has the publish job post
+# the release's record to that platform's record route once the release is
+# cut. The record's signature is its only credential, so the post sends the
+# record alone, with no token, and the platform's answer goes to the run's
+# summary. A stored record and one the platform already holds end the job
+# green. A refusal fails it with the platform's own text, which names the
+# refused check, and so does a platform that gives no answer. The job posts
+# the record it reads back from beside the image, so a rerun, which builds no
+# record, posts the same one. A caller that names no platform gets no such
+# step.
+#
 # Two events scan the block's image with the kit's scripts/scan-image.sh, which
 # refuses every finding that has a fixed version. On a pull request, whichever
 # conformance job runs builds the image, pushes it nowhere and scans it, so a
@@ -137,6 +148,12 @@ on:
         required: false
         type: string
         default: release-publisher.yml
+      # The platform the publish job posts each release's signed record to,
+      # such as https://api.mitstack.dev. Empty posts nothing.
+      record-api-url:
+        required: false
+        type: string
+        default: ''
     # The token the platform's scaffold seals into the block's repository,
     # which opens that block's manifest, attestations and dry-run apply alone.
     secrets:
@@ -981,6 +998,35 @@ jobs:
           TAG: ${{ steps.existing.outputs.tag }}
           PUBLISHER_WORKFLOW: ${{ inputs.publisher-workflow }}
         run: bash "$RUNNER_TEMP/block-kit/scripts/release-tag.sh" dispatch "$TAG" "$PUBLISHER_WORKFLOW"
+
+      # The record beside the image is this run's only where this commit built
+      # the image. A later commit that keeps the version finds another run's
+      # record, whose signing key GitHub may have retired, and posts nothing.
+      - name: Post the record to the platform the caller names
+        if: inputs.record-api-url != ''
+        env:
+          RECORD_API_URL: ${{ inputs.record-api-url }}
+          BUILT: ${{ steps.existing.outputs.built }}
+        run: |
+          set -euo pipefail
+          if [ "$BUILT" = "false" ]; then
+            echo "This commit did not build the published image, so this run posts no record." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          ECR_PASSWORD=$(aws ecr get-login-password --region ${{ inputs.aws-region }})
+          echo "::add-mask::$ECR_PASSWORD"
+          export ECR_PASSWORD
+          "$RUNNER_TEMP/blockprov" pull \
+            --registry "$REGISTRY" \
+            --repo "${{ inputs.ecr-repository }}" \
+            --image-digest "$IMAGE_DIGEST" \
+            --username AWS \
+            --password-env ECR_PASSWORD \
+            --out "$RUNNER_TEMP/published-record.json"
+          "$RUNNER_TEMP/blockprov" post \
+            --record "$RUNNER_TEMP/published-record.json" \
+            --platform "$RECORD_API_URL" \
+            --summary "$GITHUB_STEP_SUMMARY"
 
   # Runs where publish would, for a caller naming no registry, so a push that
   # publishes nothing says so in the run's summary.
