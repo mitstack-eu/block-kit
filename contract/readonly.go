@@ -15,7 +15,6 @@ func WithReadOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, readOnlyKey{}, true)
 }
 
-// RefuseWrite answers an error wrapping ErrReadOnly for a method that changes state when ctx is marked read-only, and nil for every other call.
 func RefuseWrite(ctx context.Context, method string) error {
 	if marked, _ := ctx.Value(readOnlyKey{}).(bool); marked && method != http.MethodGet && method != http.MethodHead {
 		return fmt.Errorf("refusing %s: %w", method, ErrReadOnly)
