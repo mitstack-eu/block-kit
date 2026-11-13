@@ -200,8 +200,9 @@ and your block guards it with `d.ReadOnly`:
 - `capabilities/aws/cloudid` (the `aws` command that exports credentials, and
   a temporary file for the web-identity token)
 - `helpers/hostexec` (`ssh` and `aws ssm send-command` run a command on a host)
-- `helpers/continuity` (a snapshot restore into OpenBao, and a volume directory
-  it creates and removes)
+- `capabilities/hetzner/robot/rescuessh` (a command on a host over SSH)
+- `helpers/continuity` (a snapshot restore into OpenBao, an upload by PUT to a
+  signed link, and a volume directory it creates and removes)
 
 Three helpers call the platform and not a resource, so a read-only request does
 not stop them: `helpers/events` posts the events callback, `helpers/lease`
