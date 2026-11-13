@@ -1,13 +1,12 @@
 package dockerhosttest_test
 
-// A Database served by the fake host lands an app and reads back what it landed, lists and loses the apps a
-// subscription holds, leaves nothing after a subscribe broken at any write, and fails a test sending another token.
+// A Database served by the fake host holds every database scenario, lists and loses the apps a subscription holds,
+// leaves nothing after a subscribe broken at any write, and fails a test sending another token.
 
 import (
 	"context"
 	_ "embed"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -34,21 +33,8 @@ func store() dockerhost.Database {
 	}}
 }
 
-func TestDatabase_LandsAnAppAndReadsBackItsComposeFileBackupLinesAndOutputs(t *testing.T) {
-	d := dockerhosttest.NewDatabase(t, store())
-
-	d.Land(t, d.Desired("shop", map[string]string{"dbDisk": "2Gi"}))
-
-	if got := d.Compose(t, "shop").Volumes["store-data"].Labels["eu.mitstack.size"]; got != "2GiB" {
-		t.Errorf("shop's volume is sized %q; want the 2GiB it asked for", got)
-	}
-	if service, dump := d.BackupLine(t, "shop", "service"), d.BackupLine(t, "shop", "command"); service != "store" || !strings.Contains(dump, "store dump") {
-		t.Errorf("the backup file names service %q and command %q; want store and its dump", service, dump)
-	}
-	want := map[string]string{"host": "shop-store", "port": "7000", "dbName": "app", "username": "app", "passwordSecret": "generated:docker-store:password"}
-	if obs := d.Observe(t, d.Desired("shop", nil)); obs.State != contract.Present || !maps.Equal(obs.Outputs, want) {
-		t.Errorf("Observe = %s with %v; want present with %v", obs.State, obs.Outputs, want)
-	}
+func TestAssertDatabase_HoldsEveryScenarioForTheStoreDatabase(t *testing.T) {
+	dockerhosttest.AssertDatabase(t, store())
 }
 
 func TestDatabase_ListsAndHoldsTheAppsASubscriptionLandedAndLosesOne(t *testing.T) {
