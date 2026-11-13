@@ -1,6 +1,7 @@
 # The kit's tools image holds each tool a block reads while it runs whose publisher ships no image of its own,
-# fetched here once and checked against tools.sha256, copy-tool.sh, and the sign-in companion a Docker host runs from
-# it. Each tool sits in a layer of its own, so a reader over the registry's HTTP API reads only the layer it needs.
+# fetched here once and checked against tools.sha256, copy-tool.sh, the sign-in companion a Docker host runs from it
+# and the probe an app's container mounts from it as its health check. Each tool sits in a layer of its own, so a
+# reader over the registry's HTTP API reads only the layer it needs.
 # Build it from the repository's root, which holds the companion's source:
 # docker build --platform linux/amd64 -f helpers/tools/Dockerfile -t block-kit-tools .
 FROM docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS fetch
@@ -50,6 +51,13 @@ RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags='-s -w -buildid=
       -o /out/mitstack-signin/mitstack-signin ./cmd/mitstack-signin
 COPY --from=ca /out/mitstack-signin/ca-certificates.crt /out/mitstack-signin/
 
+FROM docker.io/library/golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS probe
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/mitstack-probe cmd/mitstack-probe
+RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags='-s -w -buildid=' \
+      -o /out/mitstack-probe/mitstack-probe ./cmd/mitstack-probe
+
 FROM scratch
 COPY --from=age /out/age /age
 COPY --from=kubescape /out/kubescape /kubescape
@@ -57,3 +65,4 @@ COPY --from=k3s /out/k3s /k3s
 COPY --from=kube-bench /out/kube-bench /kube-bench
 COPY helpers/tools/scripts/copy-tool.sh /copy-tool/copy-tool.sh
 COPY --from=signin /out/mitstack-signin /mitstack-signin
+COPY --from=probe /out/mitstack-probe /mitstack-probe
