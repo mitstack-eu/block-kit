@@ -493,6 +493,35 @@ func TestSecretValues_CollectsTheCredentialsAndNeverTheGithubOwner(t *testing.T)
 	}
 }
 
+func TestCommitManifests_AnAppSecretShorterThanTheScrubsFloorCommitsAndOneAtItOrLongerIsRefused(t *testing.T) {
+	const deploymentPath = "apps/shop/deployment.yaml"
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	cases := []struct {
+		name, secret, manifest string
+		want                   error
+	}{
+		{"an app secret WORKERS=1 lets a manifest holding apiVersion: apps/v1 commit", "1", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: shop\n", nil},
+		{"an app secret of four characters in a manifest is refused naming the file", "zq7W", "env:\n- name: PIN\n  value: zq7W\n", gitops.ErrSecretInManifest},
+		{"an app secret of 12 characters in a manifest is refused naming the file", "Xq7vLm2pRt9w", "env:\n- name: SESSION_KEY\n  value: Xq7vLm2pRt9w\n", gitops.ErrSecretInManifest},
+		{"the same 12 characters as their standard base64 are refused naming the file", "Xq7vLm2pRt9w", "kind: Secret\ndata:\n  SESSION_KEY: " + b64("Xq7vLm2pRt9w") + "\n", gitops.ErrSecretInManifest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := gitopstest.NewRepository()
+			d := contract.Desired{AppSecrets: map[string]string{"APP_SECRET": tc.secret}}
+
+			_, changed, err := gitops.CommitManifests(context.Background(), repo, map[string][]byte{deploymentPath: []byte(tc.manifest)}, "app-shop", gitops.SecretValues(d))
+
+			if !errors.Is(err, tc.want) || (tc.want == nil && (err != nil || !changed)) {
+				t.Fatalf("CommitManifests with the app secret %q = changed %v, error %v; want error %v", tc.secret, changed, err, tc.want)
+			}
+			if err != nil {
+				refusedNaming(deploymentPath)(t, repo, "", "", err)
+			}
+		})
+	}
+}
+
 type failingChanged struct{ *gitopstest.Repository }
 
 func (failingChanged) Changed(context.Context, string) (string, []string, error) {
