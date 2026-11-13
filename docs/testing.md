@@ -267,6 +267,11 @@ kittest.AssertNoSecretLeak(t, kittest.SecretLeak{
 })
 ```
 
+`kittest.RequestBody(operation, desired)` builds a request's `Body` from a
+`contract.Desired`, as `kittest.AssertBlock` sends it, without the fields the
+check adds. A block whose declared-resources test already describes its
+subscription sends that same subscription here, with no body of its own.
+
 The check also reports a fixture whose passing would prove nothing: a seeded
 secret that is empty or in no request body, no request marked `Fails`, a
 `Fails` request that answers below 400, a body the kit's decoder refuses, an

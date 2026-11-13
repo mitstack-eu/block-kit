@@ -1136,10 +1136,42 @@ recreate replaces its container, as "Judging a container's health" describes.
 container itself.
 
 A block's test drives the `Database` against `dockerhosttest.Host`, a fake of
-the host's repository and its node report. Set `Database.GitHub` to the fake's
-`GitHub` and `Database.Reports` to the fake itself. The fake's fields set what
-its next node report holds, such as a silent host, a lagging agent or a
-container's state.
+the host's repository and its node report. The fake's fields set what its next
+node report holds, such as a silent host, a lagging agent or a container's
+state. `dockerhosttest.NewDatabase(t, db)` serves the block's own `Database`
+from a fresh fake at a fixed clock, and fails the test on a request to the
+host that carries another GitHub token than `dockerhosttest.Token`. The
+`dockerhosttest.Database` it answers gives these to a block's tests:
+
+| Method | What a test gets |
+|---|---|
+| `Desired(app, params)` | The app's subscription, bound to a host and a bucket |
+| `Land(t, desired)` | A subscribe that must land |
+| `Compose`, `BackupLine`, `Observe` | The compose file, one line of the backup file, and what the platform reads |
+| `ListTagged`, `Lose`, `Holds`, `Breaking` | What `kittest.AssertBlock` and `kittest.AssertTeardownAfterBrokenSetup` take, so a block writes no fake of its own |
+
+`dockerhosttest.AssertDatabase(t, db)` runs the scenarios every database block
+holds against the block's own `Database`, each as a subtest named for what it
+proves:
+
+- Each app lands on its own network with no published port and its volume at
+  its disk.
+- The password stays on the host, and no gives file is written.
+- The outputs carry the connection and the password's secret name, and no
+  password.
+- A reservation past the host's free CPU, memory or disk is refused, and
+  nothing is written.
+- An upgrade keeps the volume, its size and its mount.
+- Nothing is removed until the final backup reads uploaded.
+
+The block's own tests then check only what its engine owns, such as its image,
+its data directory, its dump and restore lines, and its port.
+
+`dockerhosttest.Create(t, service, network, env...)` makes a container from a
+rendered compose service under the local Docker daemon, as the host would run
+it, on a volume of its own. A block's tests use it to run its real engine.
+`dockerhosttest.Scratch` gives a fresh Docker name whose container, volume and
+network are removed when the test ends.
 
 ## Reporting whether an app answers
 
