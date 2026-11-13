@@ -95,7 +95,8 @@ func outputsTheConnection(t *testing.T, d *Database) {
 func refusesWhatDoesNotFit(t *testing.T, d *Database) {
 	blog := dockerhost.Reservation{CPUMillis: 500, MemoryBytes: 512 << 20}
 	d.Set(map[string]string{"blog/reservations/docker-app-slice.json": fmt.Sprintf(`{"cpuMillis":%d,"memoryBytes":%d}`, blog.CPUMillis, blog.MemoryBytes)})
-	free := dockerhost.Free(dockerhost.Allocatable(d.Allocatable), blog)
+	free := dockerhost.Reservation{CPUMillis: d.Allocatable.CPUMillis - blog.CPUMillis, MemoryBytes: d.Allocatable.MemoryBytes - blog.MemoryBytes,
+		DiskBytes: d.Allocatable.DiskBytes}
 
 	for _, params := range []map[string]string{
 		{"dbCpu": fmt.Sprintf("%dm", free.CPUMillis+1)},

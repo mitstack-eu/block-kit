@@ -229,7 +229,6 @@ func (s *blockServer) sendRequest(operation, unit string, settling bool, d contr
 	return rec.Code, resp, err
 }
 
-// requestFor is the engine's request for operation on d, before its envelope of key, token, time and nonce.
 // RequestBody is the engine's request for operation on d as a LeakRequest's Body, which the harness wraps in its envelope.
 func RequestBody(t testing.TB, operation string, d contract.Desired) map[string]any {
 	t.Helper()
@@ -247,6 +246,7 @@ func RequestBody(t testing.TB, operation string, d contract.Desired) map[string]
 	return body
 }
 
+// requestFor is the engine's request for operation on d, before its envelope of key, token, time and nonce.
 func requestFor(operation string, d contract.Desired) contract.Request {
 	return contract.Request{
 		Operation: operation, SubscriptionID: d.SubscriptionID,
