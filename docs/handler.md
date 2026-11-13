@@ -122,6 +122,7 @@ and `d.Instances` read the same on every call.
 | `PriorOutputs`, `CloudIdentity` | The outputs the last call recorded, and the short-lived AWS web identity of the org's cloud account, nil when it has none |
 | `VerbAt` | The time an observer reads after, which the next section explains |
 | `NeverActive` | `true` only when the engine has proved the subscription holds no user data |
+| `ReadOnly` | `true` on a validate that must write nothing, as [A validate that must write nothing](#a-validate-that-must-write-nothing) explains |
 | `Replacing` | `true` on a request that carries `"replacing": true`, the marker of a replacement, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
 
 The platform runs an observer of its own, outside your block, which asks a
@@ -146,6 +147,31 @@ The platform does that when it moves an app to another stack and restores a
 snapshot into the new subscription. A block may replace a stateful resource,
 one that holds data, only when `NeverActive` is `true`, and anything else,
 including a request without the field, reads as `false`.
+
+### A validate that must write nothing
+
+The platform sends a validate for several reasons, among them a dry run, the
+check before a subscribe or an upgrade, a health probe and a teardown probe.
+One more settles a subscribe or an upgrade the platform sent. Only that one may
+finish work the call started, and its request carries `"settling": true`.
+`ReadOnly` is `true` on every other validate and `false` on every other call. A
+validate writes only when `ReadOnly` is `false`. On a read-only request, a repository
+from `gitops.NewGitHubRepository` refuses a commit with an error wrapping
+`contract.ErrReadOnly`, and a write through any other client is your block's
+own to guard. A block that reverts a failed deploy while it settles therefore
+reads the field first:
+
+```go
+if d.ReadOnly {
+	return failedDeploy(verdict), nil
+}
+reverted, err := gitops.Revert(ctx, b.repo, b.notes, revert)
+```
+
+A dry run of a server whose deploy failed then answers the block's verdict, the
+failed deploy, and the validate that settles the call does the revert. Without
+that line the dry run answers the kit's refusal as an error in place of the
+verdict.
 
 ## What the handler calls for each call
 
