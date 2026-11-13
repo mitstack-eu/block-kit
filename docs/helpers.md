@@ -855,27 +855,40 @@ redirect by its own status without following it. It exits 1 for an answer of
 prints one line saying which. Given no URL or more than one, it prints its
 usage and exits 2.
 
-A block names the probe in exec form, so no shell runs, with the probe's path
-inside the container in place of `<probe>`:
+A block copies the probe out of the tools image onto the host, with the image
+named by digest as
+[Copying a tool out of an image by digest](#copying-a-tool-out-of-an-image-by-digest)
+says. It then bind-mounts that copy read-only into the app's container and
+names it in exec form, so no shell runs. In the compose file a block writes,
+with the copy's path on the host in place of `<copy>`, that reads:
 
 ```json
-"healthcheck": {"test": ["CMD", "<probe>", "http://127.0.0.1:8080/"]}
+"volumes": [{"type": "bind", "source": "<copy>", "target": "/mitstack-probe/mitstack-probe", "read_only": true}],
+"healthcheck": {"test": ["CMD", "/mitstack-probe/mitstack-probe", "http://127.0.0.1:8080/"]}
 ```
 
-Do not mount the tools image into the app's container with a Compose image
+The copy must be executable by every user, mode `0755` for instance, because
+under userns-remap the container's users map to unprivileged users on the
+host. The directory holding it may stay closed, since the daemon makes the
+mount as root. A bind mount survives a restart of the Docker daemon, and the
+probe then runs as it did before.
+
+Do not mount the tools image itself into the container with a Compose image
 mount, since on a Docker host it fails in two ways:
 
-1. Docker 29.1.3, the release Ubuntu 24.04 ships, names an image mount's
-   directory after the image reference. A reference pinned by digest makes
-   that name longer than Linux allows, so the container is never created and
-   Compose prints `mkdir …: file name too long`. Docker 29.1.4 fixed this.
-2. On the overlay2 storage driver, which Docker 29.1.3 runs under
-   userns-remap, an image mount does not survive a restart of the Docker
-   daemon, as [moby issue 50999](https://github.com/moby/moby/issues/50999)
-   reports. With a subpath the container fails to start after the restart, and
-   a later `docker compose up` with the same file cannot start it either.
-   Without one the container starts with the mount empty, so its health check
-   fails from then on.
+1. Docker 29.1.3 names an image mount's directory after the image reference.
+   A reference pinned by digest makes that name longer than Linux allows, so
+   the container is never created and Compose prints
+   `mkdir …: file name too long`. Ubuntu 24.04's package is
+   `docker.io-app 29.1.3-0ubuntu3~24.04.2` as of November 2026, and Docker
+   29.1.4 carries the fix.
+2. On the overlay2 storage driver, with or without userns-remap, an image
+   mount with a subpath does not survive a restart of the Docker daemon, as
+   [moby issue 50999](https://github.com/moby/moby/issues/50999) reports. The
+   container fails to start after the restart, and a later
+   `docker compose up` with the same file cannot start it either. A run on
+   Docker 29.1.3 with userns-remap also found that a mount with no subpath
+   comes back empty, so the health check fails from then on.
 
 A reboot restarts the daemon, so the second failure can stop an app that was
 serving.
