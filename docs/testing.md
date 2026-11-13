@@ -63,9 +63,10 @@ settles that answer the way the engine settles it: it sends
 `validate` calls, and a fresh subscribe when one answers `redrive`, until every
 declared resource reads present or ten seconds pass. Those validates carry
 `"settling": true`, as the engine's do, and every other validate the check
-sends reaches the block with `Desired.ReadOnly` set, as
+sends reaches the block with `Desired.ReadOnly` set. The check fails a block
+that writes on one of those, as
 [A validate that must write nothing](handler.md#a-validate-that-must-write-nothing)
-explains. Every declared resource
+explains, so a block that commits on a dry run fails it. Every declared resource
 must then report present with an identity, from its ensure or its observer, as
 [Running the block checks](block-checks.md#how-a-block-reports-each-resources-identity)
 explains. The check then

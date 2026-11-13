@@ -154,13 +154,24 @@ The platform sends a validate for several reasons, among them a dry run, the
 check before a subscribe or an upgrade, a health probe and a teardown probe.
 One more is the settle probe of a subscribe or an upgrade, which names no
 resource. Only that one may finish work the call started, and its request
-carries `"settling": true`. `ReadOnly` is `true` on every other validate,
-including every validate that names a resource, and `false` on every other
-call. A validate writes only when `ReadOnly` is `false`. On a read-only
-request, a repository from `gitops.NewGitHubRepository` refuses a commit with an error wrapping
-`contract.ErrReadOnly`, and a write through any other client is your block's
-own to guard. A block that reverts a failed deploy while it settles therefore
-reads the field first:
+carries `"settling": true`. Every other validate, including every validate that
+names a resource, must write nothing.
+
+The handler marks the context it hands your block for such a request. Each
+kit client reads that mark from the context it is called with and refuses a
+write with an error wrapping `contract.ErrReadOnly`, so a client you build
+once and reuse refuses or writes by the request it is called for. Reads go
+through. These clients refuse:
+
+- every client in `capabilities/github/ghapi`, which also covers
+  `capabilities/github/gitops` and `helpers/dockerhost`, since they send
+  through it
+- `capabilities/github/landing`
+- `capabilities/hetzner/cloud` and `capabilities/hetzner/robot`
+
+Your block's own code reads the same decision from `d.ReadOnly`, which is
+`true` on every such validate and `false` on every other call. A block that
+reverts a failed deploy while it settles therefore reads the field first:
 
 ```go
 if d.ReadOnly {
@@ -170,9 +181,34 @@ reverted, err := gitops.Revert(ctx, b.repo, b.notes, revert)
 ```
 
 A dry run of a server whose deploy failed then answers the block's verdict, the
-failed deploy, and the validate that settles the call does the revert. Without
-that line the dry run answers the kit's refusal as an error in place of the
-verdict.
+failed deploy, and the validate that settles the call does the revert.
+
+What stays unguarded is a write the kit does not send for you: a call through
+your own HTTP client, the `aws` command (`capabilities/aws/apphostname`), a
+command run on a host (`helpers/hostexec`, `capabilities/hetzner/robot/rescuessh`),
+an upload (`helpers/continuity`), and any client you call with a context that
+did not come from the handler. Guard those with `d.ReadOnly` yourself.
+
+The block check fails a block that writes on such a validate. After each
+validate it sends without `settling`, it counts the writes the fake
+repositories your `Provider` hands it took, and reads the answer for the kit's
+refusal. It fails with the block's name, "wrote on a validate that settles no
+verb" and what it wrote. A write to anything the check does not fake, such as
+your own client talking to a service the check never sees, stays invisible to
+it.
+
+A write the kit refuses reaches the platform as an error with no class, since a
+class would make a dry run fail the change as invalid. The platform reads that
+answer as follows:
+
+- A dry run reports the block's validate as giving no answer. The check before
+  a subscribe lists it as not checked, and an upgrade's dry run fails and says
+  to try again once the block's operator answers.
+- A health probe reads it as unknown. The subscription keeps the last healthy or
+  unhealthy verdict it had, so a block that writes on a health probe and has not
+  been fixed keeps its old verdict instead of showing the failure.
+- A teardown probe leaves the resource not proven absent, so the unsubscribe is
+  driven again and the removal waits until a probe answers.
 
 ## What the handler calls for each call
 

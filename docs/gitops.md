@@ -474,8 +474,8 @@ content must be UTF-8, because the Git Data API carries it as a JSON string. A
 commit whose parent is no longer the tip lands nothing, so `CommitManifests`
 and `Revert` retry it on a fresh head a bounded number of times.
 
-Built from a request whose `ReadOnly` is `true`, the repository still reads,
-and its `Commit` lands nothing and returns an error wrapping
+Called with a context the handler marked read-only, the repository still
+reads, and its `Commit` lands nothing and returns an error wrapping
 `contract.ErrReadOnly`. `CommitManifests`, `Deploy` and `Revert` return that
 error whenever they have a change to commit, and none when the files already
 stand as asked. [A validate that must write nothing](handler.md#a-validate-that-must-write-nothing)
