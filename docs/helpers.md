@@ -1153,7 +1153,10 @@ block's tests these:
 | `Compose`, `BackupLine` | The app's compose file, and one `key=value` line of its backup file |
 | `Observe` | What the platform reads of the database: its state and its outputs |
 | `Process` | The database served as a newly started operator |
-| `ListTagged`, `Lose`, `Holds`, `Breaking` | What `kittest.AssertBlock` and `kittest.AssertTeardownAfterBrokenSetup` take, so a block writes no fake of its own |
+| `ListTagged` | Each app whose compose file carries a subscription's label, which `kittest.AssertBlock` reads to find what a subscription made |
+| `Lose` | An app's files removed from the host, as a person deleting them by hand would, for `kittest.AssertBlock` |
+| `Breaking(faults)` | The database with each write to the host made a side effect that `kittest.AssertTeardownAfterBrokenSetup` may break |
+| `Holds` | Every file on the host but its README, which `kittest.AssertTeardownAfterBrokenSetup` reads after the teardown |
 
 `dockerhosttest.AssertDatabase(t, db)` runs the scenarios every database block
 holds against the block's own `Database`, each as a subtest named for what it
@@ -1173,9 +1176,14 @@ proves:
 The block's own tests then check only what its engine owns, such as its image,
 its data directory, its dump and restore lines, and its port.
 
-`dockerhosttest.Create(t, service, network, env...)` makes a container from a
-rendered compose service under the local Docker daemon, as the host would run
-it, on a volume of its own. It leaves out the service's restart policy, so a
+`dockerhosttest.Create(t, service, network, env...)` makes a `Container`,
+without starting it, under the local Docker daemon. `service` is one service
+of a compose file the `Database` rendered, such as
+`d.Compose(t, "shop").Services["postgres"]`. `network` is a Docker network to
+join, or empty for the default one, and each `env` is a `NAME=value` the test
+sets, such as the password the host would generate. The container runs the
+service as the host would, with its labels and environment, on a volume of its
+own. It leaves out the service's restart policy, so a
 test that stops the container decides itself when it starts again. A block's
 tests use it to run their real engine through these:
 
