@@ -37,6 +37,11 @@ func BranchPrefix(subscription string) string {
 	return "mitstack/" + subscription + "/"
 }
 
+// removalBranch is the branch the subscription's removal pull request opens from.
+func removalBranch(subscription string) string {
+	return BranchPrefix(subscription) + "remove"
+}
+
 // Remove opens one pull request per repository deleting every file r's records created that main still carries at its recorded blob, merges it under the subscription's trailer once main's required checks pass on it, and deletes every branch under the subscription's prefix.
 // For a context marked contract.AppDeleting it leaves every file in place, since the app's source repository outlives the app, and only closes the subscription's open removal pull request and deletes its branches.
 // While a pull request waits on a check, or a repository cannot be read, it returns a handler.Waiting and writes nothing it has not written before, so the unsubscribe stays unsettled and is re-driven.
@@ -121,7 +126,7 @@ func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription s
 	return kept, nil
 }
 
-// leaveInPlace is a removal during the app's delete: it writes nothing to main and lists no file kept, since the whole repository stays, and closes what the subscription left open in it.
+// leaveInPlace closes the subscription's open removal pull request and deletes its branches, and writes nothing to main, since the app's delete keeps the whole repository.
 func (a api) leaveInPlace(ctx context.Context, subscription string) error {
 	deleted, err := repositoryDeleted(ctx, a)
 	switch {
@@ -138,7 +143,7 @@ func (a api) leaveInPlace(ctx context.Context, subscription string) error {
 
 // closeRemoval closes the subscription's open removal pull request unmerged, when there is one.
 func (a api) closeRemoval(ctx context.Context, subscription string) error {
-	pr, found, err := a.openPullRequest(ctx, BranchPrefix(subscription)+"remove")
+	pr, found, err := a.openPullRequest(ctx, removalBranch(subscription))
 	if err != nil || !found {
 		return err
 	}
@@ -146,7 +151,7 @@ func (a api) closeRemoval(ctx context.Context, subscription string) error {
 }
 
 func (a api) removeThroughPullRequest(ctx context.Context, st mainState, subscription string, kept []Kept) error {
-	branch := BranchPrefix(subscription) + "remove"
+	branch := removalBranch(subscription)
 	title := fmt.Sprintf("mitstack: remove the files subscription %s landed", subscription)
 	trailer := observe.GitHubSubscriptionTrailer(subscription)
 	commit, err := a.removalCommit(ctx, st, branch, title+"\n\n"+trailer)
