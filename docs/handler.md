@@ -152,11 +152,12 @@ including a request without the field, reads as `false`.
 
 The platform sends a validate for several reasons, among them a dry run, the
 check before a subscribe or an upgrade, a health probe and a teardown probe.
-One more settles a subscribe or an upgrade the platform sent. Only that one may
-finish work the call started, and its request carries `"settling": true`.
-`ReadOnly` is `true` on every other validate and `false` on every other call. A
-validate writes only when `ReadOnly` is `false`. On a read-only request, a repository
-from `gitops.NewGitHubRepository` refuses a commit with an error wrapping
+One more is the settle probe of a subscribe or an upgrade, which names no
+resource. Only that one may finish work the call started, and its request
+carries `"settling": true`. `ReadOnly` is `true` on every other validate,
+including every validate that names a resource, and `false` on every other
+call. A validate writes only when `ReadOnly` is `false`. On a read-only
+request, a repository from `gitops.NewGitHubRepository` refuses a commit with an error wrapping
 `contract.ErrReadOnly`, and a write through any other client is your block's
 own to guard. A block that reverts a failed deploy while it settles therefore
 reads the field first:

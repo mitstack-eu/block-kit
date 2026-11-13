@@ -167,7 +167,7 @@
     },
     "settling": {
       "type": "boolean",
-      "description": "True only on the validate that settles a state-changing verb the engine sent, which is the engine's settle probe. Every other validate omits it: a dry run, the check before a verb, a health probe and a teardown probe."
+      "description": "True only on the settle probe of a subscribe or an upgrade, the validate that names no resource and asks whether that verb's work is done. Every other validate omits it: a dry run, the check before a verb, a health probe, a teardown probe, an absence probe, and every validate that names a resource."
     },
     "absences": {
       "type": "object",
