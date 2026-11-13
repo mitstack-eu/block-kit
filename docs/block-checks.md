@@ -603,3 +603,69 @@ platform with the `MITSTACK_API_TOKEN` secret. A block whose repository you
 created yourself mints that token on the API Tokens page of the mitstack
 console and stores it in that secret. Whatever the two inputs say, both
 conformance jobs read the served type snapshot from `api-url`, with no token.
+
+### Posting the release's record to the platform
+
+The platform admits a release from the provenance record the `publish` job
+signs, and its record route trusts that signature and no caller. So the job
+can hand the record over itself, with no token of yours. Name the platform in
+`record-api-url`, and the `publish` job posts each release's record to it:
+
+```yaml
+jobs:
+  block:
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
+      packages: read
+    uses: mitstack-eu/block-kit/.github/workflows/publish-block.yml@<tag>
+    with:
+      block-id: billing-db
+      ecr-repository: mitstack-billing-db
+      kit-ref: <tag>
+      record-api-url: https://api.mitstack.dev
+```
+
+The input is empty by default. A caller that leaves it out gets no post step,
+and its `publish` job makes no call to the platform.
+
+The post is the job's last step, so it runs once the image, its record, the
+release tag and the publisher are done. The step reads the record back from
+beside the image with `blockprov pull`. It then sends that record with
+`blockprov post`, as the whole body of
+`POST https://api.mitstack.dev/v1/block-releases`. The request carries no
+`Authorization` header and no cookie, because the record's signature is the
+only credential the route reads. The step tries once and follows no redirect,
+so a second attempt never hides a refusal.
+
+The step prints the platform's answer in its log and in the run's summary:
+
+| The platform's answer | The job ends | The line the step prints |
+|---|---|---|
+| `201` with `"action":"stored"` | Green | `https://api.mitstack.dev stored the release record of billing-db 1.2.0.` |
+| `200` with `"action":"already-stored"` | Green | `https://api.mitstack.dev already holds the release record of billing-db 1.2.0 and stored nothing new.` |
+| Any other status | Red | `https://api.mitstack.dev answered HTTP 403 and stored no release record: binding: no binding under blocks/public names the block "billing-db"` |
+| No answer within a minute | Red | `https://api.mitstack.dev gave no answer, so the release record is not known to be stored:` and then the cause |
+
+A refusal's text is the platform's own. It opens with the check the platform
+refused, before a colon, as `binding` above. A block that reached its daily
+limit of releases reads `the block's daily release cap is reached`, with the
+count and the limit.
+
+A red post leaves the image, its record and the release tag as the job pushed
+them. Fix what the line names and re-run the run's failed jobs. The rerun
+finds the record beside the image and builds none, reads that record back and
+posts it, and the platform answers a record it already holds as stored. Like
+any rerun of the `publish` job, it also starts your publisher again at the
+tag.
+
+A later push that keeps `spec.version` did not build the image, so it posts
+nothing and says so in the step's log. The record beside the image is the
+earlier run's, and the platform checks a record against the signing keys
+GitHub serves today, which may no longer hold that run's key.
+
+`runPost` in `verify/blockprov/post.go` sends the record and reads the answer,
+and `runPull` in `verify/blockprov/pull.go` reads the record back. The step is
+"Post the record to the platform the caller names" in
+`.github/workflows/publish-block.yml`.

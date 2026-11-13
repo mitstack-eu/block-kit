@@ -16,7 +16,19 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/provenance"
 )
 
+const ociManifestType = "application/vnd.oci.image.manifest.v1+json"
+
 var emptyOCIConfig = []byte("{}")
+
+// recordTag is the tag a record sits under beside the image of imageDigest.
+func recordTag(imageDigest string) string {
+	return "sha256-" + strings.TrimPrefix(imageDigest, "sha256:") + ".prov"
+}
+
+func sha256Digest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
 
 func runPush(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("push", flag.ContinueOnError)
@@ -78,7 +90,7 @@ func runPush(args []string, stdout io.Writer) int {
 	// No subject descriptor: a referrer would not survive the platform's untagged-image lifecycle policy, so the manifest is a tagged artifact.
 	manifest := map[string]interface{}{
 		"schemaVersion": 2,
-		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"mediaType":     ociManifestType,
 		"artifactType":  provenance.ArtifactType,
 		"config": map[string]interface{}{
 			"mediaType": "application/vnd.oci.empty.v1+json",
@@ -99,7 +111,7 @@ func runPush(args []string, stdout io.Writer) int {
 		return 1
 	}
 
-	tag := "sha256-" + strings.TrimPrefix(*imageDigest, "sha256:") + ".prov"
+	tag := recordTag(*imageDigest)
 	if err := client.putManifest(tag, manifestBytes); err != nil {
 		fmt.Fprintf(stdout, "blockprov push: %v\n", err)
 		return 1
@@ -148,8 +160,7 @@ func (c *ociClient) do(method, rawURL string, body []byte, contentType string) (
 }
 
 func (c *ociClient) uploadBlob(data []byte) (digest string, err error) {
-	sum := sha256.Sum256(data)
-	digest = "sha256:" + hex.EncodeToString(sum[:])
+	digest = sha256Digest(data)
 
 	startURL := c.base + "/v2/" + c.repo + "/blobs/uploads/"
 	startResp, err := c.do(http.MethodPost, startURL, nil, "")
@@ -187,7 +198,7 @@ func (c *ociClient) uploadBlob(data []byte) (digest string, err error) {
 
 func (c *ociClient) putManifest(tag string, manifest []byte) error {
 	manifestURL := c.base + "/v2/" + c.repo + "/manifests/" + tag
-	resp, err := c.do(http.MethodPut, manifestURL, manifest, "application/vnd.oci.image.manifest.v1+json")
+	resp, err := c.do(http.MethodPut, manifestURL, manifest, ociManifestType)
 	if err != nil {
 		return fmt.Errorf("pushing manifest: %w", err)
 	}
