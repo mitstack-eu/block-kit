@@ -267,10 +267,12 @@ kittest.AssertNoSecretLeak(t, kittest.SecretLeak{
 })
 ```
 
-`kittest.RequestBody(operation, desired)` builds a request's `Body` from a
-`contract.Desired`, as `kittest.AssertBlock` sends it, without the fields the
-check adds. A block whose declared-resources test already describes its
-subscription sends that same subscription here, with no body of its own.
+`kittest.RequestBody(t, operation, desired)` builds a request's `Body` from a
+`contract.Desired`, as `kittest.AssertBlock` sends it. It leaves out the
+`nonce`, `createdAt`, `idempotencyKey` and OBO token that
+`kittest.AssertNoSecretLeak` adds itself. A block whose declared-resources test
+already describes its subscription sends that same subscription here, with no
+body of its own.
 
 The check also reports a fixture whose passing would prove nothing: a seeded
 secret that is empty or in no request body, no request marked `Fails`, a
