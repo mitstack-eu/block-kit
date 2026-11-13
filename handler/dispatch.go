@@ -67,6 +67,9 @@ func requestContext(ctx context.Context, req contract.Request) context.Context {
 	if req.ReadOnly() {
 		ctx = contract.WithReadOnly(ctx)
 	}
+	if req.AppDeleting {
+		ctx = contract.WithAppDeleting(ctx)
+	}
 	return events.WithEnvelope(reqcache.With(ctx), events.Envelope{
 		SubscriptionID: req.SubscriptionID,
 		Operation:      req.Operation,
