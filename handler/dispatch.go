@@ -201,7 +201,10 @@ func scrubAroundClass(text string, refused *Refused, secrets []string) string {
 	classEnd := classStart + len(refused.wireClass())
 	refusalEnd := len(text) - len(after)
 	detailStart := refusalEnd - len(refused.Detail)
-	if secretOverlaps(text, len(before), classStart, secrets) || secretOverlaps(text, classEnd, detailStart, secrets) || secretOverlaps(text, refusalEnd, refusalEnd, secrets) {
+	overPrefix := secretOverlaps(text, len(before), classStart, secrets)
+	overSeparator := secretOverlaps(text, classEnd, detailStart, secrets)
+	acrossRefusalEnd := secretOverlaps(text, refusalEnd, refusalEnd, secrets)
+	if overPrefix || overSeparator || acrossRefusalEnd {
 		log.Printf("handler: a secret reads across the edge of refusal class %s, so the refusal is masked whole", safe.LogSafe(refused.wireClass(), secrets...))
 		return safe.Scrub(text, secrets...)
 	}
