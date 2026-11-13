@@ -1,7 +1,13 @@
 package dockerhosttest
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/helpers/dockerhost"
@@ -36,5 +42,57 @@ func TestCreateArgs_RunTheServiceAsTheHostWouldOnItsOwnVolumeWithItsLabelsAndEnv
 	}
 	if got := createArgs("scratch-db", s, "", nil); slices.Contains(got, "--network") {
 		t.Errorf("createArgs with no network = %q; want the default network", got)
+	}
+}
+
+// stubDocker puts first on PATH a docker that runs script, so a test reads a stream the waits follow without a daemon.
+func stubDocker(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatalf("writing the stub docker: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestFollow_AMatchingLineOnEitherStreamEndsTheCommand(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	stubDocker(t, "echo $$ > "+pidFile+"\necho noise\necho 'the marker line' >&2\nexec tail -f /dev/null\n")
+
+	found, err := follow(func(line string) bool { return strings.Contains(line, "marker") }, "logs", "--follow", "db")
+
+	if !found || err != nil {
+		t.Fatalf("follow = %v, %v; want the marker found on the command's error output", found, err)
+	}
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("reading the stub's pid: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatalf("the stub's pid reads %q: %v", raw, err)
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("signalling the stream's command %d answered %v; want it ended and reaped", pid, err)
+	}
+}
+
+func TestFollow_AnOutputThatEndsBeforeAMatchSaysSo(t *testing.T) {
+	stubDocker(t, "echo noise\n")
+
+	found, err := follow(func(string) bool { return false }, "logs", "--follow", "db")
+
+	if found || err == nil || !strings.Contains(err.Error(), "the output ended before a line matched") {
+		t.Errorf("follow = %v, %v; want no match and an error saying the output ended", found, err)
+	}
+}
+
+func TestFollow_ReadsALineLongerThanTheScannersDefaultBuffer(t *testing.T) {
+	stubDocker(t, "head -c 70000 /dev/zero | tr '\\0' x\necho\necho marker\n")
+
+	found, err := follow(func(line string) bool { return line == "marker" }, "logs", "--follow", "db")
+
+	if !found || err != nil {
+		t.Errorf("follow past a 70000-byte line = %v, %v; want the marker after it found", found, err)
 	}
 }
