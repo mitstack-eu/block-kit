@@ -20,7 +20,7 @@ const ociManifestType = "application/vnd.oci.image.manifest.v1+json"
 
 var emptyOCIConfig = []byte("{}")
 
-// recordTag is the tag a record sits under beside the image of imageDigest.
+// recordTag is the tag the publish workflow's probe also derives in shell, so the two must agree.
 func recordTag(imageDigest string) string {
 	return "sha256-" + strings.TrimPrefix(imageDigest, "sha256:") + ".prov"
 }

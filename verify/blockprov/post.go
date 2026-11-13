@@ -24,7 +24,6 @@ const (
 	actionAlreadyStored = "already-stored"
 )
 
-// platformAnswer is what the record route answered a post with.
 type platformAnswer struct {
 	status   int
 	location string
@@ -93,7 +92,7 @@ func recordClient(timeout time.Duration) *http.Client {
 	}
 }
 
-// postRecord sends record once and says in one sentence how the platform answered, and whether it holds the record.
+// One attempt only, so a retry never hides a refusal.
 func postRecord(client *http.Client, platform, route string, record []byte) (sentence string, held bool) {
 	answer, err := sendRecord(client, route, record)
 	if err != nil {
@@ -120,7 +119,6 @@ func sendRecord(client *http.Client, route string, record []byte) (platformAnswe
 	return platformAnswer{status: resp.StatusCode, location: resp.Header.Get("Location"), body: body}, nil
 }
 
-// outcome says in one sentence what the answer means for the record, and whether the platform holds it.
 func (a platformAnswer) outcome(platform string) (sentence string, held bool) {
 	const refused = "%s answered HTTP %d and stored no release record: %s"
 	switch a.status / 100 {

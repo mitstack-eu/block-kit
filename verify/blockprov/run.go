@@ -1,4 +1,4 @@
-// Command blockprov, part of mitstack's own tooling, is the CLI a block's publish workflow calls to build, verify and push its provenance record, read it back and post it to the platform.
+// Command blockprov, part of mitstack's own tooling, builds, verifies and pushes a block's provenance record, reads it back and posts it to the platform, and a block's publish workflow calls each of those but verify.
 package main
 
 import (
