@@ -9,10 +9,10 @@ import (
 
 // The files a Database writes in an app's directory, beside the app's own, as the host's pull agent reads them.
 const (
-	composeSuffix = ".compose.yaml"
-	givesSuffix   = ".gives"
-	backupSuffix  = ".backup"
-	requestSuffix = ".backup-request"
+	composeSuffix  = ".compose.yaml"
+	envNamesSuffix = ".env.names"
+	backupSuffix   = ".backup"
+	requestSuffix  = ".backup-request"
 
 	sizeLabel     = "eu.mitstack.size"
 	agentEnvDir   = "/var/lib/mitstack-agent/env"
@@ -24,19 +24,19 @@ const (
 )
 
 func (db Database) fileCompose() string     { return db.Block + composeSuffix }
-func (db Database) fileGives() string       { return db.Block + givesSuffix }
+func (db Database) fileEnvNames() string    { return db.Block + envNamesSuffix }
 func (db Database) fileBackup() string      { return db.Block + backupSuffix }
 func (db Database) fileRequest() string     { return db.Block + requestSuffix }
 func (db Database) fileReservation() string { return ReservationDir + "/" + db.Block + ".json" }
 func (db Database) volume() string          { return db.Engine.Service + "-data" }
 
 func (db Database) ownedFiles() []string {
-	return []string{db.fileCompose(), db.fileGives(), db.fileBackup(), db.fileRequest(), db.fileReservation()}
+	return []string{db.fileCompose(), db.fileEnvNames(), db.fileBackup(), db.fileRequest(), db.fileReservation()}
 }
 
 // landedFiles are the files whose presence at main decides the database's state.
 func (db Database) landedFiles() []string {
-	return []string{db.fileCompose(), db.fileGives(), db.fileBackup(), db.fileReservation()}
+	return []string{db.fileCompose(), db.fileEnvNames(), db.fileBackup(), db.fileReservation()}
 }
 
 func appPath(app, name string) string { return app + "/" + name }
@@ -98,7 +98,7 @@ func (c Compose) Network(name string) string { return c.Networks[name].Name }
 func (db Database) renderCompose(r request) (string, error) {
 	e := db.Engine
 	var entrypoint []string
-	for _, word := range e.Entrypoint(r.names) {
+	for _, word := range e.Entrypoint {
 		entrypoint = append(entrypoint, strings.ReplaceAll(word, "$", "$$"))
 	}
 	c := Compose{
@@ -139,27 +139,24 @@ func sizeText(bytes int64) string {
 	return strconv.FormatInt(bytes/bytesPerMiB, 10) + "MiB"
 }
 
-// fixedValues are what the database gives the app that its host never generates.
-func (db Database) fixedValues(t target) map[string]string {
-	return map[string]string{"host": db.container(t), "port": db.Engine.Port, "dbName": databaseName, "username": databaseUser}
-}
-
-// renderGives lists each value under the app's name for it: four fixed, and the password generated once on the host.
-func (db Database) renderGives(r request) string {
-	fixed := db.fixedValues(r.target)
-	var b strings.Builder
-	for _, v := range values {
-		if v.name == "password" {
-			b.WriteString(r.names[v.name] + "=generated\n")
-			continue
-		}
-		b.WriteString(r.names[v.name] + "=fixed:" + fixed[v.name] + "\n")
+// outputs are the connection the database hands its app's other blocks, the password named by the secret holding it.
+func (db Database) outputs(t target) map[string]string {
+	return map[string]string{
+		"host": db.container(t), "port": db.Engine.Port, "dbName": DatabaseName, "username": DatabaseUser,
+		"passwordSecret": db.passwordSource(),
 	}
-	return b.String()
 }
 
-func (db Database) renderBackup(r request) string {
-	return "service=" + db.Engine.Service + "\ncommand=" + db.Engine.Dump(r.names) + "\nrestore=" + db.Engine.Restore(r.names) + "\nevery=" + backupEvery + "\n"
+// passwordSource is the host's source line for the password it generates once and keeps in the block's own folder.
+func (db Database) passwordSource() string { return "generated:" + db.Block + ":" + passwordSecret }
+
+// renderEnvNames fills the database container's password from the host's generated secret.
+func (db Database) renderEnvNames() string {
+	return PasswordVariable + "=" + db.passwordSource() + "\n"
+}
+
+func (db Database) renderBackup() string {
+	return "service=" + db.Engine.Service + "\ncommand=" + db.Engine.Dump + "\nrestore=" + db.Engine.Restore + "\nevery=" + backupEvery + "\n"
 }
 
 // renderFiles is every file a Database writes in the app's directory, the backup request aside.
@@ -174,19 +171,8 @@ func (db Database) renderFiles(r request) (map[string]string, error) {
 	}
 	return map[string]string{
 		appPath(r.app, db.fileCompose()):     composeText,
-		appPath(r.app, db.fileGives()):       db.renderGives(r),
-		appPath(r.app, db.fileBackup()):      db.renderBackup(r),
+		appPath(r.app, db.fileEnvNames()):    db.renderEnvNames(),
+		appPath(r.app, db.fileBackup()):      db.renderBackup(),
 		appPath(r.app, db.fileReservation()): string(reservation) + "\n",
 	}, nil
-}
-
-// givenVariables reads the variable names a gives file or env.names lists, one NAME=SOURCE line each.
-func givenVariables(content string) []string {
-	var out []string
-	for _, line := range strings.Split(content, "\n") {
-		if name, _, ok := strings.Cut(strings.TrimSpace(line), "="); ok && name != "" {
-			out = append(out, name)
-		}
-	}
-	return out
 }
