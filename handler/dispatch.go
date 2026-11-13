@@ -191,30 +191,33 @@ func (h *Handler) errorResponse(err error, secrets []string) (int, contract.Resp
 	return http.StatusInternalServerError, contract.Response{Error: safe.Scrub(err.Error(), secrets...)}
 }
 
-// scrubAroundClass scrubs text everywhere but in refused's class, a word the block's own code names and the platform reads back, and scrubs all of it when text does not hold refused as written or a secret reads across the class's edge.
+// scrubAroundClass scrubs the text before refused, its detail and the text after it apart, so the class reads as the block's own code named it and the platform reads it back, and scrubs all of text when it does not hold refused as written or a secret stands anywhere but wholly inside one of those pieces or the class.
 func scrubAroundClass(text string, refused *Refused, secrets []string) string {
 	before, after, found := strings.Cut(text, refused.Error())
 	if !found {
 		return safe.Scrub(text, secrets...)
 	}
-	head := safe.Scrub(before, secrets...)
-	maskedRefusal := &Refused{Class: refused.Class, Detail: safe.Scrub(refused.Detail, secrets...)}
-	masked := head + maskedRefusal.Error() + safe.Scrub(after, secrets...)
-	classStart := len(head) + len(refusedPrefix)
-	if secretOutsideSpan(masked, classStart, classStart+len(refused.wireClass()), secrets) {
+	classStart := len(before) + len(refusedPrefix)
+	classEnd := classStart + len(refused.wireClass())
+	refusalEnd := len(text) - len(after)
+	detailStart := refusalEnd - len(refused.Detail)
+	if secretOverlaps(text, len(before), classStart, secrets) || secretOverlaps(text, classEnd, detailStart, secrets) || secretOverlaps(text, refusalEnd, refusalEnd, secrets) {
 		log.Printf("handler: a secret reads across the edge of refusal class %s, so the refusal is masked whole", safe.LogSafe(refused.wireClass(), secrets...))
 		return safe.Scrub(text, secrets...)
 	}
-	return masked
+	maskedRefusal := &Refused{Class: refused.Class, Detail: safe.Scrub(refused.Detail, secrets...)}
+	return safe.Scrub(before, secrets...) + maskedRefusal.Error() + safe.Scrub(after, secrets...)
 }
 
-// secretOutsideSpan reports whether a secret Scrub would mask occurs in text anywhere but wholly inside text[start:end], since pieces scrubbed apart can join into a secret.
-func secretOutsideSpan(text string, start, end int, secrets []string) bool {
+// secretOverlaps reports whether a secret Scrub would mask occurs in text over any byte of text[start:end], or across start when that span is empty; it reads text unmasked, since a marker over part of an occurrence hides the rest of it from a search.
+func secretOverlaps(text string, start, end int, secrets []string) bool {
 	for _, secret := range secrets {
-		// A match starting before start ends by start+len-1, and a match ending after end starts at end-len+1 or later.
-		left := text[:min(len(text), start+len(secret)-1)]
-		right := text[min(len(text), max(0, end-len(secret)+1)):]
-		if safe.Scrub(left, secret) != left || safe.Scrub(right, secret) != right {
+		if secret == "" {
+			continue
+		}
+		// An occurrence over the span starts after start-len and ends before end+len.
+		window := text[max(0, start-len(secret)+1):min(len(text), end+len(secret)-1)]
+		if safe.Scrub(window, secret) != window {
 			return true
 		}
 	}
