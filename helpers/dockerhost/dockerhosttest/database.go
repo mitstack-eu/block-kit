@@ -150,7 +150,7 @@ func (d *Database) Process() (handler.Resource, map[string]handler.Observer) {
 	return d.DB, d.DB.Observers()
 }
 
-// Holds lists every file on the host but the README it starts with, which only the database's block writes.
+// Holds lists every file on the host but its README, whatever the subscription, since a subscribe broken half way can leave a file no label ties to it.
 func (d *Database) Holds(string) []string {
 	var held []string
 	for path := range d.Main() {

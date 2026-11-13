@@ -230,6 +230,23 @@ func (s *blockServer) sendRequest(operation, unit string, settling bool, d contr
 }
 
 // requestFor is the engine's request for operation on d, before its envelope of key, token, time and nonce.
+// RequestBody is the engine's request for operation on d as a LeakRequest's Body, which the harness wraps in its envelope.
+func RequestBody(t testing.TB, operation string, d contract.Desired) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(requestFor(operation, d))
+	var body map[string]any
+	if err == nil {
+		err = json.Unmarshal(raw, &body)
+	}
+	if err != nil {
+		t.Fatalf("RequestBody(%s): the request does not read back as a body: %v", operation, err)
+	}
+	for _, envelope := range []string{"idempotencyKey", "obo", "createdAt", "nonce"} {
+		delete(body, envelope)
+	}
+	return body
+}
+
 func requestFor(operation string, d contract.Desired) contract.Request {
 	return contract.Request{
 		Operation: operation, SubscriptionID: d.SubscriptionID,

@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"maps"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +50,7 @@ func Scratch(t testing.TB, what string) string {
 	return name
 }
 
-// Create makes, without starting, a container running s as the host would, on a volume of its own, with env set and on network unless it is empty.
+// Create makes, without starting, a container running s as the host would but for its restart policy, which a test drives itself, on a volume of its own, with env set beside s's own and on network unless it is empty.
 func Create(t testing.TB, s dockerhost.ComposeService, network string, env ...string) Container {
 	t.Helper()
 	c := Container{t: t, Name: Scratch(t, "db")}
@@ -76,7 +78,13 @@ func createArgs(name string, s dockerhost.ComposeService, network string, env []
 	for _, opt := range s.SecurityOpt {
 		args = append(args, "--security-opt", opt)
 	}
+	for _, k := range slices.Sorted(maps.Keys(s.Labels)) {
+		args = append(args, "--label", k+"="+unescape(s.Labels[k]))
+	}
 	args = append(args, "--health-cmd", strings.Join(s.Healthcheck.Test[1:], " "), "--health-interval", "1s")
+	for _, k := range slices.Sorted(maps.Keys(s.Environment)) {
+		args = append(args, "--env", k+"="+unescape(s.Environment[k]))
+	}
 	for _, e := range env {
 		args = append(args, "--env", e)
 	}
@@ -85,10 +93,12 @@ func createArgs(name string, s dockerhost.ComposeService, network string, env []
 	}
 	args = append(args, "--entrypoint", s.Entrypoint[0], s.Image)
 	for _, word := range s.Entrypoint[1:] {
-		args = append(args, strings.ReplaceAll(word, "$$", "$"))
+		args = append(args, unescape(word))
 	}
 	return append(args, s.Command...)
 }
+
+func unescape(value string) string { return strings.ReplaceAll(value, "$$", "$") }
 
 // Must runs the docker CLI and fails the test on an error.
 func (c Container) Must(args ...string) string {
