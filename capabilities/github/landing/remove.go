@@ -43,7 +43,7 @@ func removalBranch(subscription string) string {
 }
 
 // Remove opens one pull request per repository deleting every file r's records created that main still carries at its recorded blob, merges it under the subscription's trailer once main's required checks pass on it, and deletes every branch under the subscription's prefix.
-// For a context marked contract.AppDeleting it leaves every file in place, since the app's source repository outlives the app, and only closes the subscription's open removal pull request and deletes its branches.
+// Under contract.AppDeleting it only closes the subscription's open removal pull request and deletes its branches, since the app's source repository outlives the app.
 // While a pull request waits on a check, or a repository cannot be read, it returns a handler.Waiting and writes nothing it has not written before, so the unsubscribe stays unsettled and is re-driven.
 func Remove(ctx context.Context, c *ghapi.Client, r Removal) (Result, error) {
 	if !subscriptionID.MatchString(r.Subscription) {
