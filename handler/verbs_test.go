@@ -129,8 +129,8 @@ func TestServe_ARefusalKeepsTheClassItsBlockChoseAndMasksEachSecretInTheTextArou
 func TestServe_ARefusalIsMaskedWholeWhenASecretReadsAcrossTheEdgeOfItsClass(t *testing.T) {
 	refusal := handler.Refuse(handler.ClassHostCannotRun, "the image is arm64")
 	for _, tc := range []struct {
-		name, secret, wantError, wantDetail string
-		err                                 error
+		name, secret, inside, wantError, wantDetail string
+		err                                         error
 	}{
 		{name: "across the class's end and the detail", secret: "run: the", err: refusal,
 			wantDetail: "refused:host-cannot-[REDACTED] image is arm64"},
@@ -140,13 +140,15 @@ func TestServe_ARefusalIsMaskedWholeWhenASecretReadsAcrossTheEdgeOfItsClass(t *t
 			wantDetail: "refused:host-cannot-run: the image is arm64", wantError: "ensur[REDACTED]sed:host-cannot-run: the image is arm64"},
 		{name: "across the detail and the wrapping after it, in the error alone", secret: "arm64 (att", err: fmt.Errorf("%w (attempt 2)", refusal),
 			wantDetail: "refused:host-cannot-run: the image is arm64", wantError: "refused:host-cannot-run: the image is [REDACTED]empt 2)"},
+		{name: "across the detail and the wrapping after it, where another secret ends the detail and overlaps it", secret: "64 (att", inside: "arm64", err: fmt.Errorf("%w (attempt 2)", refusal),
+			wantDetail: "refused:host-cannot-run: the image is [REDACTED]", wantError: "refused:host-cannot-run: the image is [REDACTED]empt 2)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logged := captureLog(t)
 			events := newFakeEventsServer(t)
 			wantError := cmp.Or(tc.wantError, tc.wantDetail)
 
-			status, raw := newHarness(t, &kittest.FakeResource{EnsureErr: tc.err}).post(map[string]any{"appSecrets": map[string]any{"EDGE": tc.secret}}, map[string]any{"eventsCallback": map[string]any{"url": events.URL, "token": "events-tok"}})
+			status, raw := newHarness(t, &kittest.FakeResource{EnsureErr: tc.err}).post(map[string]any{"appSecrets": map[string]any{"EDGE": tc.secret, "INSIDE": tc.inside}}, map[string]any{"eventsCallback": map[string]any{"url": events.URL, "token": "events-tok"}})
 
 			resp := decodeResponse(t, raw)
 			if status != http.StatusBadRequest || resp.StatusDetail != tc.wantDetail || resp.Error != wantError {
@@ -157,7 +159,7 @@ func TestServe_ARefusalIsMaskedWholeWhenASecretReadsAcrossTheEdgeOfItsClass(t *t
 				t.Errorf("events = %+v, want one failed event whose detail reads %q", got, wantError)
 			}
 			for what, haystack := range map[string]string{"response body": string(raw), "event": fmt.Sprint(got), "log output": logged.String()} {
-				kittest.AssertNoSecret(t, what, haystack, tc.secret)
+				kittest.AssertNoSecret(t, what, haystack, tc.secret, tc.inside)
 			}
 			if !strings.Contains(logged.String(), "a secret reads across the edge of refusal class host-cannot-run") {
 				t.Errorf("log = %q, want a line naming the class whose refusal was masked whole", logged.String())
