@@ -7,12 +7,10 @@ import (
 	"net/http"
 )
 
-// ErrReadOnly is what a kit client answers for a write sent while the request is a validate that settles no verb.
 var ErrReadOnly = errors.New("contract: the request is a validate that settles no verb, so it must write nothing")
 
 type readOnlyKey struct{}
 
-// WithReadOnly marks ctx as the context of a request that must write nothing, so each kit client refuses a write sent with it.
 func WithReadOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, readOnlyKey{}, true)
 }
