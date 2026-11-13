@@ -147,10 +147,8 @@ func (db Database) outputs(t target) map[string]string {
 	}
 }
 
-// passwordSource is the host's source line for the password it generates once and keeps in the block's own folder.
-func (db Database) passwordSource() string { return "generated:" + db.Block + ":" + passwordSecret }
+func (db Database) passwordSource() string { return "generated:" + db.Block + ":" + passwordSecretName }
 
-// renderEnvNames fills the database container's password from the host's generated secret.
 func (db Database) renderEnvNames() string {
 	return PasswordVariable + "=" + db.passwordSource() + "\n"
 }

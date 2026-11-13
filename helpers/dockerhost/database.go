@@ -26,18 +26,15 @@ const (
 	defaultDisk   = "1Gi"
 )
 
+// DatabaseName and DatabaseUser are the same for every app, and its container reads the password as PasswordVariable.
 const (
-	// DatabaseName and DatabaseUser name the app's database and its role, the same for every app.
-	DatabaseName = "app"
-	DatabaseUser = "app"
-	// PasswordVariable is the variable the database's container reads the role's password from.
-	PasswordVariable = "DB_PASSWORD"
-	// passwordSecret is the name the host keeps the generated password under, in the block's own folder.
-	passwordSecret = "password"
+	DatabaseName       = "app"
+	DatabaseUser       = "app"
+	PasswordVariable   = "DB_PASSWORD"
+	passwordSecretName = "password"
 )
 
-// Database is a per-app block that runs one app's database on its org's Docker host, lands it only on a host with room,
-// and removes it only once its final backup is uploaded.
+// Database runs one app's database on its org's Docker host, lands it only with room, removes it only after a backup.
 type Database struct {
 	// Block is the block's id, which names its files and labels its volume and backups on the host.
 	Block   string
@@ -53,7 +50,6 @@ type Database struct {
 type Engine struct {
 	// Service names the compose service, the container <app>-<Service> and its volume.
 	Service string
-	// Image is pinned by digest.
 	Image   string
 	Port    string
 	DataDir string
@@ -68,7 +64,6 @@ type Engine struct {
 }
 
 var (
-	// appRe is the directory name the host's pull agent accepts.
 	appRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	subIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 )

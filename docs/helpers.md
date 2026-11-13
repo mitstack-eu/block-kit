@@ -1050,7 +1050,7 @@ The `Database` then writes four files in the app's directory, in one commit:
 | File | What it holds |
 |---|---|
 | `<block>.compose.yaml` | The Compose file that runs the engine's image as the container `<app>-<Service>` on the app's own network, `app-<app>`, with no port published on the host |
-| `<block>.env.names` | The one line `DB_PASSWORD=generated:<block>:password`. The host makes a random password once, keeps it on the host, and hands it to the database's container as `DB_PASSWORD` |
+| `<block>.env.names` | The one line `DB_PASSWORD=generated:<block>:password`. The host reads this file into the database container's own environment. It makes a random password once, keeps it on the host, and hands it to the container as `DB_PASSWORD` |
 | `<block>.backup` | The lines `service=`, `command=` with the engine's dump, `restore=` with its restore and `every=24h`, which tell the host how and how often to back the database up |
 | `reservations/<block>.json` | The CPU, memory and disk the database reserves, which "Sizing an app against what the host holds" reads |
 
@@ -1074,9 +1074,12 @@ read:
 | `username` | `app`, which `dockerhost.DatabaseUser` names |
 | `passwordSecret` | `generated:docker-postgres:password`, the host's name for the password |
 
-The block that runs the app writes `DB_PASSWORD=generated:docker-postgres:password`,
-or any variable name it chooses, into the app's `env.names`. The host then
-fills that variable from the same password the database's container reads.
+An `env.names` file is the host's list of `NAME=SOURCE` lines: the app's own
+file, `env.names`, fills the app's environment, and a block's
+`<block>.env.names` fills that block's container. The block that runs the app
+writes `DB_PASSWORD=generated:docker-postgres:password`, or any variable name
+it chooses, into the app's `env.names`. The host then fills that variable from
+the same password the database's container reads.
 
 #### When a subscribe is refused
 
@@ -1108,7 +1111,7 @@ An `Engine` names the rest:
 | `Port`, `DataDir` | The port the database listens on, and where its volume mounts |
 | `Entrypoint` | The container's entrypoint. It reads the password as `$DB_PASSWORD`, which `dockerhost.PasswordVariable` names, and the kit escapes each `$` for Compose |
 | `Command`, `Environment`, `Healthcheck` | The container's command, its fixed environment and its health check's test, as Compose takes them |
-| `Dump`, `Restore` | One command line each, run as `dockerhost.DatabaseUser` on `dockerhost.DatabaseName`. The host splits `Dump` into words as a shell would, runs it in the container without a shell, and keeps what it writes to its output as the backup, so a line that reads a variable calls `sh -c` itself. A host that replaces a lost one runs `Restore` through `sh -c` in the new container, with the newest backup on its input |
+| `Dump`, `Restore` | One command line each, which the engine writes to connect as `dockerhost.DatabaseUser` to `dockerhost.DatabaseName`, reading the password from `$DB_PASSWORD`. The host splits `Dump` into words as a shell would, runs it in the container without a shell, and keeps what it writes to its output as the backup, so a line that reads a variable calls `sh -c` itself. A host that replaces a lost one runs `Restore` through `sh -c` in the new container, with the newest backup on its input |
 | `Trouble` | A regular expression. While the database waits on a container that starts, or that is down before the database ever read active, the newest output line it matches is quoted in the status detail of that wait, and nil quotes none. A failure's detail quotes no output |
 
 #### Removing the database and reading it
