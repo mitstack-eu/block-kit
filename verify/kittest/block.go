@@ -199,8 +199,17 @@ func (s *blockServer) send(operation string, d contract.Desired) (int, contract.
 	return s.sendUnit(operation, "", d)
 }
 
+// settle sends the validate that settles a verb, the one request that carries settling, as the engine's settle probe does.
+func (s *blockServer) settle(d contract.Desired) (int, contract.Response, error) {
+	return s.sendRequest("validate", "", true, d)
+}
+
 // sendUnit also names the spec.continuity entry a snapshot or a restore is for, and carries d.Replacing as the marker of a request sent during a replacement.
 func (s *blockServer) sendUnit(operation, unit string, d contract.Desired) (int, contract.Response, error) {
+	return s.sendRequest(operation, unit, false, d)
+}
+
+func (s *blockServer) sendRequest(operation, unit string, settling bool, d contract.Desired) (int, contract.Response, error) {
 	now := time.Now()
 	obo, err := webhook.MintOBO(s.signer.Private, s.signer.Kid,
 		webhook.OBOClaims{Audience: s.audience, OrgID: d.OrgID, AppID: d.AppID, SubscriptionID: d.SubscriptionID}, 5*time.Minute, now)
@@ -215,7 +224,7 @@ func (s *blockServer) sendUnit(operation, unit string, d contract.Desired) (int,
 		CloudIdentity: d.CloudIdentity, CreatedAt: now, Nonce: freshToken(), PriorOutputs: d.PriorOutputs,
 		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
 		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity, ResourceUnsubscribing: d.ResourceUnsubscribing,
-		Unit: unit, Replacing: d.Replacing,
+		Unit: unit, Replacing: d.Replacing, Settling: settling,
 	})
 	if err != nil {
 		return 0, contract.Response{}, err
@@ -531,7 +540,7 @@ func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 	for {
 		d := c.desired
 		d.RecordedResources = recorded
-		_, resp, ok := c.sendOK(call, d)
+		_, resp, ok := c.settleOK(call, d)
 		if !ok {
 			return resp, false
 		}
@@ -654,6 +663,19 @@ func (c *blockCheck) unsettled(operation string, resp contract.Response) {
 
 func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract.Response, bool) {
 	status, resp, err := c.server.send(operation, d)
+	return c.answeredOK(operation, status, resp, err)
+}
+
+// settleOK sends converge's call, whose validate is a settle poll.
+func (c *blockCheck) settleOK(call string, d contract.Desired) (int, contract.Response, bool) {
+	if call != "validate" {
+		return c.sendOK(call, d)
+	}
+	status, resp, err := c.server.settle(d)
+	return c.answeredOK(call, status, resp, err)
+}
+
+func (c *blockCheck) answeredOK(operation string, status int, resp contract.Response, err error) (int, contract.Response, bool) {
 	if err != nil {
 		c.problem("%s could not be sent or its answer read: %v", operation, err)
 		return status, resp, false
