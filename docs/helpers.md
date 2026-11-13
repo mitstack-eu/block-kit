@@ -863,7 +863,9 @@ runs. In the compose file a block writes, that reads:
 "healthcheck": {"test": ["CMD", "/mitstack-probe/mitstack-probe", "http://127.0.0.1:8080/"]}
 ```
 
-An image mount needs Docker Engine 28 or later, and Compose 2.36 or later reads it.
+An image mount needs Docker Engine 28 or later, and Compose 2.36 or later reads
+it. On an older engine Compose refuses the whole file and leaves the running
+container as it was, still checked the old way.
 
 ### Running a command in an app's container
 
