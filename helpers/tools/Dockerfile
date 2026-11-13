@@ -52,8 +52,8 @@ RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags='-s -w -buildid=
       -o /out/mitstack-signin/mitstack-signin ./cmd/mitstack-signin
 COPY --from=ca /out/mitstack-signin/ca-certificates.crt /out/mitstack-signin/
 
-# The probe builds to the same bytes from the same source, so tools.sha256 pins it for a host's copy, and a change to
-# its source changes the pin.
+# The probe builds to the same bytes from the same source and Go image, so tools.sha256 pins it for a host's copy, and
+# a change to either changes the pin.
 FROM docker.io/library/golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS probe
 WORKDIR /src
 COPY go.mod ./

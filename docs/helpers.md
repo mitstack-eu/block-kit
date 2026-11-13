@@ -860,9 +860,10 @@ named by digest as
 [Copying a tool out of an image by digest](#copying-a-tool-out-of-an-image-by-digest)
 says. `tools.Probe` names the probe's path in the image and its sha256, so
 `copy-tool.sh` copies it as it copies any other tool, and the image's build
-checks the probe it built against that pin. The block then bind-mounts that copy read-only into the app's container and
-names it in exec form, so no shell runs. In the compose file a block writes,
-with the copy's path on the host in place of `<copy>`, that reads:
+checks the probe it built against that pin. The block then bind-mounts that
+copy read-only into the app's container and names it in exec form, so no shell
+runs. In the compose file a block writes, with the copy's path on the host in
+place of `<copy>`, that reads:
 
 ```json
 "volumes": [{"type": "bind", "source": "<copy>", "target": "/mitstack-probe/mitstack-probe", "read_only": true}],
