@@ -22,5 +22,7 @@ func RefuseWrite(ctx context.Context, method string) error {
 	return nil
 }
 
-// ReadOnly is true on a validate that settles no verb, the one derivation behind Desired.ReadOnly and the context a block's kit clients are called with.
-func (r Request) ReadOnly() bool { return r.Operation == "validate" && !r.Settling }
+// ReadOnly is true on a validate that settles no verb, which is one without settling or one naming a resource, and is the one derivation behind Desired.ReadOnly and the context a block's kit clients are called with.
+func (r Request) ReadOnly() bool {
+	return r.Operation == "validate" && (!r.Settling || r.Resource != "")
+}

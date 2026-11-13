@@ -317,11 +317,11 @@ func (f *Fake) Requests() []Request {
 	return slices.Clone(f.requests)
 }
 
-// Writes lists every request but a GET.
+// Writes lists every request but a GET or a HEAD.
 func (f *Fake) Writes() []Request {
 	var out []Request
 	for _, r := range f.Requests() {
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			out = append(out, r)
 		}
 	}
