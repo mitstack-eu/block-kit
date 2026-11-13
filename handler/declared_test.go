@@ -211,7 +211,6 @@ const s3Snapshot = `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability
 
 var s3Manifest = v1betaManifest("s3-block", []string{"{ name: data, type: aws.s3-bucket }"})
 
-// recordingAWS holds one tagged bucket, acme-data, unless missing, and its document carries props beside its name and tags.
 type recordingAWS struct {
 	t       *testing.T
 	tags    map[string]string
@@ -260,7 +259,6 @@ func (a *recordingAWS) probed(maxReads int) []string {
 	return reads
 }
 
-// checkingBlock checks each full read with problem, and amends each kit observer answer with amendment or amendErr, after writing scribble into the outputs it was handed.
 type checkingBlock struct {
 	*blockResource
 	problem   string
