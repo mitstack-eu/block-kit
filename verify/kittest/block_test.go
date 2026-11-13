@@ -22,6 +22,7 @@ import (
 	"github.com/mitstack-eu/block-kit/capabilities/github/landing/landingtest"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/helpers/events"
 	"github.com/mitstack-eu/block-kit/observe"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
@@ -1162,6 +1163,73 @@ func githubBlock(t *testing.T, untagged string) kittest.Block {
 		Provider: p,
 		Desired:  blockDesired(""),
 		Upgrade:  &upgrade,
+	}
+}
+
+type sentRequest struct {
+	operation string
+	readOnly  bool
+}
+
+// requestLog keeps each request the check sent once, by its idempotency key, in the order an observer first saw it.
+type requestLog struct {
+	mu   sync.Mutex
+	seen map[string]bool
+	sent []sentRequest
+}
+
+type loggingObserver struct {
+	inner handler.Observer
+	log   *requestLog
+}
+
+func (o loggingObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	env, _ := events.EnvelopeFrom(ctx)
+	o.log.mu.Lock()
+	if !o.log.seen[env.IdempotencyKey] {
+		o.log.seen[env.IdempotencyKey] = true
+		o.log.sent = append(o.log.sent, sentRequest{env.Operation, r.Desired.ReadOnly})
+	}
+	o.log.mu.Unlock()
+	return o.inner.ObserveResource(ctx, r)
+}
+
+func TestCheckBlock_SendsOnlyTheValidatesThatSettleAVerbAsOnesThatMayWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		settlePolls int
+	}{
+		{"a block whose verbs settle at once is sent read-only validates alone", 0},
+		{"a block whose subscribe is in flight for one more observe is settled by one validate that may write", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, in := hostBlock(t)
+			log, inFlight := &requestLog{seen: map[string]bool{}}, tc.settlePolls
+			in.Config.Resource = unnamedBlock{b}
+			for name := range in.Config.Observers {
+				in.Config.Observers[name] = loggingObserver{inner: byTypeObserver{p: b.p, report: true, inFlight: &inFlight}, log: log}
+			}
+
+			wantNoProblems(t, kittest.CheckBlock(in))
+
+			var validates []bool
+			for _, sent := range log.sent {
+				switch {
+				case sent.operation == "validate":
+					validates = append(validates, sent.readOnly)
+				case sent.readOnly:
+					t.Errorf("a %s reached the block read-only, want only a validate to", sent.operation)
+				}
+			}
+			if len(validates) <= tc.settlePolls {
+				t.Fatalf("the check sent %d validates, want the %d settle polls and the validates that settle no verb after them", len(validates), tc.settlePolls)
+			}
+			for i, readOnly := range validates {
+				if want := i >= tc.settlePolls; readOnly != want {
+					t.Errorf("validate %d of %d reached the block with ReadOnly %v, want %v: only the first %d settle the subscribe and may write", i+1, len(validates), readOnly, want, tc.settlePolls)
+				}
+			}
+		})
 	}
 }
 

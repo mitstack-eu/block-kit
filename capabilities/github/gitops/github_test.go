@@ -177,6 +177,66 @@ func TestGitHubRepository_CommitManifestsRevertAndAStaleParentEndToEnd(t *testin
 	}
 }
 
+// NewGitHubRepository refuses the fake's loopback address, so repoBuiltFrom points the repository it built from d at the fake afterwards.
+func repoBuiltFrom(t *testing.T, f *fakeGitHub, d contract.Desired) *gitops.GitHubRepository {
+	t.Helper()
+	t.Setenv(ghapi.HostsEnv, "")
+	repo, err := gitops.NewGitHubRepository(d, fakeRepo)
+	if err != nil {
+		t.Fatalf("NewGitHubRepository: %v", err)
+	}
+	repo.Client = newGitHubRepo(t, f).Client
+	return repo
+}
+
+func TestGitHubRepository_BuiltFromAReadOnlyRequestRefusesEachWriteAndStillReads(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeGitHub(t, githubToken)
+	const deploy = "apps/app-alpha/deploy.yaml"
+	v1 := landOn(t, newGitHubRepo(t, f), "", map[string][]byte{deploy: []byte("image: v1\n")})
+	v2 := landOn(t, newGitHubRepo(t, f), v1, map[string][]byte{deploy: []byte("image: v2\n")})
+	notes := gitopstest.NewNotifications()
+	notes.Set(gitops.Notification{App: "app-alpha", Revision: v1, Phase: "Succeeded", Health: "Healthy"})
+	notes.Set(gitops.Notification{App: "app-alpha", Revision: v2, Phase: "Failed", Health: "Degraded"})
+	readOnly := githubDesired("https://api.github.com")
+	readOnly.ReadOnly = true
+	repo := repoBuiltFrom(t, f, readOnly)
+	commits := f.commitCount()
+
+	_, commitErr := repo.Commit(ctx, v2, map[string][]byte{deploy: []byte("image: v3\n")}, "app-alpha: v3")
+	_, changed, manifestsErr := gitops.CommitManifests(ctx, repo, map[string][]byte{deploy: []byte("image: v3\n")}, "app-alpha: v3", seededSecrets)
+	_, revertErr := gitops.Revert(ctx, repo, notes, gitops.BlockRevert{App: "app-alpha", Failed: v2, Owned: ownsAlphaDeploy, Message: "revert app-alpha: v2"})
+	own, unchanged, sameErr := gitops.CommitManifests(ctx, repo, map[string][]byte{deploy: []byte("image: v2\n")}, "app-alpha: v2 again", seededSecrets)
+	head, headErr := repo.Head(ctx)
+
+	for write, err := range map[string]error{"Commit": commitErr, "CommitManifests": manifestsErr, "Revert": revertErr} {
+		if !errors.Is(err, contract.ErrReadOnly) {
+			t.Errorf("%s on a read-only request = %v, want an error wrapping contract.ErrReadOnly", write, err)
+		}
+	}
+	if changed || f.commitCount() != commits || f.head() != v2 {
+		t.Errorf("after the refused writes: changed %v, %d commits, head %q; want nothing landed beyond the %d commits at %q", changed, f.commitCount(), f.head(), commits, v2)
+	}
+	if sameErr != nil || unchanged || own != v2 {
+		t.Errorf("CommitManifests of files already at head = (%q, %v, %v), want (%q, false, nil): a commit that would change nothing is not a write", own, unchanged, sameErr, v2)
+	}
+	if headErr != nil || head != v2 {
+		t.Errorf("Head = %q, %v; want %q, since a read-only request still reads", head, headErr, v2)
+	}
+	wantFilesAt(t, repo, v2, map[string][]byte{deploy: []byte("image: v2\n")})
+}
+
+func TestGitHubRepository_BuiltFromARequestThatMayWriteCommits(t *testing.T) {
+	f := newFakeGitHub(t, githubToken)
+	repo := repoBuiltFrom(t, f, githubDesired("https://api.github.com"))
+
+	rev, err := repo.Commit(context.Background(), "", map[string][]byte{"a.yaml": []byte("a1\n")}, "seed")
+
+	if err != nil || rev == "" || f.head() != rev {
+		t.Errorf("Commit = %q, %v with head %q; want the commit landed as head", rev, err, f.head())
+	}
+}
+
 func TestGitHubRepository_ErrorsNeverCarryTheTokenEvenWhenGitHubEchoesIt(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeGitHub(t, githubToken)
