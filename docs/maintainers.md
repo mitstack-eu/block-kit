@@ -28,14 +28,14 @@ go run ./verify/blockverify --standalone examples/hetzner-firewall
 ```
 
 The tools image builds with Docker from the repository's root, since it also
-holds the sign-in companion built from `cmd/mitstack-signin`, which [the helpers page](helpers.md#opening-an-app-only-to-its-orgs-members) describes. A test behind
+holds the sign-in companion built from `cmd/mitstack-signin`, which [the helpers page](helpers.md#opening-an-app-only-to-its-orgs-members) describes, and the health probe built from `cmd/mitstack-probe`. A test behind
 the `toolsimage` build tag checks each file it holds against
-`helpers/tools/tools.sha256` and runs the companion. CI runs both on every
+`helpers/tools/tools.sha256` and runs the companion and the probe. CI runs them on every
 event:
 
 ```sh
 docker build --platform linux/amd64 -f helpers/tools/Dockerfile -t block-kit-tools:ci .
-TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -run '^TestToolsImage_(HoldsEveryFileAtItsPinInALayerOfItsOwn|RunsTheSignInCompanion)$' ./helpers/tools
+TOOLS_IMAGE=block-kit-tools:ci go test -tags toolsimage -run '^TestToolsImage_(HoldsEveryFileAtItsPinInALayerOfItsOwn|RunsTheSignInCompanion|RunsTheProbe)$' ./helpers/tools
 ```
 
 A test behind the `edgecaddy` build tag runs the sign-in route `Edge.Site`

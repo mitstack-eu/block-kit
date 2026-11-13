@@ -843,6 +843,28 @@ case waits != "":
 obs.Unhealthy = unhealthy
 ```
 
+#### Checking an app's answer from inside its container
+
+An app's image may hold no shell, no `wget` and no `curl`, so a health check
+that needs one of them fails an app that serves. The kit's tools image holds
+a probe for this case, `cmd/mitstack-probe`, at `tools.ProbePath`. It fetches
+the one URL it is given and exits 0 when the answer is below 400, judging a
+redirect by its own status without following it. It exits 1 for an answer of
+400 or above, a refused connection or no answer within four seconds, and
+prints one line saying which.
+
+A block runs it by mounting the tools image's probe directory into the
+container at the same path, and naming the probe in exec form, so no shell
+runs. In the compose file a block writes, that reads:
+
+```json
+"volumes": [{"type": "image", "source": "<tools.Image>", "target": "/mitstack-probe",
+  "read_only": true, "image": {"subpath": "mitstack-probe"}}],
+"healthcheck": {"test": ["CMD", "/mitstack-probe/mitstack-probe", "http://127.0.0.1:8080/"]}
+```
+
+An image mount needs Docker Engine 28 or later, and Compose 2.36 or later reads it.
+
 ### Running a command in an app's container
 
 A builder can run one command, such as `php bin/add-user.php alice@example.com`,
@@ -1374,6 +1396,7 @@ registry's HTTP API downloads only the layer it needs.
 | `tools.K3sInstaller` | `/k3s/install.sh` | The k3s installer at k3s-io/k3s commit `2d0f82fa2f933cd227fe38e1482558ce4769f464` |
 | `tools.KubeBenchConfig` | `/kube-bench/cfg/config.yaml` and `/kube-bench/cfg/k3s-cis-1.11/` with `config.yaml`, `master.yaml`, `etcd.yaml`, `controlplane.yaml`, `node.yaml` and `policies.yaml` | kube-bench's config at commit `e278a5915a982f2756026de6e2f9ca77077ef9f9`, since its releases stop at k3s-cis-1.9 |
 | `tools.CopyScriptPath` | `/copy-tool/copy-tool.sh` | The helper itself, for an image build to copy with `COPY --from` |
+| `tools.ProbePath` | `/mitstack-probe/mitstack-probe` | The health probe an app's container runs from an image mount, built from `cmd/mitstack-probe` |
 
 A tool whose publisher ships an image comes from that image instead, named by
 digest, such as k3s from `registry.rancher.com/rancher/k3s-upgrade` at
