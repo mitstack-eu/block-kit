@@ -65,7 +65,6 @@ type Request struct {
 	ResourceIdentity map[string]string              `json:"resourceIdentity,omitempty"`
 	// ResourceUnsubscribing marks a request naming one resource as a teardown's probe, so the resource's observer answers as it does during an unsubscribe.
 	ResourceUnsubscribing bool `json:"resourceUnsubscribing,omitempty"`
-	// AppDeleting marks a request the platform sends while it deletes the whole app, whose source repository it keeps as the app left it.
 	AppDeleting bool `json:"appDeleting,omitempty"`
 
 	ResourceType      string                      `json:"resourceType,omitempty"`
