@@ -72,6 +72,9 @@ type Request struct {
 	SettlesAt         *time.Time                  `json:"settlesAt,omitempty"`
 	NeverActive       bool                        `json:"neverActive,omitempty"`
 
+	// Settling marks a validate as the probe that settles a verb the engine sent, and no other request carries it.
+	Settling bool `json:"settling,omitempty"`
+
 	IssueAppID string `json:"issueAppId,omitempty"`
 
 	Unit      string `json:"unit,omitempty"`
