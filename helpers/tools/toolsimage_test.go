@@ -24,7 +24,7 @@ import (
 )
 
 func everyFile() []tools.File {
-	return append([]tools.File{tools.Age, tools.AgeKeygen, tools.NSAFramework, tools.NSAConfigInputs, tools.K3sInstaller, tools.SignInCA,
+	return append([]tools.File{tools.Age, tools.AgeKeygen, tools.NSAFramework, tools.NSAConfigInputs, tools.K3sInstaller, tools.SignInCA, tools.Probe,
 		{Path: tools.CopyScriptPath, SHA256: sha(tools.CopyScript)}}, tools.KubeBenchConfig...)
 }
 
@@ -54,9 +54,7 @@ func TestToolsImage_HoldsEveryFileAtItsPinInALayerOfItsOwn(t *testing.T) {
 		}
 		held[toolOf(f)] = true
 	}
-	for _, built := range []string{tools.SignInPath, tools.ProbePath} {
-		held[toolOf(tools.File{Path: built})] = true
-	}
+	held[toolOf(tools.File{Path: tools.SignInPath})] = true
 
 	if layers := docker(t, "image", "inspect", "-f", "{{len .RootFS.Layers}}", image); layers != strconv.Itoa(len(held)) {
 		t.Errorf("%s has %s layers; want %d, one for each tool", image, layers, len(held))
