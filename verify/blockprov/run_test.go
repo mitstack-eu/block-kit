@@ -366,7 +366,6 @@ const (
 	sampleRepo   = "mitstack-postgres-db"
 )
 
-// pushSampleRecord leaves sampleRecord in srv beside the image of imageDigest, as blockprov push writes it.
 func pushSampleRecord(t *testing.T, srv *ociServer, imageDigest string) {
 	t.Helper()
 	recordPath := writeFile(t, t.TempDir(), "record.json", sampleRecord)
@@ -461,7 +460,6 @@ type platformRequest struct {
 	body         string
 }
 
-// fakePlatform answers every request with status, header and answer, and returns what it was sent so far.
 func fakePlatform(t *testing.T, status int, header http.Header, answer string) (address string, requests func() []platformRequest) {
 	t.Helper()
 	var mu sync.Mutex
@@ -485,7 +483,6 @@ func fakePlatform(t *testing.T, status int, header http.Header, answer string) (
 	}
 }
 
-// One request and a red exit: an answer that does not say the record is stored is neither retried nor followed elsewhere.
 func TestRun_Post_AnAnswerThatDoesNotSayStoredFailsAfterOneRequest(t *testing.T) {
 	elsewhere, followed := fakePlatform(t, http.StatusCreated, nil, `{"action":"stored"}`)
 	for _, tc := range []struct {

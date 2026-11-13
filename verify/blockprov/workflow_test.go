@@ -625,7 +625,6 @@ func TestWorkflow_TheProbeAnswerDecidesWhichWriteStepsRun(t *testing.T) {
 	}
 }
 
-// renderStep returns the run body of the publish step name, with a literal in place of each expression the runner would fill in.
 func renderStep(t *testing.T, name string) string {
 	t.Helper()
 	literals := map[string]string{
@@ -1216,7 +1215,6 @@ type postRun struct {
 	registry *ociServer
 }
 
-// runPostStep runs the post step as the publish job reaches it: the sample record beside the image in a registry, the kit's own blockprov under RUNNER_TEMP, and the step's env filled in for a caller naming platform, from a commit that built the image or did not.
 func runPostStep(t *testing.T, platform, built string, env ...string) postRun {
 	t.Helper()
 	registry := newOCIServer(t)
@@ -1301,7 +1299,7 @@ func TestWorkflow_ThePostStepEndsTheJobAsThePlatformAnswers(t *testing.T) {
 	}
 }
 
-// The job holds a registry password, the run's token and the request token of its identity token, and the record is the only thing of them the platform is sent.
+// The job holds a registry password, the run's token, the request token of its identity token and, where the caller passes it, a platform token, and the platform is sent none of them.
 func TestWorkflow_ThePostCarriesTheRecordAndNoCredential(t *testing.T) {
 	platform, requests := fakePlatform(t, http.StatusCreated, nil, admission("stored"))
 	held := map[string]string{"MITSTACK_API_TOKEN": "mitstack_pat_sealed", "GITHUB_TOKEN": "ghs_the_runs_token", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "id-token-request-token"}
