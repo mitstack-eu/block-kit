@@ -1,8 +1,9 @@
 # The kit's tools image holds each tool a block reads while it runs whose publisher ships no image of its own,
-# fetched here once and checked against tools.sha256, copy-tool.sh, the sign-in companion a Docker host runs from it
-# and the probe an app's container mounts from it as its health check. Each tool sits in a layer of its own, so a
-# reader over the registry's HTTP API reads only the layer it needs.
-# Build it from the repository's root, which holds the companion's source:
+# fetched here once and checked against tools.sha256, then copy-tool.sh, and two programs built from this repository's
+# source: the sign-in companion a Docker host runs from it and the probe an app's container mounts from it as its
+# health check. Each tool sits in a layer of its own, so a reader over the registry's HTTP API reads only the layer
+# it needs.
+# Build it from the repository's root, which holds the sources of the companion and the probe:
 # docker build --platform linux/amd64 -f helpers/tools/Dockerfile -t block-kit-tools .
 FROM docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS fetch
 RUN apk add --no-cache curl
