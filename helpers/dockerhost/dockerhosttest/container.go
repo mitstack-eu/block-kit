@@ -3,9 +3,9 @@ package dockerhosttest
 import (
 	"bufio"
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -118,7 +118,7 @@ func (c Container) WaitForLine(text string) {
 	c.t.Helper()
 	found, err := follow(func(line string) bool { return strings.Contains(line, text) }, "logs", "--follow", c.Name)
 	if !found {
-		c.t.Fatalf("%s logged no line holding %q within %s: %v", c.Name, text, dockerTimeout, err)
+		c.t.Fatalf("%s logged no line holding %q: %v", c.Name, text, err)
 	}
 }
 
@@ -133,7 +133,7 @@ func (c Container) WaitHealthy() {
 		"events", "--since", fmt.Sprintf("%d.%09d", since.Unix(), since.Nanosecond()),
 		"--filter", "container="+c.Name, "--filter", "event=health_status", "--format", "{{.Status}}")
 	if !found {
-		c.t.Fatalf("%s never read healthy within %s: %v", c.Name, dockerTimeout, err)
+		c.t.Fatalf("%s never read healthy: %v", c.Name, err)
 	}
 }
 
@@ -158,12 +158,19 @@ func follow(match func(line string) bool, args ...string) (bool, error) {
 		_ = cmd.Wait()
 	}()
 	lines := bufio.NewScanner(r)
+	lines.Buffer(nil, 1<<20)
 	for lines.Scan() {
 		if match(lines.Text()) {
 			return true, nil
 		}
 	}
-	return false, cmp.Or(lines.Err(), ctx.Err())
+	switch {
+	case lines.Err() != nil:
+		return false, lines.Err()
+	case ctx.Err() != nil:
+		return false, fmt.Errorf("no line matched within %s", dockerTimeout)
+	}
+	return false, errors.New("the output ended before a line matched")
 }
 
 // Exec runs line through a shell in the container, as the host runs a backup file's line, and fails the test on an error.
