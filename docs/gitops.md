@@ -460,6 +460,19 @@ material into a file it commits. A secret reaches the app's workloads through
 the External Secrets Operator on the cluster, which copies it from the
 cluster's secret store into a Kubernetes Secret.
 
+`gitops.SecretValues(d)` gives the check the request's secret inputs, app
+secrets and connection secrets, read from `SecretValues` in
+`contract/secrets.go`. It leaves out the `github` connection's `owner`,
+because a repository address in a manifest names the owner.
+
+The check skips a secret shorter than four characters, the length
+`safe.ShortestSecretScrubbed` in `helpers/safe/safe.go` sets for the kit's log
+scrubbing too. A secret below that length is not guarded in a manifest,
+because one to three characters cannot be told from ordinary text. An app
+secret `WORKERS=1` would otherwise refuse every manifest holding
+`apiVersion: apps/v1`. The code is `SecretValues` and `CommitManifests` in
+`capabilities/github/gitops/repository.go`.
+
 ## The GitHub repository and the test fakes
 
 `gitops.NewGitHubRepository` is the kit's `gitops.Repository` over GitHub, and

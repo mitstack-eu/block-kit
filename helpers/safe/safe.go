@@ -11,10 +11,10 @@ import (
 	"strings"
 )
 
-const (
-	redactionMarker        = "[REDACTED]"
-	shortestSecretScrubbed = 4
-)
+const redactionMarker = "[REDACTED]"
+
+// ShortestSecretScrubbed is the length of the shortest secret Scrub replaces, since a shorter one cannot be told from ordinary text.
+const ShortestSecretScrubbed = 4
 
 // Base is a host the operator is willing to talk to; the URL builders accept only a Base, so a request-supplied string cannot become an outbound URL without a visible conversion.
 type Base struct {
@@ -128,7 +128,7 @@ func coveredSpans(s string, secrets []string) []span {
 func occurrencesOf(s string, secrets []string) []span {
 	var found []span
 	for _, secret := range secrets {
-		if len(secret) < shortestSecretScrubbed {
+		if len(secret) < ShortestSecretScrubbed {
 			continue
 		}
 		for from := 0; ; {

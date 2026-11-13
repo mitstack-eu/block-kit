@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
 // ErrStaleBase is wrapped by a Repository's Commit when parent is no longer the tip.
@@ -36,7 +37,7 @@ type Repository interface {
 }
 
 // CommitManifests refuses a file carrying a secret, then commits the files that differ from head, retrying a moved tip a bounded number of times, and returns the block's own last commit when none differ.
-// The guard matches a value only verbatim or as its own standard base64, so a block must never render secret material in any form.
+// The guard matches a value only verbatim or as its own standard base64, and none shorter than safe.ShortestSecretScrubbed, so a block must never render secret material in any form.
 func CommitManifests(ctx context.Context, repo Repository, files map[string][]byte, message string, secrets []string) (string, bool, error) {
 	if err := refuseSecrets(files, secrets); err != nil {
 		return "", false, err
@@ -257,30 +258,26 @@ var secretGroupIdentifiers = map[secretGroupKey]bool{
 	{group: "github", key: "owner"}: true,
 }
 
-// SecretValues returns every value in d's SecretInputs, AppSecrets and Secrets except secretGroupIdentifiers, for CommitManifests to refuse.
+// SecretValues returns the secret inputs, app secrets and connection secrets of d.SecretValues except secretGroupIdentifiers, for CommitManifests to refuse.
 func SecretValues(d contract.Desired) []string {
-	var values []string
-	for _, v := range d.SecretInputs {
-		values = append(values, v)
-	}
-	for _, v := range d.AppSecrets {
-		values = append(values, v)
-	}
-	for groupName, group := range d.Secrets {
-		for key, v := range group {
-			if secretGroupIdentifiers[secretGroupKey{group: groupName, key: key}] {
-				continue
-			}
-			values = append(values, v)
+	values := d.SecretValues()
+	credentials := slices.DeleteFunc(values.Connections, func(v string) bool { return isSecretGroupIdentifier(d, v) })
+	return slices.Concat(values.SecretInputs, values.AppSecrets, credentials)
+}
+
+func isSecretGroupIdentifier(d contract.Desired, value string) bool {
+	for k := range secretGroupIdentifiers {
+		if d.Secrets[k.group][k.key] == value {
+			return true
 		}
 	}
-	return values
+	return false
 }
 
 func refuseSecrets(files map[string][]byte, secrets []string) error {
 	var needles [][]byte
 	for _, s := range secrets {
-		if s == "" {
+		if len(s) < safe.ShortestSecretScrubbed {
 			continue
 		}
 		needles = append(needles, []byte(s), []byte(base64.StdEncoding.EncodeToString([]byte(s))))
