@@ -2,11 +2,12 @@
 
 package tools_test
 
-// The tools image TOOLS_IMAGE names holds every file at its pin with each tool in a layer of its own, and copy-tool.sh copies each out of a published one through Docker and over the registry's HTTP API, where it reads that one layer.
+// The tools image TOOLS_IMAGE names holds every file at its pin with each tool in a layer of its own, and copy-tool.sh copies each out of a published one through Docker and over the registry's HTTP API, where it reads that one layer, and the image runs its sign-in companion and its probe.
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,9 @@ func TestToolsImage_HoldsEveryFileAtItsPinInALayerOfItsOwn(t *testing.T) {
 			t.Errorf("%s in %s has sha256 %x (%v); want the pin %s", f.Path, image, sum, err, f.SHA256)
 		}
 		held[toolOf(f)] = true
+	}
+	for _, built := range []string{tools.SignInPath, tools.ProbePath} {
+		held[toolOf(tools.File{Path: built})] = true
 	}
 
 	if layers := docker(t, "image", "inspect", "-f", "{{len .RootFS.Layers}}", image); layers != strconv.Itoa(len(held)) {
@@ -94,5 +98,16 @@ func TestToolsImage_RunsTheSignInCompanion(t *testing.T) {
 
 	if !strings.HasPrefix(out, "mitstack-signin ") {
 		t.Errorf("%s -version in %s printed %q; want it to name itself", tools.SignInPath, image, out)
+	}
+}
+
+func TestToolsImage_RunsTheProbe(t *testing.T) {
+	image := os.Getenv("TOOLS_IMAGE")
+
+	out, err := exec.Command("docker", "run", "--rm", "--network", "none", "--entrypoint", tools.ProbePath, image, "http://127.0.0.1:9/").CombinedOutput()
+
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || !strings.Contains(string(out), "connection refused") {
+		t.Errorf("%s in %s exited %v, printing %q; want 1 and the refused connection named", tools.ProbePath, image, err, out)
 	}
 }
