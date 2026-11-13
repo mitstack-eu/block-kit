@@ -855,24 +855,43 @@ redirect by its own status without following it. It exits 1 for an answer of
 prints one line saying which. Given no URL or more than one, it prints its
 usage and exits 2.
 
-A block runs it by mounting the tools image's probe directory into the
-container at the same path, and naming the probe in exec form, so no shell
-runs. In the compose file a block writes, that reads:
+A block copies the probe out of the tools image onto the host, with the image
+named by digest as
+[Copying a tool out of an image by digest](#copying-a-tool-out-of-an-image-by-digest)
+says. It then bind-mounts that copy read-only into the app's container and
+names it in exec form, so no shell runs. In the compose file a block writes,
+with the copy's path on the host in place of `<copy>`, that reads:
 
 ```json
-"volumes": [{"type": "image", "source": "<tools.Image>", "target": "/mitstack-probe",
-  "read_only": true, "image": {"subpath": "mitstack-probe"}}],
+"volumes": [{"type": "bind", "source": "<copy>", "target": "/mitstack-probe/mitstack-probe", "read_only": true}],
 "healthcheck": {"test": ["CMD", "/mitstack-probe/mitstack-probe", "http://127.0.0.1:8080/"]}
 ```
 
-In place of `<tools.Image>`, a block writes `tools.Image` from the kit release
-it builds on, which names the tools image by tag and digest, as
-[Copying a tool out of an image by digest](#copying-a-tool-out-of-an-image-by-digest)
-says. On the kit's main branch `tools.Image` is empty, so build on a release.
+The copy must be executable by every user, mode `0755` for instance, because
+under userns-remap the container's users map to unprivileged users on the
+host. The directory holding it may stay closed. On Docker 29.1.3 with the
+overlay2 storage driver and userns-remap, a bind mount survives a restart of
+the Docker daemon, and the probe then runs as it did before.
 
-An image mount needs Docker Engine 28 or later, and Compose 2.36 or later reads
-it. On an older engine Compose refuses the whole file and leaves the running
-container as it was, with the health check it had before.
+Do not mount the tools image itself into the container with a Compose image
+mount, since on a Docker host it fails in two ways:
+
+1. Docker 29.1.3 names an image mount's directory after the image reference.
+   A reference pinned by digest makes that name longer than Linux allows, so
+   the container is never created and Compose prints
+   `mkdir …: file name too long`. Ubuntu 24.04's package is
+   `docker.io-app 29.1.3-0ubuntu3~24.04.2` as of November 2026, and Docker
+   29.1.4 carries the fix.
+2. On the overlay2 storage driver, with or without userns-remap, an image
+   mount with a subpath does not survive a restart of the Docker daemon, as
+   [moby issue 50999](https://github.com/moby/moby/issues/50999) reports. The
+   container fails to start after the restart, and a later
+   `docker compose up` with the same file cannot start it either. A run on
+   Docker 29.1.3 with userns-remap also found that a mount with no subpath
+   comes back empty, so the health check fails from then on.
+
+A reboot restarts the daemon, so the second failure can stop an app that was
+serving.
 
 ### Running a command in an app's container
 
@@ -1405,7 +1424,7 @@ registry's HTTP API downloads only the layer it needs.
 | `tools.K3sInstaller` | `/k3s/install.sh` | The k3s installer at k3s-io/k3s commit `2d0f82fa2f933cd227fe38e1482558ce4769f464` |
 | `tools.KubeBenchConfig` | `/kube-bench/cfg/config.yaml` and `/kube-bench/cfg/k3s-cis-1.11/` with `config.yaml`, `master.yaml`, `etcd.yaml`, `controlplane.yaml`, `node.yaml` and `policies.yaml` | kube-bench's config at commit `e278a5915a982f2756026de6e2f9ca77077ef9f9`, since its releases stop at k3s-cis-1.9 |
 | `tools.CopyScriptPath` | `/copy-tool/copy-tool.sh` | The helper itself, for an image build to copy with `COPY --from` |
-| `tools.ProbePath` | `/mitstack-probe/mitstack-probe` | The health probe an app's container runs from an image mount, as [Checking an app's answer from inside its container](#checking-an-apps-answer-from-inside-its-container) shows, built from `cmd/mitstack-probe` |
+| `tools.ProbePath` | `/mitstack-probe/mitstack-probe` | The health probe an app's container runs, as [Checking an app's answer from inside its container](#checking-an-apps-answer-from-inside-its-container) says, built from `cmd/mitstack-probe` |
 
 A tool whose publisher ships an image comes from that image instead, named by
 digest, such as k3s from `registry.rancher.com/rancher/k3s-upgrade` at
