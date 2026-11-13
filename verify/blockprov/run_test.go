@@ -377,11 +377,20 @@ func pushSampleRecord(t *testing.T, srv *ociServer, imageDigest string) {
 	}
 }
 
-func pullSampleRecord(t *testing.T, srv *ociServer, out string) (stdout string, exitCode int) {
+func pullSampleRecord(t *testing.T, registry, out string, flags ...string) (stdout string, exitCode int) {
 	t.Helper()
 	t.Setenv("ECR_PASSWORD", "ecr-password")
-	return runBlockprov(t, "pull", "--registry", srv.URL, "--repo", sampleRepo, "--image-digest", testDigest,
-		"--username", "AWS", "--password-env", "ECR_PASSWORD", "--out", out)
+	return runBlockprov(t, append([]string{"pull", "--registry", registry, "--repo", sampleRepo, "--image-digest", testDigest,
+		"--username", "AWS", "--password-env", "ECR_PASSWORD", "--out", out}, flags...)...)
+}
+
+func silentServer(t *testing.T) (address string) {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	return srv.URL
 }
 
 func TestRun_Pull_ReadsBackTheRecordPushedBesideTheImage(t *testing.T) {
@@ -390,7 +399,7 @@ func TestRun_Pull_ReadsBackTheRecordPushedBesideTheImage(t *testing.T) {
 	srv.lastAuthHeader = ""
 	out := filepath.Join(t.TempDir(), "record.json")
 
-	stdout, exit := pullSampleRecord(t, srv, out)
+	stdout, exit := pullSampleRecord(t, srv.URL, out)
 
 	got, _ := os.ReadFile(out)
 	if exit != 0 || string(got) != sampleRecord {
@@ -414,6 +423,9 @@ func TestRun_Pull_WritesNoRecordItCannotReadBackWhole(t *testing.T) {
 			s.manifestBody = bytes.ReplaceAll(s.manifestBody, []byte(provenance.ArtifactType), []byte("application/vnd.example.other"))
 		}, "application/vnd.example.other"},
 		{"the registry answers other bytes than the record's digest names, so the failure names the digest", func(s *ociServer) { s.blobs[recordDigest] = []byte("another record") }, recordDigest},
+		{"the manifest names its layer by something that is no sha256 digest, so no such path is read", func(s *ociServer) {
+			s.manifestBody = bytes.ReplaceAll(s.manifestBody, []byte(recordDigest), []byte("../manifests/latest"))
+		}, `"../manifests/latest", which is no sha256 digest`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newOCIServer(t)
@@ -421,7 +433,7 @@ func TestRun_Pull_WritesNoRecordItCannotReadBackWhole(t *testing.T) {
 			tc.spoil(srv)
 			out := filepath.Join(t.TempDir(), "record.json")
 
-			stdout, exit := pullSampleRecord(t, srv, out)
+			stdout, exit := pullSampleRecord(t, srv.URL, out)
 
 			if exit != 1 || !strings.Contains(stdout, tc.wantOut) {
 				t.Errorf("pull = exit %d, stdout %q; want exit 1 naming %q", exit, stdout, tc.wantOut)
@@ -430,6 +442,16 @@ func TestRun_Pull_WritesNoRecordItCannotReadBackWhole(t *testing.T) {
 				t.Errorf("os.Stat(record) = %v, want no record written", err)
 			}
 		})
+	}
+}
+
+func TestRun_Pull_ARegistryThatNeverAnswersFailsAtTheTimeoutNamingTheTag(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "record.json")
+
+	stdout, exit := pullSampleRecord(t, silentServer(t), out, "--timeout", "50ms")
+
+	if exit != 1 || !strings.Contains(stdout, testRecordTag) {
+		t.Errorf("pull = exit %d, stdout %q; want exit 1 naming the tag %s it could not read", exit, stdout, testRecordTag)
 	}
 }
 
@@ -497,15 +519,12 @@ func TestRun_Post_AnAnswerThatDoesNotSayStoredFailsAfterOneRequest(t *testing.T)
 }
 
 func TestRun_Post_APlatformThatNeverAnswersFailsAtTheTimeoutNamingItsAddress(t *testing.T) {
-	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
-	t.Cleanup(srv.Close)
-	t.Cleanup(func() { close(release) })
+	platform := silentServer(t)
 	recordPath := writeFile(t, t.TempDir(), "record.json", sampleRecord)
 
-	stdout, exit := runBlockprov(t, "post", "--record", recordPath, "--platform", srv.URL, "--timeout", "50ms")
+	stdout, exit := runBlockprov(t, "post", "--record", recordPath, "--platform", platform, "--timeout", "50ms")
 
-	if want := "blockprov post: " + srv.URL + " gave no answer, so the release record is not known to be stored: "; exit != 1 || !strings.HasPrefix(stdout, want) {
+	if want := "blockprov post: " + platform + " gave no answer, so the release record is not known to be stored: "; exit != 1 || !strings.HasPrefix(stdout, want) {
 		t.Errorf("post = exit %d, stdout %q; want exit 1 starting %q", exit, stdout, want)
 	}
 }
@@ -524,6 +543,7 @@ func TestRun_UsageErrorsExitTwo(t *testing.T) {
 		{"post naming no platform", []string{"post", "--record", "/nonexistent", "--platform", ""}},
 		{"post to an address that carries a user and a password", []string{"post", "--record", "/nonexistent", "--platform", "https://user:secret@api.example"}},
 		{"post to an address that is no http or https address", []string{"post", "--record", "/nonexistent", "--platform", "api.example"}},
+		{"post to an address that carries a query, which the log would print", []string{"post", "--record", "/nonexistent", "--platform", "https://api.example/?token=secret"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, exit := runBlockprov(t, tc.args...)

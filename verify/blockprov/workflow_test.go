@@ -1346,8 +1346,8 @@ func TestWorkflow_ACommitThatDidNotBuildTheImagePostsNoRecord(t *testing.T) {
 
 	run := runPostStep(t, platform, "false")
 
-	if run.exitCode != 0 || !strings.Contains(run.stdout, "posts no record") {
-		t.Errorf("exit %d, stdout %q; want 0 and a line saying the run posts no record", run.exitCode, run.stdout)
+	if run.exitCode != 0 || !strings.Contains(run.stdout, "posts no record") || !strings.Contains(run.summary, "posts no record") {
+		t.Errorf("exit %d, stdout %q, summary %q; want 0 and a line saying the run posts no record, in the log and in the run's summary", run.exitCode, run.stdout, run.summary)
 	}
 	if sent := requests(); len(sent) != 0 || run.registry.lastAuthHeader != "" {
 		t.Errorf("the platform got %d requests and the registry was read with %q, want neither called", len(sent), run.registry.lastAuthHeader)
