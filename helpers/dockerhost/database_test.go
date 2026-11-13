@@ -511,3 +511,19 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 		})
 	}
 }
+
+func TestDatabase_AContextMarkedReadOnlyLandsNothingOnTheHostRepository(t *testing.T) {
+	e := newDBEnv(t)
+	before := len(e.host.Requests())
+
+	_, err := e.db.EnsureResources(contract.WithReadOnly(context.Background()), dbDesired("shop", nil))
+
+	if !errors.Is(err, contract.ErrReadOnly) {
+		t.Errorf("EnsureResources for a read-only context = %v, want an error wrapping contract.ErrReadOnly", err)
+	}
+	for _, r := range e.host.Requests()[before:] {
+		if r.Method != "GET" {
+			t.Errorf("a read-only context sent %s %s to the host repository, want nothing but reads", r.Method, r.Path)
+		}
+	}
+}

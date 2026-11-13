@@ -199,8 +199,17 @@ func (s *blockServer) send(operation string, d contract.Desired) (int, contract.
 	return s.sendUnit(operation, "", d)
 }
 
+// settle sends the validate that settles a verb, the one request that carries settling, as the engine's settle probe does.
+func (s *blockServer) settle(d contract.Desired) (int, contract.Response, error) {
+	return s.sendRequest("validate", "", true, d)
+}
+
 // sendUnit also names the spec.continuity entry a snapshot or a restore is for, and carries d.Replacing as the marker of a request sent during a replacement.
 func (s *blockServer) sendUnit(operation, unit string, d contract.Desired) (int, contract.Response, error) {
+	return s.sendRequest(operation, unit, false, d)
+}
+
+func (s *blockServer) sendRequest(operation, unit string, settling bool, d contract.Desired) (int, contract.Response, error) {
 	now := time.Now()
 	obo, err := webhook.MintOBO(s.signer.Private, s.signer.Kid,
 		webhook.OBOClaims{Audience: s.audience, OrgID: d.OrgID, AppID: d.AppID, SubscriptionID: d.SubscriptionID}, 5*time.Minute, now)
@@ -215,7 +224,7 @@ func (s *blockServer) sendUnit(operation, unit string, d contract.Desired) (int,
 		CloudIdentity: d.CloudIdentity, CreatedAt: now, Nonce: freshToken(), PriorOutputs: d.PriorOutputs,
 		RecordedResources: d.RecordedResources, RequirementTypes: d.RequirementTypes,
 		Resource: d.Resource, ResourceType: d.ResourceType, ResourceIdentity: d.ResourceIdentity, ResourceUnsubscribing: d.ResourceUnsubscribing,
-		Unit: unit, Replacing: d.Replacing,
+		Unit: unit, Replacing: d.Replacing, Settling: settling,
 	})
 	if err != nil {
 		return 0, contract.Response{}, err
@@ -311,6 +320,7 @@ type blockCheck struct {
 	holdsNothing map[string]bool
 	// afterRestore makes a resource settle only once it reads healthy, as the engine observes a replaced resource.
 	afterRestore bool
+	reported     map[string]bool
 }
 
 // unitNames lists the names a guard reads, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
@@ -531,7 +541,7 @@ func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 	for {
 		d := c.desired
 		d.RecordedResources = recorded
-		_, resp, ok := c.sendOK(call, d)
+		_, resp, ok := c.settleOK(call, d)
 		if !ok {
 			return resp, false
 		}
@@ -653,7 +663,65 @@ func (c *blockCheck) unsettled(operation string, resp contract.Response) {
 }
 
 func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract.Response, bool) {
+	before := c.repositoryWrites()
 	status, resp, err := c.server.send(operation, d)
+	if operation == "validate" {
+		c.noWriteOnReadOnly(before, resp)
+	}
+	return c.answeredOK(operation, status, resp, err)
+}
+
+func (c *blockCheck) repositoryWrites() map[string]int {
+	repos, _ := c.repositories()
+	counts := make(map[string]int, len(repos))
+	for name, fake := range repos {
+		counts[name] = len(fake.Writes())
+	}
+	return counts
+}
+
+// noWriteOnReadOnly fails a block that wrote on a validate that settles no verb, which a fake repository shows by taking a write and the kit shows by refusing one. A write to anything the check does not fake stays unseen.
+func (c *blockCheck) noWriteOnReadOnly(before map[string]int, resp contract.Response) {
+	repos, _ := c.repositories()
+	for _, name := range sortedKeys(repos) {
+		for _, w := range repos[name].Writes()[before[name]:] {
+			c.problemOnce("block %q wrote on a validate that settles no verb: %s %s", c.desired.BlockID, w.Method, w.Path)
+		}
+	}
+	refusals := []string{resp.Error}
+	for _, name := range sortedKeys(resp.Resources) {
+		for _, call := range []*contract.CallOutcome{resp.Resources[name].Ensure, resp.Resources[name].Observe, resp.Resources[name].Delete} {
+			if call != nil {
+				refusals = append(refusals, call.Error)
+			}
+		}
+	}
+	for _, text := range refusals {
+		if strings.Contains(text, contract.ErrReadOnly.Error()) {
+			c.problemOnce("block %q wrote on a validate that settles no verb, and the kit refused it: %s", c.desired.BlockID, text)
+		}
+	}
+}
+
+func (c *blockCheck) problemOnce(format string, args ...any) {
+	if c.reported == nil {
+		c.reported = map[string]bool{}
+	}
+	if text := fmt.Sprintf(format, args...); !c.reported[text] {
+		c.reported[text] = true
+		c.problem("%s", text)
+	}
+}
+
+func (c *blockCheck) settleOK(call string, d contract.Desired) (int, contract.Response, bool) {
+	if call != "validate" {
+		return c.sendOK(call, d)
+	}
+	status, resp, err := c.server.settle(d)
+	return c.answeredOK(call, status, resp, err)
+}
+
+func (c *blockCheck) answeredOK(operation string, status int, resp contract.Response, err error) (int, contract.Response, bool) {
 	if err != nil {
 		c.problem("%s could not be sent or its answer read: %v", operation, err)
 		return status, resp, false

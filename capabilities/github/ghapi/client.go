@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
@@ -109,6 +110,9 @@ func (c *Client) DeleteRepo(ctx context.Context, org, name string) error {
 		return err
 	}
 
+	if err := contract.RefuseWrite(ctx, http.MethodDelete); err != nil {
+		return fmt.Errorf("ghapi: deleting %s: %w", repo, err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.Base+"/repos/"+repo, nil)
 	if err != nil {
 		return fmt.Errorf("ghapi: build request: %w", err)
@@ -336,6 +340,9 @@ func (c *Client) SetVariable(ctx context.Context, repoFullName, name, value stri
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, payload any) (*http.Response, error) {
+	if err := contract.RefuseWrite(ctx, method); err != nil {
+		return nil, fmt.Errorf("ghapi: %s %s: %w", method, path, err)
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("ghapi: encode request: %w", err)

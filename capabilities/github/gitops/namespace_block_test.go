@@ -140,7 +140,6 @@ func namedFields(operation, app string) map[string]any {
 	return f
 }
 
-// post signs fields as a fresh delivery with its own nonce and OBO token.
 func post(t *testing.T, h http.Handler, s *kittest.Signer, fields map[string]any) (int, []byte) {
 	t.Helper()
 	body := maps.Clone(fields)
@@ -160,7 +159,6 @@ func post(t *testing.T, h http.Handler, s *kittest.Signer, fields map[string]any
 	return rec.Code, rec.Body.Bytes()
 }
 
-// expect fails unless a post answered want, and decodes the answer.
 func expect(t *testing.T, want int) func(int, []byte) contract.Response {
 	t.Helper()
 	return func(status int, raw []byte) contract.Response {

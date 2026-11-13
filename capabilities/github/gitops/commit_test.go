@@ -234,7 +234,6 @@ func errMatches(err, want error) bool {
 	}
 }
 
-// revertHistory lands commits on the tip and records Argo CD's verdict on a revision, as the cluster posts it.
 type revertHistory struct {
 	t       *testing.T
 	repo    *gitopstest.Repository
@@ -274,7 +273,6 @@ func ownsAlpha(gitops.Repository) gitops.Owned {
 	}
 }
 
-// ownsWorkerWhileHeld owns the worker's file only at a revision holding it, as a block reading its process list from the repository does.
 func ownsWorkerWhileHeld(repo gitops.Repository) gitops.Owned {
 	return func(ctx context.Context, revision string) ([]string, error) {
 		if _, held, err := repo.ReadFile(ctx, revision, alphaWorker); err != nil || held {
@@ -495,7 +493,6 @@ func TestSecretValues_CollectsTheCredentialsAndNeverTheGithubOwner(t *testing.T)
 	}
 }
 
-// failingChanged is a repository whose history cannot be read.
 type failingChanged struct{ *gitopstest.Repository }
 
 func (failingChanged) Changed(context.Context, string) (string, []string, error) {

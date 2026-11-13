@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
 )
 
@@ -65,6 +66,9 @@ func WaitForActions[A any](ctx context.Context, wait func(context.Context, ...A)
 
 // do sends in as JSON when it is not nil, and decodes the answer into out when out is not nil.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, in, out any) error {
+	if err := contract.RefuseWrite(ctx, method); err != nil {
+		return fmt.Errorf("the Hetzner request %s %s: %w", method, path, err)
+	}
 	var body io.Reader
 	if in != nil {
 		raw, err := json.Marshal(in)

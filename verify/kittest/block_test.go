@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -22,6 +23,7 @@ import (
 	"github.com/mitstack-eu/block-kit/capabilities/github/landing/landingtest"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/helpers/events"
 	"github.com/mitstack-eu/block-kit/observe"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
@@ -315,7 +317,6 @@ func (o providerObserver) ObserveResource(ctx context.Context, r contract.Resour
 	return contract.Observation{State: contract.Absent}, nil
 }
 
-// byType answers an unsubscribing observe that names no identity from what the provider holds for the subscription.
 func (o providerObserver) byType(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	held, err := o.p.heldOfType(ctx, r)
 	if err != nil || len(held) == 0 {
@@ -324,7 +325,6 @@ func (o providerObserver) byType(ctx context.Context, r contract.ResourceRef) (c
 	return contract.Observation{State: contract.Present, Outputs: o.outputs(r.Type, held[0])}, nil
 }
 
-// heldOfType lists the ids the provider holds of r's type under r's subscription.
 func (p *fakeProvider) heldOfType(ctx context.Context, r contract.ResourceRef) ([]string, error) {
 	tagged, err := p.ListTagged(ctx, r.Desired.SubscriptionID)
 	var held []string
@@ -375,7 +375,6 @@ func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.Resource
 	return contract.Observation{State: contract.Absent}, nil
 }
 
-// waitingOnceObserver answers its first observe unknown, waiting on a person, and every later one as its inner observer does.
 type waitingOnceObserver struct {
 	inner    handler.Observer
 	answered atomic.Bool
@@ -388,7 +387,6 @@ func (o *waitingOnceObserver) ObserveResource(ctx context.Context, r contract.Re
 	return o.inner.ObserveResource(ctx, r)
 }
 
-// amendedObserver amends each answer in which its inner observer finds a resource present, and with anyState set every answer.
 type amendedObserver struct {
 	inner    handler.Observer
 	amend    func(*contract.Observation)
@@ -403,7 +401,6 @@ func (o amendedObserver) ObserveResource(ctx context.Context, r contract.Resourc
 	return obs, err
 }
 
-// unnamedBlock reports its resources with no identity, as a block whose ensure answers before its work finishes does.
 type unnamedBlock struct{ *fakeBlock }
 
 func (b unnamedBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
@@ -414,7 +411,6 @@ func (b unnamedBlock) EnsureResources(ctx context.Context, d contract.Desired) (
 	return created, err
 }
 
-// silentBlock hides EnsureResources, so it reports no identity.
 type silentBlock struct{ b *fakeBlock }
 
 func (s silentBlock) Ensure(ctx context.Context, d contract.Desired) error { return s.b.Ensure(ctx, d) }
@@ -736,7 +732,6 @@ func (b *poolBlock) Delete(context.Context, contract.Desired) (map[string]string
 	return nil, nil
 }
 
-// seenObserver records each name and identity the handler hands it.
 type seenObserver struct {
 	providerObserver
 	mu   *sync.Mutex
@@ -752,7 +747,6 @@ func (o seenObserver) ObserveResource(ctx context.Context, r contract.ResourceRe
 	return o.providerObserver.ObserveResource(ctx, r)
 }
 
-// poolCheck subscribes poolBlock at size and upgrades it to upgradeTo.
 func poolCheck(t *testing.T, size, upgradeTo string, leaky bool) (kittest.Block, *fakeProvider, seenObserver) {
 	t.Helper()
 	p := newFakeProvider()
@@ -843,7 +837,6 @@ spec:
     contract: kit/v1
 `
 
-// markedSnapshot sets the snapshot key mark true on each type ids names, through the JSON the platform serves.
 func markedSnapshot(t *testing.T, mark string, ids ...string) contract.TypeSnapshot {
 	t.Helper()
 	raw, err := os.ReadFile("../../contract/testdata/type-snapshot.json")
@@ -945,7 +938,6 @@ func partlessSnapshot(t *testing.T) contract.TypeSnapshot {
 	return snap
 }
 
-// hostParts are the objects the host block's instance and volume hold, each tagged with the subscription's id.
 func hostParts() []observe.Tagged {
 	return []observe.Tagged{
 		{Type: "aws.iam-role", ID: "mitstack-app-myapp-instance"},
@@ -1038,7 +1030,6 @@ func cfnBlock(t *testing.T) kittest.Block {
 	}
 }
 
-// requiringSecretToken returns snap with each type named in ids also requiring the secret output token.
 func requiringSecretToken(snap contract.TypeSnapshot, ids ...string) contract.TypeSnapshot {
 	snap.Types = slices.Clone(snap.Types)
 	for i, typ := range snap.Types {
@@ -1162,6 +1153,75 @@ func githubBlock(t *testing.T, untagged string) kittest.Block {
 		Provider: p,
 		Desired:  blockDesired(""),
 		Upgrade:  &upgrade,
+	}
+}
+
+type sentRequest struct {
+	operation         string
+	readOnly, noWrite bool
+}
+
+type requestLog struct {
+	mu   sync.Mutex
+	seen map[string]bool
+	sent []sentRequest
+}
+
+type loggingObserver struct {
+	inner handler.Observer
+	log   *requestLog
+}
+
+func (o loggingObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	env, _ := events.EnvelopeFrom(ctx)
+	o.log.mu.Lock()
+	if !o.log.seen[env.IdempotencyKey] {
+		o.log.seen[env.IdempotencyKey] = true
+		o.log.sent = append(o.log.sent, sentRequest{env.Operation, r.Desired.ReadOnly, contract.RefuseWrite(ctx, http.MethodPost) != nil})
+	}
+	o.log.mu.Unlock()
+	return o.inner.ObserveResource(ctx, r)
+}
+
+func TestCheckBlock_SendsOnlyTheValidatesThatSettleAVerbAsOnesThatMayWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		settlePolls int
+	}{
+		{"a block whose verbs settle at once is sent read-only validates alone", 0},
+		{"a block whose subscribe is in flight for one more observe is settled by one validate that may write", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, in := hostBlock(t)
+			log, inFlight := &requestLog{seen: map[string]bool{}}, tc.settlePolls
+			in.Config.Resource = unnamedBlock{b}
+			for name := range in.Config.Observers {
+				in.Config.Observers[name] = loggingObserver{inner: byTypeObserver{p: b.p, report: true, inFlight: &inFlight}, log: log}
+			}
+
+			wantNoProblems(t, kittest.CheckBlock(in))
+
+			var validates []bool
+			for _, sent := range log.sent {
+				switch {
+				case sent.operation == "validate":
+					validates = append(validates, sent.readOnly)
+					if sent.noWrite != sent.readOnly {
+						t.Errorf("a validate reached the block with ReadOnly %v and a context that refuses a write %v, want the two to agree", sent.readOnly, sent.noWrite)
+					}
+				case sent.readOnly:
+					t.Errorf("a %s reached the block read-only, want only a validate to", sent.operation)
+				}
+			}
+			if len(validates) <= tc.settlePolls {
+				t.Fatalf("the check sent %d validates, want the %d settle polls and the validates that settle no verb after them", len(validates), tc.settlePolls)
+			}
+			for i, readOnly := range validates {
+				if want := i >= tc.settlePolls; readOnly != want {
+					t.Errorf("validate %d of %d reached the block with ReadOnly %v, want %v: only the first %d settle the subscribe and may write", i+1, len(validates), readOnly, want, tc.settlePolls)
+				}
+			}
+		})
 	}
 }
 
@@ -1479,7 +1539,6 @@ func (p repositoryProvider) Lose(ctx context.Context, r contract.CreatedResource
 	return deleteFiles(ctx, p.b.client(), rec)
 }
 
-// offerObserver adds the offered files as the scaffoldContribution output that app-scaffold reads.
 type offerObserver struct{ b *landingBlock }
 
 func (o offerObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
@@ -1640,7 +1699,6 @@ func (b *twoRepositoryBlock) DeleteKeeping(ctx context.Context, d contract.Desir
 	return nil, kept, nil
 }
 
-// repositoriesProvider hands the check one fake per repository and no single Repository.
 type repositoriesProvider struct{ b *twoRepositoryBlock }
 
 func (p repositoriesProvider) Repositories() map[string]*landingtest.Fake { return p.b.fakes() }
@@ -1759,7 +1817,6 @@ func (listsNothing) ListTagged(context.Context, contract.Desired, string) ([]obs
 	return nil, nil
 }
 
-// listerRepositoryProvider lists through a kit lister and hands the check the block's fake repository.
 type listerRepositoryProvider struct {
 	kittest.ListerProvider
 	b *landingBlock
@@ -1796,6 +1853,43 @@ func TestAssertBlock_ListsAContributionFromItsLandingRecord(t *testing.T) {
 			if !slices.ContainsFunc(got.logs, func(l string) bool { return strings.Contains(l, "guards ran:") && strings.Contains(l, "tagging") }) {
 				t.Errorf("the tagging guard did not run: %q", got.logs)
 			}
+		})
+	}
+}
+
+type writingOnReadOnlyObserver struct {
+	handler.Observer
+	write func(context.Context) error
+}
+
+func (o writingOnReadOnlyObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	if r.Desired.ReadOnly {
+		if err := o.write(ctx); err != nil {
+			return contract.Observation{}, err
+		}
+	}
+	return o.Observer.ObserveResource(ctx, r)
+}
+
+func TestCheckBlock_FailsABlockThatWritesOnAValidateThatSettlesNoVerb(t *testing.T) {
+	for name, tc := range map[string]struct {
+		write func(ctx context.Context, b *landingBlock) error
+		want  string
+	}{
+		"commits through a kit client": {func(ctx context.Context, b *landingBlock) error {
+			return b.client().CommitFiles(ctx, b.repo.Repo, "dry run", map[string]string{"dry-run.txt": "x\n"})
+		}, ""},
+		"dispatches a workflow through a client of its own": {func(_ context.Context, b *landingBlock) error {
+			_, err := http.Post(b.repo.URL+"/repos/"+b.repo.Repo+"/actions/workflows/ci.yml/dispatches", "application/json", http.NoBody)
+			return err
+		}, "POST /repos/acme/weather/actions/workflows/ci.yml/dispatches"},
+	} {
+		t.Run("a block that "+name, func(t *testing.T) {
+			in := landingBlockThat(t, landingType, "", false)
+			b := in.Provider.(repositoryProvider).b
+			in.Config.Observers[landingType] = writingOnReadOnlyObserver{in.Config.Observers[landingType], func(ctx context.Context) error { return tc.write(ctx, b) }}
+
+			wantProblemNaming(t, kittest.CheckBlock(in), in.Desired.BlockID, "wrote on a validate that settles no verb", tc.want)
 		})
 	}
 }

@@ -48,12 +48,10 @@ func note(phase, health string) gitops.Notification {
 	return gitops.Notification{App: "app-alpha", Revision: adrRevision, Phase: phase, Health: health}
 }
 
-// deployOfAlpha is app-alpha's deploy of the files alphaFiles names, read through the reports of alphaCluster.
 func deployOfAlpha(repo gitops.Repository, notes gitops.Notifications, reports observe.NodeReportsAPI) gitops.Deployment {
 	return gitops.Deployment{Repository: repo, Notifications: notes, NodeReports: reports, Application: "app-alpha", Cluster: alphaCluster, Paths: []string{nsPath, saPath}}
 }
 
-// alphaReport is a report showing app-alpha at revision, with its ServiceAccount at health.
 func alphaReport(reports *gitopstest.NodeReports, revision, health string) {
 	reports.Report(alphaCluster, verbAt.Add(time.Minute), gitopstest.Application{Name: "app-alpha", Revision: revision, Objects: []gitopstest.Object{
 		gitopstest.Healthy(alphaNamespace), {Object: alphaAccount, Sync: "Synced", Health: health, Message: "the account's token Secret is missing"},
@@ -113,7 +111,6 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// unfolding answers each read with the reports of the next state in turn, then repeats the last.
 type unfolding struct {
 	states []*gitopstest.NodeReports
 	reads  int

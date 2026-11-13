@@ -78,7 +78,6 @@ func (f *fakeGitHub) storeCommitLocked(parent, tree, message string) string {
 	return sha
 }
 
-// landLocked commits changes on the tip as another writer would, moving main.
 func (f *fakeGitHub) landLocked(changes map[string]string, message string) string {
 	files := map[string]string{}
 	if f.tip != "" {
@@ -342,7 +341,6 @@ func (f *fakeGitHub) patchMain(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// wrapBase64 encodes content as the contents API does, in 60-character lines.
 func wrapBase64(content string) string {
 	enc := base64.StdEncoding.EncodeToString([]byte(content))
 	var b strings.Builder

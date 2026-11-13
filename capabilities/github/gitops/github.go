@@ -84,7 +84,7 @@ func (r *GitHubRepository) readFile(ctx context.Context, revision, path string) 
 	return nil, false, nil
 }
 
-// A parent no longer the tip yields an error wrapping ErrStaleBase.
+// A parent no longer the tip yields an error wrapping ErrStaleBase, and a call whose context is marked read-only lands nothing and yields one wrapping contract.ErrReadOnly.
 func (r *GitHubRepository) Commit(ctx context.Context, parent string, changes map[string][]byte, message string) (string, error) {
 	entries := make(map[string]*string, len(changes))
 	for path, content := range changes {

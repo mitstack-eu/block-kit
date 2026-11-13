@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
 )
 
@@ -148,6 +149,9 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, o
 }
 
 func (c *Client) send(ctx context.Context, method, path string, form url.Values) ([]byte, error) {
+	if err := contract.RefuseWrite(ctx, method); err != nil {
+		return nil, fmt.Errorf("the Robot request %s %s: %w", method, path, err)
+	}
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())

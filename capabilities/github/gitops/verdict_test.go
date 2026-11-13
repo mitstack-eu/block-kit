@@ -30,7 +30,6 @@ var (
 	api    = gitops.Object{Group: "apps", Kind: "Deployment", Namespace: "app-home", Name: "api"}
 )
 
-// manifest renders o as a block renders its JSON manifests.
 func manifest(o gitops.Object) []byte {
 	apiVersion := "v1"
 	if o.Group != "" {
@@ -77,7 +76,6 @@ func (h *home) notify(revision, phase, health, message string) {
 	h.notes.Set(gitops.Notification{App: homeApp, Revision: revision, Phase: phase, Health: health, Message: message})
 }
 
-// report adds a node report made a minute after the verb, showing the Application at revision with objects.
 func (h *home) report(revision string, objects ...gitopstest.Object) {
 	h.reports.Report(homeCluster, verbAt.Add(time.Minute), gitopstest.Application{Name: homeApp, Revision: revision, Objects: objects})
 }
@@ -102,7 +100,6 @@ func (h *home) check(t *testing.T, revision string) gitops.Outcome {
 	return out
 }
 
-// named replaces @own, @sibling and @later in want with the revisions they stand for.
 func (h *home) named(want string) string {
 	return strings.NewReplacer("@own", h.own, "@sibling", h.sibling, "@later", h.later).Replace(want)
 }

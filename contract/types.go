@@ -295,7 +295,7 @@ type Identity struct {
 	CloudIdentity  *CloudIdentity
 }
 
-// Desired's Instances reach a block through the embedded Identity, so d.Instances in Ensure is the same map Delete and each observer's ResourceRef are handed. VerbAt is the request's settlesAt when set, else its createdAt.
+// Desired's Instances reach a block through the embedded Identity, so d.Instances in Ensure is the same map Delete and each observer's ResourceRef are handed. VerbAt is the request's settlesAt when set, else its createdAt. ReadOnly is true on a validate that settles no verb, which must write nothing.
 type Desired struct {
 	Identity
 
@@ -316,6 +316,7 @@ type Desired struct {
 	RequirementTypes  map[string]string
 	VerbAt            time.Time
 	NeverActive       bool
+	ReadOnly          bool
 
 	Replacing bool
 
@@ -585,6 +586,7 @@ func (r Request) Desired() Desired {
 		RequirementTypes:      r.RequirementTypes,
 		VerbAt:                r.verbAt(),
 		NeverActive:           r.NeverActive,
+		ReadOnly:              r.ReadOnly(),
 		Replacing:             r.Replacing,
 		OwnSecrets:            r.OwnSecrets,
 	}

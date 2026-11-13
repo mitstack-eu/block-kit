@@ -122,6 +122,7 @@ and `d.Instances` read the same on every call.
 | `PriorOutputs`, `CloudIdentity` | The outputs the last call recorded, and the short-lived AWS web identity of the org's cloud account, nil when it has none |
 | `VerbAt` | The time an observer reads after, which the next section explains |
 | `NeverActive` | `true` only when the engine has proved the subscription holds no user data |
+| `ReadOnly` | `true` on a validate that must write nothing, as [A validate that must write nothing](#a-validate-that-must-write-nothing) explains |
 | `Replacing` | `true` on a request that carries `"replacing": true`, the marker of a replacement, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
 
 The platform runs an observer of its own, outside your block, which asks a
@@ -146,6 +147,88 @@ The platform does that when it moves an app to another stack and restores a
 snapshot into the new subscription. A block may replace a stateful resource,
 one that holds data, only when `NeverActive` is `true`, and anything else,
 including a request without the field, reads as `false`.
+
+### A validate that must write nothing
+
+The platform sends a validate for several reasons, among them a dry run, the
+check before a subscribe or an upgrade, a health probe and a teardown probe.
+One more is the settle probe of a subscribe or an upgrade, which names no
+resource. Only that one may finish work the call started, and its request
+carries `"settling": true`. Every other validate, including every validate that
+names a resource, must write nothing.
+
+The handler marks the context it hands your block for such a request. The kit
+refuses a write in its HTTP clients for GitHub and for Hetzner, and in nothing
+else. Each of them reads the mark from the context it is called with and
+refuses a write with an error wrapping `contract.ErrReadOnly`, so a client you
+build once and reuse refuses or writes by the request it is called for. Reads
+go through:
+
+- the clients in `capabilities/github/ghapi`, which also covers
+  `capabilities/github/gitops` and `helpers/dockerhost`, since they send
+  through it
+- `capabilities/github/landing`
+- `capabilities/hetzner/cloud` and `capabilities/hetzner/robot`
+
+`contract.RefuseWrite` refuses every method but GET and HEAD, so a read that a
+future client sends by POST needs its own exemption. Only a validate is ever
+read-only: every other operation reaches your block with a context that may
+write.
+
+Your block's own code reads the same decision from `d.ReadOnly`, which is
+`true` on every such validate and `false` on every other call. A block that
+reverts a failed deploy while it settles therefore reads the field first:
+
+```go
+if d.ReadOnly {
+	return failedDeploy(verdict), nil
+}
+reverted, err := gitops.Revert(ctx, b.repo, b.notes, revert)
+```
+
+A dry run of a server whose deploy failed then answers the block's verdict, the
+failed deploy, and the validate that settles the call does the revert.
+
+Everything else that can change something outside the process is unguarded,
+and your block guards it with `d.ReadOnly`:
+
+- a call through your own HTTP client, and any client you call with a context
+  that did not come from the handler
+- `capabilities/aws/handover` (`Snapshot` creates an EC2 snapshot through the
+  API you pass it)
+- `capabilities/aws/apphostname` (the `aws route53` command)
+- `capabilities/aws/cloudid` (the `aws` command that exports credentials, and
+  a temporary file for the web-identity token)
+- `helpers/hostexec` (`ssh` and `aws ssm send-command` run a command on a host)
+- `capabilities/hetzner/robot/rescuessh` (a command on a host over SSH)
+- `helpers/continuity` (a snapshot restore into OpenBao, an upload by PUT to a
+  signed link, and a volume directory it creates and removes)
+
+Three helpers call the platform and not a resource, so a read-only request does
+not stop them: `helpers/events` posts the events callback, `helpers/lease`
+posts a lease request and `helpers/signin` posts the token exchange.
+
+The block check fails a block that writes on such a validate. After each
+validate it sends without `settling`, it counts the writes the fake
+repositories your `Provider` hands it took, and reads the answer for the kit's
+refusal. It fails with the block's name, "wrote on a validate that settles no
+verb" and what it wrote. A write to anything the check does not fake, such as
+your own client talking to a service the check never sees, stays invisible to
+it. A block that swallows the kit's refusal and then writes to a fake other
+than those repositories passes unseen.
+
+A write the kit refuses reaches the platform as an error with no class, since a
+class would make a dry run fail the change as invalid. The platform reads that
+answer as follows:
+
+- A dry run reports the block's validate as giving no answer. The check before
+  a subscribe lists it as not checked, and an upgrade's dry run fails and says
+  to try again once the block's operator answers.
+- A health probe reads it as unknown. The subscription keeps the last healthy or
+  unhealthy verdict it had, so a block that writes on a health probe and has not
+  been fixed keeps its old verdict instead of showing the failure.
+- A teardown probe leaves the resource not proven absent, so the unsubscribe is
+  driven again and the removal waits until a probe answers.
 
 ## What the handler calls for each call
 

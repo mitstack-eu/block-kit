@@ -402,6 +402,11 @@ nothing. The block then refuses with the failed verdict and leaves the later
 deploy to its own check. A later commit that changed only other paths lets the
 revert land on top of it.
 
+Call `Revert` only on a request whose `ReadOnly` is `false`, as
+[A validate that must write nothing](handler.md#a-validate-that-must-write-nothing)
+shows. A dry run and a health probe are read-only, so there the block answers
+the failed verdict and leaves the revert to the validate that settles the call.
+
 ## Judging a commit in a repository other blocks share
 
 Several blocks can commit to one GitOps repository. Argo CD compares only the
@@ -468,6 +473,13 @@ decode or carries any other SHA fails and names the request it sent. File
 content must be UTF-8, because the Git Data API carries it as a JSON string. A
 commit whose parent is no longer the tip lands nothing, so `CommitManifests`
 and `Revert` retry it on a fresh head a bounded number of times.
+
+Called with a context the handler marked read-only, the repository still
+reads, and its `Commit` lands nothing and returns an error wrapping
+`contract.ErrReadOnly`. `CommitManifests`, which `Deploy` commits through, and
+`Revert` return that error when they reach a commit, and `CommitManifests`
+returns none when the files already stand as asked. [A validate that must write nothing](handler.md#a-validate-that-must-write-nothing)
+says which requests are read-only and what your block checks itself.
 
 In tests, `gitopstest.NewRepository` and `gitopstest.NewNotifications` give
 in-memory fakes of the repository and the notification source.

@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
@@ -51,6 +52,9 @@ func (a api) repos(ctx context.Context, method, path string, payload, out any) e
 
 // call decodes a 2xx answer into out and returns any other as a *statusError.
 func (a api) call(ctx context.Context, method, path string, payload, out any) error {
+	if err := contract.RefuseWrite(ctx, method); err != nil {
+		return fmt.Errorf("landing: %s %s: %w", method, path, err)
+	}
 	var body io.Reader
 	if payload != nil {
 		b, err := json.Marshal(payload)

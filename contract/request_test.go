@@ -337,6 +337,33 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 	}
 }
 
+func TestRequestDesired_IsReadOnlyOnlyOnAValidateThatSettlesNoVerb(t *testing.T) {
+	for _, tc := range []struct {
+		label    string
+		req      contract.Request
+		readOnly bool
+	}{
+		{"a validate without the settling marker", contract.Request{Operation: "validate"}, true},
+		{"a validate naming one resource without the marker", contract.Request{Operation: "validate", Resource: "firewall"}, true},
+		{"the validate that settles a verb", contract.Request{Operation: "validate", Settling: true}, false},
+		{"a subscribe", contract.Request{Operation: "subscribe"}, false},
+		{"an upgrade", contract.Request{Operation: "upgrade"}, false},
+		{"an unsubscribe", contract.Request{Operation: "unsubscribe"}, false},
+		{"a run", contract.Request{Operation: contract.OperationRun}, false},
+		{"a validate naming one resource that carries settling", contract.Request{Operation: "validate", Resource: "firewall", Settling: true}, true},
+		{"a subscribe that carries settling", contract.Request{Operation: "subscribe", Settling: true}, false},
+		{"an unsubscribe that carries settling", contract.Request{Operation: "unsubscribe", Settling: true}, false},
+		{"a snapshot", contract.Request{Operation: contract.OperationSnapshot}, false},
+		{"a restore", contract.Request{Operation: contract.OperationRestore}, false},
+		{"a snapshot that carries settling", contract.Request{Operation: contract.OperationSnapshot, Settling: true}, false},
+		{"a restore that carries settling", contract.Request{Operation: contract.OperationRestore, Settling: true}, false},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			wantField(t, "Desired().ReadOnly", tc.req.Desired().ReadOnly, tc.readOnly)
+		})
+	}
+}
+
 var requestGoldenBehaviours = []struct {
 	behaviour string
 	check     func(t *testing.T, req contract.Request)
