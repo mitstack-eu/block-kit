@@ -350,6 +350,7 @@ func TestRequestDesired_IsReadOnlyOnlyOnAValidateThatSettlesNoVerb(t *testing.T)
 		{"an upgrade", contract.Request{Operation: "upgrade"}, false},
 		{"an unsubscribe", contract.Request{Operation: "unsubscribe"}, false},
 		{"a run", contract.Request{Operation: contract.OperationRun}, false},
+		{"a validate naming one resource that carries settling", contract.Request{Operation: "validate", Resource: "firewall", Settling: true}, true},
 		{"a subscribe that carries settling", contract.Request{Operation: "subscribe", Settling: true}, false},
 		{"an unsubscribe that carries settling", contract.Request{Operation: "unsubscribe", Settling: true}, false},
 		{"a snapshot", contract.Request{Operation: contract.OperationSnapshot}, false},

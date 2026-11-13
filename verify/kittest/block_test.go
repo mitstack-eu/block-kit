@@ -1168,8 +1168,8 @@ func githubBlock(t *testing.T, untagged string) kittest.Block {
 }
 
 type sentRequest struct {
-	operation string
-	readOnly  bool
+	operation         string
+	readOnly, noWrite bool
 }
 
 // requestLog keeps each request the check sent once, by its idempotency key, in the order an observer first saw it.
@@ -1189,7 +1189,7 @@ func (o loggingObserver) ObserveResource(ctx context.Context, r contract.Resourc
 	o.log.mu.Lock()
 	if !o.log.seen[env.IdempotencyKey] {
 		o.log.seen[env.IdempotencyKey] = true
-		o.log.sent = append(o.log.sent, sentRequest{env.Operation, r.Desired.ReadOnly})
+		o.log.sent = append(o.log.sent, sentRequest{env.Operation, r.Desired.ReadOnly, contract.RefuseWrite(ctx, http.MethodPost) != nil})
 	}
 	o.log.mu.Unlock()
 	return o.inner.ObserveResource(ctx, r)
@@ -1218,6 +1218,9 @@ func TestCheckBlock_SendsOnlyTheValidatesThatSettleAVerbAsOnesThatMayWrite(t *te
 				switch {
 				case sent.operation == "validate":
 					validates = append(validates, sent.readOnly)
+					if sent.noWrite != sent.readOnly {
+						t.Errorf("a validate reached the block with ReadOnly %v and a context that refuses a write %v, want the two to agree", sent.readOnly, sent.noWrite)
+					}
 				case sent.readOnly:
 					t.Errorf("a %s reached the block read-only, want only a validate to", sent.operation)
 				}
@@ -1869,10 +1872,10 @@ func TestAssertBlock_ListsAContributionFromItsLandingRecord(t *testing.T) {
 	}
 }
 
-// writingOnReadOnlyObserver writes on each request that reaches it read-only, as a block does that never reads Desired.ReadOnly before it writes.
+// writingOnReadOnlyObserver writes on each request that reaches it read-only, as a block does that never reads Desired.ReadOnly.
 type writingOnReadOnlyObserver struct {
 	handler.Observer
-	write func(ctx context.Context) error
+	write func(context.Context) error
 }
 
 func (o writingOnReadOnlyObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
@@ -1885,30 +1888,24 @@ func (o writingOnReadOnlyObserver) ObserveResource(ctx context.Context, r contra
 }
 
 func TestCheckBlock_FailsABlockThatWritesOnAValidateThatSettlesNoVerb(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
+	for name, tc := range map[string]struct {
 		write func(ctx context.Context, b *landingBlock) error
 		want  string
 	}{
-		{"commits through a kit client", func(ctx context.Context, b *landingBlock) error {
+		"commits through a kit client": {func(ctx context.Context, b *landingBlock) error {
 			return b.client().CommitFiles(ctx, b.repo.Repo, "dry run", map[string]string{"dry-run.txt": "x\n"})
 		}, ""},
-		{"dispatches a workflow through a client of its own", func(ctx context.Context, b *landingBlock) error {
-			resp, err := http.Post(b.repo.URL+"/repos/"+b.repo.Repo+"/actions/workflows/ci.yml/dispatches", "application/json", strings.NewReader("{}"))
-			if err == nil {
-				resp.Body.Close()
-			}
+		"dispatches a workflow through a client of its own": {func(_ context.Context, b *landingBlock) error {
+			_, err := http.Post(b.repo.URL+"/repos/"+b.repo.Repo+"/actions/workflows/ci.yml/dispatches", "application/json", http.NoBody)
 			return err
 		}, "POST /repos/acme/weather/actions/workflows/ci.yml/dispatches"},
 	} {
-		t.Run("a block that "+tc.name, func(t *testing.T) {
+		t.Run("a block that "+name, func(t *testing.T) {
 			in := landingBlockThat(t, landingType, "", false)
 			b := in.Provider.(repositoryProvider).b
-			in.Config.Observers[landingType] = writingOnReadOnlyObserver{Observer: in.Config.Observers[landingType], write: func(ctx context.Context) error { return tc.write(ctx, b) }}
+			in.Config.Observers[landingType] = writingOnReadOnlyObserver{in.Config.Observers[landingType], func(ctx context.Context) error { return tc.write(ctx, b) }}
 
-			problems := kittest.CheckBlock(in)
-
-			wantProblemNaming(t, problems, in.Desired.BlockID, "wrote on a validate that settles no verb", tc.want)
+			wantProblemNaming(t, kittest.CheckBlock(in), in.Desired.BlockID, "wrote on a validate that settles no verb", tc.want)
 		})
 	}
 }
