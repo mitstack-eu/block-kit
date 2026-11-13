@@ -64,6 +64,9 @@ func requestContext(ctx context.Context, req contract.Request) context.Context {
 	if req.EventsCallback != nil {
 		callback = &events.Callback{URL: req.EventsCallback.URL, Token: req.EventsCallback.Token}
 	}
+	if req.ReadOnly() {
+		ctx = contract.WithReadOnly(ctx)
+	}
 	return events.WithEnvelope(reqcache.With(ctx), events.Envelope{
 		SubscriptionID: req.SubscriptionID,
 		Operation:      req.Operation,

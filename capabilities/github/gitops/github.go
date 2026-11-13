@@ -13,9 +13,8 @@ import (
 )
 
 type GitHubRepository struct {
-	Client   *ghapi.Client
-	Repo     string
-	readOnly bool
+	Client *ghapi.Client
+	Repo   string
 }
 
 // No error NewGitHubRepository returns carries the token.
@@ -36,7 +35,7 @@ func NewGitHubRepository(d contract.Desired, repoFullName string) (*GitHubReposi
 	if token == "" {
 		return nil, errors.New("gitops: the request carries no github token")
 	}
-	return &GitHubRepository{Client: ghapi.NewClient(base.String(), token, nil), Repo: repo, readOnly: d.ReadOnly}, nil
+	return &GitHubRepository{Client: ghapi.NewClient(base.String(), token, nil), Repo: repo}, nil
 }
 
 // Head returns the commit main points at, or "" before main exists.
@@ -85,11 +84,8 @@ func (r *GitHubRepository) readFile(ctx context.Context, revision, path string) 
 	return nil, false, nil
 }
 
-// A parent no longer the tip yields an error wrapping ErrStaleBase, and a repository built from a read-only request lands nothing and yields one wrapping contract.ErrReadOnly.
+// A parent no longer the tip yields an error wrapping ErrStaleBase, and a call whose context is marked read-only lands nothing and yields one wrapping contract.ErrReadOnly.
 func (r *GitHubRepository) Commit(ctx context.Context, parent string, changes map[string][]byte, message string) (string, error) {
-	if r.readOnly {
-		return "", fmt.Errorf("gitops: committing to %s: %w", r.Repo, contract.ErrReadOnly)
-	}
 	entries := make(map[string]*string, len(changes))
 	for path, content := range changes {
 		if content == nil {

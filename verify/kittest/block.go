@@ -320,6 +320,7 @@ type blockCheck struct {
 	holdsNothing map[string]bool
 	// afterRestore makes a resource settle only once it reads healthy, as the engine observes a replaced resource.
 	afterRestore bool
+	reported     map[string]bool
 }
 
 // unitNames lists the names a guard reads, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
@@ -662,8 +663,56 @@ func (c *blockCheck) unsettled(operation string, resp contract.Response) {
 }
 
 func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract.Response, bool) {
+	before := c.repositoryWrites()
 	status, resp, err := c.server.send(operation, d)
+	if operation == "validate" {
+		c.noWriteOnReadOnly(before, resp)
+	}
 	return c.answeredOK(operation, status, resp, err)
+}
+
+// repositoryWrites counts the writes each fake repository the Provider hands the check has taken.
+func (c *blockCheck) repositoryWrites() map[string]int {
+	repos, _ := c.repositories()
+	counts := make(map[string]int, len(repos))
+	for name, fake := range repos {
+		counts[name] = len(fake.Writes())
+	}
+	return counts
+}
+
+// noWriteOnReadOnly fails a block that wrote on a validate that settles no verb, which a fake repository shows by taking a write and the kit shows by refusing one. A write to anything the check does not fake stays unseen.
+func (c *blockCheck) noWriteOnReadOnly(before map[string]int, resp contract.Response) {
+	repos, _ := c.repositories()
+	for _, name := range sortedKeys(repos) {
+		for _, w := range repos[name].Writes()[before[name]:] {
+			c.problemOnce("block %q wrote on a validate that settles no verb: %s %s", c.desired.BlockID, w.Method, w.Path)
+		}
+	}
+	refusals := []string{resp.Error}
+	for _, name := range sortedKeys(resp.Resources) {
+		for _, call := range []*contract.CallOutcome{resp.Resources[name].Ensure, resp.Resources[name].Observe, resp.Resources[name].Delete} {
+			if call != nil {
+				refusals = append(refusals, call.Error)
+			}
+		}
+	}
+	for _, text := range refusals {
+		if strings.Contains(text, contract.ErrReadOnly.Error()) {
+			c.problemOnce("block %q wrote on a validate that settles no verb, and the kit refused it: %s", c.desired.BlockID, text)
+		}
+	}
+}
+
+// problemOnce records a problem the check has not recorded already, so a write every validate repeats fails once.
+func (c *blockCheck) problemOnce(format string, args ...any) {
+	if c.reported == nil {
+		c.reported = map[string]bool{}
+	}
+	if text := fmt.Sprintf(format, args...); !c.reported[text] {
+		c.reported[text] = true
+		c.problem("%s", text)
+	}
 }
 
 // settleOK sends converge's call, whose validate is a settle poll.

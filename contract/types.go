@@ -568,8 +568,6 @@ func (r Request) Identity() Identity {
 	}
 }
 
-var ErrReadOnly = errors.New("contract: the request is a validate that settles no verb, so it must write nothing")
-
 func (r Request) Desired() Desired {
 	return Desired{
 		Identity:              r.Identity(),
@@ -588,7 +586,7 @@ func (r Request) Desired() Desired {
 		RequirementTypes:      r.RequirementTypes,
 		VerbAt:                r.verbAt(),
 		NeverActive:           r.NeverActive,
-		ReadOnly:              r.Operation == "validate" && !r.Settling,
+		ReadOnly:              r.ReadOnly(),
 		Replacing:             r.Replacing,
 		OwnSecrets:            r.OwnSecrets,
 	}
