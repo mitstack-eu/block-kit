@@ -343,7 +343,7 @@ func TestRequestBody_CarriesTheDesiredSoTheHarnessSendsTheEnginesRequest(t *test
 	quietLog(t)
 	f := &leakyFake{}
 	fx := leakFixture(t, f)
-	fx.Requests[0].Body = kittest.RequestBody("subscribe", contract.Desired{
+	fx.Requests[0].Body = kittest.RequestBody(t, "subscribe", contract.Desired{
 		Identity: contract.Identity{SubscriptionID: "sub-1", BlockID: "block-1", OrgID: "org-1", AppID: "app-1"},
 		Params:   map[string]string{"appName": "shop"}, Secrets: map[string]map[string]string{"api": {"token": leakSecret}},
 		Bindings: map[string]map[string]string{"host": {"subscriptionId": "sub-host"}}, RequirementTypes: map[string]string{"host": "example.host"},

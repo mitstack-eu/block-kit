@@ -32,9 +32,13 @@ var (
 	_ handler.Observer         = dockerhost.Database{}
 )
 
+func storeDB() dockerhost.Database {
+	return dockerhost.Database{Block: dbBlock, Type: "example.store-database", Engine: storeEngine()}
+}
+
 func newDBEnv(t *testing.T) *dockerhosttest.Database {
 	t.Helper()
-	return dockerhosttest.NewDatabase(t, dockerhost.Database{Block: dbBlock, Type: "example.store-database", Engine: storeEngine()})
+	return dockerhosttest.NewDatabase(t, storeDB())
 }
 
 func storeEngine() dockerhost.Engine {
@@ -57,43 +61,15 @@ func refused(err error) string {
 	return ""
 }
 
-func waits(err error) bool {
-	var w *handler.Waiting
-	return errors.As(err, &w)
+func TestDatabase_HoldsEveryDatabaseScenario(t *testing.T) {
+	dockerhosttest.AssertDatabase(t, storeDB())
 }
 
-func keyLines(content string) map[string]string {
-	out := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(content), "\n") {
-		if name, value, ok := strings.Cut(line, "="); ok {
-			out[name] = value
-		}
-	}
-	return out
-}
-
-func TestDatabase_LandsTwoAppsEachOnItsOwnNetworkWithNoPublishedPortAndItsVolumeAtItsDisk(t *testing.T) {
+func TestDatabase_ReservesAndLimitsTheContainerToItsSizesWithNoSwapBeyondItsMemory(t *testing.T) {
 	e := newDBEnv(t)
 
 	e.Land(t, e.Desired("shop", map[string]string{"dbCpu": "250m", "dbMemory": "1Gi", "dbDisk": "2Gi"}))
-	e.Land(t, e.Desired("blog", nil))
 
-	for app, disk := range map[string]string{"shop": "2GiB", "blog": "1GiB"} {
-		c := e.Compose(t, app)
-		s, ok := c.Services["store"]
-		if !ok || len(c.Services) != 1 {
-			t.Fatalf("%s's compose file holds %v; want the store service alone", app, slices.Collect(maps.Keys(c.Services)))
-		}
-		if len(s.Ports) != 0 || c.Network("default") != "app-"+app || !slices.Equal(s.Networks, []string{"default"}) {
-			t.Errorf("%s's database publishes %v on %v named %q; want no port on the app's own network app-%s", app, s.Ports, s.Networks, c.Network("default"), app)
-		}
-		if got := c.Volumes["store-data"].Labels["eu.mitstack.size"]; got != disk || !slices.Equal(s.Volumes, []string{"store-data:/data"}) {
-			t.Errorf("%s's volume is %v sized %q; want store-data at /data sized %s", app, s.Volumes, got, disk)
-		}
-		if s.Image != storeImage || s.ContainerName != app+"-store" || s.Labels["mitstack.dev/subscription"] != "sub_db_"+app {
-			t.Errorf("%s's database runs %q as %q labelled %v; want the engine's image as %s-store labelled with its subscription", app, s.Image, s.ContainerName, s.Labels, app)
-		}
-	}
 	var got dockerhost.Reservation
 	if err := json.Unmarshal([]byte(e.Main()["shop/reservations/"+dbBlock+".json"]), &got); err != nil || got != (dockerhost.Reservation{CPUMillis: 250, MemoryBytes: gib, DiskBytes: 2 * gib}) {
 		t.Errorf("shop's reservation reads %+v, %v; want 250 millicores, 1 GiB and 2 GiB of disk", got, err)
@@ -103,37 +79,17 @@ func TestDatabase_LandsTwoAppsEachOnItsOwnNetworkWithNoPublishedPortAndItsVolume
 	}
 }
 
-func TestDatabase_KeepsThePasswordOnTheHostWritesNoGivesFileAndLeavesTheAppsOwnVariablesAlone(t *testing.T) {
+func TestDatabase_LeavesTheAppsOwnVariablesAloneAndEscapesItsEntrypointForCompose(t *testing.T) {
 	e := newDBEnv(t)
 	e.Set(map[string]string{"shop/env.names": "DB_HOST=secret:db-host\n"})
 
 	e.Land(t, e.Desired("shop", nil))
 
-	if got, want := slices.Sorted(maps.Keys(e.Under("shop"))), slices.Sorted(slices.Values(append(landedFiles("shop"), "shop/env.names"))); !slices.Equal(got, want) {
-		t.Errorf("shop holds %v; want the database's files beside the app's env.names, and no gives file", got)
-	}
-	envNames := keyLines(e.Main()["shop/"+dbBlock+".env.names"])
-	if want := map[string]string{"DB_PASSWORD": "generated:" + dbBlock + ":password"}; !maps.Equal(envNames, want) {
-		t.Errorf("the database's env.names lists %v; want %v, the password the host generates and keeps", envNames, want)
+	if got := e.Main()["shop/env.names"]; got != "DB_HOST=secret:db-host\n" {
+		t.Errorf("the app's own env.names reads %q after the database landed; want it as the app wrote it", got)
 	}
 	if got := e.Compose(t, "shop").Services["store"].Entrypoint; !slices.Equal(got, []string{"sh", "-c", `exec store --user=app --password="$$DB_PASSWORD"`}) {
 		t.Errorf("the entrypoint is %q; want the engine's with each $ escaped for Compose", got)
-	}
-	backup := keyLines(e.Main()["shop/"+dbBlock+".backup"])
-	if want := map[string]string{"service": "store", "command": "store dump --db=app", "restore": "store load --db=app", "every": "24h"}; !maps.Equal(backup, want) {
-		t.Errorf("the backup file lists %v; want %v", backup, want)
-	}
-}
-
-func TestDatabase_OutputsTheFourValuesAndThePasswordsSecretNameAndNoPassword(t *testing.T) {
-	e := newDBEnv(t)
-	e.Land(t, e.Desired("shop", nil))
-
-	obs := e.Observe(t, e.Desired("shop", nil))
-
-	want := map[string]string{"host": "shop-store", "port": "7000", "dbName": "app", "username": "app", "passwordSecret": "generated:" + dbBlock + ":password"}
-	if obs.State != contract.Present || !maps.Equal(obs.Outputs, want) {
-		t.Errorf("ObserveResource = %s with outputs %v; want present with %v", obs.State, obs.Outputs, want)
 	}
 }
 
@@ -150,8 +106,6 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 			before: func(_ *testing.T, e *dockerhosttest.Database) {
 				e.Set(map[string]string{"blog/reservations/docker-app-slice.json": `{"cpuMillis":1000,"memoryBytes":6979321856,"diskBytes":1073741824}`})
 			}},
-		{name: "CPU past what the host has free", class: "host-full", says: "asks for 4 vCPU", params: map[string]string{"dbCpu": "4"}},
-		{name: "disk past what the host has free", class: "host-full", says: "asks for 0.5 vCPU, 512 MiB and 71 GiB of disk", params: map[string]string{"dbDisk": "71Gi"}},
 		{name: "a host that takes no backups", class: "host-takes-no-backups", says: "the host holds no backup public key",
 			before: func(_ *testing.T, e *dockerhosttest.Database) { e.BackupError = "the host holds no backup public key" }},
 		{name: "a host that has sent no report", says: "no node report giving its allocatable capacity",
@@ -270,7 +224,7 @@ func TestDatabase_GivesUpWhenMainMovesUnderEachOfThreeAttempts(t *testing.T) {
 	}
 }
 
-func TestDatabase_UnsubscribeRemovesTheFilesOnlyOnceTheFinalBackupIsUploaded(t *testing.T) {
+func TestDatabase_UnsubscribeAsksForTheFinalBackupByItsTimeNamesAFailureAndKeepsTheAppsOwnFiles(t *testing.T) {
 	ctx := context.Background()
 	e := newDBEnv(t)
 	e.Land(t, e.Desired("shop", nil))
@@ -278,26 +232,17 @@ func TestDatabase_UnsubscribeRemovesTheFilesOnlyOnceTheFinalBackupIsUploaded(t *
 	e.Volumes["shop"] = true
 	e.BackupResult = ""
 
-	_, asked := e.DB.Delete(ctx, e.Desired("shop", nil))
-	_, pending := e.DB.Delete(ctx, e.Desired("shop", nil))
-
-	if !waits(asked) || !waits(pending) || strings.TrimSpace(e.Main()["shop/"+dbBlock+".backup-request"]) != "final-1793620800" {
-		t.Fatalf("Delete = %v, then %v, holding the request %q; want both waiting on the final backup final-1793620800",
-			asked, pending, e.Main()["shop/"+dbBlock+".backup-request"])
+	_, _ = e.DB.Delete(ctx, e.Desired("shop", nil))
+	if got := strings.TrimSpace(e.Main()["shop/"+dbBlock+".backup-request"]); got != "final-1793620800" {
+		t.Fatalf("the backup request reads %q; want final-1793620800, named for the clock's time", got)
 	}
 	e.BackupResult = "failed: the store answered 403"
-	if _, err := e.DB.Delete(ctx, e.Desired("shop", nil)); err == nil || waits(err) || !strings.Contains(err.Error(), "the store answered 403") {
+	if _, err := e.DB.Delete(ctx, e.Desired("shop", nil)); err == nil || !strings.Contains(err.Error(), "the store answered 403") {
 		t.Errorf("Delete after a failed final backup = %v; want a failure naming the host's reason", err)
 	}
-	if got, want := slices.Sorted(maps.Keys(e.Under("shop"))), append(landedFiles("shop"), "shop/compose.yaml", "shop/"+dbBlock+".backup-request"); !slices.Equal(got, slices.Sorted(slices.Values(want))) {
-		t.Errorf("a failed final backup left shop holding %v; want everything kept, %v", got, want)
-	}
 	e.BackupResult = dockerhosttest.Uploaded
-	if _, err := e.DB.Delete(ctx, e.Desired("shop", nil)); err != nil {
-		t.Fatalf("Delete once the backup is uploaded = %v", err)
-	}
-	if got := slices.Collect(maps.Keys(e.Under("shop"))); !slices.Equal(got, []string{"shop/compose.yaml"}) {
-		t.Errorf("shop holds %v after the unsubscribe; want only the app's own compose file", got)
+	if _, err := e.DB.Delete(ctx, e.Desired("shop", nil)); err != nil || !slices.Equal(slices.Collect(maps.Keys(e.Under("shop"))), []string{"shop/compose.yaml"}) {
+		t.Errorf("Delete once the backup is uploaded = %v leaving %v; want only the app's own compose file", err, slices.Collect(maps.Keys(e.Under("shop"))))
 	}
 }
 

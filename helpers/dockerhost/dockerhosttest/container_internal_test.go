@@ -7,9 +7,9 @@ import (
 	"github.com/mitstack-eu/block-kit/helpers/dockerhost"
 )
 
-// A rendered service is created as the host runs it: its limits, its own data volume, its health check, the given
-// environment and network, and its entrypoint with Compose's "$$" read back as "$".
-func TestCreateArgs_RunTheServiceAsTheHostWouldOnItsOwnVolumeWithTheEnvironmentAndNetworkGiven(t *testing.T) {
+// A rendered service is created as the host runs it: its limits, its own data volume, its labels, its health check,
+// its own environment beside the given one, its network, and its entrypoint with Compose's "$$" read back as "$".
+func TestCreateArgs_RunTheServiceAsTheHostWouldOnItsOwnVolumeWithItsLabelsAndEnvironmentBesideTheOnesGiven(t *testing.T) {
 	s := dockerhost.ComposeService{
 		Image: "example.org/store:2.1@sha256:0f9e", CPUs: "0.5", MemLimit: 536870912, MemswapLimit: 536870912,
 		Entrypoint:  []string{"sh", "-c", `exec store --password="$$DB_PASSWORD"`, "store"},
@@ -17,6 +17,8 @@ func TestCreateArgs_RunTheServiceAsTheHostWouldOnItsOwnVolumeWithTheEnvironmentA
 		Volumes:     []string{"store-data:/data"},
 		SecurityOpt: []string{"no-new-privileges:true"},
 		Healthcheck: dockerhost.ComposeHealth{Test: []string{"CMD", "store", "ping"}},
+		Labels:      map[string]string{"mitstack.dev/subscription": "sub_db_shop", "mitstack.dev/app": "shop"},
+		Environment: map[string]string{"STORE_MODE": "strict", "STORE_HOME": "/data/$$HOME"},
 	}
 
 	got := createArgs("scratch-db", s, "scratch-net", []string{"DB_PASSWORD=pw$1"})
@@ -24,7 +26,9 @@ func TestCreateArgs_RunTheServiceAsTheHostWouldOnItsOwnVolumeWithTheEnvironmentA
 	want := []string{
 		"create", "--name", "scratch-db", "--cpus", "0.5", "--memory", "536870912", "--memory-swap", "536870912",
 		"--volume", "scratch-db:/data", "--security-opt", "no-new-privileges:true",
-		"--health-cmd", "store ping", "--health-interval", "1s", "--env", "DB_PASSWORD=pw$1", "--network", "scratch-net",
+		"--label", "mitstack.dev/app=shop", "--label", "mitstack.dev/subscription=sub_db_shop",
+		"--health-cmd", "store ping", "--health-interval", "1s",
+		"--env", "STORE_HOME=/data/$HOME", "--env", "STORE_MODE=strict", "--env", "DB_PASSWORD=pw$1", "--network", "scratch-net",
 		"--entrypoint", "sh", "example.org/store:2.1@sha256:0f9e", "-c", `exec store --password="$DB_PASSWORD"`, "store", "serve",
 	}
 	if !slices.Equal(got, want) {

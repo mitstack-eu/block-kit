@@ -1,7 +1,7 @@
 package dockerhosttest_test
 
-// A Database served by the fake host holds every database scenario, lists and loses the apps a subscription holds,
-// leaves nothing after a subscribe broken at any write, and fails a test sending another token.
+// A Database served by the fake host lists and loses the apps a subscription holds, leaves nothing after a subscribe
+// broken at any write, and fails a test sending another token.
 
 import (
 	"context"
@@ -31,10 +31,6 @@ func store() dockerhost.Database {
 		Healthcheck: []string{"CMD", "store", "ping"},
 		Dump:        "store dump", Restore: "store load",
 	}}
-}
-
-func TestAssertDatabase_HoldsEveryScenarioForTheStoreDatabase(t *testing.T) {
-	dockerhosttest.AssertDatabase(t, store())
 }
 
 func TestDatabase_ListsAndHoldsTheAppsASubscriptionLandedAndLosesOne(t *testing.T) {
