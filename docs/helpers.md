@@ -858,9 +858,12 @@ usage and exits 2.
 A block copies the probe out of the tools image onto the host, with the image
 named by digest as
 [Copying a tool out of an image by digest](#copying-a-tool-out-of-an-image-by-digest)
-says. It then bind-mounts that copy read-only into the app's container and
-names it in exec form, so no shell runs. In the compose file a block writes,
-with the copy's path on the host in place of `<copy>`, that reads:
+says. `tools.Probe` names the probe's path in the image and its sha256, so
+`copy-tool.sh` copies it as it copies any other tool, and the image's build
+checks the probe it built against that pin. The block then bind-mounts that
+copy read-only into the app's container and names it in exec form, so no shell
+runs. In the compose file a block writes, with the copy's path on the host in
+place of `<copy>`, that reads:
 
 ```json
 "volumes": [{"type": "bind", "source": "<copy>", "target": "/mitstack-probe/mitstack-probe", "read_only": true}],
@@ -1424,7 +1427,7 @@ registry's HTTP API downloads only the layer it needs.
 | `tools.K3sInstaller` | `/k3s/install.sh` | The k3s installer at k3s-io/k3s commit `2d0f82fa2f933cd227fe38e1482558ce4769f464` |
 | `tools.KubeBenchConfig` | `/kube-bench/cfg/config.yaml` and `/kube-bench/cfg/k3s-cis-1.11/` with `config.yaml`, `master.yaml`, `etcd.yaml`, `controlplane.yaml`, `node.yaml` and `policies.yaml` | kube-bench's config at commit `e278a5915a982f2756026de6e2f9ca77077ef9f9`, since its releases stop at k3s-cis-1.9 |
 | `tools.CopyScriptPath` | `/copy-tool/copy-tool.sh` | The helper itself, for an image build to copy with `COPY --from` |
-| `tools.ProbePath` | `/mitstack-probe/mitstack-probe` | The health probe an app's container runs, as [Checking an app's answer from inside its container](#checking-an-apps-answer-from-inside-its-container) says, built from `cmd/mitstack-probe` |
+| `tools.Probe`, at `tools.ProbePath` | `/mitstack-probe/mitstack-probe` | The health probe an app's container runs from a copy on its host, as [Checking an app's answer from inside its container](#checking-an-apps-answer-from-inside-its-container) says, built from `cmd/mitstack-probe` and checked against its pin |
 
 A tool whose publisher ships an image comes from that image instead, named by
 digest, such as k3s from `registry.rancher.com/rancher/k3s-upgrade` at
