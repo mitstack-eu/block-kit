@@ -111,7 +111,6 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// unfolding answers each read with the reports of the next state in turn, then repeats the last.
 type unfolding struct {
 	states []*gitopstest.NodeReports
 	reads  int

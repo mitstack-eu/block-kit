@@ -273,7 +273,6 @@ func ownsAlpha(gitops.Repository) gitops.Owned {
 	}
 }
 
-// ownsWorkerWhileHeld owns the worker's file only at a revision holding it, as a block reading its process list from the repository does.
 func ownsWorkerWhileHeld(repo gitops.Repository) gitops.Owned {
 	return func(ctx context.Context, revision string) ([]string, error) {
 		if _, held, err := repo.ReadFile(ctx, revision, alphaWorker); err != nil || held {

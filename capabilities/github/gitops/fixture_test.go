@@ -104,7 +104,6 @@ type gitopsBlock struct {
 	notifications gitops.Notifications
 }
 
-// newNamespaceBlock builds the block over notifications answering Succeeded and Healthy for every revision of app-alpha and app-beta, and node reports showing each at head with every object Synced and Healthy.
 func newNamespaceBlock() *gitopsBlock {
 	b := &gitopsBlock{repo: gitopstest.NewRepository(), notes: gitopstest.NewNotifications(), reports: gitopstest.NewNodeReports()}
 	for _, app := range []string{"app-alpha", "app-beta"} {
