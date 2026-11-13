@@ -76,8 +76,9 @@ type Request struct {
 
 	IssueAppID string `json:"issueAppId,omitempty"`
 
-	Unit      string `json:"unit,omitempty"`
-	Replacing bool   `json:"replacing,omitempty"`
+	Unit      string   `json:"unit,omitempty"`
+	Replacing bool     `json:"replacing,omitempty"`
+	Replace   []string `json:"replace,omitempty"`
 
 	// LeaseID, Want, Retire and Caller are read on a lease alone, and Resource then names the resource the credential is leased from.
 	LeaseID string          `json:"leaseId,omitempty"`
@@ -319,6 +320,7 @@ type Desired struct {
 	ReadOnly          bool
 
 	Replacing bool
+	Replace   []string
 
 	OwnSecrets map[string]string
 }
@@ -588,6 +590,7 @@ func (r Request) Desired() Desired {
 		NeverActive:           r.NeverActive,
 		ReadOnly:              r.ReadOnly(),
 		Replacing:             r.Replacing,
+		Replace:               r.Replace,
 		OwnSecrets:            r.OwnSecrets,
 	}
 }
