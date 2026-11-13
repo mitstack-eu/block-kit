@@ -7,7 +7,7 @@ import (
 )
 
 // Image is the tools image a release published, by tag and digest, which the release writes into the commit it tags, so main names none.
-const Image = ""
+const Image = "ghcr.io/mitstack-eu/block-kit-tools:v0.70.0@sha256:b4278446a019d781147b2527d2baeff95fa4a68a50259b9f5046ad5bc673de71"
 
 const CopyScriptPath = "/copy-tool/copy-tool.sh"
 
