@@ -3,7 +3,7 @@
   "$id": "https://mitstack.dev/schemas/lifecycle/envelope.schema.json",
   "title": "mitstack lifecycle webhook envelope",
   "description": "Versioned wire-shape contract for the JSON body mitstack's lifecycle engine POSTs to a block owner's registered webhook endpoint for each of the four alpha lifecycle verbs (subscribe/unsubscribe/upgrade/validate). Mirrors api/internal/lifecycle.Request byte-for-byte. Additive-friendly: additionalProperties is true at every level so a new optional Request field never breaks an existing operator or this contract test.",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -130,6 +130,10 @@
     "resourceUnsubscribing": {
       "type": "boolean",
       "description": "True when the validate naming one resource under resource probes it during a teardown, so the resource's observer answers as it does during an unsubscribe. Omitted, the probe is not a teardown's."
+    },
+    "appDeleting": {
+      "type": "boolean",
+      "description": "True on every request the platform sends while it deletes the whole app. The app's source repository outlives the app, so an unsubscribe leaves the files its block landed there, and opens no pull request and commits nothing in it. Omitted, the request is no part of an app's delete, and a block leaving an app that stays removes its landed files as usual."
     },
     "resourceType": {
       "type": "string",

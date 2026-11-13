@@ -65,6 +65,8 @@ type Request struct {
 	ResourceIdentity map[string]string              `json:"resourceIdentity,omitempty"`
 	// ResourceUnsubscribing marks a request naming one resource as a teardown's probe, so the resource's observer answers as it does during an unsubscribe.
 	ResourceUnsubscribing bool `json:"resourceUnsubscribing,omitempty"`
+	// AppDeleting marks a request the platform sends while it deletes the whole app, whose source repository it keeps as the app left it.
+	AppDeleting bool `json:"appDeleting,omitempty"`
 
 	ResourceType      string                      `json:"resourceType,omitempty"`
 	RecordedResources map[string]RecordedResource `json:"recordedResources,omitempty"`
@@ -311,6 +313,7 @@ type Desired struct {
 	ResourceIdentity      map[string]string
 	ResourceType          string
 	ResourceUnsubscribing bool
+	AppDeleting           bool
 
 	RecordedResources map[string]RecordedResource
 	RequirementTypes  map[string]string
@@ -582,6 +585,7 @@ func (r Request) Desired() Desired {
 		ResourceIdentity:      r.ResourceIdentity,
 		ResourceType:          r.ResourceType,
 		ResourceUnsubscribing: r.ResourceUnsubscribing,
+		AppDeleting:           r.AppDeleting,
 		RecordedResources:     r.RecordedResources,
 		RequirementTypes:      r.RequirementTypes,
 		VerbAt:                r.verbAt(),

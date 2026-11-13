@@ -9,7 +9,7 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
-// Observer is the handler.Observer of a resource whose identity is a landing's Record: present while main carries one file it created at its recorded blob, absent once main carries none or the repository is proven deleted, and unknown when a read fails.
+// Observer is the handler.Observer of a resource whose identity is a landing's Record: present while main carries one file it created at its recorded blob, absent once main carries none, the repository is proven deleted or an unsubscribe is marked contract.AppDeleting, and unknown when a read fails.
 type Observer struct {
 	// Client returns the client the resource's repository is read with.
 	Client func(ctx context.Context, d contract.Desired) (*ghapi.Client, error)
@@ -19,6 +19,9 @@ func (o Observer) ObserveResource(ctx context.Context, r contract.ResourceRef) (
 	rec, err := RecordFromIdentity(r.Identity)
 	if err != nil {
 		return unknown("resource %q has no landing record to read: %v", r.Name, err), nil
+	}
+	if r.Unsubscribing && contract.AppDeleting(ctx) {
+		return contract.Observation{State: contract.Absent, StatusDetail: fmt.Sprintf("the app's delete leaves the files this resource landed on main of %s as the app has them, so the landing ends with the subscription", rec.Repository)}, nil
 	}
 	c, err := o.Client(ctx, r.Desired)
 	if err != nil {

@@ -400,6 +400,14 @@ during a teardown. The handler then hands the resource's observer a
 `ResourceRef` with `Unsubscribing` set, so the observer answers as it does
 during an unsubscribe.
 
+The engine sets `appDeleting` on every request it sends while it deletes the
+whole app. The handler carries it into `Desired.AppDeleting` and marks the
+context it calls the block and each observer with, which
+`contract.AppDeleting(ctx)` reads. `landing.Remove` and `landing.Observer`
+read that mark, as
+[Removing the files a block landed](helpers.md#removing-the-files-a-block-landed)
+describes, so a block that lands files changes nothing to honour it.
+
 The handler checks the request's context before each resource. Once the
 context is done, the call stops before that resource, names it in
 `statusDetail`, and answers `pending:true`, or `absent:false` on an

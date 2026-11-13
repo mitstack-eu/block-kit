@@ -38,6 +38,7 @@ func BranchPrefix(subscription string) string {
 }
 
 // Remove opens one pull request per repository deleting every file r's records created that main still carries at its recorded blob, merges it under the subscription's trailer once main's required checks pass on it, and deletes every branch under the subscription's prefix.
+// For a context marked contract.AppDeleting it leaves every file in place, since the app's source repository outlives the app, and only closes the subscription's open removal pull request and deletes its branches.
 // While a pull request waits on a check, or a repository cannot be read, it returns a handler.Waiting and writes nothing it has not written before, so the unsubscribe stays unsettled and is re-driven.
 func Remove(ctx context.Context, c *ghapi.Client, r Removal) (Result, error) {
 	if !subscriptionID.MatchString(r.Subscription) {
@@ -94,6 +95,10 @@ func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription s
 	if _, err := ghapi.SafeRepo(rec.Repository); err != nil {
 		return nil, fmt.Errorf("landing: remove from %q: %w", rec.Repository, err)
 	}
+	a := api{c: c, repo: rec.Repository}
+	if contract.AppDeleting(ctx) {
+		return nil, a.leaveInPlace(ctx, subscription)
+	}
 	st, err := readMain(ctx, c, rec)
 	if err != nil {
 		return nil, handler.Wait("%s cannot be read, so nothing is removed from it yet: %v", rec.Repository, err)
@@ -105,7 +110,6 @@ func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription s
 	for _, path := range st.changed {
 		kept = append(kept, Kept{Repository: rec.Repository, Path: path, Reason: keptChanged})
 	}
-	a := api{c: c, repo: rec.Repository}
 	if len(st.unchanged) > 0 {
 		if err := a.removeThroughPullRequest(ctx, st, subscription, kept); err != nil {
 			return nil, err
@@ -115,6 +119,30 @@ func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription s
 		return nil, err
 	}
 	return kept, nil
+}
+
+// leaveInPlace is a removal during the app's delete: it writes nothing to main and lists no file kept, since the whole repository stays, and closes what the subscription left open in it.
+func (a api) leaveInPlace(ctx context.Context, subscription string) error {
+	deleted, err := repositoryDeleted(ctx, a)
+	switch {
+	case err != nil:
+		return handler.Wait("%s cannot be read, so its removal pull request is not closed yet: %v", a.repo, err)
+	case deleted:
+		return nil
+	}
+	if err := a.closeRemoval(ctx, subscription); err != nil {
+		return err
+	}
+	return a.deleteBranches(ctx, subscription)
+}
+
+// closeRemoval closes the subscription's open removal pull request unmerged, when there is one.
+func (a api) closeRemoval(ctx context.Context, subscription string) error {
+	pr, found, err := a.openPullRequest(ctx, BranchPrefix(subscription)+"remove")
+	if err != nil || !found {
+		return err
+	}
+	return a.repos(ctx, http.MethodPatch, fmt.Sprintf("/pulls/%d", pr.number), map[string]any{"state": "closed"}, nil)
 }
 
 func (a api) removeThroughPullRequest(ctx context.Context, st mainState, subscription string, kept []Kept) error {
