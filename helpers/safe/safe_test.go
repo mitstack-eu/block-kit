@@ -1,6 +1,7 @@
 package safe_test
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -111,6 +112,33 @@ func TestSanitising(t *testing.T) {
 				t.Errorf("(%q, %q) = %q, want %q", tc.in, tc.secrets, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestScrub_ShowsNoPartOfASecretWhateverOrderTheSecretsArriveIn(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+		secrets        []string
+	}{
+		{"a secret that starts another", "dial north-quartz-lagoon.example.test", "dial [REDACTED].example.test", []string{"north", "north-quartz-lagoon"}},
+		{"a secret that ends another", "dial north-quartz-lagoon.example.test", "dial [REDACTED].example.test", []string{"lagoon", "north-quartz-lagoon"}},
+		{"a secret in the middle of another", "dial north-quartz-lagoon.example.test", "dial [REDACTED].example.test", []string{"quartz", "north-quartz-lagoon"}},
+		{"two secrets of one length that overlap", "dial amber-quartz-basin.example.test", "dial [REDACTED].example.test", []string{"amber-quartz", "quartz-basin"}},
+		{"a secret that overlaps its own next occurrence", "key tatata ends", "key [REDACTED] ends", []string{"tata"}},
+		{"two secrets side by side keep a marker each", "dial amberquartz.example.test", "dial [REDACTED][REDACTED].example.test", []string{"amber", "quartz"}},
+	}
+	for _, tc := range cases {
+		reversed := slices.Clone(tc.secrets)
+		slices.Reverse(reversed)
+		for _, secrets := range [][]string{tc.secrets, reversed} {
+			t.Run(fmt.Sprintf("%s, passed as %q", tc.name, secrets), func(t *testing.T) {
+				got := safe.Scrub(tc.in, secrets...)
+
+				if got != tc.want {
+					t.Errorf("Scrub(%q, %q) = %q, want %q", tc.in, secrets, got, tc.want)
+				}
+			})
+		}
 	}
 }
 
