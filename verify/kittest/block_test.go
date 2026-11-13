@@ -317,7 +317,6 @@ func (o providerObserver) ObserveResource(ctx context.Context, r contract.Resour
 	return contract.Observation{State: contract.Absent}, nil
 }
 
-// byType answers an unsubscribing observe that names no identity from what the provider holds for the subscription.
 func (o providerObserver) byType(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
 	held, err := o.p.heldOfType(ctx, r)
 	if err != nil || len(held) == 0 {
@@ -326,7 +325,6 @@ func (o providerObserver) byType(ctx context.Context, r contract.ResourceRef) (c
 	return contract.Observation{State: contract.Present, Outputs: o.outputs(r.Type, held[0])}, nil
 }
 
-// heldOfType lists the ids the provider holds of r's type under r's subscription.
 func (p *fakeProvider) heldOfType(ctx context.Context, r contract.ResourceRef) ([]string, error) {
 	tagged, err := p.ListTagged(ctx, r.Desired.SubscriptionID)
 	var held []string
@@ -377,7 +375,6 @@ func (o byTypeObserver) ObserveResource(ctx context.Context, r contract.Resource
 	return contract.Observation{State: contract.Absent}, nil
 }
 
-// waitingOnceObserver answers its first observe unknown, waiting on a person, and every later one as its inner observer does.
 type waitingOnceObserver struct {
 	inner    handler.Observer
 	answered atomic.Bool
@@ -390,7 +387,6 @@ func (o *waitingOnceObserver) ObserveResource(ctx context.Context, r contract.Re
 	return o.inner.ObserveResource(ctx, r)
 }
 
-// amendedObserver amends each answer in which its inner observer finds a resource present, and with anyState set every answer.
 type amendedObserver struct {
 	inner    handler.Observer
 	amend    func(*contract.Observation)
@@ -405,7 +401,6 @@ func (o amendedObserver) ObserveResource(ctx context.Context, r contract.Resourc
 	return obs, err
 }
 
-// unnamedBlock reports its resources with no identity, as a block whose ensure answers before its work finishes does.
 type unnamedBlock struct{ *fakeBlock }
 
 func (b unnamedBlock) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
@@ -416,7 +411,6 @@ func (b unnamedBlock) EnsureResources(ctx context.Context, d contract.Desired) (
 	return created, err
 }
 
-// silentBlock hides EnsureResources, so it reports no identity.
 type silentBlock struct{ b *fakeBlock }
 
 func (s silentBlock) Ensure(ctx context.Context, d contract.Desired) error { return s.b.Ensure(ctx, d) }
@@ -738,7 +732,6 @@ func (b *poolBlock) Delete(context.Context, contract.Desired) (map[string]string
 	return nil, nil
 }
 
-// seenObserver records each name and identity the handler hands it.
 type seenObserver struct {
 	providerObserver
 	mu   *sync.Mutex
@@ -754,7 +747,6 @@ func (o seenObserver) ObserveResource(ctx context.Context, r contract.ResourceRe
 	return o.providerObserver.ObserveResource(ctx, r)
 }
 
-// poolCheck subscribes poolBlock at size and upgrades it to upgradeTo.
 func poolCheck(t *testing.T, size, upgradeTo string, leaky bool) (kittest.Block, *fakeProvider, seenObserver) {
 	t.Helper()
 	p := newFakeProvider()
@@ -845,7 +837,6 @@ spec:
     contract: kit/v1
 `
 
-// markedSnapshot sets the snapshot key mark true on each type ids names, through the JSON the platform serves.
 func markedSnapshot(t *testing.T, mark string, ids ...string) contract.TypeSnapshot {
 	t.Helper()
 	raw, err := os.ReadFile("../../contract/testdata/type-snapshot.json")
@@ -947,7 +938,6 @@ func partlessSnapshot(t *testing.T) contract.TypeSnapshot {
 	return snap
 }
 
-// hostParts are the objects the host block's instance and volume hold, each tagged with the subscription's id.
 func hostParts() []observe.Tagged {
 	return []observe.Tagged{
 		{Type: "aws.iam-role", ID: "mitstack-app-myapp-instance"},
@@ -1040,7 +1030,6 @@ func cfnBlock(t *testing.T) kittest.Block {
 	}
 }
 
-// requiringSecretToken returns snap with each type named in ids also requiring the secret output token.
 func requiringSecretToken(snap contract.TypeSnapshot, ids ...string) contract.TypeSnapshot {
 	snap.Types = slices.Clone(snap.Types)
 	for i, typ := range snap.Types {
@@ -1172,7 +1161,6 @@ type sentRequest struct {
 	readOnly, noWrite bool
 }
 
-// requestLog keeps each request the check sent once, by its idempotency key, in the order an observer first saw it.
 type requestLog struct {
 	mu   sync.Mutex
 	seen map[string]bool
@@ -1551,7 +1539,6 @@ func (p repositoryProvider) Lose(ctx context.Context, r contract.CreatedResource
 	return deleteFiles(ctx, p.b.client(), rec)
 }
 
-// offerObserver adds the offered files as the scaffoldContribution output that app-scaffold reads.
 type offerObserver struct{ b *landingBlock }
 
 func (o offerObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
@@ -1712,7 +1699,6 @@ func (b *twoRepositoryBlock) DeleteKeeping(ctx context.Context, d contract.Desir
 	return nil, kept, nil
 }
 
-// repositoriesProvider hands the check one fake per repository and no single Repository.
 type repositoriesProvider struct{ b *twoRepositoryBlock }
 
 func (p repositoriesProvider) Repositories() map[string]*landingtest.Fake { return p.b.fakes() }
@@ -1831,7 +1817,6 @@ func (listsNothing) ListTagged(context.Context, contract.Desired, string) ([]obs
 	return nil, nil
 }
 
-// listerRepositoryProvider lists through a kit lister and hands the check the block's fake repository.
 type listerRepositoryProvider struct {
 	kittest.ListerProvider
 	b *landingBlock
@@ -1872,7 +1857,6 @@ func TestAssertBlock_ListsAContributionFromItsLandingRecord(t *testing.T) {
 	}
 }
 
-// writingOnReadOnlyObserver writes on each request that reaches it read-only, as a block does that never reads Desired.ReadOnly.
 type writingOnReadOnlyObserver struct {
 	handler.Observer
 	write func(context.Context) error

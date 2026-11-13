@@ -30,7 +30,6 @@ var (
 	api    = gitops.Object{Group: "apps", Kind: "Deployment", Namespace: "app-home", Name: "api"}
 )
 
-// manifest renders o as a block renders its JSON manifests.
 func manifest(o gitops.Object) []byte {
 	apiVersion := "v1"
 	if o.Group != "" {

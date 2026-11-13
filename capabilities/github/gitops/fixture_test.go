@@ -60,7 +60,6 @@ func desiredFor(app string) contract.Desired {
 	}
 }
 
-// rendered is the test block's Argo CD Application, its files by repository path and its outputs.
 type rendered struct {
 	App     string
 	Files   map[string][]byte
@@ -117,7 +116,6 @@ func newNamespaceBlock() *gitopsBlock {
 	return b
 }
 
-// deployment is the deploy of files into app's Argo CD Application, read through the reports of alphaCluster.
 func (b *gitopsBlock) deployment(ctx context.Context, d contract.Desired, app string, files map[string][]byte) (gitops.Deployment, error) {
 	repo, err := b.repository(ctx, d)
 	if err != nil {

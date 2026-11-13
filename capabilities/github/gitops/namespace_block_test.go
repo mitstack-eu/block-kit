@@ -140,7 +140,6 @@ func namedFields(operation, app string) map[string]any {
 	return f
 }
 
-// post signs fields as a fresh delivery with its own nonce and OBO token.
 func post(t *testing.T, h http.Handler, s *kittest.Signer, fields map[string]any) (int, []byte) {
 	t.Helper()
 	body := maps.Clone(fields)

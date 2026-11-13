@@ -234,7 +234,6 @@ func errMatches(err, want error) bool {
 	}
 }
 
-// revertHistory lands commits on the tip and records Argo CD's verdict on a revision, as the cluster posts it.
 type revertHistory struct {
 	t       *testing.T
 	repo    *gitopstest.Repository
@@ -495,7 +494,6 @@ func TestSecretValues_CollectsTheCredentialsAndNeverTheGithubOwner(t *testing.T)
 	}
 }
 
-// failingChanged is a repository whose history cannot be read.
 type failingChanged struct{ *gitopstest.Repository }
 
 func (failingChanged) Changed(context.Context, string) (string, []string, error) {
