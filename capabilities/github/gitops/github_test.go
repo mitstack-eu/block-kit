@@ -179,11 +179,20 @@ func TestGitHubRepository_CommitManifestsRevertAndAStaleParentEndToEnd(t *testin
 
 func TestGitHubRepository_ACommitForAContextMarkedReadOnlyIsRefusedAndLandsNothing(t *testing.T) {
 	f := newFakeGitHub(t, githubToken)
+	repo := newGitHubRepo(t, f)
+	marked := contract.WithReadOnly(context.Background())
+	files := map[string][]byte{"a.yaml": []byte("a1\n")}
+	rev := landOn(t, repo, "", files)
 
-	_, err := newGitHubRepo(t, f).Commit(contract.WithReadOnly(context.Background()), "", map[string][]byte{"a.yaml": []byte("a1\n")}, "refused")
+	_, refused := repo.Commit(marked, rev, map[string][]byte{"a.yaml": []byte("a2\n")}, "refused")
+	head, headErr := repo.Head(marked)
+	own, changed, sameErr := gitops.CommitManifests(marked, repo, files, "same", seededSecrets)
 
-	if !errors.Is(err, contract.ErrReadOnly) || f.head() != "" {
-		t.Errorf("a read-only Commit = %v with head %q; want an error wrapping contract.ErrReadOnly and no commit", err, f.head())
+	if !errors.Is(refused, contract.ErrReadOnly) || f.head() != rev {
+		t.Errorf("a read-only Commit = %v with head %q; want an error wrapping contract.ErrReadOnly and head %q", refused, f.head(), rev)
+	}
+	if head != rev || headErr != nil || own != rev || changed || sameErr != nil {
+		t.Errorf("a read-only Head = %q, %v and CommitManifests of the files at head = (%q, %v, %v); want the read to go through and (%q, false, nil)", head, headErr, own, changed, sameErr, rev)
 	}
 }
 
