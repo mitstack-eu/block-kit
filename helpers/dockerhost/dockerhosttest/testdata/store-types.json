@@ -1,0 +1,359 @@
+{
+  "version": 94,
+  "types": [
+    {
+      "id": "example.store-database",
+      "capability": "hetzner",
+      "kind": "store-database",
+      "scope": "per-app",
+      "stateful": true,
+      "pricing": {
+        "priced": false
+      },
+      "category": "database",
+      "reliesOn": [
+        "github"
+      ],
+      "outputs": [
+        {
+          "name": "dbName",
+          "secret": false,
+          "required": true,
+          "meaning": "The name of the app's database.",
+          "shape": "database identifier",
+          "example": "app"
+        },
+        {
+          "name": "host",
+          "secret": false,
+          "required": true,
+          "meaning": "The address the app reaches its database server at, on the app's own network.",
+          "shape": "hostname",
+          "example": "shop-store"
+        },
+        {
+          "name": "passwordSecret",
+          "secret": false,
+          "required": true,
+          "meaning": "The name the Docker host keeps the database user's password under. A block writes NAME=<passwordSecret> into the app's env.names, and the host fills NAME from that password, which never leaves the host.",
+          "shape": "generated:<block>:<secret>",
+          "example": "generated:docker-store:password"
+        },
+        {
+          "name": "port",
+          "secret": false,
+          "required": true,
+          "meaning": "The port the app's database listens on.",
+          "shape": "TCP port number",
+          "example": "7000"
+        },
+        {
+          "name": "username",
+          "secret": false,
+          "required": true,
+          "meaning": "The database user the app connects as.",
+          "shape": "database identifier",
+          "example": "app"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "dbCpu",
+          "label": "CPU the database reserves on its host, in vCPUs",
+          "description": "The CPU the database's container reserves on the org's Docker host and may use at most, in vCPUs such as 0.5 or 2, or in millicores such as 500m. The host refuses the database when it has less CPU free, and no database reserves more than the host's 4 vCPUs. A change recreates the database's container and keeps its data. Left empty, it reserves 0.5.",
+          "required": false,
+          "secret": false,
+          "default": "0.5",
+          "kind": "size",
+          "unit": "vCPU",
+          "min": 0.03,
+          "max": 4,
+          "onChange": "restart",
+          "reserves": "cpu"
+        },
+        {
+          "name": "dbMemory",
+          "label": "Memory the database reserves on its host",
+          "description": "The memory the database's container reserves on the org's Docker host and may use at most, as a whole number of Mi or Gi such as 512Mi or 1Gi. The host refuses the database when it has less memory free, and no database reserves more than the host's 8 GB. A change recreates the database's container and keeps its data. Left empty, it reserves 512Mi.",
+          "required": false,
+          "secret": false,
+          "default": "512Mi",
+          "kind": "size",
+          "unit": "MiB",
+          "min": 128,
+          "max": 8192,
+          "onChange": "restart",
+          "reserves": "memory"
+        },
+        {
+          "name": "dbDisk",
+          "label": "Disk the database's data may fill",
+          "description": "The disk the database's data volume holds on the org's Docker host, as a whole number of Mi or Gi such as 1Gi or 10Gi. The volume is made at this size when the database is first created, the host refuses the database when it has less disk free, and no database holds more than the host's 160 GB disk. It cannot change once the database exists. Left empty, the volume holds 1Gi.",
+          "required": false,
+          "secret": false,
+          "default": "1Gi",
+          "kind": "size",
+          "unit": "MiB",
+          "min": 1,
+          "max": 163840,
+          "onChange": "fixed",
+          "reserves": "disk"
+        }
+      ],
+      "observe": "the host's repository holds the database's compose, env.names, backup and reservation files at the head of main, and the host's newest node report shows its pull agent synced that head and the database container running, past starting",
+      "absence": "the host's repository at the head of main holds none of the database's compose, env.names, backup and reservation files",
+      "timeBudgets": {
+        "delete": "30m",
+        "ensure": "10m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "GitHub rate-limited the call or answered a server error"
+        },
+        {
+          "class": "transient",
+          "cause": "the host's newest node report shows its pull agent has not yet synced the head of main"
+        },
+        {
+          "class": "transient",
+          "cause": "the host has not yet uploaded the final backup an unsubscribe asked for"
+        },
+        {
+          "class": "transient",
+          "cause": "the database's container reads unhealthy on the host"
+        },
+        {
+          "class": "transient",
+          "cause": "the database's container is not running on the host"
+        },
+        {
+          "class": "permanent",
+          "cause": "the host has less CPU, memory or disk free than the database reserves"
+        },
+        {
+          "class": "permanent",
+          "cause": "the host holds no backup public key, so it takes no backups"
+        },
+        {
+          "class": "permanent",
+          "cause": "the host's final backup before an unsubscribe failed"
+        }
+      ],
+      "hostType": "hetzner.docker-host",
+      "finalBackupDays": 30,
+      "version": 1
+    },
+    {
+      "id": "hetzner.backup-bucket",
+      "capability": "hetzner",
+      "kind": "object-storage",
+      "scope": "org-wide",
+      "stateful": true,
+      "pricing": {
+        "priced": true,
+        "key": "HetznerObjectStorage"
+      },
+      "category": "storage",
+      "outputs": [
+        {
+          "name": "bucket",
+          "secret": false,
+          "required": true,
+          "meaning": "The name of the Hetzner Object Storage bucket the host keeps its backups in.",
+          "shape": "Hetzner Object Storage bucket name",
+          "example": "docker-host-sub-3f9c2b1e8d7a-backups"
+        },
+        {
+          "name": "bucketLocation",
+          "secret": false,
+          "required": true,
+          "meaning": "The Hetzner location the backup bucket stands in, whose S3 endpoint is https://<location>.your-objectstorage.com.",
+          "shape": "Hetzner location code",
+          "example": "hel1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "backupPublicKey",
+          "label": "Backup public key",
+          "description": "The org's age public key, which age-keygen prints as age1 followed by 58 lowercase letters and digits. The host encrypts each backup to it before the backup leaves the host, and only the private key the org keeps opens one, so a lost private key leaves every backup unreadable. A host takes it when it is created, and a later change does not reach a host that stands.",
+          "required": true,
+          "secret": false,
+          "kind": "text",
+          "pattern": "age1[02-9ac-hj-np-z]{58}",
+          "example": "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p",
+          "onChange": "fixed"
+        }
+      ],
+      "observe": "GET /?location on the bucket names the location other than the host's, and GET /?lifecycle returns exactly one enabled rule that expires every object 30 days after it lands",
+      "absence": "GET /?location answers 404 NoSuchBucket for the bucket named after the host's subscription",
+      "timeBudgets": {
+        "delete": "10m",
+        "ensure": "2m",
+        "observe": "30s"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "Hetzner Object Storage rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the Hetzner connection holds no object storage access key and secret key, or the key is invalid"
+        },
+        {
+          "class": "permanent",
+          "cause": "another Hetzner customer or project holds the bucket name"
+        }
+      ],
+      "connectionGroups": [
+        "object-storage"
+      ],
+      "version": 4
+    },
+    {
+      "id": "hetzner.docker-host",
+      "capability": "hetzner",
+      "kind": "host",
+      "scope": "org-wide",
+      "stateful": false,
+      "pricing": {
+        "priced": true,
+        "key": "HetznerCloud"
+      },
+      "category": "compute",
+      "languages": [
+        "any-container"
+      ],
+      "outputs": [
+        {
+          "name": "cloud.region",
+          "secret": false,
+          "required": false,
+          "meaning": "The cloud region the app runs in.",
+          "shape": "cloud region code",
+          "example": "eu-central-1"
+        },
+        {
+          "name": "clusterRepoUrl",
+          "secret": false,
+          "required": false,
+          "meaning": "The web address of the private repository Argo CD syncs the app's cluster from.",
+          "shape": "https URL",
+          "example": "https://github.com/acme/orbitdemo-cluster",
+          "recorded": "observed"
+        },
+        {
+          "name": "enrolmentTokenSha256",
+          "secret": false,
+          "required": false,
+          "meaning": "The SHA-256 digest of the token the cluster's node presents to enrol with the platform; the token itself is never published.",
+          "shape": "52 lowercase base32 characters",
+          "example": "abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcd",
+          "recorded": "observed"
+        },
+        {
+          "name": "execKind",
+          "secret": false,
+          "required": true,
+          "meaning": "How the platform runs commands on the app's host.",
+          "shape": "mechanism name",
+          "example": "aws-ssm"
+        },
+        {
+          "name": "execTarget",
+          "secret": false,
+          "required": true,
+          "meaning": "The host that commands are sent to.",
+          "shape": "host id",
+          "example": "i-0abc123def4567890"
+        },
+        {
+          "name": "host.type",
+          "secret": false,
+          "required": false,
+          "meaning": "The machine type the app runs on.",
+          "shape": "cloud instance type",
+          "example": "t3.small"
+        },
+        {
+          "name": "hostId",
+          "secret": false,
+          "required": true,
+          "meaning": "The id of the host the app runs on.",
+          "shape": "host id",
+          "example": "i-0abc123def4567890"
+        },
+        {
+          "name": "publicIp",
+          "secret": false,
+          "required": false,
+          "meaning": "The public IP address of the app's host.",
+          "shape": "IPv4 address",
+          "example": "203.0.113.10"
+        },
+        {
+          "name": "subscriptionId",
+          "secret": false,
+          "required": false,
+          "meaning": "The id of the subscription that created the host, whose node reports carry its capacity.",
+          "shape": "platform subscription id",
+          "example": "sub_3f9c2b1e8d7a6c5b"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "location",
+          "label": "Hetzner location",
+          "description": "The Hetzner location the host runs in, fsn1, nbg1 or hel1. The host is one cpx32, with 4 shared vCPUs and 8 GB of memory, and every app on it runs in this one location. It cannot change once the host stands. Left empty, the host runs in nbg1.",
+          "required": false,
+          "secret": false,
+          "default": "nbg1",
+          "allowedValues": [
+            "fsn1",
+            "nbg1",
+            "hel1"
+          ],
+          "kind": "enum",
+          "onChange": "fixed"
+        }
+      ],
+      "observe": "GET /servers/{id} returns the server running and labelled mitstack.dev/subscription with the subscription's id, and the newest report at GET /v1/subscriptions/{id}/node-reports is signed and reads the host's install ready",
+      "absence": "GET /servers/{id} and GET /firewalls/{id} answer 404 for the server and the firewall the host's subscription created",
+      "timeBudgets": {
+        "delete": "5m",
+        "ensure": "30m",
+        "observe": "1m"
+      },
+      "failures": [
+        {
+          "class": "transient",
+          "cause": "the Hetzner Cloud API rate-limited the call or answered a server error"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's Hetzner Cloud API token is invalid or lacks write access"
+        },
+        {
+          "class": "transient",
+          "cause": "the location has no capacity for the server type"
+        },
+        {
+          "class": "permanent",
+          "cause": "the project's server limit is reached"
+        },
+        {
+          "class": "transient",
+          "cause": "the host has not yet enrolled or sent its first node report"
+        },
+        {
+          "class": "permanent",
+          "cause": "an app's directory remains in the host's repository, so unsubscribe refuses"
+        }
+      ],
+      "version": 3
+    }
+  ]
+}

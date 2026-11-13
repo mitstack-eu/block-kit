@@ -339,6 +339,32 @@ func TestCheckNoSecretLeak_SignsEveryRequestWithAFreshEnvelope(t *testing.T) {
 	}
 }
 
+func TestRequestBody_CarriesTheDesiredSoTheHarnessSendsTheEnginesRequest(t *testing.T) {
+	quietLog(t)
+	f := &leakyFake{}
+	fx := leakFixture(t, f)
+	fx.Requests[0].Body = kittest.RequestBody("subscribe", contract.Desired{
+		Identity: contract.Identity{SubscriptionID: "sub-1", BlockID: "block-1", OrgID: "org-1", AppID: "app-1"},
+		Params:   map[string]string{"appName": "shop"}, Secrets: map[string]map[string]string{"api": {"token": leakSecret}},
+		Bindings: map[string]map[string]string{"host": {"subscriptionId": "sub-host"}}, RequirementTypes: map[string]string{"host": "example.host"},
+	})
+
+	if problems := kittest.CheckNoSecretLeak(fx); len(problems) != 0 {
+		t.Fatalf("problems = %q, want none for a clean handler", problems)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.accepted) == 0 {
+		t.Fatalf("the fake accepted no request; it refused %q", f.rejected)
+	}
+	got := f.accepted[0]
+	if got.Operation != "subscribe" || got.AppID != "app-1" || got.Params["appName"] != "shop" ||
+		got.Bindings["host"]["subscriptionId"] != "sub-host" || got.RequirementTypes["host"] != "example.host" {
+		t.Errorf("the harness sent %+v; want the Desired's operation, app, params, bindings and requirement types", got)
+	}
+}
+
 func TestCheckNoSecretLeak_TeesTheStandardLoggerIntoLogsAndThePreviousWriter(t *testing.T) {
 	sink := quietLog(t)
 	f := &leakyFake{}
