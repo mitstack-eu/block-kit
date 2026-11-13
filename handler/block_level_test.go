@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/capabilities/github/landing"
+	"github.com/mitstack-eu/block-kit/capabilities/github/landing/landingtest"
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/verify/kittest"
@@ -1448,6 +1451,156 @@ func TestBlockLevel_IssueIsRefusedUnlessACapabilityIssuesACredentialWithItsExpir
 			}
 			if got := resp.Error + " " + resp.StatusDetail; !strings.Contains(got, tc.want) || strings.Contains(got, "conn-key-9f2") {
 				t.Errorf("error and statusDetail = %q, want them to name %s and carry no secret", got, tc.want)
+			}
+		})
+	}
+}
+
+// landingBlock removes the files one landing record holds, as each block that lands files in an app's repository does.
+type landingBlock struct {
+	*blockResource
+	github *ghapi.Client
+	record landing.Record
+}
+
+func (b landingBlock) DeleteKeeping(ctx context.Context, d contract.Desired) (map[string]string, map[string][]contract.Kept, error) {
+	removed, err := landing.Remove(ctx, b.github, landing.Removal{Subscription: d.SubscriptionID, Records: []landing.Record{b.record}})
+	if err != nil || len(removed.Kept) == 0 {
+		return nil, nil, err
+	}
+	return nil, map[string][]contract.Kept{"starter": removed.Kept}, nil
+}
+
+const (
+	landedRepo          = "acme/shop"
+	landingSubscription = "sub_861c4b4614d9"
+)
+
+var landingManifest = v1betaManifest("landing-block", []string{"{ name: starter, type: github.scaffold-commit }"})
+
+// landedRepository is an app's repository holding the starter one subscription landed, beside a branch of that subscription's and one of the app's own, with the block that removes it and the request fields naming its landing.
+func landedRepository(t *testing.T) (*landingtest.Fake, landingBlock, map[string]any) {
+	t.Helper()
+	f := landingtest.New(t, landedRepo)
+	c := ghapi.NewClient(f.URL, "ghs_handlertest0001", nil)
+	rec, err := landing.Land(context.Background(), c, landing.Landing{Repository: landedRepo, Message: "mitstack: land the starter",
+		Files: map[string]string{".mitstack/scaffold.lock": "lock\n", "Dockerfile": "FROM php:8.3-apache\n"}})
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	identity, err := rec.Identity()
+	if err != nil {
+		t.Fatalf("Identity: %v", err)
+	}
+	f.Branch("mitstack/" + landingSubscription + "/land")
+	f.Branch("feature/app-work")
+	fields := map[string]any{"subscriptionId": landingSubscription,
+		"recordedResources": map[string]any{"starter": map[string]any{"type": "github.scaffold-commit", "identity": identity}}}
+	return f, landingBlock{blockResource: &blockResource{cloud: newFakeCloud()}, github: c, record: rec}, fields
+}
+
+func serveLanding(t *testing.T, b landingBlock, op string, fields map[string]any) (int, contract.Response) {
+	t.Helper()
+	observers := map[string]handler.Observer{"starter": landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return b.github, nil }}}
+	return serveBlock(t, blockCall{r: b, obs: observers, op: op, fields: fields, config: []func(*handler.Config){withManifest(landingManifest)}})
+}
+
+func writesSince(f *landingtest.Fake, mark int) []string {
+	var out []string
+	for _, r := range f.Writes()[mark:] {
+		out = append(out, r.Method+" "+r.Path)
+	}
+	return out
+}
+
+func TestBlockLevel_AnUnsubscribeTheAppsDeleteSendsLeavesTheLandedFilesClosesItsOpenRemovalAndDeletesItsBranches(t *testing.T) {
+	branch := "DELETE /repos/" + landedRepo + "/git/refs/heads/mitstack/" + landingSubscription + "/"
+	cases := []struct {
+		name       string
+		arrange    func(t *testing.T, f *landingtest.Fake, b landingBlock)
+		wantWrites []string
+	}{
+		{"a removal pull request is already open from the remove branch, and main moved since it opened", func(t *testing.T, f *landingtest.Fake, b landingBlock) {
+			f.RequireCheck("managed-ci")
+			if _, err := landing.Remove(context.Background(), b.github, landing.Removal{Subscription: landingSubscription, Records: []landing.Record{b.record}}); err == nil {
+				t.Fatal("the earlier removal merged, want it left open waiting on managed-ci")
+			}
+			f.Edit("README.md", "# shop\n")
+		}, []string{"PATCH /repos/" + landedRepo + "/pulls/1", branch + "land", branch + "remove"}},
+		{"no removal pull request is open yet", func(*testing.T, *landingtest.Fake, landingBlock) {}, []string{branch + "land"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, block, fields := landedRepository(t)
+			tc.arrange(t, f, block)
+			fields["appDeleting"] = true
+			main, mark := f.Main(), len(f.Writes())
+
+			status, resp := serveLanding(t, block, "unsubscribe", fields)
+
+			wantOK(t, status, resp)
+			wantAbsent(t, resp, true)
+			if got := writesSince(f, mark); !reflect.DeepEqual(got, tc.wantWrites) {
+				t.Errorf("writes = %q, want only %q: no pull request opened and no commit made", got, tc.wantWrites)
+			}
+			if !reflect.DeepEqual(f.Main(), main) {
+				t.Errorf("main = %v, want it as the app left it, %v", f.Main(), main)
+			}
+			if want := []string{"feature/app-work"}; !reflect.DeepEqual(f.Branches(), want) {
+				t.Errorf("branches = %v, want only the app's own, %v", f.Branches(), want)
+			}
+			for _, p := range f.Pulls() {
+				if p.Open || p.Merged {
+					t.Errorf("pull request #%d reads open %v, merged %v, want it closed unmerged", p.Number, p.Open, p.Merged)
+				}
+			}
+			if d := resp.Resources["starter"].Delete; d != nil && len(d.Kept) > 0 {
+				t.Errorf("resource \"starter\" kept %+v, want no file listed, since the whole repository stays", d.Kept)
+			}
+		})
+	}
+}
+
+func TestBlockLevel_AnUnsubscribeWithoutTheAppsDeleteMarkRemovesTheLandedFilesThroughAPullRequest(t *testing.T) {
+	f, block, fields := landedRepository(t)
+
+	status, resp := serveLanding(t, block, "unsubscribe", fields)
+
+	wantOK(t, status, resp)
+	wantAbsent(t, resp, true)
+	if pulls := f.Pulls(); len(pulls) != 1 || !pulls[0].Merged {
+		t.Errorf("pull requests = %+v, want the one removal merged", pulls)
+	}
+	if len(f.Main()) != 0 {
+		t.Errorf("main = %v, want every landed file removed", f.Main())
+	}
+}
+
+func TestBlockLevel_ATeardownReadReadsALandingLeftOnMainAbsentOnlyWhenTheAppsDeleteSendsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		appDeleting bool
+		wantAbsent  bool
+	}{
+		{"a read the app's delete sends", true, true},
+		{"a read a part leaving an app that stays sends", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, block, fields := landedRepository(t)
+			recorded := fields["recordedResources"].(map[string]any)["starter"].(map[string]any)
+			probe := map[string]any{"subscriptionId": landingSubscription, "resource": "starter", "resourceType": "github.scaffold-commit",
+				"resourceIdentity": recorded["identity"], "resourceUnsubscribing": true}
+			if tc.appDeleting {
+				probe["appDeleting"] = true
+			}
+			mark := len(f.Writes())
+
+			status, resp := serveLanding(t, block, "validate", probe)
+
+			wantOK(t, status, resp)
+			wantAbsent(t, resp, tc.wantAbsent)
+			if got := writesSince(f, mark); len(got) != 0 {
+				t.Errorf("writes = %q, want none from a read", got)
 			}
 		})
 	}

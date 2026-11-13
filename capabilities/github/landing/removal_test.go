@@ -717,3 +717,92 @@ func TestObserver_ReadsTheRemovalUnderWayWhileItsCheckRunsAndGitHubRefusesTheSta
 		t.Errorf("observe while the check runs and the status read answers 403 = %s with removing %+v (%s), want present with removing", obs.State, obs.Removing, obs.StatusDetail)
 	}
 }
+
+func removeForAppDelete(c *ghapi.Client, rec landing.Record) (landing.Result, error) {
+	return landing.Remove(contract.WithAppDeleting(context.Background()), c, landing.Removal{Subscription: subscription, Records: []landing.Record{rec}})
+}
+
+func TestUnsubscribe_ForAnAppsDeleteLeavesEveryLandedFileChangedOrNotAndReportsNoneKept(t *testing.T) {
+	f := landingtest.New(t, repo)
+	rec := land(t, f, threeFiles, landing.Record{})
+	f.Edit("index.html", "<h1>my weather</h1>\n")
+	main, mark := f.Main(), len(f.Writes())
+
+	got, err := removeForAppDelete(client(f), rec)
+
+	if err != nil {
+		t.Fatalf("Remove for an app's delete: %v", err)
+	}
+	if len(got.Kept) != 0 {
+		t.Errorf("Kept = %+v, want none, since the whole repository stays", got.Kept)
+	}
+	if !reflect.DeepEqual(f.Main(), main) {
+		t.Errorf("main = %v, want every landed file left as the app had it, %v", f.Main(), main)
+	}
+	if w := f.Writes()[mark:]; len(w) != 0 {
+		t.Errorf("writes = %+v, want none, with no removal open and no branch under the subscription's prefix", w)
+	}
+}
+
+func TestUnsubscribe_ForAnAppsDeleteWritesNothingToARepositoryThatIsGoneOrCannotBeRead(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		arrange  func(f *landingtest.Fake)
+		waitsFor string
+	}{
+		{"the repository is proven deleted", (*landingtest.Fake).DeleteRepository, ""},
+		{"the repository answers 403", func(f *landingtest.Fake) { f.Answer(http.MethodGet, "/repos/"+repo, http.StatusForbidden) }, repo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := waitingRemoval(t)
+			tc.arrange(f)
+			mark := len(f.Writes())
+
+			_, err := removeForAppDelete(client(f), rec)
+
+			if tc.waitsFor != "" {
+				waiting(t, err, tc.waitsFor)
+			} else if err != nil {
+				t.Errorf("Remove = %v, want nothing left to close", err)
+			}
+			if w := f.Writes()[mark:]; len(w) != 0 {
+				t.Errorf("writes = %+v, want none", w)
+			}
+		})
+	}
+}
+
+func TestObserver_DuringAnAppsDeleteReadsALandingLeftOnMainAbsentAndOutsideAnUnsubscribeAsBefore(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		observer      func(c *ghapi.Client) handler.Observer
+		unsubscribing bool
+		want          contract.State
+	}{
+		{"Observer during the delete's unsubscribe", func(c *ghapi.Client) handler.Observer {
+			return landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return c, nil }}
+		}, true, contract.Absent},
+		{"OfferObserver during the delete's unsubscribe", func(c *ghapi.Client) handler.Observer {
+			return landing.OfferObserver{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return c, nil }}
+		}, true, contract.Absent},
+		{"Observer outside an unsubscribe", func(c *ghapi.Client) handler.Observer {
+			return landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return c, nil }}
+		}, false, contract.Present},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := landingtest.New(t, repo)
+			identity, err := land(t, f, threeFiles, landing.Record{}).Identity()
+			if err != nil {
+				t.Fatalf("Identity: %v", err)
+			}
+			ref := contract.ResourceRef{Name: "starter", Type: "github.scaffold-commit", Identity: identity, Unsubscribing: tc.unsubscribing,
+				Desired: contract.Desired{Identity: contract.Identity{SubscriptionID: subscription}}}
+
+			obs, err := tc.observer(client(f)).ObserveResource(contract.WithAppDeleting(context.Background()), ref)
+
+			if err != nil || obs.State != tc.want {
+				t.Errorf("observe with main still carrying every landed file = %s (%s), %v; want %s", obs.State, obs.StatusDetail, err, tc.want)
+			}
+		})
+	}
+}
