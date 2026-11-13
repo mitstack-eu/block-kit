@@ -869,9 +869,9 @@ with the copy's path on the host in place of `<copy>`, that reads:
 
 The copy must be executable by every user, mode `0755` for instance, because
 under userns-remap the container's users map to unprivileged users on the
-host. The directory holding it may stay closed, since the daemon makes the
-mount as root. A bind mount survives a restart of the Docker daemon, and the
-probe then runs as it did before.
+host. The directory holding it may stay closed. On Docker 29.1.3 with the
+overlay2 storage driver and userns-remap, a bind mount survives a restart of
+the Docker daemon, and the probe then runs as it did before.
 
 Do not mount the tools image itself into the container with a Compose image
 mount, since on a Docker host it fails in two ways:
