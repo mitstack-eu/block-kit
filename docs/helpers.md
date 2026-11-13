@@ -45,7 +45,10 @@ writes, so you need this package only for what your own code logs or calls.
 
 The first rule is that log sanitising and secret scrubbing are two separate jobs.
 `safe.Scrub(s, secrets...)` replaces each secret of four or more characters
-with `[REDACTED]`, and `safe.LogValue(s)` removes the line breaks and control
+with `[REDACTED]`, in whatever order you pass them. Where one secret holds
+another, or two overlap in the text, the whole stretch they cover reads as one
+`[REDACTED]`, so no part of either stays readable beside it.
+`safe.LogValue(s)` removes the line breaks and control
 characters a crafted value could use to forge a log line.
 `safe.LogSafe(s, secrets...)` does both, in that order:
 

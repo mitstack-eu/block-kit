@@ -22,7 +22,6 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
-// githubFake answers GitHub's routes from a repository and counts every request.
 type githubFake struct {
 	repo   *gitopstest.Repository
 	mu     sync.Mutex
@@ -73,7 +72,6 @@ func (p probe) ObserveResource(ctx context.Context, _ contract.ResourceRef) (con
 	return contract.Observation{State: contract.Present}, p(ctx)
 }
 
-// reports answers no report on its first read and one listing the object web on every later read.
 type reports struct{ calls atomic.Int64 }
 
 var web = map[string]string{"kind": "deployment.apps", "name": "web", "namespace": "ns", "clusterSubscription": "cluster"}
@@ -92,7 +90,6 @@ func (c *reports) observe(ctx context.Context, d contract.Desired) (contract.Sta
 	return obs.State, err
 }
 
-// serveGitHub starts a fake GitHub holding a commit of held-0.json to held-{files-1}.json.
 func serveGitHub(t *testing.T, files int) (*gitops.GitHubRepository, *githubFake, string) {
 	t.Helper()
 	repo, held := gitopstest.NewRepository(), map[string][]byte{}

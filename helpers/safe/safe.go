@@ -2,11 +2,18 @@
 package safe
 
 import (
+	"cmp"
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
+)
+
+const (
+	redactionMarker        = "[REDACTED]"
+	shortestSecretScrubbed = 4
 )
 
 // Base is a host the operator is willing to talk to; the URL builders accept only a Base, so a request-supplied string cannot become an outbound URL without a visible conversion.
@@ -82,15 +89,59 @@ func LogValue(s string) string {
 	return controlCharPattern.ReplaceAllString(s, "")
 }
 
-// Scrub replaces every occurrence of each secret with a redaction marker, and does not remove newlines; compose it with LogValue rather than substituting one for the other.
+// Scrub replaces every stretch of s that secrets cover with a redaction marker, whatever order they arrive in, and does not remove newlines; compose it with LogValue rather than substituting one for the other.
 func Scrub(s string, secrets ...string) string {
-	for _, sec := range secrets {
-		if len(sec) < 4 {
+	covered := coveredSpans(s, secrets)
+	if len(covered) == 0 {
+		return s
+	}
+	var scrubbed strings.Builder
+	kept := 0
+	for _, stretch := range covered {
+		scrubbed.WriteString(s[kept:stretch.start])
+		scrubbed.WriteString(redactionMarker)
+		kept = stretch.end
+	}
+	scrubbed.WriteString(s[kept:])
+	return scrubbed.String()
+}
+
+type span struct{ start, end int }
+
+// coveredSpans joins occurrences that overlap, since masking one alone leaves the rest of the other readable beside the marker.
+func coveredSpans(s string, secrets []string) []span {
+	occurrences := occurrencesOf(s, secrets)
+	slices.SortFunc(occurrences, func(a, b span) int { return cmp.Compare(a.start, b.start) })
+	var covered []span
+	for _, occurrence := range occurrences {
+		last := len(covered) - 1
+		if last < 0 || occurrence.start >= covered[last].end {
+			covered = append(covered, occurrence)
 			continue
 		}
-		s = strings.ReplaceAll(s, sec, "[REDACTED]")
+		covered[last].end = max(covered[last].end, occurrence.end)
 	}
-	return s
+	return covered
+}
+
+// occurrencesOf searches on from one byte past each match, so a secret that overlaps its own next occurrence is found both times.
+func occurrencesOf(s string, secrets []string) []span {
+	var found []span
+	for _, secret := range secrets {
+		if len(secret) < shortestSecretScrubbed {
+			continue
+		}
+		for from := 0; ; {
+			at := strings.Index(s[from:], secret)
+			if at < 0 {
+				break
+			}
+			start := from + at
+			found = append(found, span{start: start, end: start + len(secret)})
+			from = start + 1
+		}
+	}
+	return found
 }
 
 func LogSafe(s string, secrets ...string) string {
