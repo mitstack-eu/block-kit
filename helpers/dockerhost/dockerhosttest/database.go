@@ -77,7 +77,6 @@ func (d *Database) Desired(app string, params map[string]string) contract.Desire
 	}
 }
 
-// Land subscribes desired and fails t unless the database lands.
 func (d *Database) Land(t testing.TB, desired contract.Desired) {
 	t.Helper()
 	if _, err := d.DB.EnsureResources(context.Background(), desired); err != nil {
@@ -85,7 +84,6 @@ func (d *Database) Land(t testing.TB, desired contract.Desired) {
 	}
 }
 
-// Compose reads back app's compose file.
 func (d *Database) Compose(t testing.TB, app string) dockerhost.Compose {
 	t.Helper()
 	var c dockerhost.Compose
@@ -97,7 +95,6 @@ func (d *Database) Compose(t testing.TB, app string) dockerhost.Compose {
 
 func (d *Database) composePath(app string) string { return app + "/" + d.DB.Block + ".compose.yaml" }
 
-// Observe reads desired's database as the platform does, and fails t on an error.
 func (d *Database) Observe(t testing.TB, desired contract.Desired) contract.Observation {
 	t.Helper()
 	obs, err := d.DB.ObserveResource(context.Background(), contract.ResourceRef{Name: dockerhost.DatabaseResource, Desired: desired})

@@ -100,7 +100,6 @@ func (c Container) Must(args ...string) string {
 	return out
 }
 
-// Logs is everything the container has logged.
 func (c Container) Logs() string {
 	out, _ := Docker(nil, "logs", c.Name)
 	return out
@@ -116,7 +115,6 @@ func (c Container) WaitFor(what string, done func() bool) {
 	}
 }
 
-// WaitHealthy waits for the container's health check to pass.
 func (c Container) WaitHealthy() {
 	c.t.Helper()
 	c.WaitFor("read healthy", func() bool {
