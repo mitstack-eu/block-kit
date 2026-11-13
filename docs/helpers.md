@@ -1185,15 +1185,16 @@ sets, such as the password the host would generate. The container runs the
 service as the host would, with its labels and environment, on a volume of its
 own. It leaves out the service's restart policy, so a
 test that stops the container decides itself when it starts again. A block's
-tests use it to run their real engine through these:
+tests use it to run their real engine through these, and each wait fails the
+test after four minutes:
 
 | Name | What it does |
 |---|---|
 | `dockerhosttest.Scratch(t, what)` | A fresh Docker name whose container, volume and network are removed when the test ends |
 | `dockerhosttest.Docker(stdin, args...)` | One docker command, answering its output |
 | `Container.Must(args...)` | One docker command that fails the test on an error |
-| `Container.Logs()` | Everything the container has logged |
-| `Container.WaitFor(what, done)`, `Container.WaitHealthy()` | A wait that fails the test after four minutes |
+| `Container.WaitForLine(text)` | A wait on the container's own output, followed as Docker streams it, for a line holding `text` |
+| `Container.WaitHealthy()` | A wait on Docker's health events for the container to read healthy |
 | `Container.Exec(line, stdin)` | A shell line run in the container, as the host runs a backup file's line |
 
 ## Reporting whether an app answers
