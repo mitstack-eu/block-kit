@@ -17,23 +17,10 @@ import (
 // SyncedCommitSince is the first hcloud-docker-host release whose node report names the commit its agent last synced.
 const SyncedCommitSince = "0.8.0"
 
-// Report is a Docker host's newest node report, read the same way by every block whose app runs on the host.
+// Report is a Docker host's newest node report, read the same way by every block whose app runs on the host, each reader decoding its own part alone.
 type Report struct {
-	Allocatable   *Reservation
-	body          json.RawMessage
-	agent         map[string]json.RawMessage
-	absence       *contract.Absence
-	capacityError string
-}
-
-type reportParts struct {
-	Host struct {
-		Capacity struct {
-			Allocatable *Reservation `json:"allocatable"`
-			Error       string       `json:"error"`
-		} `json:"capacity"`
-		Agent map[string]json.RawMessage `json:"agent"`
-	} `json:"host"`
+	body    json.RawMessage
+	absence *contract.Absence
 }
 
 // NewestReport reads the newest of the host subscription's node reports, found false while the host has sent none, except that a host the platform attests absent answers a report holding no volume without reading any.
@@ -64,21 +51,88 @@ func NewestReport(ctx context.Context, api observe.NodeReportsAPI, d contract.De
 	return report, true, nil
 }
 
-// ReadReport reads a node report body its caller already holds, such as the platform reading a host's newest report itself.
+// ReadReport reads a node report body its caller already holds, such as the platform reading a host's newest report itself, and fails only a body that is not JSON.
 func ReadReport(body []byte) (Report, error) {
-	var parts reportParts
-	if err := json.Unmarshal(body, &parts); err != nil {
+	if err := json.Unmarshal(body, new(json.RawMessage)); err != nil {
 		return Report{}, fmt.Errorf("decoding the host's node report: %w", err)
 	}
-	return Report{Allocatable: parts.Host.Capacity.Allocatable, body: body, agent: parts.Host.Agent, capacityError: parts.Host.Capacity.Error}, nil
+	return Report{body: body}, nil
 }
 
-// CapacityError is the error the report carries in place of its allocatable capacity, empty when it gives that capacity or names no error.
-func (r Report) CapacityError() string {
-	if r.Allocatable != nil {
-		return ""
+// reportedCapacity holds pointers, so a capacity missing a measure names it rather than counting it as zero.
+type reportedCapacity struct {
+	Host struct {
+		Capacity struct {
+			Allocatable *struct {
+				CPUMillis   *int64 `json:"cpuMillis"`
+				MemoryBytes *int64 `json:"memoryBytes"`
+				DiskBytes   *int64 `json:"diskBytes"`
+			} `json:"allocatable"`
+			Error json.RawMessage `json:"error"`
+		} `json:"capacity"`
+	} `json:"host"`
+}
+
+const allocatablePath = "host.capacity.allocatable"
+
+// capacity reads host.capacity alone, and a report naming neither a capacity nor an error gives none with an empty unread.
+func (r Report) capacity() (allocatable Allocatable, given bool, unread string) {
+	if len(r.body) == 0 {
+		return Allocatable{}, false, ""
 	}
-	return r.capacityError
+	var parts reportedCapacity
+	if err := r.Decode(&parts); err != nil {
+		return Allocatable{}, false, misread(err) + ", which no amount can be read from"
+	}
+	reported := parts.Host.Capacity.Allocatable
+	if reported == nil {
+		return Allocatable{}, false, hostError(parts.Host.Capacity.Error)
+	}
+	measures := []struct {
+		name   string
+		amount *int64
+	}{{"cpuMillis", reported.CPUMillis}, {"memoryBytes", reported.MemoryBytes}, {"diskBytes", reported.DiskBytes}}
+	for _, m := range measures {
+		if m.amount == nil {
+			return Allocatable{}, false, allocatablePath + " lacks " + m.name
+		}
+		if *m.amount < 0 {
+			return Allocatable{}, false, fmt.Sprintf("%s gives a negative %s, %d", allocatablePath, m.name, *m.amount)
+		}
+	}
+	return Allocatable{CPUMillis: *reported.CPUMillis, MemoryBytes: *reported.MemoryBytes, DiskBytes: *reported.DiskBytes}, true, ""
+}
+
+// hostError quotes an error the host sent as anything but text as it stands, so its type never hides it.
+func hostError(sent json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(sent, &text); err != nil {
+		return string(sent)
+	}
+	return text
+}
+
+func misread(err error) string {
+	var mistyped *json.UnmarshalTypeError
+	switch {
+	case !errors.As(err, &mistyped):
+		return err.Error()
+	case mistyped.Field == "":
+		return "the report holds a JSON " + mistyped.Value
+	}
+	return fmt.Sprintf("%s holds a JSON %s", mistyped.Field, mistyped.Value)
+}
+
+// Allocatable is the capacity the report gives whole, given false when it gives none or one CapacityError explains.
+func (r Report) Allocatable() (Allocatable, bool) {
+	allocatable, given, _ := r.capacity()
+	return allocatable, given
+}
+
+// CapacityError is why the report gives no allocatable capacity to size on, empty when it gives one whole or names no reason.
+func (r Report) CapacityError() string {
+	_, _, unread := r.capacity()
+	return unread
 }
 
 // Decode reads the report's body into v, for the fields only one block reads.
@@ -86,13 +140,25 @@ func (r Report) Decode(v any) error {
 	return json.Unmarshal(r.body, v)
 }
 
+type reportedAgent struct {
+	Host struct {
+		Agent struct {
+			SyncedCommit json.RawMessage `json:"syncedCommit"`
+		} `json:"agent"`
+	} `json:"host"`
+}
+
 // SyncedCommit reads host.agent.syncedCommit, never the agent's log, and its error says why the report names none.
 func (r Report) SyncedCommit() (string, error) {
 	if r.absence != nil {
 		return "", fmt.Errorf("the platform's %s read the host's %s absent, so it syncs no commit", r.absence.Observer, r.absence.Resource)
 	}
-	raw, ok := r.agent["syncedCommit"]
-	if !ok {
+	var parts reportedAgent
+	if err := r.Decode(&parts); err != nil {
+		return "", fmt.Errorf("the host's newest node report names no commit its agent synced, since %s", misread(err))
+	}
+	raw := parts.Host.Agent.SyncedCommit
+	if raw == nil {
 		return "", fmt.Errorf("the host's newest node report carries no host.agent.syncedCommit, so the host runs a hcloud-docker-host release before %s; upgrade the host to %s or later, whose report names the commit its agent last synced",
 			SyncedCommitSince, SyncedCommitSince)
 	}

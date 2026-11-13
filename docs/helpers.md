@@ -503,8 +503,12 @@ host sends them:
 ```
 
 `dockerhost.NewestReport` reads the host's newest report and returns it as a
-`dockerhost.Report`, whose `Allocatable` field holds the report's allocatable
-capacity as a `dockerhost.Reservation`, or `nil` when the report gives none.
+`dockerhost.Report`. The kit reads the capacity strictly: all three keys must
+be present, and each must hold a whole number of zero or more. A capacity
+that passes is a `dockerhost.Allocatable`, which the report's `Allocatable`
+method returns. One that fails counts as none, and the report's
+`CapacityError` method names the key, as in
+`host.capacity.allocatable lacks memoryBytes`.
 [Reading what the host last synced](#reading-what-the-host-last-synced) covers
 its arguments and the rest of what it returns.
 
@@ -516,13 +520,14 @@ what `dockerhost.SumReservations` added up. The `ask` argument is a
 `shop` or `shop's database`. `Kind` names what the developer should give less
 of, such as `app` or `database`. `Size` is the reservation it asks for.
 
-`CheckRoom` answers one of four ways, so every per-app block treats a host the
+`CheckRoom` answers one of five ways, so every per-app block treats a host the
 same:
 
 | The host | `CheckRoom` returns |
 |---|---|
 | Has sent no node report, or a report without allocatable capacity | A `handler.WaitForSignal` wait naming the missing capacity report, so the engine sends the subscribe again once the host reports |
 | Sent a report whose capacity carries an `error` in place of `allocatable` | The same wait, quoting that error |
+| Sent a report whose `allocatable` lacks a key, or gives one below zero or as anything but a whole number | The same wait, quoting the key, so a missing measure never reads as a full host |
 | Is read absent by the platform, such as a server deleted outside mitstack | A `host-absent` refusal |
 | Has too little free beyond what the others reserve | A `host-full` refusal naming the free and the requested amounts |
 
@@ -581,12 +586,15 @@ refused through `handler.Refuse` with the class `host-binding`, so the
 platform shows the subscriber why. A platform that does not answer or a
 report that is not JSON returns a plain error. A reader that already holds a
 report's body, such as the platform, reads it with
-`dockerhost.ReadReport(body)` instead. The report gives you eight things:
+`dockerhost.ReadReport(body)` instead, which fails only on a body that is not
+JSON. Each method below decodes its own part of the report, so a capacity or
+an agent the kit cannot read never stops your block reading the report's logs
+or releases. The report gives you eight things:
 
-| Field or method | What it gives |
+| Method | What it gives |
 |---|---|
-| `report.Allocatable` | The host's allocatable capacity, or `nil` when the report gives none |
-| `report.CapacityError()` | The error the host sent under `host.capacity.error` in place of its allocatable capacity. hcloud-docker-host sends `nproc, free -b or df -B1 / printed nothing the report can read`, which names the three commands it reads its CPU, memory and disk with. The method returns an empty string when the report gives the capacity or names no error. `Capacity` and `CheckRoom` read the error through this method, so a page that shows a host's room, such as the platform's Room for apps, can quote the error a block waits on |
+| `report.Allocatable()` | The host's allocatable capacity as a `dockerhost.Allocatable`, and `false` when the report gives none or one the kit cannot read whole |
+| `report.CapacityError()` | The error the host sent under `host.capacity.error` in place of its allocatable capacity. hcloud-docker-host sends `nproc, free -b or df -B1 / printed nothing the report can read`, which names the three commands it reads its CPU, memory and disk with. When the report gives a capacity the kit cannot read whole, the method names the key that is missing, below zero or no whole number instead. The method returns an empty string when the report gives its whole capacity or names no error. `Capacity` and `CheckRoom` read the error through this method, so a page that shows a host's room, such as the platform's Room for apps, can quote the error a block waits on |
 | `report.SyncedCommit()` | The commit the agent last synced, from the report's `host.agent.syncedCommit` |
 | `report.AppRelease(app, subscription)` | The app's newest release command as a `dockerhost.AppRelease`, described below |
 | `report.ReleaseAgainst(app, subscription, asked)` | The same release command judged against the image the app's newest deploy asked for, described below |
