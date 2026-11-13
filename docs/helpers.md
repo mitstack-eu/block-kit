@@ -2009,6 +2009,17 @@ README's section
 [How mitstack reads a teardown's commits](../README.md#how-mitstack-reads-a-teardowns-commits)
 describes.
 
+An app's delete leaves its source repository as the builder has it, because
+that repository outlives the app. Every request the platform sends while it
+deletes the whole app carries `appDeleting: true`, and the handler marks the
+context it hands your block with it, which `contract.AppDeleting(ctx)` reads.
+Under that mark `Remove` leaves every landed file on main, changed or not, and
+opens no pull request and commits nothing. It closes the subscription's
+removal pull request when an earlier unsubscribe left one open, deletes every
+branch under `mitstack/<subscription>/`, and returns no `Kept`, since the whole
+repository stays. Your block passes nothing for this, because `Remove` reads
+the mark from the context its `Delete` was handed.
+
 `landing.Observer` reads such a resource from main. It is present while main
 carries at least one file recorded `created` at its recorded blob, and absent
 once main carries none. It also reads a repository proven deleted absent:
@@ -2016,7 +2027,11 @@ the repository answers 404, and the installation the token belongs to lists
 its repositories as `repository_selection: "all"`, which means every
 repository of the owner, with one of the same owner. Any read that fails,
 such as a 403, a 5xx, a rate limit or a missing token, reads unknown, and
-`Remove` then waits with no write sent.
+`Remove` then waits with no write sent. During an unsubscribe marked
+`appDeleting`, the observer does not read main. It reads the landing present
+while a branch under `mitstack/<subscription>/` is left, and absent once none
+is, so the teardown of an app's delete ends with the files still on main and
+no branch or removal pull request of the subscription left.
 
 During an unsubscribe, a present answer also reads the subscription's open
 removal pull request. While a check main requires is queued, running or failed

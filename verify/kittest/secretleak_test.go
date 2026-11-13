@@ -365,6 +365,14 @@ func TestRequestBody_CarriesTheDesiredSoTheHarnessSendsTheEnginesRequest(t *test
 	}
 }
 
+func TestRequestBody_CarriesTheAppsDeleteMarkSoABlockCanProveWhatItsUnsubscribeLeaves(t *testing.T) {
+	body := kittest.RequestBody(t, "unsubscribe", contract.Desired{Identity: contract.Identity{SubscriptionID: "sub-1"}, AppDeleting: true})
+
+	if body["appDeleting"] != true {
+		t.Errorf("body = %v, want appDeleting true, as the engine sends it while it deletes the whole app", body)
+	}
+}
+
 func TestCheckNoSecretLeak_TeesTheStandardLoggerIntoLogsAndThePreviousWriter(t *testing.T) {
 	sink := quietLog(t)
 	f := &leakyFake{}

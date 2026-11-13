@@ -37,7 +37,13 @@ func BranchPrefix(subscription string) string {
 	return "mitstack/" + subscription + "/"
 }
 
+// removalBranch is the branch the subscription's removal pull request opens from.
+func removalBranch(subscription string) string {
+	return BranchPrefix(subscription) + "remove"
+}
+
 // Remove opens one pull request per repository deleting every file r's records created that main still carries at its recorded blob, merges it under the subscription's trailer once main's required checks pass on it, and deletes every branch under the subscription's prefix.
+// Under contract.AppDeleting it only closes the subscription's open removal pull request and deletes its branches, since the app's source repository outlives the app.
 // While a pull request waits on a check, or a repository cannot be read, it returns a handler.Waiting and writes nothing it has not written before, so the unsubscribe stays unsettled and is re-driven.
 func Remove(ctx context.Context, c *ghapi.Client, r Removal) (Result, error) {
 	if !subscriptionID.MatchString(r.Subscription) {
@@ -94,6 +100,10 @@ func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription s
 	if _, err := ghapi.SafeRepo(rec.Repository); err != nil {
 		return nil, fmt.Errorf("landing: remove from %q: %w", rec.Repository, err)
 	}
+	a := api{c: c, repo: rec.Repository}
+	if contract.AppDeleting(ctx) {
+		return nil, a.leaveInPlace(ctx, subscription)
+	}
 	st, err := readMain(ctx, c, rec)
 	if err != nil {
 		return nil, handler.Wait("%s cannot be read, so nothing is removed from it yet: %v", rec.Repository, err)
@@ -105,7 +115,6 @@ func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription s
 	for _, path := range st.changed {
 		kept = append(kept, Kept{Repository: rec.Repository, Path: path, Reason: keptChanged})
 	}
-	a := api{c: c, repo: rec.Repository}
 	if len(st.unchanged) > 0 {
 		if err := a.removeThroughPullRequest(ctx, st, subscription, kept); err != nil {
 			return nil, err
@@ -117,8 +126,32 @@ func removeFrom(ctx context.Context, c *ghapi.Client, rec Record, subscription s
 	return kept, nil
 }
 
+// leaveInPlace closes the subscription's open removal pull request and deletes its branches, and writes nothing to main, since the app's delete keeps the whole repository.
+func (a api) leaveInPlace(ctx context.Context, subscription string) error {
+	deleted, err := repositoryDeleted(ctx, a)
+	switch {
+	case err != nil:
+		return handler.Wait("%s cannot be read, so its removal pull request is not closed yet: %v", a.repo, err)
+	case deleted:
+		return nil
+	}
+	if err := a.closeRemoval(ctx, subscription); err != nil {
+		return err
+	}
+	return a.deleteBranches(ctx, subscription)
+}
+
+// closeRemoval closes the subscription's open removal pull request unmerged, when there is one.
+func (a api) closeRemoval(ctx context.Context, subscription string) error {
+	pr, found, err := a.openPullRequest(ctx, removalBranch(subscription))
+	if err != nil || !found {
+		return err
+	}
+	return a.repos(ctx, http.MethodPatch, fmt.Sprintf("/pulls/%d", pr.number), map[string]any{"state": "closed"}, nil)
+}
+
 func (a api) removeThroughPullRequest(ctx context.Context, st mainState, subscription string, kept []Kept) error {
-	branch := BranchPrefix(subscription) + "remove"
+	branch := removalBranch(subscription)
 	title := fmt.Sprintf("mitstack: remove the files subscription %s landed", subscription)
 	trailer := observe.GitHubSubscriptionTrailer(subscription)
 	commit, err := a.removalCommit(ctx, st, branch, title+"\n\n"+trailer)
@@ -285,22 +318,33 @@ func (a api) merge(ctx context.Context, pr openPull, title, message string) erro
 
 // deleteBranches deletes every branch under the subscription's prefix, a branch already gone included.
 func (a api) deleteBranches(ctx context.Context, subscription string) error {
-	prefix := BranchPrefix(subscription)
-	var refs []struct {
-		Ref string `json:"ref"`
-	}
-	if err := a.repos(ctx, http.MethodGet, "/git/matching-refs/heads/"+strings.TrimSuffix(prefix, "/"), nil, &refs); err != nil {
+	names, err := a.branches(ctx, subscription)
+	if err != nil {
 		return err
 	}
-	for _, r := range refs {
-		name, ok := strings.CutPrefix(r.Ref, "refs/heads/")
-		if !ok || !strings.HasPrefix(name, prefix) {
-			continue
-		}
+	for _, name := range names {
 		err := a.repos(ctx, http.MethodDelete, "/git/refs/heads/"+name, nil, nil)
 		if err != nil && statusOf(err) != http.StatusUnprocessableEntity {
 			return err
 		}
 	}
 	return nil
+}
+
+// branches names every branch under the subscription's prefix.
+func (a api) branches(ctx context.Context, subscription string) ([]string, error) {
+	prefix := BranchPrefix(subscription)
+	var refs []struct {
+		Ref string `json:"ref"`
+	}
+	if err := a.repos(ctx, http.MethodGet, "/git/matching-refs/heads/"+strings.TrimSuffix(prefix, "/"), nil, &refs); err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, r := range refs {
+		if name, ok := strings.CutPrefix(r.Ref, "refs/heads/"); ok && strings.HasPrefix(name, prefix) {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }

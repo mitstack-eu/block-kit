@@ -396,6 +396,8 @@ func (f *Fake) route(method, rest string, r *http.Request, body map[string]any) 
 		return f.openPull(body)
 	case method == http.MethodPut && strings.HasPrefix(rest, "/pulls/") && strings.HasSuffix(rest, "/merge"):
 		return f.mergePull(strings.TrimSuffix(strings.TrimPrefix(rest, "/pulls/"), "/merge"), body)
+	case method == http.MethodPatch && strings.HasPrefix(rest, "/pulls/"):
+		return f.updatePull(strings.TrimPrefix(rest, "/pulls/"), body)
 	case method == http.MethodGet && rest == "/branches/main":
 		return f.readBranch()
 	case method == http.MethodGet && rest == "/branches/main/protection":
@@ -596,6 +598,19 @@ func (f *Fake) mergePull(number string, body map[string]any) (int, any) {
 	f.refs["heads/main"] = merged
 	p.Open, p.Merged, p.MergedRevision = false, true, merged
 	return http.StatusOK, map[string]any{"sha": merged, "merged": true, "message": "Pull Request successfully merged"}
+}
+
+// updatePull mirrors GitHub's update route, which closes a pull request unmerged.
+func (f *Fake) updatePull(number string, body map[string]any) (int, any) {
+	n, _ := strconv.Atoi(number)
+	if n < 1 || n > len(f.pulls) {
+		return http.StatusNotFound, map[string]any{"message": "Not Found"}
+	}
+	p := f.pulls[n-1]
+	if str(body["state"]) == "closed" && !p.Merged {
+		p.Open = false
+	}
+	return http.StatusOK, f.pullBody(p)
 }
 
 // squash applies what head changed against its parent onto main, refusing a path main has changed since that parent.
