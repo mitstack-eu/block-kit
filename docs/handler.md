@@ -124,6 +124,7 @@ and `d.Instances` read the same on every call.
 | `NeverActive` | `true` only when the engine has proved the subscription holds no user data |
 | `ReadOnly` | `true` on a validate that must write nothing, as [A validate that must write nothing](#a-validate-that-must-write-nothing) explains |
 | `Replacing` | `true` on a request that carries `"replacing": true`, the marker of a replacement, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
+| `Replace` | The declared resources the user asked a confirmed replacement to replace, on its validate and its upgrade, as [Snapshotting and restoring state](#snapshotting-and-restoring-state) explains |
 
 The platform runs an observer of its own, outside your block, which asks a
 provider whether a resource still exists. When it reads a resource absent, the
@@ -1038,6 +1039,16 @@ block whose `EnsureResources` starts a server's install a second time when the
 first attempt has not finished. Such a block skips that second install while
 `d.Replacing` is true, since ADR 0125 rules out an install retry during a
 replacement.
+
+A confirmed replacement also names the resources the user asked to replace,
+under `"replace"`, which the block reads as `d.Replace`. The validate that
+judges the replacement carries it, so the block's `PlanReplacements` reports
+them, and so does the upgrade that reinstalls them. The block replaces exactly
+those resources and no other. This upgrade names the node in `fsn1`:
+
+```json
+{"operation": "upgrade", "subscriptionId": "sub_a1b2c3d4e5", "replacing": true, "replace": ["node-fsn1"]}
+```
 
 | What goes wrong | Status |
 |---|---|
