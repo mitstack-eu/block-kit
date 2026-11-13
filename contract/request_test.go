@@ -277,6 +277,13 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 		}, func(t *testing.T, req contract.Request, d contract.Desired) {
 			wantField(t, "ResourceUnsubscribing, Desired().ResourceUnsubscribing", []bool{req.ResourceUnsubscribing, d.ResourceUnsubscribing}, []bool{true, true})
 		}},
+		{"the resources a confirmed replacement names reach Desired", func(m map[string]any) {
+			m["operation"], m["replacing"], m["replace"] = "upgrade", true, []any{"node-fsn1", "node-nbg1"}
+		}, func(t *testing.T, req contract.Request, d contract.Desired) {
+			want := []string{"node-fsn1", "node-nbg1"}
+			wantField(t, "Replace", req.Replace, want)
+			wantField(t, "Desired().Replace", d.Replace, want)
+		}},
 		{"recorded resources and requirement types reach Desired, at the request's time", func(m map[string]any) {
 			m["operation"], m["recordedResources"], m["requirementTypes"] = "unsubscribe", recorded, requirementTypes
 		}, func(t *testing.T, req contract.Request, d contract.Desired) {
@@ -500,6 +507,8 @@ func TestRequestMarshal_EncodesEachResourceFieldUnderItsWireNameOnlyWhenSet(t *t
 		{"no own secrets key when the subscription keeps none", contract.Request{}, "ownSecrets", nil},
 		{"a resource's unsubscribing marker", contract.Request{Resource: "firewall", ResourceUnsubscribing: true}, "resourceUnsubscribing", true},
 		{"no unsubscribing marker when unset", contract.Request{}, "resourceUnsubscribing", nil},
+		{"the resources a confirmed replacement names", contract.Request{Operation: "upgrade", Replacing: true, Replace: []string{"node-fsn1"}}, "replace", []any{"node-fsn1"}},
+		{"no replace key on an upgrade that replaces nothing", contract.Request{Operation: "upgrade"}, "replace", nil},
 		{"no resource type when unset", contract.Request{}, "resourceType", nil},
 		{"no never-active key when it may have been active", contract.Request{}, "neverActive", nil},
 		{"the settling marker, on the validate that settles a verb", contract.Request{Operation: "validate", Settling: true}, "settling", true},
@@ -648,6 +657,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 				t.Errorf("properties.replacing type = %v, want boolean", schemaTypes(prop))
 			}
 		}},
+		{"replace", func(t *testing.T, prop map[string]any) {
+			if items := schemaAt(t, doc, prop, "items"); !hasType(prop, "array") || !hasType(items, "string") {
+				t.Errorf("properties.replace = %v, want an array of strings", prop)
+			}
+		}},
 		{"caller", func(t *testing.T, prop map[string]any) {
 			if !hasType(prop, "object") {
 				t.Fatalf("properties.caller type = %v, want object", schemaTypes(prop))
@@ -676,11 +690,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_17_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_18_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.17.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.17.0: it adds the optional field settling, a minor change from 1.16.0, which added the operations snapshot and restore", doc["version"])
+	if doc["version"] != "1.18.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.18.0: it adds the optional field replace, a minor change from 1.17.0, which added the optional field settling", doc["version"])
 	}
 }
 
