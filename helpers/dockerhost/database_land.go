@@ -68,9 +68,6 @@ func (db Database) land(ctx context.Context, d contract.Desired, repo *hostRepo,
 	if heldByAnother(owner, r.target) {
 		return handler.Refuse("app-taken", "%s/%s belongs to the subscription %s, so %s cannot give the app a second database", r.app, db.fileCompose(), owner, r.subID)
 	}
-	if err := db.refuseTakenNames(ctx, repo, snap, r); err != nil {
-		return err
-	}
 	if err := db.refuseResize(ctx, repo, snap, r); err != nil {
 		return err
 	}
@@ -139,45 +136,6 @@ func (db Database) owner(ctx context.Context, repo *hostRepo, snap snapshot, app
 		return foreignOwner, nil
 	}
 	return c.Services[db.Engine.Service].Labels[labelSub], nil
-}
-
-// refuseTakenNames refuses a variable the app's env.names or another block's gives file already names, since the
-// host's agent starts no app whose sources name one variable twice.
-func (db Database) refuseTakenNames(ctx context.Context, repo *hostRepo, snap snapshot, r request) error {
-	takenBy := map[string]string{}
-	for p := range snap.paths {
-		dir, file := path.Split(p)
-		if dir != r.app+"/" || p == appPath(r.app, db.fileGives()) {
-			continue
-		}
-		var holder string
-		switch {
-		case file == "env.names":
-			holder = "the app's env.names"
-		case strings.HasSuffix(file, givesSuffix):
-			holder = strings.TrimSuffix(file, givesSuffix) + "'s gives file"
-		default:
-			continue
-		}
-		text, err := repo.read(ctx, snap.head, p)
-		if err != nil {
-			return err
-		}
-		for _, v := range givenVariables(text) {
-			takenBy[v] = holder
-		}
-	}
-	var problems []string
-	for _, v := range r.variables() {
-		if holder := takenBy[v]; holder != "" {
-			problems = append(problems, fmt.Sprintf("%s, which %s already names", v, holder))
-		}
-	}
-	if len(problems) > 0 {
-		return handler.Refuse("env-mapping", "the database cannot give %s, so nothing was written: %s; rename it with params[%q]",
-			r.app, strings.Join(problems, "; "), paramEnv)
-	}
-	return nil
 }
 
 // refuseResize refuses a disk other than the volume's, since the host makes the volume once at its first size.

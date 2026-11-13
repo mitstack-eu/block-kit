@@ -129,10 +129,8 @@ func (db Database) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 	if c.Read() == ContainerNotRunning {
 		runs = c.Name + " reads " + c.State
 	}
-	fixed := db.fixedValues(t)
 	obs := contract.Observation{
-		State: contract.Present, Identity: db.identity(repo, t),
-		Outputs:      map[string]string{"dbName": fixed["dbName"], "host": fixed["host"], "port": fixed["port"], "username": fixed["username"]},
+		State: contract.Present, Identity: db.identity(repo, t), Outputs: db.outputs(t),
 		StatusDetail: fmt.Sprintf("the host synced %s's database as main's head %s holds it, and %s", t.app, snap.head, runs),
 		Unhealthy:    unhealthy,
 	}

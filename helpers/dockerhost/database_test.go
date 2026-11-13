@@ -1,8 +1,8 @@
 package dockerhost_test
 
 // A Database lands each app's database in the app's own directory on the app's own network with no published port,
-// refuses a host without room or a variable the app holds with nothing written, reads the database through the host's
-// node report, and removes it only once its final backup is uploaded.
+// keeps its password on the host, refuses a host without room with nothing written, reads the database through the
+// host's node report, and removes it only once its final backup is uploaded.
 
 import (
 	"context"
@@ -61,13 +61,11 @@ func newDBEnv(t *testing.T) *dbEnv {
 func storeEngine() dockerhost.Engine {
 	return dockerhost.Engine{
 		Service: "store", Image: storeImage, Port: "7000", DataDir: "/data",
-		Entrypoint: func(n dockerhost.Names) []string {
-			return []string{"sh", "-c", `exec store --user="$` + n["username"] + `" --password="$` + n["password"] + `"`}
-		},
+		Entrypoint:  []string{"sh", "-c", `exec store --user=app --password="$` + dockerhost.PasswordVariable + `"`},
 		Command:     []string{"serve"},
 		Healthcheck: []string{"CMD", "store", "ping"},
-		Dump:        func(n dockerhost.Names) string { return "store dump --db=$" + n["dbName"] },
-		Restore:     func(n dockerhost.Names) string { return "store load --db=$" + n["dbName"] },
+		Dump:        "store dump --db=" + dockerhost.DatabaseName,
+		Restore:     "store load --db=" + dockerhost.DatabaseName,
 		Trouble:     regexp.MustCompile(`FATAL`),
 	}
 }
@@ -165,22 +163,37 @@ func TestDatabase_LandsTwoAppsEachOnItsOwnNetworkWithNoPublishedPortAndItsVolume
 	}
 }
 
-func TestDatabase_GivesTheValuesUnderTheNamesTheEnvInputSetsToTheAppTheEntrypointAndTheBackup(t *testing.T) {
+func TestDatabase_KeepsThePasswordOnTheHostWritesNoGivesFileAndLeavesTheAppsOwnVariablesAlone(t *testing.T) {
 	e := newDBEnv(t)
+	e.host.Set(map[string]string{"shop/env.names": "DB_HOST=secret:db-host\n"})
 
-	e.land(t, dbDesired("shop", map[string]string{"env": "STORE_USER=username, STORE_DB=dbName"}))
+	e.land(t, dbDesired("shop", nil))
 
-	gives := keyLines(e.host.Main()["shop/"+dbBlock+".gives"])
-	want := map[string]string{"DB_HOST": "fixed:shop-store", "DB_PORT": "fixed:7000", "STORE_DB": "fixed:app", "STORE_USER": "fixed:app", "DB_PASSWORD": "generated"}
-	if !maps.Equal(gives, want) {
-		t.Errorf("the gives file lists %v; want %v", gives, want)
+	if got, want := slices.Sorted(maps.Keys(e.host.Under("shop"))), slices.Sorted(slices.Values(append(landedFiles("shop"), "shop/env.names"))); !slices.Equal(got, want) {
+		t.Errorf("shop holds %v; want the database's files beside the app's env.names, and no gives file", got)
 	}
-	if got := e.compose(t, "shop").Services["store"].Entrypoint; !slices.Equal(got, []string{"sh", "-c", `exec store --user="$$STORE_USER" --password="$$DB_PASSWORD"`}) {
-		t.Errorf("the entrypoint is %q; want the engine's, its variables renamed and each $ escaped for Compose", got)
+	envNames := keyLines(e.host.Main()["shop/"+dbBlock+".env.names"])
+	if want := map[string]string{"DB_PASSWORD": "generated:" + dbBlock + ":password"}; !maps.Equal(envNames, want) {
+		t.Errorf("the database's env.names lists %v; want %v, the password the host generates and keeps", envNames, want)
+	}
+	if got := e.compose(t, "shop").Services["store"].Entrypoint; !slices.Equal(got, []string{"sh", "-c", `exec store --user=app --password="$$DB_PASSWORD"`}) {
+		t.Errorf("the entrypoint is %q; want the engine's with each $ escaped for Compose", got)
 	}
 	backup := keyLines(e.host.Main()["shop/"+dbBlock+".backup"])
-	if want := map[string]string{"service": "store", "command": "store dump --db=$STORE_DB", "restore": "store load --db=$STORE_DB", "every": "24h"}; !maps.Equal(backup, want) {
+	if want := map[string]string{"service": "store", "command": "store dump --db=app", "restore": "store load --db=app", "every": "24h"}; !maps.Equal(backup, want) {
 		t.Errorf("the backup file lists %v; want %v", backup, want)
+	}
+}
+
+func TestDatabase_OutputsTheFourValuesAndThePasswordsSecretNameAndNoPassword(t *testing.T) {
+	e := newDBEnv(t)
+	e.land(t, dbDesired("shop", nil))
+
+	obs := e.observe(t, dbDesired("shop", nil))
+
+	want := map[string]string{"host": "shop-store", "port": "7000", "dbName": "app", "username": "app", "passwordSecret": "generated:" + dbBlock + ":password"}
+	if obs.State != contract.Present || !maps.Equal(obs.Outputs, want) {
+		t.Errorf("ObserveResource = %s with outputs %v; want present with %v", obs.State, obs.Outputs, want)
 	}
 }
 
@@ -191,14 +204,7 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 		before            func(*testing.T, *dbEnv)
 		edit              func(*contract.Desired)
 	}{
-		{name: "a variable the app's env.names holds", class: "env-mapping", says: "DB_HOST, which the app's env.names already names",
-			before: func(_ *testing.T, e *dbEnv) { e.host.Set(map[string]string{"shop/env.names": "DB_HOST=secret:host\n"}) }},
-		{name: "a variable another block gives", class: "env-mapping", says: "DB_PASSWORD, which docker-cache's gives file already names",
-			before: func(_ *testing.T, e *dbEnv) {
-				e.host.Set(map[string]string{"shop/docker-cache.gives": "DB_PASSWORD=generated\n"})
-			}},
-		{name: "an env input naming no value", class: "invalid-param", says: `"X=nothing" names "nothing"`, params: map[string]string{"env": "X=nothing"}},
-		{name: "an env input giving two values one name", class: "invalid-param", says: "host and port would both be DB_PORT", params: map[string]string{"env": "DB_PORT=host"}},
+		{name: "a disk that does not parse", class: "invalid-param", says: `params["dbDisk"] is "lots"`, params: map[string]string{"dbDisk": "lots"}},
 		{name: "memory past what the host has free", class: "host-full", says: "the host has 2.5 vCPU, 512 MiB and 69 GiB of disk free",
 			params: map[string]string{"dbMemory": "1Gi"},
 			before: func(_ *testing.T, e *dbEnv) {
@@ -371,7 +377,7 @@ func TestDatabase_UnsubscribeRemovesADatabaseTheHostNeverMadeAVolumeForAndLeaves
 }
 
 func landedFiles(app string) []string {
-	return slices.Sorted(slices.Values([]string{app + "/" + dbBlock + ".backup", app + "/" + dbBlock + ".compose.yaml", app + "/" + dbBlock + ".gives", app + "/reservations/" + dbBlock + ".json"}))
+	return slices.Sorted(slices.Values([]string{app + "/" + dbBlock + ".backup", app + "/" + dbBlock + ".compose.yaml", app + "/" + dbBlock + ".env.names", app + "/reservations/" + dbBlock + ".json"}))
 }
 
 func TestDatabase_UnsubscribeKeepsTheDatabaseWhileTheHostCannotShowAFinalBackup(t *testing.T) {
@@ -423,10 +429,10 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 		{name: "a silent host", land: true, host: func(h *dockerhosttest.Host) { h.Silent = true }, state: contract.Unknown, says: "no node report"},
 		{name: "a report naming no synced commit", land: true, host: func(h *dockerhosttest.Host) { h.Unsynced = true }, state: contract.Unknown,
 			says: "carries no host.agent.syncedCommit"},
-		{name: "an agent behind on the database's files", land: true, state: contract.Unknown, says: "whose " + dbBlock + ".gives differs from main's head",
+		{name: "an agent behind on the database's files", land: true, state: contract.Unknown, says: "whose " + dbBlock + ".env.names differs from main's head",
 			host: func(h *dockerhosttest.Host) {
 				synced := h.Head()
-				h.Set(map[string]string{"shop/" + dbBlock + ".gives": "DB_HOST=fixed:elsewhere\n"})
+				h.Set(map[string]string{"shop/" + dbBlock + ".env.names": "DB_PASSWORD=generated:elsewhere:password\n"})
 				h.Lagging = synced
 			}},
 		{name: "an agent behind only on another app's files", land: true, state: contract.Present, says: "shop-store runs",
@@ -439,8 +445,8 @@ func TestDatabase_ObserveReadsTheDatabasePresentOnlyOnceTheHostRunsItsFilesHealt
 			state: contract.Unknown, says: "whether the database's files changed since cannot be read"},
 		{name: "a container still starting", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"health": "starting"} },
 			state: contract.Unknown, says: "still starting"},
-		{name: "a database missing its gives file", land: true, host: func(h *dockerhosttest.Host) { h.Set(map[string]string{"shop/" + dbBlock + ".gives": ""}) },
-			state: contract.Unknown, says: "without " + dbBlock + ".gives"},
+		{name: "a database missing its env.names", land: true, host: func(h *dockerhosttest.Host) { h.Set(map[string]string{"shop/" + dbBlock + ".env.names": ""}) },
+			state: contract.Unknown, says: "without " + dbBlock + ".env.names"},
 		{name: "a report naming no container of the database", land: true, host: func(h *dockerhosttest.Host) { h.Containers["shop"] = map[string]any{"container": "shop-web"} },
 			state: contract.Unknown, says: "shows no shop-store"},
 		{name: "a container that exited before it ever read active", land: true, neverActive: true, state: contract.Unknown, says: "reads exited: FATAL: password authentication failed",

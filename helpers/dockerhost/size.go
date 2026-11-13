@@ -83,7 +83,7 @@ type Ask struct {
 	Size Reservation
 }
 
-// Capacity is the allocatable capacity the host's report gives whole, a wait for the host's next report while it gives none or one CapacityError explains, or a refusal of a host the platform attests absent.
+// Capacity is the allocatable capacity the host's report holds whole, a wait for the host's next report while it holds none or one CapacityError explains, or a refusal of a host the platform attests absent.
 func Capacity(report Report, found bool, part string) (Allocatable, error) {
 	allocatable, given, unread := report.capacity()
 	switch {
@@ -91,7 +91,7 @@ func Capacity(report Report, found bool, part string) (Allocatable, error) {
 		return Allocatable{}, handler.Refuse(classHostAbsent, "the platform's %s read the host's %s absent, so %s cannot be placed on it; give the app a running host",
 			report.absence.Observer, report.absence.Resource, part)
 	case found && unread != "":
-		return Allocatable{}, handler.WaitForSignal("the host's newest node report gives no allocatable capacity but the error %q, so %s waits for a report that gives it before it is sized",
+		return Allocatable{}, handler.WaitForSignal("the host's newest node report holds no allocatable capacity but the error %q, so %s waits for a report that holds it before it is sized",
 			unread, part)
 	case !found || !given:
 		return Allocatable{}, handler.WaitForSignal("the host has sent no node report giving its allocatable capacity yet, so %s waits for that capacity report before it is sized", part)

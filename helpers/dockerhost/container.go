@@ -20,7 +20,7 @@ type Container struct {
 	Logs         *string `json:"logs"`
 }
 
-// ContainerReading is the one answer every reader gives a container; ContainerStarting reads neither healthy nor failed.
+// ContainerReading is the one answer every reader returns for a container; ContainerStarting reads neither healthy nor failed.
 type ContainerReading int
 
 const (

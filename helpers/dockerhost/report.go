@@ -75,7 +75,7 @@ type reportedCapacity struct {
 
 const allocatablePath = "host.capacity.allocatable"
 
-// capacity reads host.capacity alone, and a report naming neither a capacity nor an error gives none with an empty unread.
+// capacity reads host.capacity alone, and a report naming neither a capacity nor an error yields none with an empty unread.
 func (r Report) capacity() (allocatable Allocatable, given bool, unread string) {
 	if len(r.body) == 0 {
 		return Allocatable{}, false, ""
@@ -97,7 +97,7 @@ func (r Report) capacity() (allocatable Allocatable, given bool, unread string) 
 			return Allocatable{}, false, allocatablePath + " lacks " + m.name
 		}
 		if *m.amount < 0 {
-			return Allocatable{}, false, fmt.Sprintf("%s gives a negative %s, %d", allocatablePath, m.name, *m.amount)
+			return Allocatable{}, false, fmt.Sprintf("%s holds a negative %s, %d", allocatablePath, m.name, *m.amount)
 		}
 	}
 	return Allocatable{CPUMillis: *reported.CPUMillis, MemoryBytes: *reported.MemoryBytes, DiskBytes: *reported.DiskBytes}, true, ""
@@ -123,13 +123,13 @@ func misread(err error) string {
 	return fmt.Sprintf("%s holds a JSON %s", mistyped.Field, mistyped.Value)
 }
 
-// Allocatable is the capacity the report gives whole, given false when it gives none or one CapacityError explains.
+// Allocatable is the capacity the report holds whole, with false when it holds none or one CapacityError explains.
 func (r Report) Allocatable() (Allocatable, bool) {
 	allocatable, given, _ := r.capacity()
 	return allocatable, given
 }
 
-// CapacityError is why the report gives no allocatable capacity to size on, empty when it gives one whole or names no reason.
+// CapacityError is why the report holds no allocatable capacity to size on, empty when it holds one whole or names no reason.
 func (r Report) CapacityError() string {
 	_, _, unread := r.capacity()
 	return unread
@@ -164,7 +164,7 @@ func (r Report) SyncedCommit() (string, error) {
 	}
 	var commit *string
 	if err := json.Unmarshal(raw, &commit); err != nil {
-		return "", fmt.Errorf("the host's newest node report gives host.agent.syncedCommit as %s, which is not a commit: %w", raw, err)
+		return "", fmt.Errorf("the host's newest node report holds host.agent.syncedCommit as %s, which is not a commit: %w", raw, err)
 	}
 	if commit == nil || *commit == "" {
 		return "", errors.New("the host's agent has not synced since it took its current release, so the commit it runs cannot be read until its next sync")
@@ -238,7 +238,7 @@ func SubscriptionLogs(ctx context.Context, api observe.NodeReportsAPI, d contrac
 	return lines, nil
 }
 
-// AppRelease is an app's newest release command as its host's newest node report gives it, which the host keeps until the next release command runs.
+// AppRelease is an app's newest release command as its host's newest node report records it, which the host keeps until the next release command runs.
 type AppRelease struct {
 	Failed        bool
 	FailedDigest  string
@@ -289,7 +289,7 @@ func (a AskedRelease) AskedAbsent() bool {
 	return a.Failed && !a.FailedOnAsked() && a.ServingDigest != a.AskedDigest
 }
 
-// ReleaseAgainst reads app's newest release command as AppRelease does and judges it against asked, the image ImageFile.Asked gives, so every reader of the record applies one rule.
+// ReleaseAgainst reads app's newest release command as AppRelease does and judges it against asked, the image ImageFile.Asked returns, so every reader of the record applies one rule.
 func (r Report) ReleaseAgainst(app, subscription, asked string) (AskedRelease, error) {
 	read, exitCode, err := r.appRelease(app, subscription)
 	if err != nil {
@@ -348,7 +348,7 @@ func digestOf(image string) string {
 	return image
 }
 
-// led gives each non-empty line of text led by its container's name.
+// led returns each non-empty line of text led by its container's name.
 func led(container, text string) []string {
 	var lines []string
 	for line := range strings.Lines(text) {

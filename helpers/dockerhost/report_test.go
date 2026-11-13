@@ -416,7 +416,7 @@ func TestReport_CapacityErrorIsTheReasonAReportGivesInPlaceOfItsAllocatableCapac
 		{name: "a capacity without its CPU names cpuMillis", body: `{"host":{"capacity":{"allocatable":{"memoryBytes":1,"diskBytes":1}}}}`, want: "host.capacity.allocatable lacks cpuMillis"},
 		{name: "a capacity without its memory names memoryBytes", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"diskBytes":1}}}}`, want: "host.capacity.allocatable lacks memoryBytes"},
 		{name: "a capacity without its disk names diskBytes", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"memoryBytes":1}}}}`, want: "host.capacity.allocatable lacks diskBytes"},
-		{name: "a negative amount names its measure", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"memoryBytes":-1,"diskBytes":1}}}}`, want: "host.capacity.allocatable gives a negative memoryBytes, -1"},
+		{name: "a negative amount names its measure", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"memoryBytes":-1,"diskBytes":1}}}}`, want: "host.capacity.allocatable holds a negative memoryBytes, -1"},
 		{name: "an amount given as text names its measure", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":"[redacted]6","memoryBytes":1,"diskBytes":1}}}}`,
 			want: "host.capacity.allocatable.cpuMillis holds a JSON string, which no amount can be read from"},
 		{name: "an amount past what an int64 holds names its measure", body: `{"host":{"capacity":{"allocatable":{"cpuMillis":4000,"memoryBytes":1,"diskBytes":9223372036854775808}}}}`,

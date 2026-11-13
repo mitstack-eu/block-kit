@@ -106,7 +106,7 @@ func SSHLockdown() File {
 	}
 }
 
-// Caddyfile refuses any value that could break out of the config, and gives a client sending no SNI the IP's site.
+// Caddyfile refuses any value that could break out of the config, and serves a client sending no SNI the IP's site.
 func (e Edge) Caddyfile() (File, error) {
 	if err := e.check(); err != nil {
 		return File{}, err

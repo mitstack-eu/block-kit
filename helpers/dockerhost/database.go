@@ -1,9 +1,7 @@
 package dockerhost
 
 import (
-	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -22,18 +20,21 @@ const (
 	paramCPU    = "dbCpu"
 	paramMemory = "dbMemory"
 	paramDisk   = "dbDisk"
-	paramEnv    = "env"
 
 	defaultCPU    = "0.5"
 	defaultMemory = "512Mi"
 	defaultDisk   = "1Gi"
-
-	databaseName = "app"
-	databaseUser = "app"
 )
 
-// Database is a per-app block that runs one app's database on its org's Docker host, lands it only on a host with room,
-// and removes it only once its final backup is uploaded.
+// DatabaseName and DatabaseUser are the same for every app, and its container reads the password as PasswordVariable.
+const (
+	DatabaseName       = "app"
+	DatabaseUser       = "app"
+	PasswordVariable   = "DB_PASSWORD"
+	passwordSecretName = "password"
+)
+
+// Database runs one app's database on its org's Docker host, lands it only with room, removes it only after a backup.
 type Database struct {
 	// Block is the block's id, which names its files and labels its volume and backups on the host.
 	Block   string
@@ -49,32 +50,22 @@ type Database struct {
 type Engine struct {
 	// Service names the compose service, the container <app>-<Service> and its volume.
 	Service string
-	// Image is pinned by digest.
 	Image   string
 	Port    string
 	DataDir string
 	// Entrypoint is written with plain "$" signs, which the kit escapes for Compose.
-	Entrypoint  func(Names) []string
+	Entrypoint  []string
 	Command     []string
 	Environment map[string]string
 	Healthcheck []string
 	// Dump writes the database to its output and Restore loads a dump from its input, each one shell command line.
-	Dump, Restore func(Names) string
+	Dump, Restore string
 	Trouble       *regexp.Regexp
 }
 
-// Names maps each value a database gives, such as password, to the variable the app reads it under.
-type Names map[string]string
-
-var values = []struct{ name, variable string }{
-	{"host", "DB_HOST"}, {"port", "DB_PORT"}, {"dbName", "DB_NAME"}, {"username", "DB_USER"}, {"password", "DB_PASSWORD"},
-}
-
 var (
-	// appRe is the directory name the host's pull agent accepts.
 	appRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	subIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	varRe   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 func (db Database) now() time.Time {
@@ -90,8 +81,7 @@ type target struct {
 
 type request struct {
 	target
-	size  Reservation
-	names Names
+	size Reservation
 }
 
 func readTarget(d contract.Desired) (target, error) {
@@ -124,11 +114,7 @@ func readRequest(d contract.Desired) (request, error) {
 	if size.DiskBytes, err = readParam(d.Params, paramDisk, defaultDisk, ParseSize); err != nil {
 		return request{}, err
 	}
-	names, err := readNames(d.Params[paramEnv])
-	if err != nil {
-		return request{}, err
-	}
-	return request{target: t, size: size, names: names}, nil
+	return request{target: t, size: size}, nil
 }
 
 func readParam(params map[string]string, name, fallback string, parse func(string) (int64, error)) (int64, error) {
@@ -141,50 +127,6 @@ func readParam(params map[string]string, name, fallback string, parse func(strin
 		return 0, handler.Refuse("invalid-param", `params["%s"] is %q; %v`, name, v, err)
 	}
 	return n, nil
-}
-
-// readNames reads the env input's NAME=value entries over the default names, refusing one it cannot give.
-func readNames(env string) (Names, error) {
-	names := Names{}
-	for _, v := range values {
-		names[v.name] = v.variable
-	}
-	var problems []string
-	for _, entry := range strings.Split(env, ",") {
-		if entry = strings.TrimSpace(entry); entry == "" {
-			continue
-		}
-		variable, value, ok := strings.Cut(entry, "=")
-		variable, value = strings.TrimSpace(variable), strings.TrimSpace(value)
-		switch {
-		case !ok || !varRe.MatchString(variable):
-			problems = append(problems, fmt.Sprintf("%q is not NAME=value with NAME a variable name", entry))
-		case names[value] == "":
-			problems = append(problems, fmt.Sprintf("%q names %q, which is not one of host, port, dbName, username and password", entry, value))
-		default:
-			names[value] = variable
-		}
-	}
-	seen := map[string]string{}
-	for _, v := range values {
-		if other, taken := seen[names[v.name]]; taken {
-			problems = append(problems, fmt.Sprintf("%s and %s would both be %s", other, v.name, names[v.name]))
-		}
-		seen[names[v.name]] = v.name
-	}
-	if len(problems) > 0 {
-		return nil, handler.Refuse("invalid-param", `params["%s"] cannot name the database's variables: %s`, paramEnv, strings.Join(problems, "; "))
-	}
-	return names, nil
-}
-
-func (r request) variables() []string {
-	var out []string
-	for _, v := range r.names {
-		out = append(out, v)
-	}
-	slices.Sort(out)
-	return out
 }
 
 func (db Database) container(t target) string { return t.app + "-" + db.Engine.Service }
