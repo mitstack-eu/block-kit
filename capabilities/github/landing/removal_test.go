@@ -772,22 +772,30 @@ func TestUnsubscribe_ForAnAppsDeleteWritesNothingToARepositoryThatIsGoneOrCannot
 	}
 }
 
-func TestObserver_DuringAnAppsDeleteReadsALandingLeftOnMainAbsentAndOutsideAnUnsubscribeAsBefore(t *testing.T) {
+func TestObserver_DuringAnAppsDeleteReadsALandingLeftOnMainAbsentOnceNoBranchOfItsSubscriptionIsLeft(t *testing.T) {
+	observer := func(c *ghapi.Client) handler.Observer {
+		return landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return c, nil }}
+	}
+	offer := func(c *ghapi.Client) handler.Observer {
+		return landing.OfferObserver{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return c, nil }}
+	}
+	nothing := func(*landingtest.Fake) {}
+	branch := func(name string) func(*landingtest.Fake) { return func(f *landingtest.Fake) { f.Branch(name) } }
 	for _, tc := range []struct {
 		name          string
 		observer      func(c *ghapi.Client) handler.Observer
+		arrange       func(f *landingtest.Fake)
 		unsubscribing bool
 		want          contract.State
 	}{
-		{"Observer during the delete's unsubscribe", func(c *ghapi.Client) handler.Observer {
-			return landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return c, nil }}
-		}, true, contract.Absent},
-		{"OfferObserver during the delete's unsubscribe", func(c *ghapi.Client) handler.Observer {
-			return landing.OfferObserver{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return c, nil }}
-		}, true, contract.Absent},
-		{"Observer outside an unsubscribe", func(c *ghapi.Client) handler.Observer {
-			return landing.Observer{Client: func(context.Context, contract.Desired) (*ghapi.Client, error) { return c, nil }}
-		}, false, contract.Present},
+		{"Observer during the delete's unsubscribe", observer, nothing, true, contract.Absent},
+		{"OfferObserver during the delete's unsubscribe", offer, nothing, true, contract.Absent},
+		{"only a branch of the app's own left", observer, branch("feature/app-work"), true, contract.Absent},
+		{"the repository proven deleted", observer, (*landingtest.Fake).DeleteRepository, true, contract.Absent},
+		{"the subscription's removal branch left", observer, branch("mitstack/" + subscription + "/remove"), true, contract.Present},
+		{"the subscription's removal branch left, read through OfferObserver", offer, branch("mitstack/" + subscription + "/remove"), true, contract.Present},
+		{"the repository answering 403", observer, func(f *landingtest.Fake) { f.Answer(http.MethodGet, "/repos/"+repo, http.StatusForbidden) }, true, contract.Unknown},
+		{"Observer outside an unsubscribe", observer, nothing, false, contract.Present},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := landingtest.New(t, repo)
@@ -795,13 +803,14 @@ func TestObserver_DuringAnAppsDeleteReadsALandingLeftOnMainAbsentAndOutsideAnUns
 			if err != nil {
 				t.Fatalf("Identity: %v", err)
 			}
+			tc.arrange(f)
 			ref := contract.ResourceRef{Name: "starter", Type: "github.scaffold-commit", Identity: identity, Unsubscribing: tc.unsubscribing,
 				Desired: contract.Desired{Identity: contract.Identity{SubscriptionID: subscription}}}
 
 			obs, err := tc.observer(client(f)).ObserveResource(contract.WithAppDeleting(context.Background()), ref)
 
 			if err != nil || obs.State != tc.want {
-				t.Errorf("observe with main still carrying every landed file = %s (%s), %v; want %s", obs.State, obs.StatusDetail, err, tc.want)
+				t.Errorf("observe with main carrying every landed file = %s (%s), %v; want %s", obs.State, obs.StatusDetail, err, tc.want)
 			}
 		})
 	}
