@@ -476,9 +476,9 @@ and `Revert` retry it on a fresh head a bounded number of times.
 
 Called with a context the handler marked read-only, the repository still
 reads, and its `Commit` lands nothing and returns an error wrapping
-`contract.ErrReadOnly`. `CommitManifests`, `Deploy` and `Revert` return that
-error whenever they have a change to commit, and none when the files already
-stand as asked. [A validate that must write nothing](handler.md#a-validate-that-must-write-nothing)
+`contract.ErrReadOnly`. `CommitManifests`, which `Deploy` commits through, and
+`Revert` return that error when they reach a commit, and `CommitManifests`
+returns none when the files already stand as asked. [A validate that must write nothing](handler.md#a-validate-that-must-write-nothing)
 says which requests are read-only and what your block checks itself.
 
 In tests, `gitopstest.NewRepository` and `gitopstest.NewNotifications` give

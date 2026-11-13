@@ -157,17 +157,23 @@ resource. Only that one may finish work the call started, and its request
 carries `"settling": true`. Every other validate, including every validate that
 names a resource, must write nothing.
 
-The handler marks the context it hands your block for such a request. Each
-kit client reads that mark from the context it is called with and refuses a
-write with an error wrapping `contract.ErrReadOnly`, so a client you build
-once and reuse refuses or writes by the request it is called for. Reads go
-through. These clients refuse:
+The handler marks the context it hands your block for such a request. The kit
+refuses a write in its HTTP clients for GitHub and for Hetzner, and in nothing
+else. Each of them reads the mark from the context it is called with and
+refuses a write with an error wrapping `contract.ErrReadOnly`, so a client you
+build once and reuse refuses or writes by the request it is called for. Reads
+go through:
 
-- every client in `capabilities/github/ghapi`, which also covers
+- the clients in `capabilities/github/ghapi`, which also covers
   `capabilities/github/gitops` and `helpers/dockerhost`, since they send
   through it
 - `capabilities/github/landing`
 - `capabilities/hetzner/cloud` and `capabilities/hetzner/robot`
+
+`contract.RefuseWrite` refuses every method but GET and HEAD, so a read that a
+future client sends by POST needs its own exemption. Only a validate is ever
+read-only: every other operation reaches your block with a context that may
+write.
 
 Your block's own code reads the same decision from `d.ReadOnly`, which is
 `true` on every such validate and `false` on every other call. A block that
@@ -183,11 +189,23 @@ reverted, err := gitops.Revert(ctx, b.repo, b.notes, revert)
 A dry run of a server whose deploy failed then answers the block's verdict, the
 failed deploy, and the validate that settles the call does the revert.
 
-What stays unguarded is a write the kit does not send for you: a call through
-your own HTTP client, the `aws` command (`capabilities/aws/apphostname`), a
-command run on a host (`helpers/hostexec`, `capabilities/hetzner/robot/rescuessh`),
-an upload (`helpers/continuity`), and any client you call with a context that
-did not come from the handler. Guard those with `d.ReadOnly` yourself.
+Everything else that can change something outside the process is unguarded,
+and your block guards it with `d.ReadOnly`:
+
+- a call through your own HTTP client, and any client you call with a context
+  that did not come from the handler
+- `capabilities/aws/handover` (`Snapshot` creates an EC2 snapshot through the
+  API you pass it)
+- `capabilities/aws/apphostname` (the `aws route53` command)
+- `capabilities/aws/cloudid` (the `aws` command that exports credentials, and
+  a temporary file for the web-identity token)
+- `helpers/hostexec` (`ssh` and `aws ssm send-command` run a command on a host)
+- `helpers/continuity` (a snapshot restore into OpenBao, and a volume directory
+  it creates and removes)
+
+Three helpers call the platform and not a resource, so a read-only request does
+not stop them: `helpers/events` posts the events callback, `helpers/lease`
+posts a lease request and `helpers/signin` posts the token exchange.
 
 The block check fails a block that writes on such a validate. After each
 validate it sends without `settling`, it counts the writes the fake
@@ -195,7 +213,8 @@ repositories your `Provider` hands it took, and reads the answer for the kit's
 refusal. It fails with the block's name, "wrote on a validate that settles no
 verb" and what it wrote. A write to anything the check does not fake, such as
 your own client talking to a service the check never sees, stays invisible to
-it.
+it. A block that swallows the kit's refusal and then writes to a fake other
+than those repositories passes unseen.
 
 A write the kit refuses reaches the platform as an error with no class, since a
 class would make a dry run fail the change as invalid. The platform reads that
