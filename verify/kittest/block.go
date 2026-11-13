@@ -671,7 +671,6 @@ func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract
 	return c.answeredOK(operation, status, resp, err)
 }
 
-// repositoryWrites counts the writes each fake repository the Provider hands the check has taken.
 func (c *blockCheck) repositoryWrites() map[string]int {
 	repos, _ := c.repositories()
 	counts := make(map[string]int, len(repos))
@@ -704,7 +703,6 @@ func (c *blockCheck) noWriteOnReadOnly(before map[string]int, resp contract.Resp
 	}
 }
 
-// problemOnce records a problem the check has not recorded already, so a write every validate repeats fails once.
 func (c *blockCheck) problemOnce(format string, args ...any) {
 	if c.reported == nil {
 		c.reported = map[string]bool{}
@@ -715,7 +713,6 @@ func (c *blockCheck) problemOnce(format string, args ...any) {
 	}
 }
 
-// settleOK sends converge's call, whose validate is a settle poll.
 func (c *blockCheck) settleOK(call string, d contract.Desired) (int, contract.Response, bool) {
 	if call != "validate" {
 		return c.sendOK(call, d)
