@@ -177,20 +177,8 @@ func TestGitHubRepository_CommitManifestsRevertAndAStaleParentEndToEnd(t *testin
 	}
 }
 
-// NewGitHubRepository refuses the fake's loopback address, so repoBuiltFrom points the repository it built from d at the fake afterwards.
-func repoBuiltFrom(t *testing.T, f *fakeGitHub, d contract.Desired) *gitops.GitHubRepository {
-	t.Helper()
-	t.Setenv(ghapi.HostsEnv, "")
-	repo, err := gitops.NewGitHubRepository(d, fakeRepo)
-	if err != nil {
-		t.Fatalf("NewGitHubRepository: %v", err)
-	}
-	repo.Client = newGitHubRepo(t, f).Client
-	return repo
-}
-
-func TestGitHubRepository_BuiltFromAReadOnlyRequestRefusesEachWriteAndStillReads(t *testing.T) {
-	ctx := context.Background()
+func TestGitHubRepository_ACallForAContextMarkedReadOnlyRefusesEachWriteAndStillReads(t *testing.T) {
+	ctx := contract.WithReadOnly(context.Background())
 	f := newFakeGitHub(t, githubToken)
 	const deploy = "apps/app-alpha/deploy.yaml"
 	v1 := landOn(t, newGitHubRepo(t, f), "", map[string][]byte{deploy: []byte("image: v1\n")})
@@ -198,9 +186,7 @@ func TestGitHubRepository_BuiltFromAReadOnlyRequestRefusesEachWriteAndStillReads
 	notes := gitopstest.NewNotifications()
 	notes.Set(gitops.Notification{App: "app-alpha", Revision: v1, Phase: "Succeeded", Health: "Healthy"})
 	notes.Set(gitops.Notification{App: "app-alpha", Revision: v2, Phase: "Failed", Health: "Degraded"})
-	readOnly := githubDesired("https://api.github.com")
-	readOnly.ReadOnly = true
-	repo := repoBuiltFrom(t, f, readOnly)
+	repo := newGitHubRepo(t, f)
 	commits := f.commitCount()
 
 	_, commitErr := repo.Commit(ctx, v2, map[string][]byte{deploy: []byte("image: v3\n")}, "app-alpha: v3")
@@ -226,9 +212,13 @@ func TestGitHubRepository_BuiltFromAReadOnlyRequestRefusesEachWriteAndStillReads
 	wantFilesAt(t, repo, v2, map[string][]byte{deploy: []byte("image: v2\n")})
 }
 
-func TestGitHubRepository_BuiltFromARequestThatMayWriteCommits(t *testing.T) {
+func TestGitHubRepository_ARepositoryBuiltOnceRefusesOnlyTheCallsMarkedReadOnly(t *testing.T) {
 	f := newFakeGitHub(t, githubToken)
-	repo := repoBuiltFrom(t, f, githubDesired("https://api.github.com"))
+	repo := newGitHubRepo(t, f)
+	_, refused := repo.Commit(contract.WithReadOnly(context.Background()), "", map[string][]byte{"a.yaml": []byte("a0\n")}, "refused")
+	if !errors.Is(refused, contract.ErrReadOnly) {
+		t.Fatalf("Commit for a read-only context = %v, want an error wrapping contract.ErrReadOnly", refused)
+	}
 
 	rev, err := repo.Commit(context.Background(), "", map[string][]byte{"a.yaml": []byte("a1\n")}, "seed")
 

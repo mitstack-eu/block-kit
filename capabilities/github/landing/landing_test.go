@@ -3,6 +3,7 @@ package landing_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -300,5 +301,24 @@ func TestOfferObserver_AnInstallationListPastItsBoundIsUnknownNamingTheCallAndTh
 
 	if want := "GET /installation/repositories?per_page=1: the answer is longer than 1048576 bytes"; obs.State != contract.Unknown || !strings.Contains(obs.StatusDetail, want) {
 		t.Errorf("observe = %s (%s); want unknown naming %q", obs.State, obs.StatusDetail, want)
+	}
+}
+
+func TestLandAndRemove_LandNothingForAContextMarkedReadOnly(t *testing.T) {
+	f := landingtest.New(t, repo)
+	rec := land(t, f, threeFiles, landing.Record{})
+	writes := len(f.Writes())
+	ctx := contract.WithReadOnly(context.Background())
+
+	_, landErr := landing.Land(ctx, client(f), landing.Landing{Repository: repo, Message: "again", Files: map[string]string{"new.txt": "new\n"}, Prior: rec})
+	_, removeErr := landing.Remove(ctx, client(f), landing.Removal{Subscription: subscription, Records: []landing.Record{rec}})
+
+	for call, err := range map[string]error{"Land": landErr, "Remove": removeErr} {
+		if !errors.Is(err, contract.ErrReadOnly) {
+			t.Errorf("%s for a read-only context = %v, want an error wrapping contract.ErrReadOnly", call, err)
+		}
+	}
+	if got := len(f.Writes()); got != writes {
+		t.Errorf("the repository took %d writes after the read-only calls, want the %d the first landing made", got, writes)
 	}
 }

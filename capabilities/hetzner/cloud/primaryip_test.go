@@ -14,6 +14,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/cloud"
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/cloud/cloudtest"
+	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 )
 
@@ -225,5 +226,24 @@ func TestClient_ReadsHetznersErrorAnswerWithoutSayingTheToken(t *testing.T) {
 
 	if cloud.ErrorCode(err) != "unauthorized" || !strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "another-token") {
 		t.Fatalf("KeepPrimaryIPs = %v, want Hetzner's 401 unauthorized without the token", err)
+	}
+}
+
+func TestPrimaryIPCalls_AContextMarkedReadOnlyWritesNothing(t *testing.T) {
+	f, c := newFake(t)
+	f.AddPrimaryIP(cloudtest.PrimaryIP{Location: "fsn1", AutoDelete: true, Labels: ours})
+	marked := contract.WithReadOnly(ctx)
+
+	for call, err := range map[string]error{
+		"KeepPrimaryIPs":   c.KeepPrimaryIPs(marked, ours),
+		"DeletePrimaryIPs": c.DeletePrimaryIPs(marked, ours),
+	} {
+		if !errors.Is(err, contract.ErrReadOnly) {
+			t.Errorf("%s for a read-only context = %v, want an error wrapping contract.ErrReadOnly", call, err)
+		}
+	}
+
+	if writes := f.Writes(); len(writes) != 0 {
+		t.Errorf("a read-only context sent %v, want no write", writes)
 	}
 }

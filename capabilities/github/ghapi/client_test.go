@@ -2,6 +2,7 @@ package ghapi_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/contract"
 )
 
 func TestEnsureRepo_AndDeleteRepo(t *testing.T) {
@@ -221,5 +223,29 @@ func sentTree(commits, tree string) func(t *testing.T, f *fakeGitHub) {
 		if got := f.bodies(commits); len(got) != 1 || got[0]["tree"] != tree {
 			t.Errorf("%s bodies = %v, want one carrying tree %s", commits, got, tree)
 		}
+	}
+}
+
+func TestClient_RefusesEachWriteForAContextMarkedReadOnlyAndStillReads(t *testing.T) {
+	f := &fakeGitHub{routes: map[string][]reply{}, fallback: &reply{http.StatusOK, `{}`}}
+	c := serve(t, f)
+	ctx := contract.WithReadOnly(context.Background())
+
+	for write, err := range map[string]error{
+		"DeleteRepo":  c.DeleteRepo(ctx, "acme", "widget"),
+		"SetVariable": c.SetVariable(ctx, "acme/widget", "NAME", "value"),
+		"CommitFiles": c.CommitFiles(ctx, "acme/widget", "message", map[string]string{"a.txt": "a"}),
+	} {
+		if !errors.Is(err, contract.ErrReadOnly) {
+			t.Errorf("%s for a read-only context = %v, want an error wrapping contract.ErrReadOnly", write, err)
+		}
+	}
+	_, readErr := c.HeadCommit(ctx, "acme/widget")
+
+	if writes := slices.DeleteFunc(f.keys(), func(key string) bool { return strings.HasPrefix(key, "GET ") }); len(writes) != 0 {
+		t.Errorf("a read-only context sent %v, want no request but a GET", writes)
+	}
+	if readErr != nil && errors.Is(readErr, contract.ErrReadOnly) {
+		t.Errorf("HeadCommit for a read-only context = %v, want the read to go through", readErr)
 	}
 }

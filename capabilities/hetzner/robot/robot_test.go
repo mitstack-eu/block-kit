@@ -23,6 +23,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/robot"
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/robot/robottest"
+	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 )
 
@@ -502,5 +503,28 @@ func TestGetServer_AnAnswerPastItsBoundFailsNamingTheCallAndTheBound(t *testing.
 
 	if want := "GET /server/3041839: the answer is longer than 1048576 bytes"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("GetServer = %v; want an error naming %q", err, want)
+	}
+}
+
+func TestClient_AContextMarkedReadOnlyWritesNothingAndStillReads(t *testing.T) {
+	f, c := newFake(t)
+	marked := contract.WithReadOnly(context.Background())
+
+	for call, err := range map[string]error{
+		"Reset":         c.Reset(marked, number),
+		"SetServerName": c.SetServerName(marked, number, name),
+		"DeleteKey":     c.DeleteKey(marked, "fingerprint"),
+	} {
+		if !errors.Is(err, contract.ErrReadOnly) {
+			t.Errorf("%s for a read-only context = %v, want an error wrapping contract.ErrReadOnly", call, err)
+		}
+	}
+	_, readErr := c.GetServer(marked, number)
+
+	if writes := f.Writes(); len(writes) != 0 {
+		t.Errorf("a read-only context sent %v, want no write", writes)
+	}
+	if readErr != nil {
+		t.Errorf("GetServer for a read-only context = %v, want the read to go through", readErr)
 	}
 }

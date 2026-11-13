@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -1864,6 +1865,50 @@ func TestAssertBlock_ListsAContributionFromItsLandingRecord(t *testing.T) {
 			if !slices.ContainsFunc(got.logs, func(l string) bool { return strings.Contains(l, "guards ran:") && strings.Contains(l, "tagging") }) {
 				t.Errorf("the tagging guard did not run: %q", got.logs)
 			}
+		})
+	}
+}
+
+// writingOnReadOnlyObserver writes on each request that reaches it read-only, as a block does that never reads Desired.ReadOnly before it writes.
+type writingOnReadOnlyObserver struct {
+	handler.Observer
+	write func(ctx context.Context) error
+}
+
+func (o writingOnReadOnlyObserver) ObserveResource(ctx context.Context, r contract.ResourceRef) (contract.Observation, error) {
+	if r.Desired.ReadOnly {
+		if err := o.write(ctx); err != nil {
+			return contract.Observation{}, err
+		}
+	}
+	return o.Observer.ObserveResource(ctx, r)
+}
+
+func TestCheckBlock_FailsABlockThatWritesOnAValidateThatSettlesNoVerb(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(ctx context.Context, b *landingBlock) error
+		want  string
+	}{
+		{"commits through a kit client", func(ctx context.Context, b *landingBlock) error {
+			return b.client().CommitFiles(ctx, b.repo.Repo, "dry run", map[string]string{"dry-run.txt": "x\n"})
+		}, ""},
+		{"dispatches a workflow through a client of its own", func(ctx context.Context, b *landingBlock) error {
+			resp, err := http.Post(b.repo.URL+"/repos/"+b.repo.Repo+"/actions/workflows/ci.yml/dispatches", "application/json", strings.NewReader("{}"))
+			if err == nil {
+				resp.Body.Close()
+			}
+			return err
+		}, "POST /repos/acme/weather/actions/workflows/ci.yml/dispatches"},
+	} {
+		t.Run("a block that "+tc.name, func(t *testing.T) {
+			in := landingBlockThat(t, landingType, "", false)
+			b := in.Provider.(repositoryProvider).b
+			in.Config.Observers[landingType] = writingOnReadOnlyObserver{Observer: in.Config.Observers[landingType], write: func(ctx context.Context) error { return tc.write(ctx, b) }}
+
+			problems := kittest.CheckBlock(in)
+
+			wantProblemNaming(t, problems, in.Desired.BlockID, "wrote on a validate that settles no verb", tc.want)
 		})
 	}
 }

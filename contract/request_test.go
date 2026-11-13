@@ -350,6 +350,12 @@ func TestRequestDesired_IsReadOnlyOnlyOnAValidateThatSettlesNoVerb(t *testing.T)
 		{"an upgrade", contract.Request{Operation: "upgrade"}, false},
 		{"an unsubscribe", contract.Request{Operation: "unsubscribe"}, false},
 		{"a run", contract.Request{Operation: contract.OperationRun}, false},
+		{"a subscribe that carries settling", contract.Request{Operation: "subscribe", Settling: true}, false},
+		{"an unsubscribe that carries settling", contract.Request{Operation: "unsubscribe", Settling: true}, false},
+		{"a snapshot", contract.Request{Operation: contract.OperationSnapshot}, false},
+		{"a restore", contract.Request{Operation: contract.OperationRestore}, false},
+		{"a snapshot that carries settling", contract.Request{Operation: contract.OperationSnapshot, Settling: true}, false},
+		{"a restore that carries settling", contract.Request{Operation: contract.OperationRestore, Settling: true}, false},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			wantField(t, "Desired().ReadOnly", tc.req.Desired().ReadOnly, tc.readOnly)
