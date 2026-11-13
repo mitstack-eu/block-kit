@@ -1,11 +1,14 @@
 package dockerhosttest
 
 import (
+	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"maps"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -110,27 +113,57 @@ func (c Container) Must(args ...string) string {
 	return out
 }
 
-func (c Container) Logs() string {
-	out, _ := Docker(nil, "logs", c.Name)
-	return out
-}
-
-// WaitFor fails the test unless done holds within the timeout, what naming what it waited for.
-func (c Container) WaitFor(what string, done func() bool) {
+// WaitForLine follows the container's output, every start's included, and fails the test unless a line holding text comes within the timeout.
+func (c Container) WaitForLine(text string) {
 	c.t.Helper()
-	for deadline := time.Now().Add(dockerTimeout); !done(); time.Sleep(50 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			c.t.Fatalf("%s never %s", c.Name, what)
-		}
+	found, err := follow(func(line string) bool { return strings.Contains(line, text) }, "logs", "--follow", c.Name)
+	if !found {
+		c.t.Fatalf("%s logged no line holding %q within %s: %v", c.Name, text, dockerTimeout, err)
 	}
 }
 
+// WaitHealthy reads the container's health, then Docker's health events from that moment, and fails the test unless it reads healthy within the timeout.
 func (c Container) WaitHealthy() {
 	c.t.Helper()
-	c.WaitFor("read healthy", func() bool {
-		out, _ := Docker(nil, "inspect", "--format", "{{.State.Health.Status}}", c.Name)
-		return strings.TrimSpace(out) == "healthy"
-	})
+	since := time.Now()
+	if strings.TrimSpace(c.Must("inspect", "--format", "{{.State.Health.Status}}", c.Name)) == "healthy" {
+		return
+	}
+	found, err := follow(func(line string) bool { return strings.TrimSpace(line) == "health_status: healthy" },
+		"events", "--since", fmt.Sprintf("%d.%09d", since.Unix(), since.Nanosecond()),
+		"--filter", "container="+c.Name, "--filter", "event=health_status", "--format", "{{.Status}}")
+	if !found {
+		c.t.Fatalf("%s never read healthy within %s: %v", c.Name, dockerTimeout, err)
+	}
+}
+
+// follow runs a docker command that streams lines until one matches or the timeout ends it, and ends the command either way.
+func follow(match func(line string) bool, args ...string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dockerTimeout)
+	defer cancel()
+	r, w, err := os.Pipe()
+	if err != nil {
+		return false, err
+	}
+	defer r.Close()
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdout, cmd.Stderr = w, w
+	err = cmd.Start()
+	w.Close()
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		cancel()
+		_ = cmd.Wait()
+	}()
+	lines := bufio.NewScanner(r)
+	for lines.Scan() {
+		if match(lines.Text()) {
+			return true, nil
+		}
+	}
+	return false, cmp.Or(lines.Err(), ctx.Err())
 }
 
 // Exec runs line through a shell in the container, as the host runs a backup file's line, and fails the test on an error.
