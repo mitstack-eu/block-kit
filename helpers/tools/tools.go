@@ -11,7 +11,7 @@ const Image = ""
 
 const CopyScriptPath = "/copy-tool/copy-tool.sh"
 
-// The programs in the tools image: a Docker host runs the sign-in companion as a container, and an app's container runs the health probe from an image mount of its directory at the same path.
+// The programs in the tools image: a Docker host runs the sign-in companion as a container, and copies the health probe out for an app's container to run at ProbePath.
 const (
 	SignInPath = "/mitstack-signin/mitstack-signin"
 	ProbePath  = "/mitstack-probe/mitstack-probe"
@@ -37,6 +37,7 @@ var (
 	K3sInstaller    = pinned("/k3s/install.sh")
 	KubeBenchConfig = pinnedUnder("/kube-bench/cfg/")
 	SignInCA        = pinned("/mitstack-signin/ca-certificates.crt")
+	Probe           = pinned(ProbePath)
 )
 
 func pinned(path string) File {

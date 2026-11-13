@@ -1,4 +1,4 @@
-// Command mitstack-probe is the health check an app's container runs from an image mount of the tools image, so it needs no tool of the app's image: it exits 0 when its URL answers below 400, a redirect never followed, and 1 otherwise.
+// Command mitstack-probe is the health check an app's container runs from a copy its host bind-mounts, so it needs no tool of the app's image: it exits 0 when its URL answers below 400, a redirect never followed, and 1 otherwise.
 package main
 
 import (

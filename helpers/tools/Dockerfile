@@ -1,7 +1,7 @@
 # The kit's tools image holds each tool a block reads while it runs whose publisher ships no image of its own,
 # fetched here once and checked against tools.sha256, then copy-tool.sh, and two programs built from this repository's
-# source: the sign-in companion a Docker host runs from it and the probe an app's container mounts from it as its
-# health check. Each tool sits in a layer of its own, so a reader over the registry's HTTP API reads only the layer
+# source: the sign-in companion a Docker host runs from it and the probe a Docker host copies out of it for an
+# app's health check. Each tool sits in a layer of its own, so a reader over the registry's HTTP API reads only the layer
 # it needs.
 # Build it from the repository's root, which holds the sources of the companion and the probe:
 # docker build --platform linux/amd64 -f helpers/tools/Dockerfile -t block-kit-tools .
@@ -52,12 +52,16 @@ RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags='-s -w -buildid=
       -o /out/mitstack-signin/mitstack-signin ./cmd/mitstack-signin
 COPY --from=ca /out/mitstack-signin/ca-certificates.crt /out/mitstack-signin/
 
+# The probe builds to the same bytes from the same source, so tools.sha256 pins it for a host's copy, and a change to
+# its source changes the pin.
 FROM docker.io/library/golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS probe
 WORKDIR /src
 COPY go.mod ./
+COPY helpers/tools/tools.sha256 /tools.sha256
 COPY cmd/mitstack-probe cmd/mitstack-probe
 RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags='-s -w -buildid=' \
-      -o /out/mitstack-probe/mitstack-probe ./cmd/mitstack-probe
+      -o /out/mitstack-probe/mitstack-probe ./cmd/mitstack-probe \
+ && cd /out && grep '  mitstack-probe/' /tools.sha256 | sha256sum -c -
 
 FROM scratch
 COPY --from=age /out/age /age
