@@ -1,6 +1,6 @@
 package scripts_test
 
-// scan-image-proof.yml's scan step passes only when scan-image.sh exits as the matrix expects, accepts GO-2026-5932 in the provider and refuses it nowhere, and records the scan in the step summary.
+// scan-image-proof.yml's scan step passes only when scan-image.sh exits as the matrix expects, accepts each finding the row lists as accepted in the provider and refuses it nowhere, refuses each one it lists as refused there and accepts it nowhere, and records the scan in the step summary.
 
 import (
 	"os"
@@ -12,29 +12,38 @@ import (
 	"github.com/mitstack-eu/block-kit/verify/kittest"
 )
 
-const accepted = "accepted GO-2026-5932 in var/cache/tofu-plugins/registry.opentofu.org/scaleway/scaleway/2.89.0/linux_amd64/terraform-provider-scaleway_v2.89.0: its Go function table names 324"
+const (
+	proofBinary   = "var/cache/tofu-plugins/registry.opentofu.org/scaleway/scaleway/2.92.1/linux_amd64/terraform-provider-scaleway_v2.92.1"
+	accepted      = "accepted GO-2026-5932 in " + proofBinary + ": its Go function table names 324"
+	acceptedXNet  = "accepted CVE-2026-78661 in " + proofBinary + ": the binary's sha256 is the release's"
+	refusedStdlib = "refused CVE-2026-97054 in " + proofBinary + ": stdlib v1.27.3 has a fix in 1.26.11, 1.27.4"
+)
 
-func TestScanImageProof_PassesOnlyWhenTheScanExitsAsExpectedAndAcceptsTheAdvisory(t *testing.T) {
+func TestScanImageProof_PassesOnlyWhenTheScanExitsAcceptsAndRefusesAsTheRowLists(t *testing.T) {
 	workflow, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "scan-image-proof.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	step, err := kittest.ReadWorkflowScript(workflow, "real-provider", "Scan the image, expecting GO-2026-5932 accepted and exit ${{ matrix.exit }}")
+	step, err := kittest.ReadWorkflowScript(workflow, "real-provider", "Scan the image, expecting exit ${{ matrix.exit }} and each listed finding accepted or refused")
 	if err != nil {
 		t.Fatal(err)
 	}
+	const listAccepted, listRefused = "GO-2026-5932 CVE-2026-78661", "CVE-2026-97054"
+	all := strings.Join([]string{accepted, acceptedXNet, refusedStdlib}, "\n")
 	cases := []struct {
-		name           string
-		scanExit, want int
-		scanOut        string
-		pass           bool
+		name             string
+		scanExit, want   int
+		refused, scanOut string
+		pass             bool
 	}{
-		{"a scan exiting 1 as expected on refusals other than GO-2026-5932 passes", 1, 1, accepted + "\nrefused CVE-2026-78669 in x: golang.org/x/net v0.59.0 has a fix in 0.60.0", true},
-		{"a scan exiting 0 as expected passes", 0, 0, accepted, true},
-		{"a scan exiting 1 where 0 is expected fails", 1, 0, accepted, false},
-		{"a scan exiting 0 where 1 is expected fails", 0, 1, accepted, false},
-		{"a scan that never accepts GO-2026-5932 fails", 1, 1, "refused CVE-2026-78669 in x", false},
-		{"a scan that refuses GO-2026-5932 anywhere fails", 1, 1, accepted + "\nrefused GO-2026-5932 in usr/local/bin/operator: the exception covers only", false},
+		{"a scan exiting 1 as expected, accepting and refusing as the row lists, passes", 1, 1, listRefused, all, true},
+		{"a scan exiting 0 as expected, with nothing listed as refused, passes", 0, 0, "", accepted + "\n" + acceptedXNet, true},
+		{"a scan exiting 1 where 0 is expected fails", 1, 0, listRefused, all, false},
+		{"a scan exiting 0 where 1 is expected fails", 0, 1, listRefused, all, false},
+		{"a scan that never accepts a finding listed as accepted fails", 1, 1, listRefused, accepted + "\n" + refusedStdlib, false},
+		{"a scan that refuses a finding listed as accepted anywhere fails", 1, 1, listRefused, all + "\nrefused GO-2026-5932 in usr/local/bin/operator: the exception covers only", false},
+		{"a scan that never refuses a finding listed as refused fails", 1, 1, listRefused, accepted + "\n" + acceptedXNet, false},
+		{"a scan that accepts a finding listed as refused fails", 1, 1, listRefused, all + "\naccepted CVE-2026-97054 in " + proofBinary + ": the binary's sha256", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -45,7 +54,8 @@ func TestScanImageProof_PassesOnlyWhenTheScanExitsAsExpectedAndAcceptsTheAdvisor
 			got := kittest.RunWorkflowScript(t, step, kittest.ScriptRun{
 				Tools: []string{"bash", "tee", "cat", "grep"},
 				Dir:   dir,
-				Env: map[string]string{"PROVIDER": "scaleway/scaleway", "VERSION": "2.89.0", "WANT_EXIT": strconv.Itoa(c.want),
+				Env: map[string]string{"PROVIDER": "scaleway/scaleway", "VERSION": "2.92.1", "WANT_EXIT": strconv.Itoa(c.want),
+					"ACCEPTED": listAccepted, "REFUSED": c.refused,
 					"RUNNER_TEMP": temp, "GITHUB_STEP_SUMMARY": summary, "STUB_OUT": c.scanOut, "STUB_EXIT": strconv.Itoa(c.scanExit)},
 			})
 
