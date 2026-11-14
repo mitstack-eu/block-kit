@@ -983,12 +983,13 @@ The host lists each run under `host.runs` of its node report, which
 `dockerhost.ReportedRun` types. A run that ended carries `exitCode` and
 `output`, beside the image's `digest` and the `startedAt` and `endedAt` times.
 A run the host refused carries `refusal` and no exit code, and one still
-running carries neither:
+running carries neither, only its `digest` and `startedAt`:
 
 ```json
 {"host": {"runs": [
   {"runId": "run_4c1e9a7f2b3d", "digest": "sha256:5f1c", "startedAt": "2026-11-11T14:00:09Z", "endedAt": "2026-11-11T14:00:10Z", "exitCode": 0, "output": "added alice@example.com\n"},
-  {"runId": "run_9d2b7e4a1c0f", "exitCode": null, "refusal": "the request names server 61432178, and this host is server 70011223"}
+  {"runId": "run_9d2b7e4a1c0f", "exitCode": null, "refusal": "the request names server 61432178, and this host is server 70011223"},
+  {"runId": "run_e3a8c5f10b27", "digest": "sha256:5f1c", "startedAt": "2026-11-11T14:00:30Z"}
 ]}}
 ```
 
@@ -996,7 +997,7 @@ running carries neither:
 |---|---|
 | Lists the run with an exit code | The exit code, the output whole, the digest and the times, whatever the exit code |
 | Lists the run with a refusal | A refusal of class `run-refused` naming the run id and the host's words |
-| Lists the run with neither | Pending, since the command is still running |
+| Lists the run with neither | Pending, since the command is still running, with the run's `StartedAt` and `Digest` beside the wait |
 | Does not list the run, or the host has sent no report | Pending, once main holds the request, by step 4 or step 5 |
 
 `Run` keeps whatever output the report carries, so the host alone decides how

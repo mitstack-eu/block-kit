@@ -160,7 +160,7 @@ func answerRun(ran ReportedRun) (contract.RunResult, error) {
 	case ran.Refusal != "":
 		return contract.RunResult{}, handler.Refuse(classRunRefused, "the host refused run %s: %s", ran.RunID, ran.Refusal)
 	case ran.ExitCode == nil:
-		return contract.RunResult{}, handler.Wait("the host is running run %s and has not reported its end yet", ran.RunID)
+		return contract.RunResult{Digest: ran.Digest, StartedAt: ran.StartedAt}, handler.Wait("the host is running run %s and has not reported its end yet", ran.RunID)
 	}
 	return contract.RunResult{ExitCode: *ran.ExitCode, Output: ran.Output, Digest: ran.Digest, StartedAt: ran.StartedAt, EndedAt: ran.EndedAt}, nil
 }

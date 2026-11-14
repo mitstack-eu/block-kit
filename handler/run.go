@@ -28,11 +28,20 @@ func (h *Handler) run(ctx context.Context, req contract.Request, secrets []strin
 	}
 	result, err := h.runFunction(ctx, req.Desired(), req.Run())
 	if w, ok := waiting(err); ok {
-		return http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, secrets...)}
+		return http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, secrets...), Run: started(result)}
 	}
 	if err != nil {
 		return h.errorResponse(err, secrets)
 	}
 	result.Output = safe.Scrub(result.Output, secrets...)
 	return http.StatusOK, contract.Response{Run: &result}
+}
+
+// started is the start and digest of a run its host started and has not ended, all a pending answer carries of
+// a run, and nil before the host started it.
+func started(result contract.RunResult) *contract.RunResult {
+	if result.StartedAt.IsZero() {
+		return nil
+	}
+	return &contract.RunResult{StartedAt: result.StartedAt, Digest: result.Digest}
 }
