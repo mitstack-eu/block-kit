@@ -392,10 +392,11 @@ and name the alerts that must fire at given times. Those test files sit under
 The `conformance` job runs `scripts/run-rule-tests.sh` on every event. The
 script fetches promtool 3.16.0 from the Prometheus release into the user's
 cache, refuses a binary whose sha256 differs from the one pinned in the
-script, and runs every test file under `testdata/rules/`. promtool reads only a file that lists its
-groups, so the script copies each group to `<kind>/<file>` in a scratch
-directory under `groups:`, its lines indented and otherwise unchanged. A test
-file therefore names its group as `metrics/disk.yaml`:
+script, and runs every `*.yaml` test file under `testdata/rules/`. promtool
+reads only a file that lists its groups, so the script copies each group to
+`<kind>/<file>` in a scratch directory under `groups:`, its lines indented and
+otherwise unchanged. A test file therefore names its group as
+`metrics/disk.yaml`:
 
 ```yaml
 rule_files:
@@ -415,10 +416,13 @@ tests:
 ```
 
 A failing test fails `block / conformance`, and promtool's output names the
-test group, the alert and the time. A block with no `testdata/rules/` passes
-the step without fetching promtool. To run the tests on your own checkout,
-with the kit cloned beside your block as above, run this from your block's
-directory:
+test group, the alert and the time. The step also fails when a test's
+`rule_files` names a file the block does not hold, which promtool alone only
+warns of, and when `testdata/rules/` holds no `*.yaml` test file, since a
+`.yml` file would otherwise go untested. A block with no `testdata/rules/`
+passes the step without fetching promtool. To run the tests on your own
+checkout, with the kit cloned beside your block as above, run this from your
+block's directory:
 
 ```sh
 bash ../block-kit/scripts/run-rule-tests.sh .

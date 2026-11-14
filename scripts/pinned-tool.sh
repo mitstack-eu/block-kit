@@ -6,9 +6,9 @@
 #   bin=$(pinned_tool <name> <version> <tar.gz url> <member> <sha256>)
 # prints the path of a binary whose sha256 matched.
 #
-# Why this exists. scan-secrets.sh and lint-scripts.sh each run a scanner at
-# one version, refused unless its checksum matches, and the fetch and the check
-# are the same for both.
+# Why this exists. scan-secrets.sh, lint-scripts.sh and run-rule-tests.sh each
+# run a tool at one version, refused unless its checksum matches, and the fetch
+# and the check are the same for all three.
 
 pinned_tool() {
   local name="$1" version="$2" url="$3" member="$4" sha256="$5"

@@ -5,9 +5,11 @@
 # Usage: scripts/run-rule-tests.sh <block>
 #
 #   exit 0  every test file under <block>/testdata/rules/ passes, or the block
-#           holds none, in which case no promtool is fetched
+#           has no testdata/rules/, in which case no promtool is fetched
 #   exit 1  promtool failed a test, naming its group and alert, or refused a
-#           rule file, or the pinned promtool could not be run
+#           rule file; a test names a rule file the block does not hold;
+#           testdata/rules/ holds no *.yaml test file; or the pinned promtool
+#           could not be run
 #
 # A test file is a promtool unit test file, testdata/rules/*.yaml. Each file
 # under rules/<kind>/ holds one bare rule group, the body a Cockpit's ruler
@@ -41,18 +43,29 @@ copy_groups() {
 }
 
 main() {
-  local block="${1:?usage: run-rule-tests.sh <block>}" promtool
-  local -a tests=("$block"/testdata/rules/*.yaml)
-  if [ ! -f "${tests[0]}" ]; then
+  local block="${1:?usage: run-rule-tests.sh <block>}" promtool status=0
+  if [ ! -d "$block/testdata/rules" ]; then
     echo "run-rule-tests: $block holds no rule test under testdata/rules/, so promtool does not run"
     return 0
+  fi
+  local -a tests=("$block"/testdata/rules/*.yaml)
+  if [ ! -f "${tests[0]}" ]; then
+    echo "run-rule-tests: $block/testdata/rules/ holds no *.yaml test file, so promtool would test nothing" >&2
+    return 1
   fi
   promtool=$(pinned_tool promtool "$PROMTOOL_VERSION" "$PROMTOOL_URL" "prometheus-${PROMTOOL_VERSION}.linux-amd64/promtool" "$PROMTOOL_SHA256")
   scratch=$(mktemp -d)
   trap 'rm -rf "$scratch"' EXIT
   copy_groups "$block" "$scratch"
   cp "${tests[@]}" "$scratch/"
-  if ! (cd "$scratch" && "$promtool" test rules "${tests[@]##*/}"); then
+  (cd "$scratch" && "$promtool" test rules "${tests[@]##*/}") > "$scratch/promtool.out" 2>&1 || status=$?
+  cat "$scratch/promtool.out"
+  # promtool only warns of a rule_files entry matching no file, and a test expecting no alert then passes.
+  if grep -q 'no file match pattern' "$scratch/promtool.out"; then
+    echo "run-rule-tests: a rule test of $block names a rule file the block does not hold, in the WARNING above" >&2
+    return 1
+  fi
+  if [ "$status" -ne 0 ]; then
     echo "run-rule-tests: promtool $PROMTOOL_VERSION failed a rule test of $block, named above" >&2
     return 1
   fi
