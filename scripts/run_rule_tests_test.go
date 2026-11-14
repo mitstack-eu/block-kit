@@ -1,6 +1,6 @@
 package scripts_test
 
-// run-rule-tests.sh passes a block whose promtool rule tests pass, fails one whose test or rule file promtool refuses, and fetches no promtool for a block holding no rule test.
+// run-rule-tests.sh passes a block whose promtool rule tests pass, fails one whose test fails, whose rule file promtool refuses or whose tests it cannot find, and fetches no promtool for a block holding no rule test.
 
 import (
 	"path/filepath"
@@ -36,6 +36,21 @@ tests:
 `
 }
 
+const quietTestOfAMissingGroup = `rule_files:
+  - metrics/dsk.yaml
+evaluation_interval: 1m
+tests:
+  - name: a disk at 50% used stays quiet
+    interval: 1m
+    input_series:
+      - series: 'disk_used_ratio{host="h1"}'
+        values: '0.5x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DiskAlmostFull
+        exp_alerts: []
+`
+
 func TestRunRuleTests(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -52,6 +67,12 @@ func TestRunRuleTests(t *testing.T) {
 		{name: "a rule group holding a field promtool does not know fails, naming the field", exit: 1,
 			repo:   []change{writes("rules/metrics/disk.yaml", strings.Replace(diskGroup, "labels:", "lables:", 1)), writes("testdata/rules/disk.yaml", diskTest("0.9"))},
 			naming: []string{"lables"}},
+		{name: "a quiet rule test naming a group the block does not hold fails, naming the file", exit: 1,
+			repo:   []change{writes("rules/metrics/disk.yaml", diskGroup), writes("testdata/rules/disk.yaml", quietTestOfAMissingGroup)},
+			naming: []string{"metrics/dsk.yaml", "does not hold"}},
+		{name: "a testdata/rules directory holding no yaml test file fails, naming the directory", exit: 1,
+			repo:   []change{writes("rules/metrics/disk.yaml", diskGroup), writes("testdata/rules/disk.yml", diskTest("0.9"))},
+			naming: []string{"testdata/rules/", "no *.yaml test file"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
