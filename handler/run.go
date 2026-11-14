@@ -28,11 +28,23 @@ func (h *Handler) run(ctx context.Context, req contract.Request, secrets []strin
 	}
 	result, err := h.runFunction(ctx, req.Desired(), req.Run())
 	if w, ok := waiting(err); ok {
-		return http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, secrets...)}
+		return http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, secrets...), Run: pendingRun(result)}
 	}
 	if err != nil {
 		return h.errorResponse(err, secrets)
 	}
 	result.Output = safe.Scrub(result.Output, secrets...)
 	return http.StatusOK, contract.Response{Run: &result}
+}
+
+// pendingRun is all a pending answer carries of a run: a started run's start and digest, that the run is queued, or
+// nil when the run function says neither.
+func pendingRun(result contract.RunResult) *contract.RunResult {
+	switch {
+	case !result.StartedAt.IsZero():
+		return &contract.RunResult{StartedAt: result.StartedAt, Digest: result.Digest}
+	case result.Queued:
+		return &contract.RunResult{Queued: true}
+	}
+	return nil
 }

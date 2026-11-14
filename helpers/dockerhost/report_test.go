@@ -4,8 +4,13 @@ package dockerhost_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +18,67 @@ import (
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/helpers/dockerhost"
+	"github.com/mitstack-eu/block-kit/helpers/events"
 	"github.com/mitstack-eu/block-kit/observe"
 )
+
+// listingPlatform serves a host's reports, given newest first, to the kit's own client and records each query it is sent.
+type listingPlatform struct {
+	srv     *httptest.Server
+	queries []string
+}
+
+// platformListing honours a ?limit only when honoursLimit is set, as a platform from before the limit does not.
+func platformListing(t *testing.T, honoursLimit bool, reports ...observe.NodeReport) *listingPlatform {
+	t.Helper()
+	p := &listingPlatform{}
+	p.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.queries = append(p.queries, r.URL.RawQuery)
+		served := reports
+		if limit, err := strconv.Atoi(r.URL.Query().Get("limit")); honoursLimit && err == nil && limit < len(served) {
+			served = served[:limit]
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"reports": served})
+	}))
+	t.Cleanup(p.srv.Close)
+	return p
+}
+
+func (p *listingPlatform) newest(t *testing.T) (dockerhost.Report, bool, error) {
+	t.Helper()
+	ctx := events.WithEnvelope(context.Background(), events.Envelope{SubscriptionID: "sub_slice_shop",
+		Callback: &events.Callback{URL: p.srv.URL + "/v1/webhooks/operator-events", Token: "callback-token"}})
+	return dockerhost.NewestReport(ctx, observe.NodeReportsClient{HTTPClient: p.srv.Client()}, contract.Desired{}, hostSub)
+}
+
+func syncedReport(minute int, commit string) observe.NodeReport {
+	return received(minute, `{"host":{"agent":{"output":"","syncedCommit":"`+commit+`"}}}`)
+}
+
+func TestNewestReport_AsksThePlatformForTheNewestReportAlone(t *testing.T) {
+	p := platformListing(t, true, syncedReport(39, synced), syncedReport(38, "0123456789abcdef0123456789abcdef01234567"))
+
+	r, found, err := p.newest(t)
+
+	commit, _ := r.SyncedCommit()
+	if err != nil || !found || commit != synced {
+		t.Errorf("NewestReport = found %v, commit %q, %v; want the newest report's %s", found, commit, err, synced)
+	}
+	if want := []string{"limit=1"}; !reflect.DeepEqual(p.queries, want) {
+		t.Errorf("NewestReport sent the queries %q; want %q", p.queries, want)
+	}
+}
+
+func TestNewestReport_AnswersTheNewestReportFromAPlatformThatIgnoresTheLimit(t *testing.T) {
+	p := platformListing(t, false,
+		syncedReport(38, "0123456789abcdef0123456789abcdef01234567"), syncedReport(39, synced), syncedReport(37, "89abcdef0123456789abcdef0123456789abcdef"))
+
+	r, found, err := p.newest(t)
+
+	if commit, _ := r.SyncedCommit(); err != nil || !found || commit != synced {
+		t.Errorf("NewestReport = found %v, commit %q, %v; want the newest report's %s, whatever order the platform lists them in", found, commit, err, synced)
+	}
+}
 
 const (
 	hostSub = "sub_host"

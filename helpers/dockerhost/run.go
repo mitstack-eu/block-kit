@@ -65,7 +65,7 @@ type reportedRuns struct {
 	} `json:"host"`
 }
 
-// Run answers from the host's newest report once it lists the run, and otherwise commits the request unless main already holds it and answers pending.
+// Run answers from the host's newest report once it lists the run, and otherwise commits the request unless main already holds it and answers the run queued.
 func (r Runner) Run(ctx context.Context, d contract.Desired, req contract.RunRequest) (contract.RunResult, error) {
 	file, t, err := r.request(d, req)
 	if err != nil {
@@ -81,7 +81,7 @@ func (r Runner) Run(ctx context.Context, d contract.Desired, req contract.RunReq
 	if err := retryOnMovedMain(func() error { return r.ask(ctx, d, t, file) }); err != nil {
 		return contract.RunResult{}, err
 	}
-	return contract.RunResult{}, handler.Wait("run %s is in the host's repository and waits for the host's node report to list it", req.ID)
+	return contract.RunResult{Queued: true}, handler.Wait("run %s is in the host's repository and waits for the host's node report to list it", req.ID)
 }
 
 // request refuses, before anything is read, a process the block does not run and a host the request could not reach or the platform attests absent.
@@ -160,7 +160,7 @@ func answerRun(ran ReportedRun) (contract.RunResult, error) {
 	case ran.Refusal != "":
 		return contract.RunResult{}, handler.Refuse(classRunRefused, "the host refused run %s: %s", ran.RunID, ran.Refusal)
 	case ran.ExitCode == nil:
-		return contract.RunResult{}, handler.Wait("the host is running run %s and has not reported its end yet", ran.RunID)
+		return contract.RunResult{Digest: ran.Digest, StartedAt: ran.StartedAt}, handler.Wait("the host is running run %s and has not reported its end yet", ran.RunID)
 	}
 	return contract.RunResult{ExitCode: *ran.ExitCode, Output: ran.Output, Digest: ran.Digest, StartedAt: ran.StartedAt, EndedAt: ran.EndedAt}, nil
 }

@@ -207,9 +207,30 @@ func TestNodeReported_ReturnsTheAPIsError(t *testing.T) {
 	}
 }
 
-var _ observe.NodeReportsAPI = observe.NodeReportsClient{}
+var (
+	_ observe.NodeReportsAPI       = observe.NodeReportsClient{}
+	_ observe.NewestNodeReportsAPI = observe.NodeReportsClient{}
+)
 
 const callbackToken = "callback-token-7f3a"
+
+func TestNodeReportsClient_NewestNodeReportsAsksForThatManyAndNodeReportsForEvery(t *testing.T) {
+	var queries []string
+	platform := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		_, _ = w.Write([]byte(`{"reports":[]}`))
+	}))
+	t.Cleanup(platform.Close)
+	client := observe.NodeReportsClient{HTTPClient: platform.Client()}
+	ctx := withCallback(platform.URL+"/v1/webhooks/operator-events", callbackToken)
+
+	_, everyErr := client.NodeReports(ctx, contract.Desired{}, "sub-host")
+	_, newestErr := client.NewestNodeReports(ctx, contract.Desired{}, "sub-host", 1)
+
+	if want := []string{"", "limit=1"}; everyErr != nil || newestErr != nil || !reflect.DeepEqual(queries, want) {
+		t.Errorf("NodeReports then NewestNodeReports(1) = %v, %v, sending queries %q; want %q", everyErr, newestErr, queries, want)
+	}
+}
 
 func platformServing(t *testing.T, cluster string, reports ...observe.NodeReport) *httptest.Server {
 	t.Helper()
