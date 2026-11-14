@@ -855,26 +855,34 @@ redirect by its own status without following it. It exits 1 for an answer of
 prints one line saying which. Given no URL or more than one, it prints its
 usage and exits 2.
 
-A block copies the probe out of the tools image onto the host, with the image
-named by digest as
+A block copies the probe out of the tools image into a directory of its own on
+the host, with the image named by digest as
 [Copying a tool out of an image by digest](#copying-a-tool-out-of-an-image-by-digest)
 says. `tools.Probe` names the probe's path in the image and its sha256, so
 `copy-tool.sh` copies it as it copies any other tool, and the image's build
-checks the probe it built against that pin. The block then bind-mounts that
-copy read-only into the app's container and names it in exec form, so no shell
-runs. In the compose file a block writes, with the copy's path on the host in
-place of `<copy>`, that reads:
+checks the probe it built against that pin. The copy keeps the probe's name,
+`mitstack-probe`. The block then bind-mounts that directory read-only into the
+app's container at `/mitstack-probe`, the directory of `tools.ProbePath`, and
+names the probe in exec form, so no shell runs. In the compose file a block
+writes, with the directory's path on the host in place of `<dir>`, that reads:
 
 ```json
-"volumes": [{"type": "bind", "source": "<copy>", "target": "/mitstack-probe/mitstack-probe", "read_only": true}],
+"volumes": [{"type": "bind", "source": "<dir>", "target": "/mitstack-probe", "read_only": true}],
 "healthcheck": {"test": ["CMD", "/mitstack-probe/mitstack-probe", "http://127.0.0.1:8080/"]}
 ```
 
-The copy must be executable by every user, mode `0755` for instance, because
-under userns-remap the container's users map to unprivileged users on the
-host. The directory holding it may stay closed. On Docker 29.1.3 with the
-overlay2 storage driver and userns-remap, a bind mount survives a restart of
-the Docker daemon, and the probe then runs as it did before.
+Mount the directory, not the copy itself. A bind mount of a file holds that
+file, so a running container keeps the old probe after `copy-tool.sh` replaces
+the copy by rename. A mount of the directory shows the new copy at once, and
+the container's next health check runs it. Keep the directory in place, since
+its mount holds the directory the same way.
+
+Under userns-remap the container's users map to unprivileged users on the
+host. Both the copy and its directory must therefore be open to every user,
+mode `0755` for instance. With the directory at `0700`, the probe fails with
+`permission denied`. On Docker 29.1.3 with the overlay2 storage driver and
+userns-remap, the mount survives a restart of the Docker daemon, and the probe
+then runs as it did before.
 
 Do not mount the tools image itself into the container with a Compose image
 mount, since on a Docker host it fails in two ways:
