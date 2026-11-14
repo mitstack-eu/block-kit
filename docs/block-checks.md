@@ -390,9 +390,9 @@ and name the alerts that must fire at given times. Those test files sit under
 `testdata/rules/`, so the block neither embeds nor ships them.
 
 The `conformance` job runs `scripts/run-rule-tests.sh` on every event. The
-script fetches promtool 3.16.0 from the Prometheus release once, refuses a
-binary whose sha256 differs from the one pinned in the script, and runs every
-test file under `testdata/rules/`. promtool reads only a file that lists its
+script fetches promtool 3.16.0 from the Prometheus release into the user's
+cache, refuses a binary whose sha256 differs from the one pinned in the
+script, and runs every test file under `testdata/rules/`. promtool reads only a file that lists its
 groups, so the script copies each group to `<kind>/<file>` in a scratch
 directory under `groups:`, its lines indented and otherwise unchanged. A test
 file therefore names its group as `metrics/disk.yaml`:
