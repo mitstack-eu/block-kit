@@ -210,15 +210,19 @@ func (s *blockServer) sendUnit(operation, unit string, d contract.Desired) (int,
 }
 
 func (s *blockServer) sendRequest(operation, unit string, settling bool, d contract.Desired) (int, contract.Response, error) {
-	now := time.Now()
+	req := requestFor(operation, d)
+	req.Unit, req.Settling = unit, settling
+	return s.post(req, time.Now())
+}
+
+// post serves req to the block as sent at now, under a fresh idempotency key and nonce and an OBO token naming its subscription.
+func (s *blockServer) post(req contract.Request, now time.Time) (int, contract.Response, error) {
 	obo, err := webhook.MintOBO(s.signer.Private, s.signer.Kid,
-		webhook.OBOClaims{Audience: s.audience, OrgID: d.OrgID, AppID: d.AppID, SubscriptionID: d.SubscriptionID}, 5*time.Minute, now)
+		webhook.OBOClaims{Audience: s.audience, OrgID: req.OrgID, AppID: req.AppID, SubscriptionID: req.SubscriptionID}, 5*time.Minute, now)
 	if err != nil {
 		return 0, contract.Response{}, err
 	}
-	req := requestFor(operation, d)
 	req.IdempotencyKey, req.OBO, req.CreatedAt, req.Nonce = freshToken(), obo, now, freshToken()
-	req.Unit, req.Settling = unit, settling
 	body, err := json.Marshal(req)
 	if err != nil {
 		return 0, contract.Response{}, err
@@ -345,7 +349,14 @@ type blockCheck struct {
 	holdsNothing map[string]bool
 	// afterRestore makes a resource settle only once it reads healthy, as the engine observes a replaced resource.
 	afterRestore bool
+	// snapshotting, while the replacement drill settles a snapshot, names the unit every send carries and keeps the first send's createdAt, which each resend carries as settlesAt.
+	snapshotting *unitSend
 	reported     map[string]bool
+}
+
+type unitSend struct {
+	unit  string
+	first time.Time
 }
 
 // unitNames lists the names a guard reads, in manifest order, putting in each entry's place the names contract.ManifestResource.Names gives it among held.
@@ -558,7 +569,7 @@ var settleBudget = 10 * time.Second
 
 const settlePause = 20 * time.Millisecond
 
-// converge settles operation as the engine does: while the answer leaves a declared resource not present, it validates with what every answer so far reported of each resource, and sends operation again when a validate asks for a re-drive.
+// converge settles operation as the engine does: while the answer leaves a declared resource not present, it validates with what every answer so far reported of each resource, and sends operation again when an answer asks for a re-drive; a snapshot reports no resource, so it drops no member and settles once it stops answering pending.
 func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 	recorded := maps.Clone(c.desired.RecordedResources)
 	dropped := map[string]contract.RecordedResource{}
@@ -571,7 +582,7 @@ func (c *blockCheck) converge(operation string) (contract.Response, bool) {
 			return resp, false
 		}
 		recorded = c.recordReported(recorded, resp)
-		if call == operation {
+		if call == operation && c.snapshotting == nil {
 			c.dropUnreported(recorded, resp, dropped)
 		}
 		if c.settled(resp) {
@@ -660,6 +671,9 @@ func (c *blockCheck) proveDroppedAbsent(operation string, dropped map[string]con
 }
 
 func (c *blockCheck) settled(resp contract.Response) bool {
+	if c.snapshotting != nil {
+		return !resp.Pending
+	}
 	for _, name := range unitNames(c.spec, resp.Resources) {
 		o := resp.Resources[name].Observe
 		if o == nil || o.State != contract.Present || (c.afterRestore && o.Unhealthy != nil) {
@@ -670,6 +684,10 @@ func (c *blockCheck) settled(resp contract.Response) bool {
 }
 
 func (c *blockCheck) unsettled(operation string, resp contract.Response) {
+	if c.snapshotting != nil {
+		c.problem("the snapshot of %q still answered pending after %s: %s", c.snapshotting.unit, settleBudget, resp.StatusDetail)
+		return
+	}
 	named := false
 	for _, name := range unitNames(c.spec, resp.Resources) {
 		o := resp.Resources[name].Observe
@@ -689,11 +707,28 @@ func (c *blockCheck) unsettled(operation string, resp contract.Response) {
 
 func (c *blockCheck) sendOK(operation string, d contract.Desired) (int, contract.Response, bool) {
 	before := c.repositoryWrites()
-	status, resp, err := c.server.send(operation, d)
+	status, resp, err := c.send(operation, d)
 	if operation == "validate" {
 		c.noWriteOnReadOnly(before, resp)
 	}
 	return c.answeredOK(operation, status, resp, err)
+}
+
+// send sends a snapshot the drill settles for its unit, each resend carrying the first send's createdAt as settlesAt as the engine resends a pending snapshot, and any other request as it stands.
+func (c *blockCheck) send(operation string, d contract.Desired) (int, contract.Response, error) {
+	s := c.snapshotting
+	if operation != contract.OperationSnapshot || s == nil {
+		return c.server.send(operation, d)
+	}
+	req := requestFor(operation, d)
+	req.Unit = s.unit
+	now := time.Now()
+	if s.first.IsZero() {
+		s.first = now
+	} else {
+		req.SettlesAt = &s.first
+	}
+	return c.server.post(req, now)
 }
 
 func (c *blockCheck) repositoryWrites() map[string]int {

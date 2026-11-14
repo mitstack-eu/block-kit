@@ -376,7 +376,10 @@ func (v *volumeData) Replace(context.Context) error {
 
 The drill subscribes the block and writes three known values through
 `Data.Write`. It sends a `snapshot` and keeps the handover the answer
-publishes under `contract.HandoverOutputKey`, calls `Data.Replace`, loses each
+publishes under `contract.HandoverOutputKey`. While the snapshot answers
+pending, the drill sends it again within the same ten seconds `AssertBlock`
+allows a pending answer, each resend carrying the first send's `createdAt` as
+`settlesAt`. It then calls `Data.Replace`, loses each
 stateful resource from the provider, and sends an `upgrade` so the block
 creates them again. It then sends a `restore` carrying the handover and
 validates every declared resource until it reads present and healthy. Every
@@ -391,7 +394,9 @@ replacement lost datum "beta"
 resource "aws.ebs-volume": reads unhealthy after the restore: the volume is still creating, attaching or detaching (the restored volume reports no attachment)
 ```
 
-A value that comes back changed fails as `replacement changed datum`. A
+A snapshot still pending after those ten seconds fails as `the snapshot of
+"app-data" still answered pending after 10s`, followed by the block's last
+detail. A value that comes back changed fails as `replacement changed datum`. A
 resource that reads unhealthy passes only if it turns healthy within the same
 ten seconds `AssertBlock` allows. The drill logs one line that
 names its unit and the stages it ran, as in `kittest.AssertReplacement drill
