@@ -948,9 +948,16 @@ handler:
 | The function returns | The handler answers |
 |---|---|
 | A `contract.RunResult` | 200 with the result under `run`, every request secret scrubbed from its output |
-| An error wrapping `handler.Wait` | 200 `pending:true`, with the wait's detail as `statusDetail`. When the result beside the wait has a `StartedAt`, `run` carries that start and the `Digest` and nothing else of the run |
+| An error wrapping `handler.Wait` | 200 `pending:true`, with the wait's detail as `statusDetail`. When the result beside the wait has a `StartedAt`, `run` carries that start and the `Digest` and nothing else of the run. When it has `Queued` and no start, `run` carries only `queued:true` |
 | A `handler.Refuse` | 400 with the refusal, as when the host refused the run or the run names a process the block does not run |
 | Any other error, or a panic | 500 |
+
+Set `Queued` beside the wait while the host has not started the run. The
+platform records it once and shows the run queued:
+
+```json
+{"outputs":null,"pending":true,"statusDetail":"run run_e3a8c5f10b27 is in the host's repository and waits for the host's node report to list it","run":{"exitCode":0,"output":"","queued":true}}
+```
 
 A pending answer for a run the host has started looks like this, and the
 platform records the start once, so the run reads running until it ends:
@@ -958,6 +965,9 @@ platform records the start once, so the run reads running until it ends:
 ```json
 {"outputs":null,"pending":true,"statusDetail":"the host is running run run_e3a8c5f10b27 and has not reported its end yet","run":{"exitCode":0,"output":"","digest":"sha256:5f1c","startedAt":"2026-11-11T14:00:30Z"}}
 ```
+
+A pending answer with no `run` says nothing of the host, and the platform
+shows the run running.
 
 A pending answer's `exitCode` and `output` mean nothing, because the run has
 not ended. A platform reads the end only from an answer that is not pending.

@@ -998,7 +998,7 @@ running carries neither, only its `digest` and `startedAt`:
 | Lists the run with an exit code | The exit code, the output whole, the digest and the times, whatever the exit code |
 | Lists the run with a refusal | A refusal of class `run-refused` naming the run id and the host's words |
 | Lists the run with neither | Pending, since the command is still running, with the run's `StartedAt` and `Digest` beside the wait |
-| Does not list the run, or the host has sent no report | Pending, once main holds the request, by step 4 or step 5 |
+| Does not list the run, or the host has sent no report | Pending, once main holds the request, by step 4 or step 5, with `Queued` beside the wait |
 
 `Run` keeps whatever output the report carries, so the host alone decides how
 much of it to keep.

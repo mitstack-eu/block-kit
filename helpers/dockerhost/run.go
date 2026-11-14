@@ -65,7 +65,7 @@ type reportedRuns struct {
 	} `json:"host"`
 }
 
-// Run answers from the host's newest report once it lists the run, and otherwise commits the request unless main already holds it and answers pending.
+// Run answers from the host's newest report once it lists the run, and otherwise commits the request unless main already holds it and answers the run queued.
 func (r Runner) Run(ctx context.Context, d contract.Desired, req contract.RunRequest) (contract.RunResult, error) {
 	file, t, err := r.request(d, req)
 	if err != nil {
@@ -81,7 +81,7 @@ func (r Runner) Run(ctx context.Context, d contract.Desired, req contract.RunReq
 	if err := retryOnMovedMain(func() error { return r.ask(ctx, d, t, file) }); err != nil {
 		return contract.RunResult{}, err
 	}
-	return contract.RunResult{}, handler.Wait("run %s is in the host's repository and waits for the host's node report to list it", req.ID)
+	return contract.RunResult{Queued: true}, handler.Wait("run %s is in the host's repository and waits for the host's node report to list it", req.ID)
 }
 
 // request refuses, before anything is read, a process the block does not run and a host the request could not reach or the platform attests absent.

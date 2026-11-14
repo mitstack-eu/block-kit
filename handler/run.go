@@ -28,7 +28,7 @@ func (h *Handler) run(ctx context.Context, req contract.Request, secrets []strin
 	}
 	result, err := h.runFunction(ctx, req.Desired(), req.Run())
 	if w, ok := waiting(err); ok {
-		return http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, secrets...), Run: started(result)}
+		return http.StatusOK, contract.Response{Pending: true, StatusDetail: safe.Scrub(w.Detail, secrets...), Run: pendingRun(result)}
 	}
 	if err != nil {
 		return h.errorResponse(err, secrets)
@@ -37,11 +37,14 @@ func (h *Handler) run(ctx context.Context, req contract.Request, secrets []strin
 	return http.StatusOK, contract.Response{Run: &result}
 }
 
-// started is the start and digest of a run its host started and has not ended, all a pending answer carries of
-// a run, and nil before the host started it.
-func started(result contract.RunResult) *contract.RunResult {
-	if result.StartedAt.IsZero() {
-		return nil
+// pendingRun is all a pending answer carries of a run: a started run's start and digest, that the run is queued, or
+// nil when the run function says neither.
+func pendingRun(result contract.RunResult) *contract.RunResult {
+	switch {
+	case !result.StartedAt.IsZero():
+		return &contract.RunResult{StartedAt: result.StartedAt, Digest: result.Digest}
+	case result.Queued:
+		return &contract.RunResult{Queued: true}
 	}
-	return &contract.RunResult{StartedAt: result.StartedAt, Digest: result.Digest}
+	return nil
 }

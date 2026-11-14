@@ -121,13 +121,14 @@ type RunRequest struct {
 	Process string
 }
 
-// RunResult is an ended run, a non-zero exit included, or on a pending answer only a started run's start and digest.
+// RunResult is an ended run, a non-zero exit included, or on a pending answer only that the run is queued or a started run's start and digest.
 type RunResult struct {
 	ExitCode  int       `json:"exitCode"`
 	Output    string    `json:"output"`
 	Digest    string    `json:"digest,omitempty"`
 	StartedAt time.Time `json:"startedAt,omitzero"`
 	EndedAt   time.Time `json:"endedAt,omitzero"`
+	Queued    bool      `json:"queued,omitempty"`
 }
 
 // MaxLeaseLife is the longest a leased credential may live, since a credential that lives longer is no lease.
