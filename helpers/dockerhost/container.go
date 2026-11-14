@@ -82,8 +82,6 @@ func (c Container) Unhealthy(causes ContainerCauses) *contract.Unhealthy {
 	return nil
 }
 
-// said quotes the last healthSaidLimit bytes of the check's output with every control character dropped, and is ""
-// when nothing printable remains.
 func (h HealthCheck) said() string {
 	words := strings.TrimSpace(strings.Map(dropControl, h.Output))
 	if words == "" {
@@ -99,7 +97,6 @@ func dropControl(r rune) rune {
 	return r
 }
 
-// lastBytes keeps at most limit bytes from text's end, starting at a whole character.
 func lastBytes(text string, limit int) string {
 	if len(text) <= limit {
 		return text
