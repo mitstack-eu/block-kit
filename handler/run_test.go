@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
@@ -89,6 +90,25 @@ func TestRun_AnswersPendingRefusedOrFailedAsTheRunFunctionDoes(t *testing.T) {
 				t.Errorf("answered %d with %s, want %d, pending %v, refused class %q, no run and the secret scrubbed", status, raw, tc.status, tc.status == http.StatusOK, tc.class)
 			}
 		})
+	}
+}
+
+func TestRun_AWaitBesideTheHostsStartAnswersPendingCarryingOnlyTheStartAndDigest(t *testing.T) {
+	started := time.Date(2026, 11, 11, 14, 0, 30, 0, time.UTC)
+	run := &runFunction{
+		result: contract.RunResult{ExitCode: 3, Output: "half done with " + runSecret, Digest: "sha256:5f1c", StartedAt: started},
+		err:    handler.Wait("the host is running run_4c1e9a7f2b3d and has not reported its end yet"),
+	}
+	x := newHarness(t, &kittest.FakeResource{}, then(servesBlock(listsRun(t)), func(c *handler.Config) { c.Run = run.run }))
+
+	status, raw := x.post(runFields())
+
+	resp := decodeResponse(t, raw)
+	if status != http.StatusOK || !resp.Pending || resp.Run == nil || *resp.Run != (contract.RunResult{Digest: "sha256:5f1c", StartedAt: started}) {
+		t.Errorf("answered %d with %s, want 200 pending carrying the run's start and digest alone", status, raw)
+	}
+	if strings.Contains(string(raw), "half done") || strings.Contains(string(raw), runSecret) {
+		t.Errorf("answered %s, want no output from a run that has not ended", raw)
 	}
 }
 

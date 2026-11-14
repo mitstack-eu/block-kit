@@ -332,6 +332,30 @@ func TestRunner_StaysPendingWhileTheNewestReportListsTheRunWithNoExitCodeOrRefus
 	wantPending(t, err)
 }
 
+func TestRunner_AnswersBesideItsWaitTheStartAndDigestOfARunTheNewestReportListsAsRunning(t *testing.T) {
+	cases := []struct {
+		name string
+		id   string
+		want contract.RunResult
+	}{
+		{"a run the host started", "run_e3a8c5f10b27", contract.RunResult{Digest: "sha256:5f1c", StartedAt: time.Date(2026, 11, 11, 14, 0, 30, 0, time.UTC)}},
+		{"a run the newest report does not list", "run_aaaaaaaaaaaa", contract.RunResult{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newRunEnv(t)
+			e.host.Runs = goldenRuns(t)
+
+			got, err := e.run(t, asked(tc.id))
+
+			wantPending(t, err)
+			if got != tc.want {
+				t.Errorf("Run(%s) = %+v beside its wait, want %+v", tc.id, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunner_AnswersFinishedWithTheExitCodeAndOutputOnceTheNewestReportListsTheRun(t *testing.T) {
 	cases := []struct {
 		name string
