@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
@@ -86,6 +87,60 @@ func TestSnapshot_PublishesNoHandoverWhenTheBlocksCheckFails(t *testing.T) {
 
 	if status != http.StatusInternalServerError || resp.Outputs[handoverKey] != "" || !strings.Contains(resp.Error, "scratch restore") {
 		t.Errorf("a failed check answered status %d, outputs %v, error %q; want 500 naming the check and no handover", status, resp.Outputs, resp.Error)
+	}
+}
+
+func TestSnapshot_AnswersAWaitAs200PendingWithItsDetailNoHandoverAndAProgressEvent(t *testing.T) {
+	block := newSnapshottingBlock("hnd_0001")
+	block.err = handler.Wait("the scratch copy of app-data is restoring with %s", guardSecret)
+	events := newFakeEventsServer(t)
+
+	status, resp := serveContinuity(t, block, snapshotManifest, "snapshot", map[string]any{"unit": "app-data", "secrets": guardSecrets(), "eventsCallback": map[string]any{"url": events.URL, "token": "events-tok"}})
+
+	if want := "the scratch copy of app-data is restoring with [REDACTED]"; status != http.StatusOK || !resp.Pending || !resp.Redrive || resp.StatusDetail != want || len(resp.Outputs) != 0 {
+		t.Errorf("a snapshot the block holds back answered %d, pending %v, redrive %v, statusDetail %q, outputs %v; want 200, pending and redrive, so the caller sends the snapshot again, statusDetail %q and no handover", status, resp.Pending, resp.Redrive, resp.StatusDetail, resp.Outputs, want)
+	}
+	if got := events.recorded(); len(got) != 1 || got[0].Status != "progress" || got[0].Detail != resp.StatusDetail {
+		t.Errorf("a pending snapshot sent the events %+v, want one progress event carrying its statusDetail", got)
+	}
+}
+
+func TestSnapshot_SentAgainAtTheFirstSendsCreatedAtOnceTheWorkFinishesHandsOverWithACompletedEvent(t *testing.T) {
+	block := newSnapshottingBlock("hnd_0001")
+	block.err = handler.Wait("the scratch copy of app-data is restoring")
+	events := newFakeEventsServer(t)
+	fields := map[string]any{"unit": "app-data", "eventsCallback": map[string]any{"url": events.URL, "token": "events-tok"}}
+	if status, resp := serveContinuity(t, block, snapshotManifest, "snapshot", fields); status != http.StatusOK || !resp.Pending {
+		t.Fatalf("the first send answered %d with pending %v, want 200 pending", status, resp.Pending)
+	}
+	block.err, fields["settlesAt"] = nil, block.desired[0].VerbAt.Format(time.RFC3339Nano)
+
+	status, resp := serveContinuity(t, block, snapshotManifest, "snapshot", fields)
+
+	if status != http.StatusOK || resp.Pending || resp.Outputs[handoverKey] != "hnd_0001" {
+		t.Errorf("the resend answered %d, pending %v, outputs %v; want 200 with the handover under %q", status, resp.Pending, resp.Outputs, handoverKey)
+	}
+	if last := block.desired[len(block.desired)-1].VerbAt; len(block.desired) != 2 || !last.Equal(block.desired[0].VerbAt) {
+		t.Errorf("the block saw %d sends, the last at %v; want two, the resend at the first send's createdAt %v, so both name one snapshot", len(block.desired), last, block.desired[0].VerbAt)
+	}
+	if got := events.recorded(); len(got) != 2 || got[0].Status != "progress" || got[1].Status != "completed" {
+		t.Errorf("the two sends sent the events %+v, want progress and then completed", got)
+	}
+}
+
+func TestSnapshot_APendingAnswerUnderOneIdempotencyKeyReachesTheBlockOnEveryDelivery(t *testing.T) {
+	block := newSnapshottingBlock("hnd_0001")
+	block.err = handler.Wait("the scratch copy of app-data is restoring")
+	x := newHarness(t, block, withManifest(snapshotManifest), func(cfg *handler.Config) { cfg.Observers = asObservers(blockObservers(newFakeCloud())) })
+
+	var pending []bool
+	for range 2 {
+		_, raw := x.post(map[string]any{"operation": "snapshot", "unit": "app-data", "idempotencyKey": "sub-1:snapshot:rep_01"})
+		pending = append(pending, decodeResponse(t, raw).Pending)
+	}
+
+	if len(block.taken) != 2 || !slices.Equal(pending, []bool{true, true}) {
+		t.Errorf("two deliveries under one key reached the block %d times and answered pending %v; want both to reach it and answer pending, since the cache keeps no pending answer", len(block.taken), pending)
 	}
 }
 

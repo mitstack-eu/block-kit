@@ -7,14 +7,17 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
@@ -57,9 +60,10 @@ type carrier interface {
 // stateBlock keeps its data in live and carries it across a replacement through carry.
 type stateBlock struct {
 	*fakeBlock
-	carry  carrier
-	mu     sync.Mutex
-	marked map[string]bool
+	carry      carrier
+	mu         sync.Mutex
+	marked     map[string]bool
+	snapshotAt []time.Time
 }
 
 func (b *stateBlock) mark(op string, d contract.Desired) {
@@ -70,6 +74,9 @@ func (b *stateBlock) mark(op string, d contract.Desired) {
 
 func (b *stateBlock) Snapshot(ctx context.Context, d contract.Desired, unit string) (string, error) {
 	b.mark("snapshot", d)
+	b.mu.Lock()
+	b.snapshotAt = append(b.snapshotAt, d.VerbAt)
+	b.mu.Unlock()
 	return b.carry.Snapshot(ctx, unit)
 }
 
@@ -181,6 +188,62 @@ func memoryBlock(t *testing.T, drop string, unhealthy bool) (*stateBlock, kittes
 	return newStateBlock(t, live, func(restored *atomic.Bool) carrier {
 		return &vault{live: live, drop: drop, restored: restored, taken: map[string]map[string]string{}}
 	}, unhealthy)
+}
+
+// slowVault is a vault whose snapshot answers a wait to its first waits sends, as a block that checks a scratch copy over several requests does.
+type slowVault struct {
+	*vault
+	waits      int
+	units      []string
+	lastDetail string
+}
+
+func (v *slowVault) Snapshot(ctx context.Context, unit string) (string, error) {
+	if v.units = append(v.units, unit); len(v.units) > v.waits {
+		return v.vault.Snapshot(ctx, unit)
+	}
+	v.lastDetail = fmt.Sprintf("the scratch copy of %s is restoring, check %d", unit, len(v.units))
+	return "", handler.Wait("%s", v.lastDetail)
+}
+
+func slowBlock(t *testing.T, waits int) (*stateBlock, *slowVault, kittest.Replacement) {
+	t.Helper()
+	live := &memState{data: map[string]string{}}
+	slow := &slowVault{vault: &vault{live: live, taken: map[string]map[string]string{}}, waits: waits}
+	b, in := newStateBlock(t, live, func(restored *atomic.Bool) carrier { slow.restored = restored; return slow }, false)
+	return b, slow, in
+}
+
+func TestAssertReplacement_SendsAPendingSnapshotAgainAtTheFirstSendsCreatedAtUntilItHandsOver(t *testing.T) {
+	b, slow, in := slowBlock(t, 2)
+
+	tb := runAndCollect(func(tb testing.TB) { kittest.AssertReplacement(tb, in) })
+
+	resentAtAnotherTime := slices.ContainsFunc(b.snapshotAt, func(at time.Time) bool { return !at.Equal(b.snapshotAt[0]) })
+	if tb.failed || !slices.Equal(slow.units, []string{"app-data", "app-data", "app-data"}) || resentAtAnotherTime {
+		t.Errorf("AssertReplacement failed = %v, logging %q, after snapshots of %q reaching the block at %v; want it to pass on the third, each of app-data at the first send's createdAt, which each resend carries as settlesAt", tb.failed, tb.logs, slow.units, b.snapshotAt)
+	}
+}
+
+func TestCheckReplacement_FailsASnapshotStillPendingPastTheSettleBudgetNamingItsLastDetail(t *testing.T) {
+	_, slow, in := slowBlock(t, math.MaxInt)
+
+	problems := kittest.CheckReplacement(in)
+
+	wantProblemNaming(t, problems, `snapshot of "app-data"`, "pending", slow.lastDetail)
+}
+
+func TestCheckReplacement_DropsNoMemberOfAManyEntryOnASnapshotThatReportsNoResource(t *testing.T) {
+	b, in := memoryBlock(t, "", false)
+	b.resources["replica/1"] = "aws.ebs-volume"
+	in.Block.Config.Manifest = []byte(strings.Replace(stateBlockManifest, "    - aws.ebs-volume\n", "    - aws.ebs-volume\n    - name: replica\n      type: aws.ebs-volume\n      many: true\n", 1))
+	in.Block.Config.Observers["replica"] = providerObserver{p: b.p}
+
+	problems := kittest.CheckReplacement(in)
+
+	if i := slices.IndexFunc(problems, func(p string) bool { return strings.Contains(p, "the snapshot stopped reporting it") }); i >= 0 {
+		t.Errorf("the drill dropped a member on the snapshot's answer, which ensures nothing: %q", problems[i])
+	}
 }
 
 func TestCheckReplacement_FailsABlockWhoseRestoreDropsADatum(t *testing.T) {
