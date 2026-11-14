@@ -93,7 +93,7 @@ func checkFields(t *testing.T, workflow, prefix string, cases []struct{ name, go
 }
 
 // prDeliveryRun is how ci.yml and publish-block.yml run plain-delivery's delivery check, at one release.
-const prDeliveryRun = `go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.0 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"`
+const prDeliveryRun = `go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.2 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"`
 
 func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const checkout, setupGo = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"

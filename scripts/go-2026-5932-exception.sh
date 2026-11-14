@@ -3,8 +3,10 @@
 # advisory GO-2026-5932 only in an OpenTofu provider binary whose Go function
 # table names golang.org/x/crypto code but none of golang.org/x/crypto/openpgp,
 # and only while that provider's newest release still requires an affected
-# golang.org/x/crypto. Every other finding is refused. govulncheck 1.9.0,
-# checked by its module sum, also scans each such binary. Its result is
+# golang.org/x/crypto. A dated exception also accepts the findings it lists,
+# only in the one provider binary its sha256 names and only through its last
+# day. Every other finding is refused. govulncheck 1.9.0, checked by its
+# module sum, also scans each binary that holds GO-2026-5932. Its result is
 # printed but does not decide, and when it cannot run the script says so.
 #
 # Usage: scripts/go-2026-5932-exception.sh <trivy-report.json> <image-root>
@@ -12,7 +14,8 @@
 #   <image-root> holds the image's files at their paths in the image, and
 #   needs only the provider binaries the report names.
 #
-#   exit 0  every finding is GO-2026-5932 in a provider binary proven so
+#   exit 0  every finding is GO-2026-5932 in a provider binary proven so, or
+#           one the dated exception lists in its binary through its last day
 #   exit 1  a finding is refused, naming it and why, a read failed, or the
 #           report holds no finding at all
 #
@@ -25,7 +28,8 @@
 # every provider built on a tagged release, whether or not the provider links
 # openpgp. govulncheck cannot tell which do, since provider releases are
 # stripped of the symbols it reads, while the function table every Go binary
-# keeps for its stack traces names each function compiled in.
+# keeps for its stack traces names each function compiled in. The dated
+# exception covers findings that no release of the provider fixes yet.
 set -euo pipefail
 export LC_ALL=C
 
@@ -39,6 +43,15 @@ readonly SEMVER='^v([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.-]+))?(\+[0-9A-Za-z
 readonly SEP=$'\x1f'
 readonly GOVULNCHECK=golang.org/x/vuln/cmd/govulncheck@v1.9.0
 readonly GOVULNCHECK_SUM=h1:12VaqnI9kJfqwRoPptxoqsUhQtdfrSbdksT7X/KY/sc=
+
+# The Scaleway provider's newest release, 2.92.1, is built with Go 1.27.3 and
+# golang.org/x/net v0.61.0, and only Go 1.27.4 and x/net v0.62.0 fix these. A
+# sha256 names one binary, so a rebuild or any other file at the same path is
+# refused.
+readonly DATED_BINARY=$PROVIDERS/registry.opentofu.org/scaleway/scaleway/2.92.1/linux_amd64/terraform-provider-scaleway_v2.92.1
+readonly DATED_SHA256=d5868a2c11a9241b8c55c44ffd8b20c60b44ec6398f224e3f4d14c2bf41614b7
+readonly DATED_LAST_DAY=2026-12-14
+readonly DATED_FINDINGS=("CVE-2026-78661 golang.org/x/net" "CVE-2026-97045 golang.org/x/net" "CVE-2026-97054 stdlib")
 
 work=""
 funcnames=""
@@ -214,12 +227,55 @@ no_fixed_release() {
   echo "$provider's newest release $newest still requires $CRYPTO $required, below the fix $FIXED"
 }
 
+# dated_finding succeeds when finding $1 in module $2 is one the dated
+# exception lists.
+dated_finding() {
+  local listed
+  for listed in "${DATED_FINDINGS[@]}"; do
+    [ "$listed" = "$1 $2" ] && return 0
+  done
+  return 1
+}
+
+# judge_dated prints the verdict on dated finding $4 in module $5 of binary $2
+# and fails when it is refused.
+judge_dated() {
+  local root="$1" target="$2" type="$3" id="$4" pkg="$5" today digest
+  if [ "$type" != gobinary ] || [ "$target" != "$DATED_BINARY" ]; then
+    echo "refused $id in $target: its dated exception covers only $DATED_BINARY"
+    return 1
+  fi
+  today=$(date -u +%Y-%m-%d)
+  if [[ ! $today =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "refused $id in $target: date printed '$today', not today's date, so its dated exception cannot be judged"
+    return 1
+  fi
+  if [[ $today > $DATED_LAST_DAY ]]; then
+    echo "refused $id in $target: its dated exception lasted through $DATED_LAST_DAY UTC and today is $today, so move the block to a provider release that fixes $pkg"
+    return 1
+  fi
+  if [ ! -f "$root/$target" ]; then
+    echo "refused $id in $target: the image holds no such file"
+    return 1
+  fi
+  digest=$(sha256sum "$root/$target" | awk '{print $1}')
+  if [ "$digest" != "$DATED_SHA256" ]; then
+    echo "refused $id in $target: the binary's sha256 is $digest, not the release's $DATED_SHA256, so its dated exception does not cover it"
+    return 1
+  fi
+  echo "accepted $id in $target: the binary's sha256 is the release's $DATED_SHA256, and this dated exception lasts through $DATED_LAST_DAY UTC"
+}
+
 # judge prints the verdict on one finding and fails when it is refused.
 judge() {
   local root="$1" kind="$2" target="$3" type="$4" id="$5" pkg="$6" installed="$7" fixed="$8" proof release
   if [ "$kind" != vuln ]; then
     echo "refused $kind $id in $target"
     return 1
+  fi
+  if dated_finding "$id" "$pkg"; then
+    judge_dated "$root" "$target" "$type" "$id" "$pkg"
+    return
   fi
   if [ "$id" != "$ADVISORY" ] || [ "$pkg" != "$CRYPTO" ]; then
     echo "refused $id in $target: $pkg $installed has a fix in $fixed"
@@ -271,10 +327,10 @@ main() {
     judge "$root" "$kind" "$target" "$type" "$id" "$pkg" "$installed" "$fixed" || refused=$((refused + 1))
   done 3<<<"$rows"
   if [ "$refused" -gt 0 ]; then
-    echo "go-2026-5932-exception: refused $refused of $total finding(s); only $ADVISORY in a provider binary proven free of $OPENPGP code is accepted"
+    echo "go-2026-5932-exception: refused $refused of $total finding(s); only $ADVISORY in a provider binary proven free of $OPENPGP code, and the dated exception's findings in $DATED_BINARY through $DATED_LAST_DAY, are accepted"
     return 1
   fi
-  echo "go-2026-5932-exception: accepted all $total finding(s), each $ADVISORY in a provider binary proven free of $OPENPGP code"
+  echo "go-2026-5932-exception: accepted all $total finding(s), each $ADVISORY in a provider binary proven free of $OPENPGP code or a dated exception's finding in $DATED_BINARY"
 }
 
 main "$@"

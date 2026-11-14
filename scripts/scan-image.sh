@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # scan-image.sh — scan a local Docker image with Trivy 0.76.0, checked by
 # sha256, and refuse every finding that has a fixed version, except the
-# GO-2026-5932 findings go-2026-5932-exception.sh proves.
+# GO-2026-5932 findings go-2026-5932-exception.sh proves and the findings its
+# dated exception lists in one provider binary.
 #
 # Usage: scripts/scan-image.sh <image>
 #

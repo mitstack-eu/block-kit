@@ -1,8 +1,10 @@
 package scripts_test
 
-// go-2026-5932-exception.sh accepts GO-2026-5932 only in a provider binary whose Go function table names x/crypto code and no openpgp code, from a provider whose newest release is not on a fixed x/crypto, and refuses every other finding.
+// go-2026-5932-exception.sh accepts GO-2026-5932 only in a provider binary whose Go function table names x/crypto code and no openpgp code, from a provider whose newest release is not on a fixed x/crypto, accepts the dated exception's findings only in the one binary its sha256 names through its last day, and refuses every other finding.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +26,12 @@ const (
 	fixtureModule  = "github.com/acme/terraform-provider-fixture"
 	fixedCrypto    = "v0.58.1-0.20261009181718-2f1f834330b2"
 	moveFixture    = "move the block to registry.opentofu.org/acme/fixture 1.1.0"
+	releaseTarget  = plugins + "scaleway/scaleway/2.92.1/linux_amd64/terraform-provider-scaleway_v2.92.1"
+	releaseSHA256  = "d5868a2c11a9241b8c55c44ffd8b20c60b44ec6398f224e3f4d14c2bf41614b7"
+	scalewayModule = "github.com/scaleway/terraform-provider-scaleway/v2"
+	acceptedDated  = ": the binary's sha256 is the release's " + releaseSHA256 + ", and this dated exception lasts through 2026-12-14 UTC"
+	endedDated     = ": its dated exception lasted through 2026-12-14 UTC and today is 2026-12-15, so move the block to a provider release that fixes "
+	coversOnly     = ": its dated exception covers only " + releaseTarget
 )
 
 type finding struct{ kind, target, id, pkg, installed, fixed string }
@@ -298,4 +306,101 @@ func TestException_RefusesAReportItCannotReadOrThatHoldsNoFinding(t *testing.T) 
 			wantOutput(t, out, exit, 1, []string{fmt.Sprintf(c.want, report)}, "accepted all")
 		})
 	}
+}
+
+func xnetIn(target string) []finding {
+	return []finding{{"vuln", target, "CVE-2026-78661", "golang.org/x/net", "v0.61.0", "0.62.0"}, {"vuln", target, "CVE-2026-97045", "golang.org/x/net", "v0.61.0", "0.62.0"}}
+}
+
+// eachXNet is line once for each dated x/net finding, its id in place of %s, then more.
+func eachXNet(line string, more ...string) []string {
+	return append([]string{fmt.Sprintf(line, "CVE-2026-78661"), fmt.Sprintf(line, "CVE-2026-97045")}, more...)
+}
+
+// datedStubs answers date with day and, with releaseDigest, sha256sum with the release binary's sha256, since no fixture can hold the release's bytes.
+func datedStubs(t *testing.T, day string, releaseDigest bool) string {
+	t.Helper()
+	bin := t.TempDir()
+	writeFile(t, filepath.Join(bin, "date"), "#!/usr/bin/env bash\necho "+day+"\n")
+	if releaseDigest {
+		writeFile(t, filepath.Join(bin, "sha256sum"), "#!/usr/bin/env bash\necho \""+releaseSHA256+"  $1\"\n")
+	}
+	return "PATH=" + bin + ":" + os.Getenv("PATH")
+}
+
+func TestException_AcceptsTheDatedFindingsOnlyInTheReleaseBinaryBySha256ThroughTheLastDay(t *testing.T) {
+	const standIn = "a stand-in for the provider binary\n"
+	bin, sum := filepath.Join(t.TempDir(), "terraform-provider-scaleway"), sha256.Sum256([]byte(standIn))
+	writeFile(t, bin, standIn)
+	cases := []struct {
+		name, target, day      string
+		missing, releaseDigest bool
+		extra                  []finding
+		exit                   int
+		want                   []string
+		notWant                string
+	}{
+		{name: "a month before the last day both are accepted, naming the binary, its sha256 and the last day", target: releaseTarget, day: "2026-11-14", releaseDigest: true,
+			want: eachXNet("accepted %s in " + releaseTarget + acceptedDated), notWant: "refused"},
+		{name: "on the last day both are still accepted", target: releaseTarget, day: "2026-12-14", releaseDigest: true,
+			want: eachXNet("accepted %s in " + releaseTarget + acceptedDated), notWant: "refused"},
+		{name: "the day after the last day both are refused, naming the last day and today", target: releaseTarget, day: "2026-12-15", releaseDigest: true, exit: 1,
+			want: eachXNet("refused %s in " + releaseTarget + endedDated + "golang.org/x/net"), notWant: "accepted CVE-"},
+		{name: "a date command that prints nothing leaves both refused", target: releaseTarget, day: "", releaseDigest: true, exit: 1,
+			want: eachXNet("refused %s in " + releaseTarget + ": date printed '', not today's date, so its dated exception cannot be judged"), notWant: "accepted CVE-"},
+		{name: "a binary at the release's path with another sha256 is refused, naming both", target: releaseTarget, day: "2026-11-14", exit: 1,
+			want:    eachXNet("refused %s in " + releaseTarget + ": the binary's sha256 is " + hex.EncodeToString(sum[:]) + ", not the release's " + releaseSHA256 + ", so its dated exception does not cover it"),
+			notWant: "accepted CVE-"},
+		{name: "the Scaleway provider 2.89.0 binary is refused, even with the release's sha256", target: scalewayTarget, day: "2026-11-14", releaseDigest: true, exit: 1,
+			want: eachXNet("refused %s in " + scalewayTarget + coversOnly), notWant: "accepted CVE-"},
+		{name: "the operator's own binary is refused, even with the release's sha256", target: operatorTarget, day: "2026-11-14", releaseDigest: true, exit: 1,
+			want: eachXNet("refused %s in " + operatorTarget + coversOnly), notWant: "accepted CVE-"},
+		{name: "the release's path missing from the image root is refused", target: releaseTarget, missing: true, day: "2026-11-14", releaseDigest: true, exit: 1,
+			want: eachXNet("refused %s in " + releaseTarget + ": the image holds no such file"), notWant: "accepted CVE-"},
+		{name: "another golang.org/x/net finding in the release binary is refused", target: releaseTarget, day: "2026-11-14", releaseDigest: true, exit: 1,
+			extra: []finding{{"vuln", releaseTarget, "CVE-2026-78669", "golang.org/x/net", "v0.61.0", "0.62.0"}},
+			want:  eachXNet("accepted %s in "+releaseTarget+acceptedDated, "refused CVE-2026-78669 in "+releaseTarget+": golang.org/x/net v0.61.0 has a fix in 0.62.0")},
+		{name: "one of the two ids in another module of the release binary is refused", target: releaseTarget, day: "2026-11-14", releaseDigest: true, exit: 1,
+			extra: []finding{{"vuln", releaseTarget, "CVE-2026-78661", "golang.org/x/text", "v0.31.0", "0.32.0"}},
+			want:  eachXNet("accepted %s in "+releaseTarget+acceptedDated, "refused CVE-2026-78661 in "+releaseTarget+": golang.org/x/text v0.31.0 has a fix in 0.32.0")},
+		{name: "a secret Trivy found in the release binary is refused", target: releaseTarget, day: "2026-11-14", releaseDigest: true, exit: 1,
+			extra: []finding{{kind: "secret", target: releaseTarget, id: "aws-access-key-id"}},
+			want:  eachXNet("accepted %s in "+releaseTarget+acceptedDated, "refused secret aws-access-key-id in "+releaseTarget)},
+		{name: "the standard-library finding CVE-2026-97054 in the release binary is accepted on the last day", target: releaseTarget, day: "2026-12-14", releaseDigest: true,
+			extra: []finding{{"vuln", releaseTarget, "CVE-2026-97054", "stdlib", "v1.27.3", "1.26.11, 1.27.4"}},
+			want:  eachXNet("accepted %s in "+releaseTarget+acceptedDated, "accepted CVE-2026-97054 in "+releaseTarget+acceptedDated), notWant: "refused"},
+		{name: "the standard-library finding is refused the day after the last day", target: releaseTarget, day: "2026-12-15", releaseDigest: true, exit: 1,
+			extra: []finding{{"vuln", releaseTarget, "CVE-2026-97054", "stdlib", "v1.27.3", "1.26.11, 1.27.4"}},
+			want:  []string{"refused CVE-2026-97054 in " + releaseTarget + endedDated + "stdlib"}, notWant: "accepted CVE-"},
+		{name: "the standard-library finding in the Scaleway provider 2.89.0 binary is refused, even with the release's sha256", target: scalewayTarget, day: "2026-11-14", releaseDigest: true, exit: 1,
+			extra: []finding{{"vuln", scalewayTarget, "CVE-2026-97054", "stdlib", "v1.27.1", "1.26.11, 1.27.4"}},
+			want:  []string{"refused CVE-2026-97054 in " + scalewayTarget + coversOnly}, notWant: "accepted CVE-"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			binaries := map[string]string{c.target: bin}
+			if c.missing {
+				binaries = nil
+			}
+			report := trivyReport(t, append(xnetIn(c.target), c.extra...)...)
+
+			out, exit := runException(t, report, imageRoot(t, binaries), serve(t, nil), datedStubs(t, c.day, c.releaseDigest))
+
+			wantOutput(t, out, exit, c.exit, c.want, c.notWant)
+		})
+	}
+}
+
+func TestException_AcceptsGO20265932AndTheDatedFindingsTogetherInTheReleaseBinary(t *testing.T) {
+	bin := fixtureBinary(t, scalewayModule, "")
+	url := serve(t, map[string]string{
+		"/v1/providers/scaleway/scaleway/versions":             registryVersions("2.92.0", "2.92.1"),
+		"/scaleway/terraform-provider-scaleway/v2.92.1/go.mod": goModRequiring(scalewayModule, "v0.58.0"),
+	})
+	report := trivyReport(t, append(xnetIn(releaseTarget), advisoryIn(releaseTarget))...)
+
+	out, exit := runException(t, report, imageRoot(t, map[string]string{releaseTarget: bin}), url, datedStubs(t, "2026-11-14", true))
+
+	wantOutput(t, out, exit, 0, eachXNet("accepted %s in "+releaseTarget+acceptedDated,
+		"accepted GO-2026-5932 in "+releaseTarget+": its Go function table names ", "accepted all 3 finding(s)"), "refused")
 }

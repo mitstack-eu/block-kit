@@ -94,9 +94,10 @@
 # conformance job runs builds the image, pushes it nowhere and scans it, so a
 # finding fails the conformance check before merge. On a push to the default
 # branch, the publish job scans the image it was handed before any push. No
-# other event scans the image. The one finding the script accepts is
-# GO-2026-5932 in an OpenTofu provider binary that
-# scripts/go-2026-5932-exception.sh proves free of openpgp code.
+# other event scans the image. The script accepts GO-2026-5932 in an OpenTofu
+# provider binary that scripts/go-2026-5932-exception.sh proves free of openpgp
+# code, and the findings that script's dated exception lists in one provider
+# binary, named by its sha256, through the exception's last day.
 name: publish-block
 
 on:
@@ -599,7 +600,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}
           TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
-        run: go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.0 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.2 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"
 
   # The platform runs every check a real apply runs on manifest.yaml, the ones
   # that read its own records included, and writes nothing, so a pull request
@@ -860,7 +861,7 @@ jobs:
 
       # The image is the one the conformance job built and judged. Any finding
       # with a fixed version, at any severity, stops the job before the first
-      # push, but the one scan-image.sh's exception proves.
+      # push, but those scan-image.sh's exceptions accept.
       - name: Scan and push the image
         if: steps.existing.outputs.published == 'false'
         run: |
