@@ -111,7 +111,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           TRACKER_BASE_URL: ${{ vars.TRACKER_BASE_URL }}
           TRACKER_API_TOKEN: ${{ secrets.TRACKER_API_TOKEN }}
-        run: go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.0 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: go run github.com/mitstack-eu/plain-delivery/cmd/pr-delivery@v0.2.2 --repo . --base "$BASE_SHA" --head "$HEAD_SHA"
 
   comment-check:
     name: comment check
