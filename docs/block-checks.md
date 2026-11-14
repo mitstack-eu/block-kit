@@ -383,7 +383,7 @@ conformance job built, before any push. The script runs the image scanner
 Trivy 0.76.0, checked by its sha256, from an empty directory with every
 `TRIVY_` variable unset, so no ignore file or setting can silence a finding.
 Any finding that has a fixed version, at any severity, stops the job, with the
-one exception below. An error of Trivy's own stops the job too.
+two exceptions below. An error of Trivy's own stops the job too.
 
 A pull request runs the same scan before merge, so a finding the publish job
 would refuse fails `block / conformance` first. The conformance job for your
@@ -440,6 +440,32 @@ release requires the fixed x/crypto or none at all, the scan refuses that
 provider's finding and names the release to lock, as in
 `move the block to registry.opentofu.org/hashicorp/aws 6.72.0`. A registry or
 `go.mod` read that gets no answer stops the job and names the read.
+
+The second exception is a dated one, which means it ends on a set day. It
+covers findings that no release of a provider fixes yet, in one provider
+binary only. It lists two findings today, CVE-2026-78661 and CVE-2026-97045
+in golang.org/x/net v0.61.0. The Scaleway provider's newest release, 2.92.1,
+is built on that version, and only v0.62.0 fixes them. The same script accepts
+such a finding only when each condition in this table holds, and refuses it
+otherwise:
+
+| Condition | How the script proves it |
+|---|---|
+| The exception lists the finding | Its id and its module both match an entry of `DATED_FINDINGS`. The same id reported in another module, such as the Go standard library, is refused |
+| The binary is the release's own | Its path in the image is `DATED_BINARY`, the Scaleway 2.92.1 `linux_amd64` binary in the plugin cache, and its sha256 equals `DATED_SHA256`. A digest names one binary, so a rebuild from the same source, or any other file at that path, is refused |
+| The last day has not passed | Today's date in UTC is on or before `DATED_LAST_DAY`, 2026-12-14. From the next day the script refuses both findings and says the exception has ended |
+
+Every other finding in that binary keeps the full refusal, such as
+CVE-2026-97054, which the Go standard library fixes in Go 1.27.4. The
+sha256 is that of the binary inside the release's zip file, which the
+registry's checksum covers. An accepted finding reads like this:
+
+```text
+accepted CVE-2026-78661 in var/cache/tofu-plugins/registry.opentofu.org/scaleway/scaleway/2.92.1/linux_amd64/terraform-provider-scaleway_v2.92.1: the binary's sha256 is the release's d5868a2c11a9241b8c55c44ffd8b20c60b44ec6398f224e3f4d14c2bf41614b7, and this dated exception lasts through 2026-12-14 UTC
+```
+
+Once the last day passes, a block on that binary fails its scan until it moves
+to a provider release that fixes the findings.
 
 To scan an image you built yourself, install Docker, Go, jq and curl, and
 clone the kit beside your block at the tag your `kit-ref` names. Then build
