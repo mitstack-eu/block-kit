@@ -366,6 +366,15 @@ func TestException_AcceptsTheDatedFindingsOnlyInTheReleaseBinaryBySha256ThroughT
 		{name: "a secret Trivy found in the release binary is refused", target: releaseTarget, day: "2026-11-14", releaseDigest: true, exit: 1,
 			extra: []finding{{kind: "secret", target: releaseTarget, id: "aws-access-key-id"}},
 			want:  eachXNet("accepted %s in "+releaseTarget+acceptedDated, "refused secret aws-access-key-id in "+releaseTarget)},
+		{name: "the standard-library finding CVE-2026-97054 in the release binary is accepted on the last day", target: releaseTarget, day: "2026-12-14", releaseDigest: true,
+			extra: []finding{{"vuln", releaseTarget, "CVE-2026-97054", "stdlib", "v1.27.3", "1.26.11, 1.27.4"}},
+			want:  eachXNet("accepted %s in "+releaseTarget+acceptedDated, "accepted CVE-2026-97054 in "+releaseTarget+acceptedDated), notWant: "refused"},
+		{name: "the standard-library finding is refused the day after the last day", target: releaseTarget, day: "2026-12-15", releaseDigest: true, exit: 1,
+			extra: []finding{{"vuln", releaseTarget, "CVE-2026-97054", "stdlib", "v1.27.3", "1.26.11, 1.27.4"}},
+			want:  []string{"refused CVE-2026-97054 in " + releaseTarget + endedDated + "stdlib"}, notWant: "accepted CVE-"},
+		{name: "the standard-library finding in the Scaleway provider 2.89.0 binary is refused, even with the release's sha256", target: scalewayTarget, day: "2026-11-14", releaseDigest: true, exit: 1,
+			extra: []finding{{"vuln", scalewayTarget, "CVE-2026-97054", "stdlib", "v1.27.1", "1.26.11, 1.27.4"}},
+			want:  []string{"refused CVE-2026-97054 in " + scalewayTarget + coversOnly}, notWant: "accepted CVE-"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
