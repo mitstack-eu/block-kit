@@ -452,16 +452,15 @@ otherwise:
 | Condition | How the script proves it |
 |---|---|
 | The exception lists the finding | Its id and its module both match an entry of `DATED_FINDINGS`. The same id reported in another module, such as the Go standard library, is refused |
-| The binary is the release's own | Its path in the image is `DATED_BINARY`, the Scaleway 2.92.1 `linux_amd64` binary in the plugin cache, and its sha256 equals `DATED_SHA256`. A digest names one binary, so a rebuild from the same source, or any other file at that path, is refused |
-| The last day has not passed | Today's date in UTC is on or before `DATED_LAST_DAY`, 2026-12-14. From the next day the script refuses both findings and says the exception has ended |
+| The binary is the release's own | Its path in the image is `DATED_BINARY`, the Scaleway 2.92.1 `linux_amd64` binary in the plugin cache, and its sha256 equals `DATED_SHA256`. A digest names one binary, so a rebuild from the same source, or any other file at that path, is refused. `DATED_SHA256` is the digest of the unpacked binary, not the checksum the registry publishes for the release's zip file. To read it for a release, fetch the zip, check it against that checksum, unzip it and run `sha256sum` on the binary |
+| The last day has not passed | Today's date in UTC is on or before `DATED_LAST_DAY`, 2026-12-14. From the next day the script refuses both findings and says the exception has ended. When `date` prints no date, the script refuses them too |
 
 Every other finding in that binary keeps the full refusal, such as
-CVE-2026-97054, which the Go standard library fixes in Go 1.27.4. The
-sha256 is that of the binary inside the release's zip file, which the
-registry's checksum covers. An accepted finding reads like this:
+CVE-2026-97054, which the Go standard library fixes in Go 1.27.4. An
+accepted finding reads like this:
 
 ```text
-accepted CVE-2026-78661 in var/cache/tofu-plugins/registry.opentofu.org/scaleway/scaleway/2.92.1/linux_amd64/terraform-provider-scaleway_v2.92.1: the binary's sha256 is the release's d5868a2c11a9241b8c55c44ffd8b20c60b44ec6398f224e3f4d14c2bf41614b7, and this dated exception lasts through 2026-12-14 UTC
+accepted CVE-2026-78661 in var/cache/tofu-plugins/registry.opentofu.org/scaleway/scaleway/2.92.1/linux_amd64/terraform-provider-scaleway_v2.92.1: the binary's sha256 is the release's d5868a2c..., and this dated exception lasts through 2026-12-14 UTC
 ```
 
 Once the last day passes, a block on that binary fails its scan until it moves
