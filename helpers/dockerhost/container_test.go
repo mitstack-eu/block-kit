@@ -1,8 +1,9 @@
 package dockerhost_test
 
-// A container a Docker host reports reads as one answer for every reader: unhealthy, naming only the container and what it reads, while it is not running or its health reads unhealthy, waiting while it starts, and healthy once it runs healthy.
+// A container a Docker host reports reads as one answer for every reader: unhealthy, naming the container, what it reads and, once its health reads unhealthy, what its health check said, waiting while it starts, and healthy once it runs healthy.
 
 import (
+	"encoding/json"
 	"reflect"
 	"regexp"
 	"strings"
@@ -46,6 +47,44 @@ func TestContainer_ReadsItsStateAndHealthAsOneAnswer(t *testing.T) {
 	}
 }
 
+const curlError = "curl: (22) The requested URL returned error: 500"
+
+func TestContainer_UnhealthyEndsWithWhatItsHealthCheckSaidCutAndFreeOfControlCharacters(t *testing.T) {
+	said := func(words string) string {
+		return "shop-web reads unhealthy, and its health check said \"" + words + "\""
+	}
+	for _, tc := range []struct {
+		name, state, health string
+		check               dockerhost.HealthCheck
+		want                *contract.Unhealthy
+	}{
+		{"an unhealthy container whose check printed curl's error ends with that line", "running", "unhealthy", dockerhost.HealthCheck{ExitCode: 1, Output: curlError},
+			&contract.Unhealthy{Cause: appCauses.Unhealthy, Detail: said(curlError)}},
+		{"an unhealthy container's 5 KB output holding control characters ends with its last 160 bytes and no control character", "running", "unhealthy",
+			dockerhost.HealthCheck{ExitCode: 1, Output: strings.Repeat("\x1b[2K\r\x00\x7f\u0085", 640) + strings.Repeat("e", 200) + "\t" + curlError + "\n"},
+			&contract.Unhealthy{Cause: appCauses.Unhealthy, Detail: said(strings.Repeat("e", 160-len(curlError)) + curlError)}},
+		{"an unhealthy container's output cut inside a character keeps only whole characters", "running", "unhealthy", dockerhost.HealthCheck{ExitCode: 1, Output: strings.Repeat("€", 54)},
+			&contract.Unhealthy{Cause: appCauses.Unhealthy, Detail: said(strings.Repeat("€", 53))}},
+		{"an unhealthy container on a host release that sends no health check reads as before", "running", "unhealthy", dockerhost.HealthCheck{},
+			&contract.Unhealthy{Cause: appCauses.Unhealthy, Detail: "shop-web reads unhealthy"}},
+		{"an unhealthy container whose check printed only white space and control characters reads as before", "running", "unhealthy", dockerhost.HealthCheck{ExitCode: 1, Output: " \n\t\x1b\x00 "},
+			&contract.Unhealthy{Cause: appCauses.Unhealthy, Detail: "shop-web reads unhealthy"}},
+		{"a restarting container names its state alone, whatever its check printed", "restarting", "unhealthy", dockerhost.HealthCheck{ExitCode: 1, Output: curlError},
+			&contract.Unhealthy{Cause: appCauses.NotRunning, Detail: "shop-web reads restarting"}},
+		{"a healthy container reads healthy, with no health check words", "running", "healthy", dockerhost.HealthCheck{ExitCode: 0, Output: "GET http://127.0.0.1:8080/ answered 200 OK"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := dockerhost.Container{Name: "shop-web", State: tc.state, Health: tc.health, HealthCheck: tc.check}
+
+			unhealthy := c.Unhealthy(appCauses)
+
+			if !reflect.DeepEqual(unhealthy, tc.want) {
+				t.Errorf("Container{%s, %s, %+q}.Unhealthy = %+v; want %+v", tc.state, tc.health, tc.check.Output, unhealthy, tc.want)
+			}
+		})
+	}
+}
+
 func appReport(t *testing.T, containers ...string) dockerhost.Report {
 	t.Helper()
 	return newest(t, received(1, `{"host":{"apps":{"shop":[`+strings.Join(containers, ",")+`]}}}`))
@@ -56,6 +95,11 @@ func listed(name, sub, state, health string) string {
 }
 
 func shopWeb(sub, state, health string) string { return listed("shop-web", sub, state, health) }
+
+func checked(sub, health, output string) string {
+	check, _ := json.Marshal(dockerhost.HealthCheck{ExitCode: 1, Output: output})
+	return `{"container":"shop-web","subscription":"` + sub + `","state":"running","health":"` + health + `","healthCheck":` + string(check) + `}`
+}
 
 func TestReport_AppHealthJudgesTheSubscriptionsOwnContainers(t *testing.T) {
 	down := &contract.Unhealthy{Cause: appCauses.NotRunning, Detail: "shop-web reads restarting"}
@@ -71,6 +115,9 @@ func TestReport_AppHealthJudgesTheSubscriptionsOwnContainers(t *testing.T) {
 		{"its restarting container names it", []string{shopWeb("sub_shop", "restarting", "unhealthy")}, down, ""},
 		{"its container still starting waits, so the verdict before it stands", []string{shopWeb("sub_shop", "running", "starting")}, nil, starting},
 		{"its running, healthy container reads healthy", []string{shopWeb("sub_shop", "running", "healthy")}, nil, ""},
+		{"its unhealthy container names what its health check said", []string{checked("sub_shop", "unhealthy", curlError)},
+			&contract.Unhealthy{Cause: appCauses.Unhealthy, Detail: "shop-web reads unhealthy, and its health check said \"" + curlError + "\""}, ""},
+		{"another subscription's unhealthy container leaves it healthy, with none of that check's words", []string{checked("sub_shop", "healthy", "ok"), checked("sub_db_shop", "unhealthy", curlError)}, nil, ""},
 		{"its running container with no health check reads healthy and never waits", []string{shopWeb("sub_shop", "running", "none")}, nil, ""},
 		{"another subscription's restarting container leaves it healthy", []string{shopWeb("sub_shop", "running", "healthy"), shopWeb("sub_db_shop", "restarting", "unhealthy")}, nil, ""},
 		{"an app the report lists no container of reads healthy, as before its first deploy", nil, nil, ""},
@@ -156,14 +203,16 @@ func TestContainer_DatabaseHealthWaitsWhileItStartsOrARecreateReplacesItAndFails
 
 func TestReport_AppContainersReadsTheContainersListedUnderOneApp(t *testing.T) {
 	report := newest(t, received(1, `{"host":{"apps":{
-		"shop":[{"container":"shop-web","subscription":"sub_shop","image":"ghcr.io/acme/shop@sha256:ab12","digest":"sha256:ab12","state":"restarting","health":"unhealthy","logs":"boom\n"}],
+		"shop":[{"container":"shop-web","subscription":"sub_shop","image":"ghcr.io/acme/shop@sha256:ab12","digest":"sha256:ab12","state":"restarting","health":"unhealthy","logs":"boom\n",
+			"healthCheck":{"exitCode":1,"output":"curl: (7) Failed to connect to 127.0.0.1 port 8080"}}],
 		"blog":[{"container":"blog-web","subscription":"sub_blog","state":"running","health":"healthy"}]}}}`))
 	logs := "boom\n"
 
 	shop, errShop := report.AppContainers("shop")
 	none, errNone := report.AppContainers("wiki")
 
-	want := []dockerhost.Container{{Name: "shop-web", Subscription: "sub_shop", Image: "ghcr.io/acme/shop@sha256:ab12", Digest: "sha256:ab12", State: "restarting", Health: "unhealthy", Logs: &logs}}
+	want := []dockerhost.Container{{Name: "shop-web", Subscription: "sub_shop", Image: "ghcr.io/acme/shop@sha256:ab12", Digest: "sha256:ab12", State: "restarting", Health: "unhealthy", Logs: &logs,
+		HealthCheck: dockerhost.HealthCheck{ExitCode: 1, Output: "curl: (7) Failed to connect to 127.0.0.1 port 8080"}}}
 	if errShop != nil || !reflect.DeepEqual(shop, want) || errNone != nil || len(none) != 0 {
 		t.Errorf("AppContainers(shop) = %+v, %v and AppContainers(wiki) = %+v, %v; want %+v and none", shop, errShop, none, errNone, want)
 	}
