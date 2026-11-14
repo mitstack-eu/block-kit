@@ -444,7 +444,7 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 				t.Errorf("properties.run = %v, want an object requiring exitCode and output", run)
 			}
 			runProps := schemaAt(t, doc, run, "properties")
-			for field, ty := range map[string]string{"exitCode": "integer", "output": "string", "digest": "string"} {
+			for field, ty := range map[string]string{"exitCode": "integer", "output": "string", "digest": "string", "queued": "boolean"} {
 				if f := schemaAt(t, doc, runProps, field); !hasType(f, ty) {
 					t.Errorf("properties.run.%s type = %v, want %s", field, schemaTypes(f), ty)
 				}
@@ -453,6 +453,9 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 				if f := schemaAt(t, doc, runProps, field); !hasType(f, "string") || f["format"] != "date-time" {
 					t.Errorf("properties.run.%s = %v, want a string of format date-time", field, f)
 				}
+			}
+			if version, _ := doc["version"].(string); !atLeastVersion(version, 1, 14, 0) {
+				t.Errorf("response.schema.json version = %q, want at least 1.14.0, the version that adds run.queued", version)
 			}
 		}},
 		{"redrive is a boolean", func(t *testing.T) {
