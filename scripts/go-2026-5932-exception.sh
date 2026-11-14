@@ -44,13 +44,14 @@ readonly SEP=$'\x1f'
 readonly GOVULNCHECK=golang.org/x/vuln/cmd/govulncheck@v1.9.0
 readonly GOVULNCHECK_SUM=h1:12VaqnI9kJfqwRoPptxoqsUhQtdfrSbdksT7X/KY/sc=
 
-# The Scaleway provider's newest release, 2.92.1, links golang.org/x/net
-# v0.61.0, and only v0.62.0 fixes these two. A sha256 names one binary, so a
-# rebuild or any other file at the same path is refused.
+# The Scaleway provider's newest release, 2.92.1, is built with Go 1.27.3 and
+# golang.org/x/net v0.61.0, and only Go 1.27.4 and x/net v0.62.0 fix these. A
+# sha256 names one binary, so a rebuild or any other file at the same path is
+# refused.
 readonly DATED_BINARY=$PROVIDERS/registry.opentofu.org/scaleway/scaleway/2.92.1/linux_amd64/terraform-provider-scaleway_v2.92.1
 readonly DATED_SHA256=d5868a2c11a9241b8c55c44ffd8b20c60b44ec6398f224e3f4d14c2bf41614b7
 readonly DATED_LAST_DAY=2026-12-14
-readonly DATED_FINDINGS=("CVE-2026-78661 golang.org/x/net" "CVE-2026-97045 golang.org/x/net")
+readonly DATED_FINDINGS=("CVE-2026-78661 golang.org/x/net" "CVE-2026-97045 golang.org/x/net" "CVE-2026-97054 stdlib")
 
 work=""
 funcnames=""

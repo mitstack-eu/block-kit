@@ -39,13 +39,13 @@ jobs:
             zip-sha256: c60b9bbd7c5875bf705f8ffc966574266f7293daf1dc632b1f4443aea23c2fe2
             exit: 1
             accepted: GO-2026-5932
-            refused: CVE-2026-78661 CVE-2026-97045
+            refused: CVE-2026-78661 CVE-2026-97045 CVE-2026-97054
           - provider: scaleway/scaleway
             version: 2.92.1
             zip-sha256: 2604434bb120cf28ce401c233dded7ef775c536a5b560d76c1a2cb615b5df844
-            exit: 1
-            accepted: GO-2026-5932 CVE-2026-78661 CVE-2026-97045
-            refused: CVE-2026-97054
+            exit: 0
+            accepted: GO-2026-5932 CVE-2026-78661 CVE-2026-97045 CVE-2026-97054
+            refused: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -443,21 +443,21 @@ provider's finding and names the release to lock, as in
 
 The second exception is a dated one, which means it ends on a set day. It
 covers findings that no release of a provider fixes yet, in one provider
-binary only. It lists two findings today, CVE-2026-78661 and CVE-2026-97045
-in golang.org/x/net v0.61.0. The Scaleway provider's newest release, 2.92.1,
-is built on that version, and only v0.62.0 fixes them. The same script accepts
+binary only. It lists three findings today. CVE-2026-78661 and CVE-2026-97045
+are in golang.org/x/net v0.61.0, which only v0.62.0 fixes. CVE-2026-97054 is
+in the Go standard library of Go 1.27.3, which Go 1.27.4 fixes. The Scaleway
+provider's newest release, 2.92.1, is built on both. The same script accepts
 such a finding only when each condition in this table holds, and refuses it
 otherwise:
 
 | Condition | How the script proves it |
 |---|---|
-| The exception lists the finding | Its id and its module both match an entry of `DATED_FINDINGS`. The same id reported in another module, such as the Go standard library, is refused |
+| The exception lists the finding | Its id and its module both match an entry of `DATED_FINDINGS`. The same id reported in another module is refused |
 | The binary is the release's own | Its path in the image is `DATED_BINARY`, the Scaleway 2.92.1 `linux_amd64` binary in the plugin cache, and its sha256 equals `DATED_SHA256`. A digest names one binary, so a rebuild from the same source, or any other file at that path, is refused. `DATED_SHA256` is the digest of the unpacked binary, not the checksum the registry publishes for the release's zip file. To read it for a release, fetch the zip, check it against that checksum, unzip it and run `sha256sum` on the binary |
-| The last day has not passed | Today's date in UTC is on or before `DATED_LAST_DAY`, 2026-12-14. From the next day the script refuses both findings and says the exception has ended. When `date` prints no date, the script refuses them too |
+| The last day has not passed | Today's date in UTC is on or before `DATED_LAST_DAY`, 2026-12-14. From the next day the script refuses every listed finding and says the exception has ended. When `date` prints no date, the script refuses them too |
 
-Every other finding in that binary keeps the full refusal, such as
-CVE-2026-97054, which the Go standard library fixes in Go 1.27.4. An
-accepted finding reads like this:
+Every other finding in that binary keeps the full refusal. An accepted finding
+reads like this:
 
 ```text
 accepted CVE-2026-78661 in var/cache/tofu-plugins/registry.opentofu.org/scaleway/scaleway/2.92.1/linux_amd64/terraform-provider-scaleway_v2.92.1: the binary's sha256 is the release's d5868a2c..., and this dated exception lasts through 2026-12-14 UTC

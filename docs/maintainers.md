@@ -103,10 +103,10 @@ version, with the `shasum` the registry publishes for it, and to leave the scan
 as it is. The Scaleway 2.89.0 release
 also carries x/net and
 standard-library findings that have fixes, which the scan refuses as it should,
-so its scan is expected to exit 1. Its row lists the dated exception's two
+so its scan is expected to exit 1. Its row lists the dated exception's three
 findings as refused, which proves the exception covers no other binary. The
-2.92.1 row lists them as accepted and lists CVE-2026-97054 as refused, so its
-scan exits 1 too. Once the dated exception's last day passes, the 2.92.1 job
+2.92.1 row lists them as accepted, so its scan exits 0. Once the dated
+exception's last day passes, the 2.92.1 job
 fails until its row changes. To repeat the proof
 on `main` with no change, start the workflow by hand from the repository's
 Actions tab, which its `workflow_dispatch` trigger allows.
