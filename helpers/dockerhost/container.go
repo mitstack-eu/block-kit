@@ -23,10 +23,9 @@ type Container struct {
 	HealthCheck  HealthCheck `json:"healthCheck"`
 }
 
-// HealthCheck is the newest result of a container's health check, zero from a host release that sends none.
+// HealthCheck is what a container's newest health check printed, empty from a host release that sends none.
 type HealthCheck struct {
-	ExitCode int    `json:"exitCode"`
-	Output   string `json:"output"`
+	Output string `json:"output"`
 }
 
 // healthSaidLimit bounds the health check's words in a detail, so a long or binary output cannot crowd out the cause.
