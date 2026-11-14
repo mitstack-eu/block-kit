@@ -5,20 +5,31 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mitstack-eu/block-kit/contract"
 )
 
 // Container is one container a Docker host's node report lists under an app; Logs is nil from a host release that sends no output.
 type Container struct {
-	Name         string  `json:"container"`
-	Subscription string  `json:"subscription"`
-	Image        string  `json:"image"`
-	Digest       string  `json:"digest"`
-	State        string  `json:"state"`
-	Health       string  `json:"health"`
-	Logs         *string `json:"logs"`
+	Name         string      `json:"container"`
+	Subscription string      `json:"subscription"`
+	Image        string      `json:"image"`
+	Digest       string      `json:"digest"`
+	State        string      `json:"state"`
+	Health       string      `json:"health"`
+	Logs         *string     `json:"logs"`
+	HealthCheck  HealthCheck `json:"healthCheck"`
 }
+
+// HealthCheck is what a container's newest health check printed, empty from a host release that sends none.
+type HealthCheck struct {
+	Output string `json:"output"`
+}
+
+// healthSaidLimit bounds the health check's words in a detail, so a long or binary output cannot crowd out the cause.
+const healthSaidLimit = 160
 
 // ContainerReading is the one answer every reader returns for a container; ContainerStarting reads neither healthy nor failed.
 type ContainerReading int
@@ -58,15 +69,42 @@ type ContainerCauses struct {
 	NotRunning, Unhealthy string
 }
 
-// Unhealthy quotes no output, so one failure reads the same at every restart and is re-driven once.
+// Unhealthy quotes no log line, so a crash loop reads the same at every restart; an unhealthy container's detail ends
+// with what its health check said, which may change between reports while the cause the platform re-drives on stays.
 func (c Container) Unhealthy(causes ContainerCauses) *contract.Unhealthy {
 	switch c.Read() {
 	case ContainerNotRunning:
 		return &contract.Unhealthy{Cause: causes.NotRunning, Detail: c.Name + " reads " + c.State}
 	case ContainerUnhealthy:
-		return &contract.Unhealthy{Cause: causes.Unhealthy, Detail: c.Name + " reads " + healthUnhealthy}
+		return &contract.Unhealthy{Cause: causes.Unhealthy, Detail: c.Name + " reads " + healthUnhealthy + c.HealthCheck.said()}
 	}
 	return nil
+}
+
+func (h HealthCheck) said() string {
+	words := strings.TrimSpace(strings.Map(dropControl, h.Output))
+	if words == "" {
+		return ""
+	}
+	return `, and its health check said "` + lastBytes(words, healthSaidLimit) + `"`
+}
+
+func dropControl(r rune) rune {
+	if unicode.IsControl(r) {
+		return -1
+	}
+	return r
+}
+
+func lastBytes(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	at := len(text) - limit
+	for at < len(text) && !utf8.RuneStart(text[at]) {
+		at++
+	}
+	return text[at:]
 }
 
 func (c Container) quote(trouble *regexp.Regexp) string {
