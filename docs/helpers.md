@@ -582,8 +582,12 @@ to the next.
 `subscriptionId` that `d.Bindings` gives under your block's host requirement.
 `api` is `observe.NodeReportsClient{}`, which [Observing a resource the
 platform cannot reach](observe.md#observing-a-resource-the-platform-cannot-reach)
-describes, or a fake of `observe.NodeReportsAPI` in your tests. It returns
-three values: the `dockerhost.Report`, a `found` flag that is `false` while
+describes, or a fake of `observe.NodeReportsAPI` in your tests. An `api` that
+also has `observe.NewestNodeReportsAPI`'s method, as `NodeReportsClient` does,
+is asked for the newest report alone, through the route's `?limit=1`. Any
+other `api` is asked for every report it holds, and `NewestReport` keeps the
+one received last, so a platform that ignores the limit still gives the newest.
+It returns three values: the `dockerhost.Report`, a `found` flag that is `false` while
 the host has sent no report, and an error. An empty `hostSubscription` is
 refused through `handler.Refuse` with the class `host-binding`, so the
 platform shows the subscriber why. A platform that does not answer or a

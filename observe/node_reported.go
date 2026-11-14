@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,11 @@ type ClusterReportsAPI interface {
 	ClusterReports(ctx context.Context, d contract.Desired, subscriptionID string) (ClusterReports, error)
 }
 
+// NewestNodeReportsAPI is a NodeReportsAPI that can ask the platform for only a subscription's newest limit reports, which a platform from before the limit answers with all of them.
+type NewestNodeReportsAPI interface {
+	NewestNodeReports(ctx context.Context, d contract.Desired, subscriptionID string, limit int) ([]NodeReport, error)
+}
+
 // maxNodeReportsBody fits the platform's answer, which holds up to 50 reports of up to 256 KiB each.
 const maxNodeReportsBody = 32 << 20
 
@@ -58,12 +64,21 @@ func (c NodeReportsClient) NodeReports(ctx context.Context, d contract.Desired, 
 	return listed.Reports, err
 }
 
+func (c NodeReportsClient) NewestNodeReports(ctx context.Context, _ contract.Desired, subscriptionID string, limit int) ([]NodeReport, error) {
+	listed, err := c.listReports(ctx, subscriptionID, "?limit="+strconv.Itoa(limit))
+	return listed.Reports, err
+}
+
 func (c NodeReportsClient) ClusterReports(ctx context.Context, _ contract.Desired, subscriptionID string) (ClusterReports, error) {
+	return c.listReports(ctx, subscriptionID, "")
+}
+
+func (c NodeReportsClient) listReports(ctx context.Context, subscriptionID, query string) (ClusterReports, error) {
 	base, token, err := events.PlatformFrom(ctx)
 	if err != nil {
 		return ClusterReports{}, fmt.Errorf("observe: reading the node reports of %s: %w", subscriptionID, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/subscriptions/"+url.PathEscape(subscriptionID)+"/node-reports", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/subscriptions/"+url.PathEscape(subscriptionID)+"/node-reports"+query, nil)
 	if err != nil {
 		return ClusterReports{}, fmt.Errorf("observe: building the node reports request for %s: %w", subscriptionID, err)
 	}

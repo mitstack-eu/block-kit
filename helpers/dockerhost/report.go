@@ -31,10 +31,11 @@ func NewestReport(ctx context.Context, api observe.NodeReportsAPI, d contract.De
 	if absence, ok := d.AttestedAbsent(hostSubscription); ok {
 		return Report{body: json.RawMessage(`{"host":{"volumes":[]}}`), absence: &absence}, true, nil
 	}
-	reports, err := api.NodeReports(ctx, d, hostSubscription)
+	reports, err := newestReports(ctx, api, d, hostSubscription)
 	if err != nil {
 		return Report{}, false, fmt.Errorf("reading the host's node reports: %w", err)
 	}
+	// A platform from before the limit answers every report it keeps, so the newest is still picked here.
 	var newest *observe.NodeReport
 	for i, r := range reports {
 		if newest == nil || r.ReceivedAt.After(newest.ReceivedAt) {
@@ -49,6 +50,17 @@ func NewestReport(ctx context.Context, api observe.NodeReportsAPI, d contract.De
 		return Report{}, false, fmt.Errorf("reading the host's newest node report: %w", err)
 	}
 	return report, true, nil
+}
+
+// newestReportOnly is the report limit NewestReport asks for, since it reads the newest report alone.
+const newestReportOnly = 1
+
+// newestReports asks a reader that can limit its read for the newest report alone, and any other reader for every report it serves.
+func newestReports(ctx context.Context, api observe.NodeReportsAPI, d contract.Desired, hostSubscription string) ([]observe.NodeReport, error) {
+	if limited, ok := api.(observe.NewestNodeReportsAPI); ok {
+		return limited.NewestNodeReports(ctx, d, hostSubscription, newestReportOnly)
+	}
+	return api.NodeReports(ctx, d, hostSubscription)
 }
 
 // ReadReport reads a node report body its caller already holds, such as the platform reading a host's newest report itself, and fails only a body that is not JSON.
