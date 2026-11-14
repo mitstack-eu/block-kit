@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -59,10 +60,16 @@ type carrier interface {
 // stateBlock keeps its data in live and carries it across a replacement through carry.
 type stateBlock struct {
 	*fakeBlock
-	carry      carrier
-	mu         sync.Mutex
-	marked     map[string]bool
-	snapshotAt []time.Time
+	carry  carrier
+	mu     sync.Mutex
+	marked map[string]bool
+	sent   []snapshotSend
+}
+
+// snapshotSend is the unit and the Desired.VerbAt one snapshot reached the block with.
+type snapshotSend struct {
+	unit string
+	at   time.Time
 }
 
 func (b *stateBlock) mark(op string, d contract.Desired) {
@@ -74,7 +81,7 @@ func (b *stateBlock) mark(op string, d contract.Desired) {
 func (b *stateBlock) Snapshot(ctx context.Context, d contract.Desired, unit string) (string, error) {
 	b.mark("snapshot", d)
 	b.mu.Lock()
-	b.snapshotAt = append(b.snapshotAt, d.VerbAt)
+	b.sent = append(b.sent, snapshotSend{unit, d.VerbAt})
 	b.mu.Unlock()
 	return b.carry.Snapshot(ctx, unit)
 }
@@ -219,12 +226,12 @@ func TestAssertReplacement_SendsAPendingSnapshotAgainAtTheFirstSendsCreatedAtUnt
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if tb.failed || len(b.snapshotAt) != 3 {
-		t.Fatalf("AssertReplacement failed = %v, logging %q, after %d snapshot sends; want it to pass on the third", tb.failed, tb.logs, len(b.snapshotAt))
+	if tb.failed || len(b.sent) != 3 {
+		t.Fatalf("AssertReplacement failed = %v, logging %q, after %d snapshot sends; want it to pass on the third", tb.failed, tb.logs, len(b.sent))
 	}
-	for i, at := range b.snapshotAt[1:] {
-		if !at.Equal(b.snapshotAt[0]) {
-			t.Errorf("resend %d reached the block at %v, want the first send's createdAt %v as its settlesAt", i+1, at, b.snapshotAt[0])
+	for i, s := range b.sent {
+		if s.unit != "app-data" || !s.at.Equal(b.sent[0].at) {
+			t.Errorf("send %d reached the block for unit %q at %v; want app-data at the first send's createdAt %v, which each resend carries as settlesAt", i+1, s.unit, s.at, b.sent[0].at)
 		}
 	}
 }
@@ -235,6 +242,21 @@ func TestCheckReplacement_FailsASnapshotStillPendingPastTheSettleBudgetNamingIts
 	problems := kittest.CheckReplacement(in)
 
 	wantProblemNaming(t, problems, `snapshot of "app-data"`, "pending", slow.lastDetail)
+}
+
+func TestCheckReplacement_DropsNoMemberOfAManyEntryOnASnapshotThatReportsNoResource(t *testing.T) {
+	b, in := memoryBlock(t, "", false)
+	b.resources["replica/1"] = "aws.ebs-volume"
+	in.Block.Config.Manifest = []byte(strings.Replace(stateBlockManifest, "    - aws.ebs-volume\n", "    - aws.ebs-volume\n    - name: replica\n      type: aws.ebs-volume\n      many: true\n", 1))
+	in.Block.Config.Observers["replica"] = providerObserver{p: b.p}
+
+	problems := kittest.CheckReplacement(in)
+
+	for _, p := range problems {
+		if strings.Contains(p, "the snapshot stopped reporting it") {
+			t.Errorf("the drill dropped a member on the snapshot's answer, which ensures nothing: %q", p)
+		}
+	}
 }
 
 func TestCheckReplacement_FailsABlockWhoseRestoreDropsADatum(t *testing.T) {

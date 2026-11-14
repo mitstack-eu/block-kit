@@ -97,8 +97,8 @@ func TestSnapshot_AnswersAWaitAs200PendingWithItsDetailNoHandoverAndAProgressEve
 
 	status, resp := serveContinuity(t, block, snapshotManifest, "snapshot", map[string]any{"unit": "app-data", "secrets": guardSecrets(), "eventsCallback": map[string]any{"url": events.URL, "token": "events-tok"}})
 
-	if want := "the scratch copy of app-data is restoring with [REDACTED]"; status != http.StatusOK || !resp.Pending || resp.StatusDetail != want || len(resp.Outputs) != 0 {
-		t.Errorf("a snapshot the block holds back answered %d, pending %v, statusDetail %q, outputs %v; want 200, pending, statusDetail %q and no handover", status, resp.Pending, resp.StatusDetail, resp.Outputs, want)
+	if want := "the scratch copy of app-data is restoring with [REDACTED]"; status != http.StatusOK || !resp.Pending || !resp.Redrive || resp.StatusDetail != want || len(resp.Outputs) != 0 {
+		t.Errorf("a snapshot the block holds back answered %d, pending %v, redrive %v, statusDetail %q, outputs %v; want 200, pending and redrive, so the caller sends the snapshot again, statusDetail %q and no handover", status, resp.Pending, resp.Redrive, resp.StatusDetail, resp.Outputs, want)
 	}
 	if got := events.recorded(); len(got) != 1 || got[0].Status != "progress" || got[0].Detail != resp.StatusDetail {
 		t.Errorf("a pending snapshot sent the events %+v, want one progress event carrying its statusDetail", got)
