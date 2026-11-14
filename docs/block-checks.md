@@ -418,11 +418,13 @@ tests:
 A failing test fails `block / conformance`, and promtool's output names the
 test group, the alert and the time. The step also fails when a test's
 `rule_files` names a file the block does not hold, which promtool alone only
-warns of, and when `testdata/rules/` holds no `*.yaml` test file, since a
-`.yml` file would otherwise go untested. A block with no `testdata/rules/`
-passes the step without fetching promtool. To run the tests on your own
-checkout, with the kit cloned beside your block as above, run this from your
-block's directory:
+warns of. It fails, too, when `testdata/rules/` holds no `*.yaml` test file,
+or a file other than a `*.yaml` file at its top, such as a `.yml` file or one
+in a folder below, since promtool would skip that file. A block with no
+`testdata/rules/` passes the step without fetching promtool. The
+`opentofu-conformance` job of an OpenTofu-only block runs the same step. To
+run the tests on your own checkout, with the kit cloned beside your block as
+above, run this from your block's directory:
 
 ```sh
 bash ../block-kit/scripts/run-rule-tests.sh .

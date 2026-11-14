@@ -8,8 +8,8 @@
 #           has no testdata/rules/, in which case no promtool is fetched
 #   exit 1  promtool failed a test, naming its group and alert, or refused a
 #           rule file; a test names a rule file the block does not hold;
-#           testdata/rules/ holds no *.yaml test file; or the pinned promtool
-#           could not be run
+#           testdata/rules/ holds no *.yaml test file, or a file that is not a
+#           *.yaml file at its top; or the pinned promtool could not be run
 #
 # A test file is a promtool unit test file, testdata/rules/*.yaml. Each file
 # under rules/<kind>/ holds one bare rule group, the body a Cockpit's ruler
@@ -19,9 +19,9 @@
 # promtool there. A test's rule_files names metrics/<file>, and promtool judges
 # the bytes the block posts. Nothing is written into the block's tree.
 #
-# Why this exists. publish-block.yml's conformance job runs it on every block,
-# so a block's alert rules fire on made-up signals before any Cockpit holds
-# them, with one promtool pin for every block.
+# Why this exists. Both conformance jobs of publish-block.yml run it on every
+# event, so a block's alert rules fire on made-up signals before any Cockpit
+# holds them, with one promtool pin for every block.
 set -euo pipefail
 
 readonly PROMTOOL_VERSION=3.16.0
@@ -43,10 +43,15 @@ copy_groups() {
 }
 
 main() {
-  local block="${1:?usage: run-rule-tests.sh <block>}" promtool status=0
+  local block="${1:?usage: run-rule-tests.sh <block>}" promtool status=0 skipped
   if [ ! -d "$block/testdata/rules" ]; then
     echo "run-rule-tests: $block holds no rule test under testdata/rules/, so promtool does not run"
     return 0
+  fi
+  skipped=$(find "$block/testdata/rules" -type f \( -path "$block/testdata/rules/*/*" -o ! -name '*.yaml' \))
+  if [ -n "$skipped" ]; then
+    sed 's|^|run-rule-tests: |; s|$| is no *.yaml test file at the top of testdata/rules/, so promtool would skip it|' <<<"$skipped" >&2
+    return 1
   fi
   local -a tests=("$block"/testdata/rules/*.yaml)
   if [ ! -f "${tests[0]}" ]; then
