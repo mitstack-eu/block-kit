@@ -73,6 +73,10 @@ func TestRunRuleTests(t *testing.T) {
 		{name: "a testdata/rules directory holding no yaml test file fails, naming the directory", exit: 1,
 			repo:   []change{writes("rules/metrics/disk.yaml", diskGroup), writes("testdata/rules/disk.yml", diskTest("0.9"))},
 			naming: []string{"testdata/rules/", "no *.yaml test file"}},
+		{name: "a test file promtool would skip beside a passing one fails, naming each skipped file", exit: 1,
+			repo: []change{writes("rules/metrics/disk.yaml", diskGroup), writes("testdata/rules/disk.yaml", diskTest("0.9")),
+				writes("testdata/rules/quiet.yml", diskTest("0.7")), writes("testdata/rules/nested/quiet.yaml", diskTest("0.7"))},
+			naming: []string{"testdata/rules/quiet.yml is no *.yaml test file", "testdata/rules/nested/quiet.yaml is no *.yaml test file"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
