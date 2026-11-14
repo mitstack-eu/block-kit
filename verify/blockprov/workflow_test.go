@@ -748,7 +748,7 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 	}{
 		{"conformance", "<absent>", []string{
 			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "go vet", "Log in to ghcr.io with the job's token", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck", "Build checkpolls",
-			"Remove the kit checkout from the block tree", "Write the base commit's manifest and the changed files", "Fail a pull request that adds a fixed sleep or a polling interval", "Judge the comments this pull request adds",
+			"Remove the kit checkout from the block tree", "Run the block's alert rule tests with promtool", "Write the base commit's manifest and the changed files", "Fail a pull request that adds a fixed sleep or a polling interval", "Judge the comments this pull request adds",
 			"blockverify (standalone contract check)", "Upload blockverify report", "Build the block image", "Scan the block image", "Collect what the release signs", "Hand the release to the publish job",
 		}},
 		{"base-image", "write", []string{
@@ -756,7 +756,7 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		}},
 		{"opentofu-conformance", "<absent>", []string{
 			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "Checkout block-kit", "Build blockverify", "Build checkpolls", "Remove the kit checkout from the block tree",
-			"Write the base commit's manifest and the changed files", "blockverify (standalone contract check)", "Upload blockverify report", "Fail a pull request that adds a fixed sleep or a polling interval", "Stop where the base image job did not succeed", "Fetch the base images", "Log in to ghcr.io with the job's token", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image", "Collect what the release signs", "Hand the release to the publish job",
+			"Run the block's alert rule tests with promtool", "Write the base commit's manifest and the changed files", "blockverify (standalone contract check)", "Upload blockverify report", "Fail a pull request that adds a fixed sleep or a polling interval", "Stop where the base image job did not succeed", "Fetch the base images", "Log in to ghcr.io with the job's token", "Build the block image", "tofu fmt -check", "tofu test", "block-verify", "Scan the block image", "Collect what the release signs", "Hand the release to the publish job",
 		}},
 		{"secrets", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Scan every commit for secrets with gitleaks", "Fail a shipped file that fetches a tool from a GitHub release page"}},
 		{"scripts", "<absent>", []string{"actions/checkout", "Checkout block-kit", "Lint every tracked shell script with shellcheck"}},

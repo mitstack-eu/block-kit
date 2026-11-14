@@ -1,6 +1,6 @@
 package scripts_test
 
-// publish-block.yml keeps no token in any checkout, runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, asks the platform for its verdict and its attestation where a starter turns them on, and tags each release it builds at the commit that built it.
+// publish-block.yml keeps no token in any checkout, runs the kit's scan scripts and a block's rule tests on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, asks the platform for its verdict and its attestation where a starter turns them on, and tags each release it builds at the commit that built it.
 
 import (
 	"encoding/json"
@@ -203,6 +203,20 @@ func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFilesAndThePlatformsAddr
 			{"the fetch takes the job's token, since the checkout keeps none", step(wrote, "env.FETCH_TOKEN"), "${{ github.token }}"},
 		}
 		checkFields(t, "publish-block.yml", j.job+": ", cases)
+	}
+}
+
+// Both conformance jobs run a block's alert rule tests with the kit's own script on every event, since either one is the block's required conformance check.
+func TestPublishBlockWorkflow_BothConformanceJobsRunTheBlocksRuleTestsWithTheKitsScript(t *testing.T) {
+	all := publishWorkflow(t)
+	for _, job := range []string{"conformance", "opentofu-conformance"} {
+		moved, tested := stepAt(all, job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, job, "run", kitScript+`run-rule-tests.sh" .`)
+		_, gated := all["jobs."+job+".steps."+strconv.Itoa(tested)+".if"]
+		cases := []struct{ name, got, want string }{
+			{"the rule tests run from the kit once it reaches RUNNER_TEMP", strconv.FormatBool(moved >= 0 && moved < tested), "true"},
+			{"the rule tests carry no if, so every event runs them", strconv.FormatBool(!gated), "true"},
+		}
+		checkFields(t, "publish-block.yml", job+": ", cases)
 	}
 }
 

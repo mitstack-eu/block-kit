@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# pinned-tool.sh — fetch a scanner's linux x64 release once into the user
-# cache, and check the binary's sha256 on every use.
+# pinned-tool.sh — fetch a tool's linux x64 release once into the user cache,
+# and check the binary's sha256 on every use.
 #
 # Usage: source this file, then
 #   bin=$(pinned_tool <name> <version> <tar.gz url> <member> <sha256>)
 # prints the path of a binary whose sha256 matched.
 #
-# Why this exists. scan-secrets.sh and lint-scripts.sh each run a scanner at
-# one version, refused unless its checksum matches, and the fetch and the check
-# are the same for both.
+# Why this exists. Every script that runs a pinned tool refuses it unless its
+# checksum matches, and the fetch and the check are the same for all of them.
 
 pinned_tool() {
   local name="$1" version="$2" url="$3" member="$4" sha256="$5"
