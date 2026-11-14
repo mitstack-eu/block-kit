@@ -347,8 +347,9 @@ cluster node pushes to mitstack on its own. Such an observer counts only
 records made after `Desired.VerbAt`, the time of the call a record must
 answer, so a record older than the call cannot settle it. After
 `EnsureResources` or `Delete`, the handler sets `VerbAt` to its clock once the
-call returned. On a `validate` it is the request's `settlesAt`, the time of the
-call the validate settles, and otherwise the request's `createdAt`.
+call returned. On a `validate` and on a `snapshot` sent again it is the
+request's `settlesAt`, the time of the call the validate settles or of the
+snapshot's first send, and otherwise the request's `createdAt`.
 
 A block that implements `handler.ReplacementPlanner` names, on a `validate`,
 the resources an upgrade would replace, and the answer carries them under
@@ -552,10 +553,12 @@ report a state the resource has left.
 The request's events callback is a URL and token the platform includes so the
 operator can report back. A `subscribe`, `upgrade` or `unsubscribe` sends
 `progress` with its status detail while it is pending or still present,
-`completed` once it settles, and `failed` on an error answer. A `snapshot` or
-a `restore` sends `completed` on a 2xx answer, and `failed` on a refusal or an
-error. A `validate` and an `issue` send none. An unsubscribe therefore completes only
-after its teardown is observed absent.
+`completed` once it settles, and `failed` on an error answer. A `snapshot`
+sends `progress` with its status detail while it is pending, and `completed`
+once it answers its handover. A `restore` sends `completed` on a 2xx answer.
+Both send `failed` on a refusal or an error. A `validate` and an `issue` send
+none. An unsubscribe therefore completes only after its teardown is observed
+absent.
 
 ## Work that outlasts one call
 
@@ -1013,6 +1016,35 @@ known query answers. It returns the handover when the check passes and an
 error when it does not. That check is the block's own work: the handler
 publishes whatever handover the block returns without an error, and answers a
 snapshot that returns an error with that error and no handover.
+
+A check that outlasts one request, such as a scratch database that takes
+minutes to read healthy, returns `handler.Wait` with a detail naming what it
+waits on. These steps then follow:
+
+1. The handler answers 200 with `pending:true` and `redrive:true`, the wait's
+   detail as `statusDetail` and no handover. `redrive` asks the caller to send
+   the same snapshot again rather than settle it through `validate`.
+2. The caller sends the same snapshot again until the answer carries a
+   handover or an error, within the block's settle budget, the time
+   `spec.lifecycle.settleBudget` gives pending work to finish.
+3. Each resend carries `settlesAt`, set to the first send's `createdAt`. Your
+   `Snapshot` reads it as `d.VerbAt`, which is the same on every send, so it
+   can tell the scratch copy it already started from a new snapshot.
+4. The handler never keeps a pending answer in the idempotency cache, so every
+   resend reaches your code.
+
+A pending answer looks like this:
+
+```json
+{"outputs": null, "pending": true, "redrive": true, "statusDetail": "the scratch copy of app-data is restoring"}
+```
+
+A resend of that snapshot carries the first send's time:
+
+```json
+{"operation": "snapshot", "subscriptionId": "sub_a1b2c3d4e5", "unit": "app-data", "replacing": true,
+ "createdAt": "2026-11-14T09:01:00Z", "settlesAt": "2026-11-14T09:00:00Z"}
+```
 
 The handover is a string your block chooses. The handler publishes it as the
 answer's output `contract.HandoverOutputKey(unit)`, which is `handover.`

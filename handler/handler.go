@@ -72,6 +72,7 @@ type Leaser interface {
 
 // Snapshotter, which a block-level Resource implements to serve a manifest that lists snapshot and restore, snapshots one declared state and returns its handover only once a scratch restore of the snapshot has passed, and puts the state back from that handover.
 type Snapshotter interface {
+	// Snapshot returns Wait while its check outlasts one request, which answers pending with redrive, and the caller sends the same snapshot again with settlesAt set to the first send's createdAt, so d.VerbAt names one snapshot across every send.
 	Snapshot(ctx context.Context, d contract.Desired, unit string) (handover string, err error)
 	Restore(ctx context.Context, d contract.Desired, unit, handover string) error
 }

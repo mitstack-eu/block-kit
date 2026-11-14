@@ -127,10 +127,12 @@ func (d *drill) emptied(ctx context.Context) bool {
 	return gone
 }
 
-// snapshot sends the snapshot of the unit and returns the handover its answer publishes.
+// snapshot settles the snapshot of the unit through converge, which sends it again while it answers pending, and returns the handover its answer publishes.
 func (d *drill) snapshot() (string, bool) {
-	status, resp, err := d.server.sendUnit(contract.OperationSnapshot, d.in.Unit, d.desired)
-	if !d.answered(contract.OperationSnapshot, status, resp, err) {
+	d.snapshotting = &unitSend{unit: d.in.Unit}
+	resp, ok := d.converge(contract.OperationSnapshot)
+	d.snapshotting = nil
+	if !ok {
 		return "", false
 	}
 	key := contract.HandoverOutputKey(d.in.Unit)
