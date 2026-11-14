@@ -52,10 +52,8 @@ func NewestReport(ctx context.Context, api observe.NodeReportsAPI, d contract.De
 	return report, true, nil
 }
 
-// newestReportOnly is the report limit NewestReport asks for, since it reads the newest report alone.
 const newestReportOnly = 1
 
-// newestReports asks a reader that can limit its read for the newest report alone, and any other reader for every report it serves.
 func newestReports(ctx context.Context, api observe.NodeReportsAPI, d contract.Desired, hostSubscription string) ([]observe.NodeReport, error) {
 	if limited, ok := api.(observe.NewestNodeReportsAPI); ok {
 		return limited.NewestNodeReports(ctx, d, hostSubscription, newestReportOnly)

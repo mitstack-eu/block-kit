@@ -121,8 +121,7 @@ type RunRequest struct {
 	Process string
 }
 
-// RunResult is a run that ended, a command that exited non-zero included, and on a pending answer only the start
-// and digest of a run its host started.
+// RunResult is an ended run, a non-zero exit included, or on a pending answer only a started run's start and digest.
 type RunResult struct {
 	ExitCode  int       `json:"exitCode"`
 	Output    string    `json:"output"`
