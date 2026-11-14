@@ -1,6 +1,6 @@
 package scripts_test
 
-// publish-block.yml keeps no token in any checkout, runs the kit's scan scripts on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, asks the platform for its verdict and its attestation where a starter turns them on, and tags each release it builds at the commit that built it.
+// publish-block.yml keeps no token in any checkout, runs the kit's scan scripts and a block's rule tests on every event before publish, scans a pull request's image with the publish job's own scan, publishes only for a caller naming its image registry, hands blockverify in either conformance job what a pull request changes, asks the platform for its verdict and its attestation where a starter turns them on, and tags each release it builds at the commit that built it.
 
 import (
 	"encoding/json"
@@ -204,6 +204,18 @@ func TestPublishBlockWorkflow_HandsBlockverifyTheChangedFilesAndThePlatformsAddr
 		}
 		checkFields(t, "publish-block.yml", j.job+": ", cases)
 	}
+}
+
+// A block's alert rules are proven inside the one required conformance check, on every event, by the kit's own script.
+func TestPublishBlockWorkflow_TheConformanceJobRunsTheBlocksRuleTestsWithTheKitsScript(t *testing.T) {
+	all := publishWorkflow(t)
+	moved, tested := stepAt(all, "conformance", "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, "conformance", "run", kitScript+`run-rule-tests.sh" .`)
+	_, gated := all["jobs.conformance.steps."+strconv.Itoa(tested)+".if"]
+	cases := []struct{ name, got, want string }{
+		{"the rule tests run from the kit once it reaches RUNNER_TEMP", strconv.FormatBool(moved >= 0 && moved < tested), "true"},
+		{"the rule tests carry no if, so every event runs them", strconv.FormatBool(!gated), "true"},
+	}
+	checkFields(t, "publish-block.yml", "conformance: ", cases)
 }
 
 // No job pushes to git, so no checkout writes the job's token into the tree where the block's own code and tests run.
