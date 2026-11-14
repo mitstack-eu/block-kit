@@ -60,16 +60,10 @@ type carrier interface {
 // stateBlock keeps its data in live and carries it across a replacement through carry.
 type stateBlock struct {
 	*fakeBlock
-	carry  carrier
-	mu     sync.Mutex
-	marked map[string]bool
-	sent   []snapshotSend
-}
-
-// snapshotSend is the unit and the Desired.VerbAt one snapshot reached the block with.
-type snapshotSend struct {
-	unit string
-	at   time.Time
+	carry      carrier
+	mu         sync.Mutex
+	marked     map[string]bool
+	snapshotAt []time.Time
 }
 
 func (b *stateBlock) mark(op string, d contract.Desired) {
@@ -81,7 +75,7 @@ func (b *stateBlock) mark(op string, d contract.Desired) {
 func (b *stateBlock) Snapshot(ctx context.Context, d contract.Desired, unit string) (string, error) {
 	b.mark("snapshot", d)
 	b.mu.Lock()
-	b.sent = append(b.sent, snapshotSend{unit, d.VerbAt})
+	b.snapshotAt = append(b.snapshotAt, d.VerbAt)
 	b.mu.Unlock()
 	return b.carry.Snapshot(ctx, unit)
 }
@@ -199,15 +193,16 @@ func memoryBlock(t *testing.T, drop string, unhealthy bool) (*stateBlock, kittes
 // slowVault is a vault whose snapshot answers a wait to its first waits sends, as a block that checks a scratch copy over several requests does.
 type slowVault struct {
 	*vault
-	waits, sends int
-	lastDetail   string
+	waits      int
+	units      []string
+	lastDetail string
 }
 
 func (v *slowVault) Snapshot(ctx context.Context, unit string) (string, error) {
-	if v.sends++; v.sends > v.waits {
+	if v.units = append(v.units, unit); len(v.units) > v.waits {
 		return v.vault.Snapshot(ctx, unit)
 	}
-	v.lastDetail = fmt.Sprintf("the scratch copy of %s is restoring, check %d", unit, v.sends)
+	v.lastDetail = fmt.Sprintf("the scratch copy of %s is restoring, check %d", unit, len(v.units))
 	return "", handler.Wait("%s", v.lastDetail)
 }
 
@@ -220,19 +215,13 @@ func slowBlock(t *testing.T, waits int) (*stateBlock, *slowVault, kittest.Replac
 }
 
 func TestAssertReplacement_SendsAPendingSnapshotAgainAtTheFirstSendsCreatedAtUntilItHandsOver(t *testing.T) {
-	b, _, in := slowBlock(t, 2)
+	b, slow, in := slowBlock(t, 2)
 
 	tb := runAndCollect(func(tb testing.TB) { kittest.AssertReplacement(tb, in) })
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if tb.failed || len(b.sent) != 3 {
-		t.Fatalf("AssertReplacement failed = %v, logging %q, after %d snapshot sends; want it to pass on the third", tb.failed, tb.logs, len(b.sent))
-	}
-	for i, s := range b.sent {
-		if s.unit != "app-data" || !s.at.Equal(b.sent[0].at) {
-			t.Errorf("send %d reached the block for unit %q at %v; want app-data at the first send's createdAt %v, which each resend carries as settlesAt", i+1, s.unit, s.at, b.sent[0].at)
-		}
+	resentAtAnotherTime := slices.ContainsFunc(b.snapshotAt, func(at time.Time) bool { return !at.Equal(b.snapshotAt[0]) })
+	if tb.failed || !slices.Equal(slow.units, []string{"app-data", "app-data", "app-data"}) || resentAtAnotherTime {
+		t.Errorf("AssertReplacement failed = %v, logging %q, after snapshots of %q reaching the block at %v; want it to pass on the third, each of app-data at the first send's createdAt, which each resend carries as settlesAt", tb.failed, tb.logs, slow.units, b.snapshotAt)
 	}
 }
 
@@ -252,10 +241,8 @@ func TestCheckReplacement_DropsNoMemberOfAManyEntryOnASnapshotThatReportsNoResou
 
 	problems := kittest.CheckReplacement(in)
 
-	for _, p := range problems {
-		if strings.Contains(p, "the snapshot stopped reporting it") {
-			t.Errorf("the drill dropped a member on the snapshot's answer, which ensures nothing: %q", p)
-		}
+	if i := slices.IndexFunc(problems, func(p string) bool { return strings.Contains(p, "the snapshot stopped reporting it") }); i >= 0 {
+		t.Errorf("the drill dropped a member on the snapshot's answer, which ensures nothing: %q", problems[i])
 	}
 }
 
