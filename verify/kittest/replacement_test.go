@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
@@ -57,9 +59,10 @@ type carrier interface {
 // stateBlock keeps its data in live and carries it across a replacement through carry.
 type stateBlock struct {
 	*fakeBlock
-	carry  carrier
-	mu     sync.Mutex
-	marked map[string]bool
+	carry      carrier
+	mu         sync.Mutex
+	marked     map[string]bool
+	snapshotAt []time.Time
 }
 
 func (b *stateBlock) mark(op string, d contract.Desired) {
@@ -70,6 +73,9 @@ func (b *stateBlock) mark(op string, d contract.Desired) {
 
 func (b *stateBlock) Snapshot(ctx context.Context, d contract.Desired, unit string) (string, error) {
 	b.mark("snapshot", d)
+	b.mu.Lock()
+	b.snapshotAt = append(b.snapshotAt, d.VerbAt)
+	b.mu.Unlock()
 	return b.carry.Snapshot(ctx, unit)
 }
 
@@ -181,6 +187,54 @@ func memoryBlock(t *testing.T, drop string, unhealthy bool) (*stateBlock, kittes
 	return newStateBlock(t, live, func(restored *atomic.Bool) carrier {
 		return &vault{live: live, drop: drop, restored: restored, taken: map[string]map[string]string{}}
 	}, unhealthy)
+}
+
+// slowVault is a vault whose snapshot answers a wait to its first waits sends, as a block that checks a scratch copy over several requests does.
+type slowVault struct {
+	*vault
+	waits, sends int
+	lastDetail   string
+}
+
+func (v *slowVault) Snapshot(ctx context.Context, unit string) (string, error) {
+	if v.sends++; v.sends > v.waits {
+		return v.vault.Snapshot(ctx, unit)
+	}
+	v.lastDetail = fmt.Sprintf("the scratch copy of %s is restoring, check %d", unit, v.sends)
+	return "", handler.Wait("%s", v.lastDetail)
+}
+
+func slowBlock(t *testing.T, waits int) (*stateBlock, *slowVault, kittest.Replacement) {
+	t.Helper()
+	live := &memState{data: map[string]string{}}
+	slow := &slowVault{vault: &vault{live: live, taken: map[string]map[string]string{}}, waits: waits}
+	b, in := newStateBlock(t, live, func(restored *atomic.Bool) carrier { slow.restored = restored; return slow }, false)
+	return b, slow, in
+}
+
+func TestAssertReplacement_SendsAPendingSnapshotAgainAtTheFirstSendsCreatedAtUntilItHandsOver(t *testing.T) {
+	b, _, in := slowBlock(t, 2)
+
+	tb := runAndCollect(func(tb testing.TB) { kittest.AssertReplacement(tb, in) })
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if tb.failed || len(b.snapshotAt) != 3 {
+		t.Fatalf("AssertReplacement failed = %v, logging %q, after %d snapshot sends; want it to pass on the third", tb.failed, tb.logs, len(b.snapshotAt))
+	}
+	for i, at := range b.snapshotAt[1:] {
+		if !at.Equal(b.snapshotAt[0]) {
+			t.Errorf("resend %d reached the block at %v, want the first send's createdAt %v as its settlesAt", i+1, at, b.snapshotAt[0])
+		}
+	}
+}
+
+func TestCheckReplacement_FailsASnapshotStillPendingPastTheSettleBudgetNamingItsLastDetail(t *testing.T) {
+	_, slow, in := slowBlock(t, math.MaxInt)
+
+	problems := kittest.CheckReplacement(in)
+
+	wantProblemNaming(t, problems, `snapshot of "app-data"`, "pending", slow.lastDetail)
 }
 
 func TestCheckReplacement_FailsABlockWhoseRestoreDropsADatum(t *testing.T) {
