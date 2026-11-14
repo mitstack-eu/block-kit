@@ -70,45 +70,32 @@ func TestRun_HandsEachSendToTheRunFunctionAndAnswersItsResultWithTheRequestsSecr
 }
 
 func TestRun_AnswersPendingRefusedOrFailedAsTheRunFunctionDoes(t *testing.T) {
+	started := time.Date(2026, 11, 11, 14, 0, 30, 0, time.UTC)
 	cases := map[string]struct {
 		err    error
+		result contract.RunResult
 		status int
 		class  string
+		run    *contract.RunResult
 	}{
-		"a wait is a 200 answered pending":  {handler.Wait("waiting for the host to report run_4c1e9a7f2b3d"), http.StatusOK, ""},
-		"a refusal is a 400 with its class": {handler.Refuse("run-refused", "the host refused it for server %s", runSecret), http.StatusBadRequest, "run-refused"},
-		"an error is a 500":                 {errors.New("reading the host with " + runSecret), http.StatusInternalServerError, ""},
+		"a wait is a 200 answered pending": {err: handler.Wait("waiting for the host to report run_4c1e9a7f2b3d"), status: http.StatusOK},
+		"a wait beside the host's start carries only its start and digest": {err: handler.Wait("the host is running run_4c1e9a7f2b3d"), status: http.StatusOK,
+			result: contract.RunResult{ExitCode: 3, Output: "half done with " + runSecret, Digest: "sha256:5f1c", StartedAt: started}, run: &contract.RunResult{Digest: "sha256:5f1c", StartedAt: started}},
+		"a refusal is a 400 with its class": {err: handler.Refuse("run-refused", "the host refused it for server %s", runSecret), status: http.StatusBadRequest, class: "run-refused"},
+		"an error is a 500":                 {err: errors.New("reading the host with " + runSecret), status: http.StatusInternalServerError},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			x := newHarness(t, &kittest.FakeResource{}, then(servesBlock(listsRun(t)), func(c *handler.Config) { c.Run = (&runFunction{err: tc.err}).run }))
+			x := newHarness(t, &kittest.FakeResource{}, then(servesBlock(listsRun(t)), func(c *handler.Config) { c.Run = (&runFunction{result: tc.result, err: tc.err}).run }))
 
 			status, raw := x.post(runFields())
 
 			resp := decodeResponse(t, raw)
-			if pending := tc.status == http.StatusOK; status != tc.status || resp.Pending != pending || resp.Run != nil || strings.Contains(string(raw), runSecret) || handler.RefusedClass(resp.StatusDetail) != tc.class {
-				t.Errorf("answered %d with %s, want %d, pending %v, refused class %q, no run and the secret scrubbed", status, raw, tc.status, tc.status == http.StatusOK, tc.class)
+			runDiffers := (resp.Run == nil) != (tc.run == nil) || (resp.Run != nil && *resp.Run != *tc.run)
+			if pending := tc.status == http.StatusOK; status != tc.status || resp.Pending != pending || runDiffers || strings.Contains(string(raw), runSecret) || handler.RefusedClass(resp.StatusDetail) != tc.class {
+				t.Errorf("answered %d with %s, want %d, pending %v, refused class %q, run %+v and the secret scrubbed", status, raw, tc.status, tc.status == http.StatusOK, tc.class, tc.run)
 			}
 		})
-	}
-}
-
-func TestRun_AWaitBesideTheHostsStartAnswersPendingCarryingOnlyTheStartAndDigest(t *testing.T) {
-	started := time.Date(2026, 11, 11, 14, 0, 30, 0, time.UTC)
-	run := &runFunction{
-		result: contract.RunResult{ExitCode: 3, Output: "half done with " + runSecret, Digest: "sha256:5f1c", StartedAt: started},
-		err:    handler.Wait("the host is running run_4c1e9a7f2b3d and has not reported its end yet"),
-	}
-	x := newHarness(t, &kittest.FakeResource{}, then(servesBlock(listsRun(t)), func(c *handler.Config) { c.Run = run.run }))
-
-	status, raw := x.post(runFields())
-
-	resp := decodeResponse(t, raw)
-	if status != http.StatusOK || !resp.Pending || resp.Run == nil || *resp.Run != (contract.RunResult{Digest: "sha256:5f1c", StartedAt: started}) {
-		t.Errorf("answered %d with %s, want 200 pending carrying the run's start and digest alone", status, raw)
-	}
-	if strings.Contains(string(raw), "half done") || strings.Contains(string(raw), runSecret) {
-		t.Errorf("answered %s, want no output from a run that has not ended", raw)
 	}
 }
 
