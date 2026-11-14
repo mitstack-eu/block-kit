@@ -556,9 +556,9 @@ operator can report back. A `subscribe`, `upgrade` or `unsubscribe` sends
 `completed` once it settles, and `failed` on an error answer. A `snapshot`
 sends `progress` with its status detail while it is pending, and `completed`
 once it answers its handover. A `restore` sends `completed` on a 2xx answer.
-Both send `failed` on a refusal or an error. A `validate` and an `issue` send
-none. An unsubscribe therefore completes only after its teardown is observed
-absent.
+A `snapshot` and a `restore` send `failed` on a refusal or an error. A
+`validate` and an `issue` send none. An unsubscribe therefore completes only
+after its teardown is observed absent.
 
 ## Work that outlasts one call
 
@@ -1022,8 +1022,9 @@ minutes to read healthy, returns `handler.Wait` with a detail naming what it
 waits on. These steps then follow:
 
 1. The handler answers 200 with `pending:true` and `redrive:true`, the wait's
-   detail as `statusDetail` and no handover. `redrive` asks the caller to send
-   the same snapshot again rather than settle it through `validate`.
+   detail as `statusDetail` and no handover. `redrive` asks the caller, the
+   engine in production or the kit's replacement drill under test, to send the
+   same snapshot again rather than settle it through `validate`.
 2. The caller sends the same snapshot again until the answer carries a
    handover or an error, within the block's settle budget, the time
    `spec.lifecycle.settleBudget` gives pending work to finish.
