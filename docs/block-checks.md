@@ -253,7 +253,10 @@ fixed sleep or a polling interval. To wait on provider work, your
 and the engine asks again later. Other code calls the waiter that the client of
 the system it waits on provides, a function that returns once that system
 reports the work done, as [Judging the waits a pull request
-adds](maintainers.md#judging-the-waits-a-pull-request-adds) explains.
+adds](maintainers.md#judging-the-waits-a-pull-request-adds) explains. When
+your block holds alert rule tests under `testdata/rules/`, the job also runs
+them on every event, as [How a block's alert rules are
+tested](#how-a-blocks-alert-rules-are-tested) explains.
 
 A red verdict stops the `publish` job, so no image ships without a pass. On a
 push to your default branch, the conformance job builds your image and hands
@@ -375,6 +378,51 @@ each push to `main` that workflow does three things with the token:
 2. It runs `blockverify --standalone --json .` into `report.json`.
 3. It posts the report to `POST https://api.mitstack.dev/v1/blocks/{id}/attestations`,
    and the platform signs a passing report as the block's attestation.
+
+### How a block's alert rules are tested
+
+A block that writes alert rules to a provider, as the Scaleway Cockpit block
+does, keeps each rule group in its own file under `rules/<kind>/`, such as
+`rules/metrics/disk.yaml`. The file holds one bare group, the body a
+Prometheus-style ruler takes. The block proves its rules with promtool,
+Prometheus's own rule checker, whose test files feed a group made-up samples
+and name the alerts that must fire at given times. Those test files sit under
+`testdata/rules/`, so the block neither embeds nor ships them.
+
+The `conformance` job runs `scripts/run-rule-tests.sh` on every event. The
+script fetches promtool 3.16.0 from the Prometheus release once, refuses a
+binary whose sha256 differs from the one pinned in the script, and runs every
+test file under `testdata/rules/`. promtool reads only a file that lists its
+groups, so the script copies each group to `<kind>/<file>` in a scratch
+directory under `groups:`, its lines indented and otherwise unchanged. A test
+file therefore names its group as `metrics/disk.yaml`:
+
+```yaml
+rule_files:
+  - metrics/disk.yaml
+evaluation_interval: 1m
+tests:
+  - name: a disk at 90% used fires DiskAlmostFull
+    interval: 1m
+    input_series:
+      - series: 'disk_used_ratio{host="h1"}'
+        values: '0.9x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DiskAlmostFull
+        exp_alerts:
+          - exp_labels: {severity: warning, host: h1}
+```
+
+A failing test fails `block / conformance`, and promtool's output names the
+test group, the alert and the time. A block with no `testdata/rules/` passes
+the step without fetching promtool. To run the tests on your own checkout,
+with the kit cloned beside your block as above, run this from your block's
+directory:
+
+```sh
+bash ../block-kit/scripts/run-rule-tests.sh .
+```
 
 ### How the publish job scans the image
 

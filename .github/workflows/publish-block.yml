@@ -252,6 +252,10 @@ jobs:
       - name: Remove the kit checkout from the block tree
         run: mv block-kit "$RUNNER_TEMP/block-kit"
 
+      # A block holding no testdata/rules/ passes this step without fetching promtool.
+      - name: Run the block's alert rule tests with promtool
+        run: bash "$RUNNER_TEMP/block-kit/scripts/run-rule-tests.sh" .
+
       # On a pull request blockverify judges spec.version against the base
       # commit's manifest.yaml and the files the pull request changes. Both
       # files go to RUNNER_TEMP, outside the tree blockverify judges. The
