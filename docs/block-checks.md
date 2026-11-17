@@ -125,6 +125,20 @@ both of these hold:
 - It never builds a URL by appending to a variable named `apiBase`, the name
   the suite looks for as an unchecked host.
 
+The suite also follows your block's imports, so moving the GitHub calls into a
+shared module keeps them under the rule. It runs
+`go list -deps ./...` in your block, which lists every package your non-test
+code imports, directly or through another package. Each `github.com/mitstack-eu/`
+package outside your own module that reads the GitHub connection is judged by
+the two conditions above, on its own non-test files. The kit's `ghapi` package
+is left out, because it defines the allowlist the rule asks for. For example,
+a Talos cluster block that dials its repository through talos-cluster-kit's
+`clusterrepo.Dial` passes with a detail such as
+`clusterrepo.Dial reads the GitHub connection at github.com/mitstack-eu/talos-cluster-kit/operator/clusterrepo/repository.go:82`.
+When that package took its base from the request, the suite would fail and
+name the same file and line. A package the Go toolchain cannot load fails the
+suite, since an unread file is no evidence that the rule holds.
+
 ## The floor and operator-kit
 
 The floor is the oldest kit release your `go.mod` may require, and today it is
