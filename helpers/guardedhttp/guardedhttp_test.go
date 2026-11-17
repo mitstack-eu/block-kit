@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -75,6 +76,10 @@ func (v *vendor) get(t *testing.T, url string, hosts ...string) (*http.Response,
 
 func TestClient_ReachesADeclaredHostOverHTTPSAtTheAddressItChecked(t *testing.T) {
 	v := newVendor(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "pong") })
+	var logs strings.Builder
+	prev := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(prev) })
 
 	resp, err := v.get(t, "https://"+vendorHost+"/ping", vendorHost)
 
@@ -85,6 +90,9 @@ func TestClient_ReachesADeclaredHostOverHTTPSAtTheAddressItChecked(t *testing.T)
 	body, _ := io.ReadAll(resp.Body)
 	if want := "resolve api.example.com,dial 203.0.113.10:443"; string(body) != "pong" || strings.Join(v.calls, ",") != want {
 		t.Errorf("body %q, calls %q; want pong and %q: the dial goes to the checked address, never the name", body, v.calls, want)
+	}
+	if got := logs.String(); strings.Count(got, "calllog: ") != 1 || !strings.Contains(got, "method=GET host=api.example.com route=/ping answer=200") {
+		t.Errorf("logs = %q; want one calllog line for the GET of /ping answered 200", got)
 	}
 }
 
