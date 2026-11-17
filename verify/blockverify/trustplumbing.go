@@ -37,7 +37,7 @@ var kitOwnedFuncs = []string{
 	"scrubEventDetail",
 }
 
-// trustPlumbingSuite is textual and static so it still fails meaningfully on a module that does not compile.
+// trustPlumbingSuite reads source text and lists imports with go list -e, which compiles nothing, so it still fails meaningfully on a module that does not compile.
 func trustPlumbingSuite(target string) SuiteResult {
 	const name = "trust-plumbing"
 

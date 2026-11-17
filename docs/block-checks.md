@@ -126,19 +126,22 @@ both of these hold:
   the suite looks for as an unchecked host.
 
 The suite also follows your block's imports, so moving the GitHub calls into a
-shared module keeps them under the rule. It runs
-`go list -deps ./...` in your block, which lists every package your non-test
-code imports, directly or through another package. Each `github.com/mitstack-eu/`
-package outside your own module that reads the GitHub connection is judged by
-the two conditions above, on its own non-test files, including those a build
-constraint leaves out on the machine that runs the check. The kit's `ghapi` package
-is left out, because it defines the allowlist the rule asks for. For example,
-a Talos cluster block that dials its repository through talos-cluster-kit's
-`clusterrepo.Dial` passes with a detail such as
-`clusterrepo.Dial reads the GitHub connection at github.com/mitstack-eu/talos-cluster-kit/operator/clusterrepo/repository.go:82`.
-When that package took its base from the request, the suite would fail and
-name the same file and line. A package the Go toolchain cannot load fails the
-suite, since an unread file is no evidence that the rule holds.
+shared module keeps them under the rule. It runs `go list -deps ./...` in your
+block with any `go.work` turned off, as your image build sees it. That lists
+every package your non-test code imports, directly or through another package,
+at the versions your `go.mod` pins. A `github.com/mitstack-eu/` package outside
+your own module counts as reading the GitHub connection by the same test as
+your own files. Such a package is judged by the two conditions above, on every
+one of its non-test files. The kit's `ghapi` package is left out, because it
+defines the allowlist the rule asks for.
+
+For example, talos-cluster-kit is the shared module of mitstack's Talos
+cluster blocks, and its `clusterrepo.Dial` function opens the cluster's GitHub
+repository. A Talos cluster block passes with a detail such as
+`clusterrepo.Dial reads the GitHub connection at github.com/mitstack-eu/talos-cluster-kit/operator/clusterrepo/repository.go:<line>`.
+A package that took its base from the request would fail the suite, naming
+the same file and line. A package the Go toolchain cannot load fails the
+suite too, since an unread file is no evidence that the rule holds.
 
 ## The floor and operator-kit
 
