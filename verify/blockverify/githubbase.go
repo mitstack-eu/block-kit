@@ -25,7 +25,7 @@ var (
 	wholeLineCommentRe  = regexp.MustCompile(`^\s*//`)
 )
 
-// goSource is one non-test .go file, by its path relative to the target.
+// goSource is one non-test .go file, by its path within the module or package it was read from.
 type goSource struct {
 	rel     string
 	content string
@@ -58,33 +58,55 @@ func nonTestGoSources(target string) ([]goSource, error) {
 }
 
 func isGitHubConsuming(sources []goSource) bool {
+	_, _, found := firstGitHubRead(sources)
+	return found
+}
+
+// firstGitHubRead returns the first source reading the GitHub connection for more than its owner, and the read's byte offset in it.
+func firstGitHubRead(sources []goSource) (source goSource, offset int, found bool) {
 	for _, s := range sources {
-		for _, m := range githubConsumingRe.FindAllString(s.content, -1) {
-			if m != githubOwnerRead {
-				return true
+		for _, m := range githubConsumingRe.FindAllStringIndex(s.content, -1) {
+			if s.content[m[0]:m[1]] != githubOwnerRead {
+				return s, m[0], true
 			}
 		}
 	}
-	return false
+	return goSource{}, 0, false
 }
 
-// checkGitHubBaseAllowlist answers ok with an empty detail for a module that makes no GitHub API call, since the rule does not apply to it.
+// checkGitHubBaseAllowlist answers ok with an empty detail for a module that makes no GitHub API call, in its own source or in a mitstack-eu package it imports, since the rule does not apply to it.
 func checkGitHubBaseAllowlist(target string) (detail string, ok bool) {
 	sources, err := nonTestGoSources(target)
 	if err != nil {
 		return fmt.Sprintf("could not scan %s for GitHub API use: %v", target, err), false
 	}
-	if !isGitHubConsuming(sources) {
-		return "", true
+	var verdicts []string
+	if isGitHubConsuming(sources) {
+		own, ok := judgeGitHubBase(target, sources)
+		if !ok {
+			return own, false
+		}
+		verdicts = append(verdicts, own)
 	}
 
-	binding, ok := githubBaseBinding(target, sources)
+	imported, ok := checkImportedGitHubBases(target)
+	if !ok {
+		return imported, false
+	}
+	if imported != "" {
+		verdicts = append(verdicts, imported)
+	}
+	return strings.Join(verdicts, ", "), true
+}
+
+func judgeGitHubBase(label string, sources []goSource) (detail string, ok bool) {
+	binding, ok := githubBaseBinding(label, sources)
 	if !ok {
 		return binding, false
 	}
 	if hits := rawAPIBaseConcatenations(sources); len(hits) > 0 {
 		return fmt.Sprintf("%s concatenates the raw apiBase into a URL at %s; route it through ghapi.Base or trustedGitHubBase first",
-			target, strings.Join(hits, ", ")), false
+			label, strings.Join(hits, ", ")), false
 	}
 	return binding, true
 }
