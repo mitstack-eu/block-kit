@@ -24,12 +24,13 @@ const ghapiPackage = kitModulePath + "/capabilities/github/ghapi"
 
 // listedPackage is the part of one `go list -json` record the rule reads.
 type listedPackage struct {
-	ImportPath string
-	Name       string
-	Dir        string
-	GoFiles    []string
-	CgoFiles   []string
-	Module     *struct {
+	ImportPath     string
+	Name           string
+	Dir            string
+	GoFiles        []string
+	CgoFiles       []string
+	IgnoredGoFiles []string
+	Module         *struct {
 		Path string
 		Main bool
 	}
@@ -67,8 +68,10 @@ func checkImportedGitHubBases(target string) (detail string, ok bool) {
 
 // importedMitstackPackages asks the Go toolchain for the packages target's non-test code imports, directly or not, and keeps the mitstack-eu ones outside target's own module.
 func importedMitstackPackages(target string) ([]listedPackage, error) {
-	cmd := exec.Command("go", "list", "-e", "-deps", "-json=ImportPath,Name,Dir,GoFiles,CgoFiles,Module,Error", "./...")
+	cmd := exec.Command("go", "list", "-e", "-deps", "-json=ImportPath,Name,Dir,GoFiles,CgoFiles,IgnoredGoFiles,Module,Error", "./...")
 	cmd.Dir = target
+	// A go.work around target would make each module it uses a main module, which the rule skips as target's own.
+	cmd.Env = append(os.Environ(), "GOWORK=off")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -111,9 +114,13 @@ func judgedImport(p listedPackage) (bool, error) {
 	return true, nil
 }
 
+// packageSources reads the files a build constraint leaves out as well, so a read that ships on another platform or tag is judged too.
 func packageSources(p listedPackage) ([]goSource, error) {
 	var sources []goSource
-	for _, name := range slices.Concat(p.GoFiles, p.CgoFiles) {
+	for _, name := range slices.Concat(p.GoFiles, p.CgoFiles, p.IgnoredGoFiles) {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
 		raw, err := os.ReadFile(filepath.Join(p.Dir, name))
 		if err != nil {
 			return nil, err
