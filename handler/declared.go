@@ -427,7 +427,12 @@ func (r *declaredRun) converging(detail string, done bool) (int, contract.Respon
 
 // logEnded writes one line for a validate whose request ended, naming no output or identity value, since the caller reads only that its deadline passed.
 func (r *declaredRun) logEnded() {
-	log.Print(calllog.Ended{Subscription: r.d.SubscriptionID, Reached: r.reached, Took: r.h.now().Sub(r.started)}.Format(r.secrets...))
+	ended := calllog.Ended{
+		Subscription: r.d.SubscriptionID,
+		Reached:      r.reached,
+		Took:         r.h.now().Sub(r.started),
+	}
+	log.Print(ended.Format(r.secrets...))
 }
 
 func (r *declaredRun) notReached(name string) string {

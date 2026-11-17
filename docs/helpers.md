@@ -136,6 +136,8 @@ The fields follow these rules:
 | `answer` | The status, or `canceled` when the request's context was cancelled, `timeout` when a deadline passed, and `error` for any other failure |
 | `ms` | The time until the status arrived or the call failed, so reading the body is not counted |
 
+A client that follows a redirect writes one line for each hop.
+
 Some APIs name a thing by a word, as GitHub does with an owner, a repository
 and a branch. A client for such an API passes `calllog.FixedSegments` with
 every fixed word its routes hold, and any other segment then reads `{id}`.
@@ -144,7 +146,8 @@ every fixed word its routes hold, and any other segment then reads `{id}`.
 When a validate's request ends before it answers, the handler writes one more
 line, formatted by `calllog.Ended`. It says how long the validate ran and the
 resource it had reached. The lines of the calls it was waiting on come before
-that line, each marked `canceled`.
+that line, each marked `canceled`, or `timeout` when a deadline ended the
+request.
 
 ```text
 validate: subscription sub_681cd5ccfbb0: the request ended after 5s at resource "scaleway.cockpit"

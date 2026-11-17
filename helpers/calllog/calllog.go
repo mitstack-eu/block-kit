@@ -127,22 +127,20 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func answer(ctx context.Context, resp *http.Response, err error) string {
-	if err == nil {
+	if err == nil && resp != nil {
 		return strconv.Itoa(resp.StatusCode)
 	}
 	var netErr net.Error
 	switch {
 	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
 		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return "timeout"
-	case errors.As(err, &netErr) && netErr.Timeout():
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
 		return "timeout"
 	}
 	return "error"
 }
 
-// Route names path with each segment that is neither a word nor one of fixed, when fixed is given, as {id}.
+// Route names path with each segment that is no word as {id}, or, when fixed is given, each segment not in fixed.
 func Route(path string, fixed ...string) string {
 	segments := strings.Split(path, "/")
 	for i, s := range segments {
