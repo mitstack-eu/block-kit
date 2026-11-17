@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/helpers/calllog"
 	"github.com/mitstack-eu/block-kit/helpers/reqcache"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
@@ -426,12 +427,7 @@ func (r *declaredRun) converging(detail string, done bool) (int, contract.Respon
 
 // logEnded writes one line for a validate whose request ended, naming no output or identity value, since the caller reads only that its deadline passed.
 func (r *declaredRun) logEnded() {
-	at := "before any resource"
-	if r.reached != "" {
-		at = fmt.Sprintf("at resource %q", safe.LogSafe(r.reached, r.secrets...))
-	}
-	log.Printf("validate: subscription %s: the request ended after %s %s",
-		safe.LogSafe(r.d.SubscriptionID, r.secrets...), r.h.now().Sub(r.started).Round(time.Millisecond), at)
+	log.Print(calllog.Ended{Subscription: r.d.SubscriptionID, Reached: r.reached, Took: r.h.now().Sub(r.started)}.Format(r.secrets...))
 }
 
 func (r *declaredRun) notReached(name string) string {

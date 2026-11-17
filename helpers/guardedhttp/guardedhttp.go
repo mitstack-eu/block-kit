@@ -12,6 +12,8 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/mitstack-eu/block-kit/helpers/calllog"
 )
 
 // ErrRefused is wrapped by every error the client returns for a request it will not send, so a caller tells a guard from a transport failure.
@@ -57,7 +59,7 @@ func New(cfg Config) (*http.Client, error) {
 		ForceAttemptHTTP2:   true,
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
-	return &http.Client{Transport: g, Timeout: timeout, CheckRedirect: refuseRedirect}, nil
+	return &http.Client{Transport: calllog.Transport(g), Timeout: timeout, CheckRedirect: refuseRedirect}, nil
 }
 
 func declaredHosts(hosts []string) (map[string]bool, error) {

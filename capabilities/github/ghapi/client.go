@@ -14,6 +14,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
+	"github.com/mitstack-eu/block-kit/helpers/calllog"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
 )
 
@@ -29,11 +30,16 @@ func NewClient(baseURL, token string, httpClient *http.Client) *Client {
 	return &Client{HTTP: httpClient, Base: baseURL, Token: token}
 }
 
+// routeSegments names every fixed segment of the routes this client calls, since an owner, repository or branch name reads as a word.
+var routeSegments = calllog.FixedSegments("actions", "commits", "contents", "git", "heads", "orgs", "ref", "refs", "repos", "rulesets", "trees", "variables")
+
+var defaultClient = calllog.Client(http.DefaultClient, routeSegments)
+
 func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
-		return c.HTTP
+		return calllog.Client(c.HTTP, routeSegments)
 	}
-	return http.DefaultClient
+	return defaultClient
 }
 
 func (c *Client) headers(req *http.Request) {

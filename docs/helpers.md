@@ -11,6 +11,7 @@ package has [a page of its own](gitops.md).
 |---|---|
 | `helpers/safe` | Logs a value from a request, or calls an API whose host a request names |
 | `helpers/bounded` | Calls an API with its own HTTP client and reads the answer |
+| `helpers/calllog` | Calls an API with an HTTP client of its own, which then logs one line per call |
 | `helpers/guardedhttp` | Is a capability operator that calls its vendor with an org's credential |
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/reqcache` | Wants a read repeated within one request to cost one call, for a source of its own that cannot change under the request |
@@ -102,6 +103,51 @@ cuts a refusal's text to `limit`, since the status already says what happened.
 ```go
 raw, err := bounded.Read(resp, "GET /server/42", 1<<20)
 // err: GET /server/42: the answer is longer than 1048576 bytes
+```
+
+## Logging each call a client makes
+
+When a call is slow or fails, you need to know which call it was. A body or
+a header can carry a credential, so the line leaves them out.
+`helpers/calllog` wraps an `*http.Client` so that each call it makes writes
+one log line. The line names the subscription, the method, the host, the route
+and the answer, and says how many milliseconds the call took. It never holds
+the query, a header value or a body.
+
+```text
+calllog: subscription=sub_681cd5ccfbb0 method=GET host=api.scaleway.com route=/cockpit/v1/regions/fr-par/data-sources answer=200 ms=212
+```
+
+The kit's own clients already write this line. They are `guardedhttp`, the
+Hetzner Cloud and Robot clients, `ghapi`, `lease` and `events`. A block that
+builds its own client wraps it once:
+
+```go
+var httpClient = calllog.Client(&http.Client{Timeout: 10 * time.Second})
+```
+
+The fields follow these rules:
+
+| Field | What it holds |
+|---|---|
+| `subscription` | The id of the request the call was made for, which the handler sets through `events.WithEnvelope`, or `-` outside a request |
+| `host` | The host and port, with each label that is no word or number read as `{id}` |
+| `route` | The path, with each segment that is no word read as `{id}`, as `/v1/servers/{id}` |
+| `answer` | The status, or `canceled` when the request's context was cancelled, `timeout` when a deadline passed, and `error` for any other failure |
+| `ms` | The time until the status arrived or the call failed, so reading the body is not counted |
+
+Some APIs name a thing by a word, as GitHub does with an owner, a repository
+and a branch. A client for such an API passes `calllog.FixedSegments` with
+every fixed word its routes hold, and any other segment then reads `{id}`.
+`ghapi` does this.
+
+When a validate's request ends before it answers, the handler writes one more
+line, formatted by `calllog.Ended`. It says how long the validate ran and the
+resource it had reached. The lines of the calls it was waiting on come before
+that line, each marked `canceled`.
+
+```text
+validate: subscription sub_681cd5ccfbb0: the request ended after 5s at resource "scaleway.cockpit"
 ```
 
 ## Reporting progress and reading the platform

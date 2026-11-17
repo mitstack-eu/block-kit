@@ -17,6 +17,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
+	"github.com/mitstack-eu/block-kit/helpers/calllog"
 )
 
 // Endpoint is Robot's webservice, which a block never takes from a request.
@@ -48,7 +49,7 @@ func New(user, password string) *Client { return NewAt(Endpoint, user, password)
 func NewAt(base, user, password string) *Client {
 	return &Client{
 		base: base, user: user, password: password, login: loginKey(base, user, password),
-		http: &http.Client{Timeout: timeout}, PollInterval: 10 * time.Second, ReadWindow: ReadWindow, Now: time.Now,
+		http: &http.Client{Timeout: timeout, Transport: calllog.Transport(nil)}, PollInterval: 10 * time.Second, ReadWindow: ReadWindow, Now: time.Now,
 		firewallSettleTimeout: firewallSettleTimeout,
 	}
 }
