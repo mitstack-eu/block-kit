@@ -91,6 +91,16 @@ import "github.com/mitstack-eu/block-kit/contract"
 func Dial(d contract.Desired) (base, token string) {
 	return d.Instances["github"].Endpoint, d.Secrets["github"]["token"]
 }
+-- kit-dial-base-from-the-request-on-plan9.go --
+//go:build plan9
+
+package clusterrepo
+
+import "github.com/mitstack-eu/block-kit/contract"
+
+func dialOnPlan9(d contract.Desired) (base, token string) {
+	return d.Instances["github"].Endpoint, d.Secrets["github"]["token"]
+}
 -- kit-dial-raw-apibase-concatenated.go --
 package clusterrepo
 
