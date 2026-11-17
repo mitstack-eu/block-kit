@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -112,7 +113,7 @@ func judgedImport(p listedPackage) (bool, error) {
 
 func packageSources(p listedPackage) ([]goSource, error) {
 	var sources []goSource
-	for _, name := range append(append([]string{}, p.GoFiles...), p.CgoFiles...) {
+	for _, name := range slices.Concat(p.GoFiles, p.CgoFiles) {
 		raw, err := os.ReadFile(filepath.Join(p.Dir, name))
 		if err != nil {
 			return nil, err
