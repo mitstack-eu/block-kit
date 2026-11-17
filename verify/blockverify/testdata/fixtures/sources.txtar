@@ -83,6 +83,54 @@ import (
 func repoOwner(d contract.Desired) string { return ghapi.Owner(d) }
 
 func githubToken(c githubCreds) string { return c.Secrets["github"]["token"] }
+-- kit-dial-base-from-the-request.go --
+package clusterrepo
+
+import "github.com/mitstack-eu/block-kit/contract"
+
+func Dial(d contract.Desired) (base, token string) {
+	return d.Instances["github"].Endpoint, d.Secrets["github"]["token"]
+}
+-- kit-dial-raw-apibase-concatenated.go --
+package clusterrepo
+
+import (
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/contract"
+)
+
+func Dial(d contract.Desired) (url, token string, err error) {
+	apiBase := d.Instances["github"].Endpoint
+	if _, err := ghapi.Base(apiBase); err != nil {
+		return "", "", err
+	}
+	return apiBase + "/user", d.Secrets["github"]["token"], nil
+}
+-- kit-dial-through-ghapi-base.go --
+package clusterrepo
+
+import (
+	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
+	"github.com/mitstack-eu/block-kit/contract"
+)
+
+func Dial(d contract.Desired) (base, token string, err error) {
+	resolved, err := ghapi.Base(d.Instances["github"].Endpoint)
+	if err != nil {
+		return "", "", err
+	}
+	return resolved.String(), d.Secrets["github"]["token"], nil
+}
+-- kit-names-the-repository-only.go --
+package clusterrepo
+
+func Dial(owner, appName string) string { return owner + "/" + appName + "-cluster" }
+-- operator-imports-the-kit.go --
+package main
+
+import "github.com/mitstack-eu/fixture-kit/clusterrepo"
+
+var _ = clusterrepo.Dial
 -- handler-imported-only-in-a-test.go --
 package main
 

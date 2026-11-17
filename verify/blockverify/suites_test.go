@@ -26,6 +26,34 @@ func githubBlock(file, src string) dirFunc {
 	return fullBlock(opts...)
 }
 
+const fixtureKitModule = "github.com/mitstack-eu/fixture-kit"
+
+const fixtureKitPackage = fixtureKitModule + "/clusterrepo"
+
+// importingKit writes the kit module outside the block's tree, so only following the block's imports reaches its source.
+func importingKit(kitSource string) option {
+	return func(t *testing.T, files map[string]string) {
+		kit := writeFixture(t, map[string]string{
+			"go.mod":                    "module " + fixtureKitModule + "\n\nrequire github.com/mitstack-eu/block-kit v0.4.0\n",
+			"clusterrepo/repository.go": source(t, kitSource),
+		})
+		importingKitAt(kit)(t, files)
+	}
+}
+
+func importingKitAt(kitDir string) option {
+	return func(t *testing.T, files map[string]string) {
+		files["go.mod"] += "\nrequire " + fixtureKitModule + " v0.0.0\n\nreplace " + fixtureKitModule + " => " + kitDir + "\n"
+		files["kit.go"] = source(t, "operator-imports-the-kit.go")
+	}
+}
+
+func importingMissingKit() option {
+	return func(t *testing.T, files map[string]string) {
+		importingKitAt(filepath.Join(t.TempDir(), "missing"))(t, files)
+	}
+}
+
 func TestTrustPlumbingSuite(t *testing.T) {
 	runSuites(t, []string{"trust-plumbing"}, []suiteCase{
 		{name: "a kit/v1 block that requires block-kit v0.4.0 passes, naming the kit/v1 rule and the floor", dir: kitV1Block(),
@@ -77,6 +105,20 @@ func TestTrustPlumbingSuite(t *testing.T) {
 			dir: githubBlock("github.go", "github-raw-apibase-concatenated.go"), status: "fail", detail: []string{"apiBase"}},
 		{name: "a whole-line comment that describes apiBase concatenation is not a violation",
 			dir: githubBlock("github.go", "github-raw-apibase-in-a-comment.go"), status: "pass", detail: []string{"ghapi"}},
+		{name: "an operator whose only GitHub read sits in an imported kit package with the right base passes, naming the kit package as the GitHub consumer",
+			dir: fullBlock(importingKit("kit-dial-through-ghapi-base.go")), status: "pass",
+			detail: []string{fixtureKitPackage + "/repository.go:9", "clusterrepo.Dial", "ghapi"}},
+		{name: "the same operator with a kit package that takes the GitHub base from the request fails, naming the file and line of the read",
+			dir: fullBlock(importingKit("kit-dial-base-from-the-request.go")), status: "fail",
+			detail: []string{fixtureKitPackage + "/repository.go:6", "clusterrepo.Dial", "ghapi.Base"}},
+		{name: "a kit package that concatenates the raw apiBase into a URL fails the operator even when it adopts ghapi",
+			dir: fullBlock(importingKit("kit-dial-raw-apibase-concatenated.go")), status: "fail",
+			detail: []string{fixtureKitPackage, "apiBase", "repository.go:13"}},
+		{name: "an operator with no GitHub read in its own source or in any kit package it imports is not judged",
+			dir: fullBlock(importingKit("kit-names-the-repository-only.go")), status: "pass",
+			detail: []string{"manifest.yaml present"}, not: []string{"GitHub", fixtureKitPackage}},
+		{name: "an operator whose imported packages cannot be listed fails as a tooling failure, naming the module",
+			dir: fullBlock(importingMissingKit()), status: "fail", detail: []string{scanFailureMarker, fixtureKitModule}},
 	})
 }
 
