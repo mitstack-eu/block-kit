@@ -22,7 +22,6 @@ const mitstackPackagePrefix = "github.com/mitstack-eu/"
 // ghapiPackage defines ghapi.Base, the allowlist the rule asks a consumer to call, so it is the guard and never judged as a consumer.
 const ghapiPackage = kitModulePath + "/capabilities/github/ghapi"
 
-// listedPackage is the part of one `go list -json` record the rule reads.
 type listedPackage struct {
 	ImportPath     string
 	Name           string

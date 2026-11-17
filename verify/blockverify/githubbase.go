@@ -25,7 +25,7 @@ var (
 	wholeLineCommentRe  = regexp.MustCompile(`^\s*//`)
 )
 
-// goSource is one non-test .go file, by its path relative to the target.
+// goSource is one non-test .go file, by its path within the module or package it was read from.
 type goSource struct {
 	rel     string
 	content string
@@ -99,7 +99,6 @@ func checkGitHubBaseAllowlist(target string) (detail string, ok bool) {
 	return strings.Join(verdicts, ", "), true
 }
 
-// judgeGitHubBase judges the sources of one module or package that reads the GitHub connection, naming it by label.
 func judgeGitHubBase(label string, sources []goSource) (detail string, ok bool) {
 	binding, ok := githubBaseBinding(label, sources)
 	if !ok {
