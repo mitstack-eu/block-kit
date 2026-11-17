@@ -38,7 +38,6 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// lines parses each calllog line in logs into its key=value fields.
 func lines(logs *bytes.Buffer) []map[string]string {
 	var out []map[string]string
 	for _, l := range strings.Split(logs.String(), "\n") {
