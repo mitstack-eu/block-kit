@@ -1,0 +1,43 @@
+{
+  "outputs": null,
+  "absent": true,
+  "resources": {
+    "ci-workflows": {
+      "observe": {
+        "state": "absent",
+        "type": "github.workflow-file",
+        "settings": {
+          "file": "config/.env.dist",
+          "branch": "main",
+          "commit": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+          "found": true,
+          "variables": [
+            {
+              "name": "APP_KEY",
+              "source": "missing",
+              "secret": "app-key"
+            },
+            {
+              "name": "MAIL_PASSWORD",
+              "source": "secret",
+              "secret": "mail-password"
+            },
+            {
+              "name": "DB_PASSWORD",
+              "source": "block",
+              "block": "docker-postgres"
+            },
+            {
+              "name": "LOG_CHANNEL",
+              "source": "repository"
+            },
+            {
+              "name": "FEATURE_FLAG_URL",
+              "source": "run-without"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
