@@ -373,8 +373,13 @@ func unitNames[V any](spec contract.ManifestSpec, held map[string]V) []string {
 
 // included is the spec holding only the resource entries the current request's inputs include, as the handler serves a subscribe, an upgrade and a validate.
 func (c *blockCheck) included() contract.ManifestSpec {
+	resources, err := contract.IncludedResources(c.spec.Resources, c.in.Config.Types, c.desired.Params)
+	if err != nil {
+		// The handler refuses such a request, so the check fails on its answer; every entry is kept to read that answer by.
+		return c.spec
+	}
 	spec := c.spec
-	spec.Resources = contract.IncludedResources(c.spec.Resources, c.in.Config.Types, c.desired.Params)
+	spec.Resources = resources
 	return spec
 }
 

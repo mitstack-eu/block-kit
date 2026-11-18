@@ -125,16 +125,22 @@ func units[V any](declared []namedResource, held map[string]V) []namedResource {
 	return out
 }
 
+// classInputValue refuses a request whose inputs cannot tell which resource entries the block holds.
+const classInputValue = "input-value"
+
 // included keeps the declared entries the request's inputs include, judged over every declared entry since the block's inputs are merged across them.
-func (h *Handler) included(params map[string]string) []namedResource {
+func (h *Handler) included(params map[string]string) ([]namedResource, error) {
 	all := make([]contract.ManifestResource, len(h.declared))
 	for i, nr := range h.declared {
 		all[i] = nr.declaration
 	}
-	keep := contract.IncludedResources(all, h.types, params)
+	keep, err := contract.IncludedResources(all, h.types, params)
+	if err != nil {
+		return nil, Refuse(classInputValue, "%v", err)
+	}
 	return slices.DeleteFunc(slices.Clone(h.declared), func(nr namedResource) bool {
 		return !slices.ContainsFunc(keep, func(r contract.ManifestResource) bool { return r.Name == nr.declaration.Name })
-	})
+	}), nil
 }
 
 // checkConditions refuses a resource condition Config.Types cannot judge, since the handler could not tell which entries a request includes.

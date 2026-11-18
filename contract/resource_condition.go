@@ -60,8 +60,14 @@ func mergeInput(resources []ManifestResource, types TypeCatalogue, name string) 
 	return in
 }
 
-// CheckResourceConditions refuses a condition naming an input the types of the block's entries not marked many do not declare or list allowed values for, and a listed value one of them does not allow.
+// CheckResourceConditions refuses, in a block carrying a condition, an entry not marked many listing a type the catalogue does not hold, a condition naming an input the types of those entries do not declare or list allowed values for, and a listed value one of them does not allow.
 func CheckResourceConditions(resources []ManifestResource, types TypeCatalogue) error {
+	if !slices.ContainsFunc(resources, func(r ManifestResource) bool { return r.When != nil }) {
+		return nil
+	}
+	if err := refuseUnheldTypes(resources, types); err != nil {
+		return err
+	}
 	for i, r := range resources {
 		if r.When == nil {
 			continue
@@ -83,21 +89,42 @@ func CheckResourceConditions(resources []ManifestResource, types TypeCatalogue) 
 	return nil
 }
 
-// IncludedResources keeps each entry with no condition, and each whose condition lists the request's value of its input, read from params or else from the default every declaring type gives.
-func IncludedResources(resources []ManifestResource, types TypeCatalogue, params map[string]string) []ManifestResource {
+// refuseUnheldTypes refuses a type the catalogue does not hold, since a condition would read none of its inputs and so judge the block's inputs without it.
+func refuseUnheldTypes(resources []ManifestResource, types TypeCatalogue) error {
+	for i, r := range resources {
+		if r.Many {
+			continue
+		}
+		for _, id := range r.Types {
+			if !types.Holds(id) {
+				return fmt.Errorf("spec.resources[%d]: resource %q lists type %q, which the type snapshot does not hold, so a condition cannot read the inputs it declares", i, r.Name, id)
+			}
+		}
+	}
+	return nil
+}
+
+// IncludedResources keeps each entry with no condition, and each whose condition lists the request's value of its input, read from params or else from the default every declaring type gives. It refuses a request giving no value where the types give no one default, and a value the input does not allow, since either leaves unknown which entries the block holds.
+func IncludedResources(resources []ManifestResource, types TypeCatalogue, params map[string]string) ([]ManifestResource, error) {
 	var out []ManifestResource
 	for _, r := range resources {
 		if r.When == nil {
 			out = append(out, r)
 			continue
 		}
+		in := mergeInput(resources, types, r.When.Input)
 		value := params[r.When.Input]
-		if value == "" {
-			value = mergeInput(resources, types, r.When.Input).fallback
+		switch {
+		case value == "" && in.fallback == "":
+			return nil, fmt.Errorf("resource %q is created only for some values of input %q, but the request gives it no value and its types give no one default", r.Name, r.When.Input)
+		case value == "":
+			value = in.fallback
+		case !in.anyValue && !slices.Contains(in.allowed, value):
+			return nil, fmt.Errorf("resource %q is created only for some values of input %q, but the request gives it %q, which the input does not allow (it allows %s)", r.Name, r.When.Input, value, strings.Join(in.allowed, ", "))
 		}
-		if value != "" && slices.Contains(r.When.Values, value) {
+		if slices.Contains(r.When.Values, value) {
 			out = append(out, r)
 		}
 	}
-	return out
+	return out, nil
 }

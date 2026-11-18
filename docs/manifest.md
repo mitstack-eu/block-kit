@@ -187,14 +187,19 @@ declaring type gives the same one. A request that leaves the input empty reads
 that default. `contract.CheckManifest` refuses an input none of the types
 declares, an input that declares no allowed values, and a listed value the
 input does not allow, naming the entry and the input. `handler.New` refuses the
-same through `Config.Types`.
+same through `Config.Types`. In a block carrying `when`, it also refuses an
+entry not marked many that lists a type `Config.Types` does not hold, since the
+condition could not read that type's inputs.
 
 A subscribe, an upgrade and a validate of the block reach only the entries the
-request's inputs include, and `contract.IncludedResources` lists them. An
-unsubscribe reaches every entry, since a resource an earlier input created may
-still stand. When an upgrade's inputs leave out an entry that was created,
-the block's Ensure removes it, and `kittest.CheckBlock` fails a block that
-leaves it standing.
+request's inputs include, and `contract.IncludedResources` lists them. The
+handler refuses the request with class `input-value` when the input is empty
+and the types give no one default, or when its value is one the input does not
+allow. It refuses with class `undeclared-resource` a block that reports a
+resource of an entry the inputs leave out. An unsubscribe reaches every entry,
+since a resource an earlier input created may still stand. When an upgrade's
+inputs leave out an entry that was created, the block's Ensure removes it, and
+`kittest.CheckBlock` fails a block that leaves it standing.
 
 `provides` names resources from the block's own `resources`, and never an
 entry marked many or carrying `when`, because a binding names one resource
