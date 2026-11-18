@@ -13,7 +13,13 @@ type TypeSnapshot struct {
 	Types   []SnapshotType `json:"types"`
 }
 
-// SnapshotType is one resource type of a snapshot.
+// SnapshotInput is one input a resource type takes, with the value it falls back to and the values it allows, where none listed allows any.
+type SnapshotInput struct {
+	Name          string   `json:"name"`
+	Default       string   `json:"default,omitempty"`
+	AllowedValues []string `json:"allowedValues,omitempty"`
+}
+
 type SnapshotType struct {
 	ID           string            `json:"id"`
 	Capability   string            `json:"capability"`
@@ -27,6 +33,7 @@ type SnapshotType struct {
 	ReliesOn     []string          `json:"reliesOn,omitempty"`
 	Hosts        string            `json:"hosts,omitempty"`
 	Outputs      []SnapshotOutput  `json:"outputs"`
+	Inputs       []SnapshotInput   `json:"inputs,omitempty"`
 	Observe      string            `json:"observe,omitempty"`
 	Absence      string            `json:"absence,omitempty"`
 	TimeBudgets  map[string]string `json:"timeBudgets,omitempty"`

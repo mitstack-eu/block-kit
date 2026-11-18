@@ -16,7 +16,7 @@ func (c *blockCheck) emptyIdentityUnsubscribe() {
 		c.problem("listing what carries the subscription's id failed: %v", err)
 		return
 	}
-	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+	for _, name := range unitNames(c.included(), c.desired.RecordedResources) {
 		typ := c.desired.RecordedResources[name].Type
 		if landing.LandsFiles(typ) {
 			continue

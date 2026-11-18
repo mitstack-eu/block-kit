@@ -34,9 +34,16 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 	}
 
 	r.provided = r.h.provided
+	var included []namedResource
+	if operation != "unsubscribe" {
+		var err error
+		if included, err = r.h.included(r.d.Params); err != nil {
+			return r.h.errorResponse(err, r.secrets)
+		}
+	}
 	switch operation {
 	case "subscribe", "upgrade":
-		reported, err := r.ensureBlock(ctx)
+		reported, err := r.ensureBlock(ctx, included)
 		if w, ok := waiting(err); ok {
 			return r.withOwnSecrets(http.StatusOK, contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: safe.Scrub(w.Detail, r.secrets...)})
 		}
@@ -49,7 +56,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 			return status, resp
 		}
 		r.d.VerbAt = r.h.now()
-		r.resources = units(r.h.declared, reported)
+		r.resources = units(included, reported)
 		r.setRefs(reported)
 		r.ensured(reported)
 		return r.withOwnSecrets(r.ensureEach(ctx))
@@ -65,6 +72,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		}
 		r.deleteOutputs = outputs
 		r.d.VerbAt = r.h.now()
+		// Unsubscribe reaches every declared entry, since one the inputs leave out may still stand.
 		r.resources = units(r.h.declared, r.d.RecordedResources)
 		r.setRefs(nil)
 		for name, ref := range r.refs {
@@ -80,7 +88,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
-		r.resources = units(r.h.declared, r.d.RecordedResources)
+		r.resources = units(included, r.d.RecordedResources)
 		r.setRefs(nil)
 		status, resp := r.withOwnSecrets(r.validateEach(ctx))
 		if status == http.StatusOK {
@@ -129,9 +137,9 @@ func waiting(err error) (*Waiting, bool) {
 }
 
 // ensureBlock returns what the ensure reported by resource name, beside the ensure's error when it made resources before failing, and none of them when one is refused.
-func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.CreatedResource, error) {
+func (r *declaredRun) ensureBlock(ctx context.Context, included []namedResource) (map[string]contract.CreatedResource, error) {
 	created, err := r.ensureReporting(ctx)
-	reported, refused := r.checkReported(created)
+	reported, refused := r.checkReported(created, included)
 	switch {
 	case err != nil && refused != nil:
 		return nil, err
@@ -141,12 +149,15 @@ func (r *declaredRun) ensureBlock(ctx context.Context) (map[string]contract.Crea
 	return reported, refused
 }
 
-func (r *declaredRun) checkReported(created []contract.CreatedResource) (map[string]contract.CreatedResource, error) {
+func (r *declaredRun) checkReported(created []contract.CreatedResource, included []namedResource) (map[string]contract.CreatedResource, error) {
 	reported := make(map[string]contract.CreatedResource, len(created))
 	for _, c := range created {
 		nr, err := r.h.reportedResource(c.Name)
 		if err != nil {
 			return nil, err
+		}
+		if !slices.ContainsFunc(included, func(in namedResource) bool { return in.declaration.Name == nr.declaration.Name }) {
+			return nil, Refuse(classUndeclaredResource, "the block reported resource %q, but the request's inputs leave it out, so the block creates no such resource", c.Name)
 		}
 		if _, repeated := reported[c.Name]; repeated {
 			return nil, Refuse(classRepeatedResource, "the block reported resource %q twice, and an ensure reports each resource once", c.Name)

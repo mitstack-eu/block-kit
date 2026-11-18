@@ -167,10 +167,44 @@ whether a name is one of an entry's members, and `ManifestResource.Names` lists
 the names an entry stands for among the names a request or a report holds, in
 the order the handler observes them.
 
+A resource entry with `when` is created only for some values of one input. It
+suits a resource that only some locations need, such as a spare volume kept in
+`hel1` alone:
+
+```yaml
+resources:
+  - { name: server, type: hetzner.server }
+  - name: spare-volume
+    type: hetzner.volume
+    when: { input: location, values: [hel1] }
+```
+
+`when.input` names an input that the block's resource types declare, and
+`when.values` lists the values that include the entry. The block's inputs are
+merged across its entries not marked many. An input's allowed values are the
+values every declaring type allows, and its default stands only when every
+declaring type gives the same one. A request that leaves the input empty reads
+that default. `contract.CheckManifest` refuses an input none of the types
+declares, an input that declares no allowed values, and a listed value the
+input does not allow, naming the entry and the input. `handler.New` refuses the
+same through `Config.Types`. In a block carrying `when`, it also refuses an
+entry not marked many that lists a type `Config.Types` does not hold, since the
+condition could not read that type's inputs.
+
+A subscribe, an upgrade and a validate of the block reach only the entries the
+request's inputs include, and `contract.IncludedResources` lists them. The
+handler refuses the request with class `input-value` when the input is empty
+and the types give no one default, or when its value is one the input does not
+allow. It refuses with class `undeclared-resource` a block that reports a
+resource of an entry the inputs leave out. An unsubscribe reaches every entry,
+since a resource an earlier input created may still stand. When an upgrade's
+inputs leave out an entry that was created, the block's Ensure removes it, and
+`kittest.CheckBlock` fails a block that leaves it standing.
+
 `provides` names resources from the block's own `resources`, and never an
-entry marked many, because a binding names one resource. The outputs of a
-provided resource, such as a host's address, reach the other blocks of the app
-that require its type.
+entry marked many or carrying `when`, because a binding names one resource
+that exists. The outputs of a provided resource, such as a host's address,
+reach the other blocks of the app that require its type.
 
 A binding is one value the engine hands the block from a resource. It is
 written `requires.<reference>.outputs.<output>` for an output of the resource
@@ -369,14 +403,16 @@ curl -fsS https://api.mitstack.dev/v1/resource-types/snapshots/latest -o type-sn
 
 `contract.ParseTypeSnapshot` reads a snapshot, and
 `contract.CheckManifestTypes` refuses a manifest entry listing a type the
-snapshot does not hold. A block passes the snapshot to `handler.New` as
-`Config.Types`.
+snapshot does not hold. `contract.CheckManifest` also judges each resource's
+`when` against the inputs the snapshot lists for its types. A block passes the
+snapshot to `handler.New` as `Config.Types`.
 
 | Snapshot field | What it means |
 |---|---|
 | `id` | The type's id, such as `aws.s3-bucket`, which a manifest names |
 | `version` | The number of this version of the type in the platform's store. blockverify leaves it out when it compares a block's copy with the served snapshot |
 | `outputs` | Each output a resource of the type reports, with `required` when every such resource must report it and `secret` when its value is secret, such as a role's ARN or a cluster's credential. `outputs` is a list, and one entry reads `{"name": "bucketName", "secret": false, "required": true, "schema": {"type": "string", "pattern": "^[a-z0-9-]+$"}}`. An output's `schema` holds the JSON Schema its type declares for the value, and is absent when the type declares none. The kit reads `schema` from v0.48.0 on and holds it in `contract.SnapshotOutput`. blockverify compares it between a block's copy and the served snapshot, and no check of the kit judges a value against it yet. An earlier kit reads the snapshot and ignores the field |
+| `inputs` | Each input the platform asks for when an app subscribes to a block creating the type, such as `{"name": "location", "default": "nbg1", "allowedValues": ["fsn1", "nbg1", "hel1"]}`. The kit holds each input's `name`, `default` and `allowedValues` in `contract.SnapshotInput`, and reads them to judge a resource's `when`. The served snapshot carries more fields for each input, such as its `label`, which the kit leaves out. blockverify compares the three the kit holds, so a copy that leaves out a type's inputs fails until the command above writes it again |
 | `stateful` | A resource of the type can hold data, so replacing it loses the data |
 | `parts` | The objects that exist only to serve one resource of the type, such as the push role of an ECR repository, each with its `type` and `count`, the most one resource holds |
 | `endsWithSubscription` | The resource's absence cannot be observed, so it ends when the block's unsubscribe succeeds |

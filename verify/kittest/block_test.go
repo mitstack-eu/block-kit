@@ -821,6 +821,80 @@ func TestCheckBlock_AnUpgradeDroppingAMemberPassesOnlyOnceItsTaggedServerIsGone(
 	}
 }
 
+const spareBlockManifest = `apiVersion: mitstack/v1beta
+type: block
+metadata: { id: spare-block, name: Spare Block }
+spec:
+  version: 1.0.0
+  resources:
+    - { name: server, type: hetzner.server }
+    - { name: spare, type: hetzner.server, when: { input: location, values: [hel1] } }
+  lifecycle: { endpoint: https://spare-block.example/hook, operations: [subscribe, unsubscribe, upgrade, validate], contract: kit/v1 }
+`
+
+// spareBlock keeps server-main, and server-spare only at hel1; a leaky one never removes server-spare once it stands.
+type spareBlock struct {
+	p     *fakeProvider
+	leaky bool
+}
+
+func (b *spareBlock) EnsureResources(_ context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
+	b.p.put("server-main", "hetzner.server", d.SubscriptionID)
+	out := []contract.CreatedResource{{Name: "server", Type: "hetzner.server", Identity: map[string]string{"id": "server-main"}}}
+	switch {
+	case d.Params["location"] == "hel1":
+		b.p.put("server-spare", "hetzner.server", d.SubscriptionID)
+		out = append(out, contract.CreatedResource{Name: "spare", Type: "hetzner.server", Identity: map[string]string{"id": "server-spare"}})
+	case !b.leaky:
+		b.p.remove("server-spare")
+	}
+	return out, nil
+}
+
+func (b *spareBlock) Ensure(ctx context.Context, d contract.Desired) error {
+	_, err := b.EnsureResources(ctx, d)
+	return err
+}
+
+func (b *spareBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
+	b.p.remove("server-main")
+	b.p.remove("server-spare")
+	return nil, nil
+}
+
+func TestCheckBlock_ServesOnlyTheEntriesALocationIncludesAndProvesALeftOutOneGone(t *testing.T) {
+	for _, tc := range []struct {
+		from, to string
+		leaky    bool
+		want     [][]string
+	}{
+		{from: "fsn1", to: "fsn1"},
+		{from: "", to: ""},
+		{from: "hel1", to: "fsn1"},
+		{from: "fsn1", to: "hel1"},
+		{from: "hel1", to: "fsn1", leaky: true, want: [][]string{{`resource "spare"`, "leave it out"}, {`resource "server-spare"`, "hetzner.server"}}},
+	} {
+		t.Run(fmt.Sprintf("%q to %q, leaky %v", tc.from, tc.to, tc.leaky), func(t *testing.T) {
+			p := newFakeProvider()
+			desired := func(location string) contract.Desired {
+				return contract.Desired{Identity: contract.Identity{SubscriptionID: "sub-spare", BlockID: "spare-block", OrgID: "org-1"}, Params: map[string]string{"location": location}}
+			}
+			upgrade := desired(tc.to)
+
+			problems := kittest.CheckBlock(kittest.Block{Provider: p, Desired: desired(tc.from), Upgrade: &upgrade,
+				Config: handler.Config{Resource: &spareBlock{p: p, leaky: tc.leaky}, Manifest: []byte(spareBlockManifest), Types: typeSnapshot(t),
+					Observers: map[string]handler.Observer{"server": providerObserver{p: p}, "spare": providerObserver{p: p}}}})
+
+			if len(tc.want) == 0 {
+				wantNoProblems(t, problems)
+			}
+			for _, want := range tc.want {
+				wantProblemNaming(t, problems, want...)
+			}
+		})
+	}
+}
+
 const pullRequestBlockManifest = `apiVersion: mitstack/v1beta
 type: block
 metadata:

@@ -171,6 +171,9 @@ func New(cfg Config) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkConditions(cfg, declared); err != nil {
+		return nil, err
+	}
 	if err := validateTypeObservers(cfg.TypeObservers); err != nil {
 		return nil, err
 	}
