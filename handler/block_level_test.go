@@ -560,9 +560,13 @@ func TestBlockLevel_RefusesAValueTheInputDoesNotAllowAndAReportOfAnEntryTheInput
 
 func TestNew_RefusesAConditionTheTypeSnapshotCannotJudge(t *testing.T) {
 	for _, tc := range []struct {
-		label string
-		types func(*handler.Config)
-	}{{"no type snapshot", func(*handler.Config) {}}, {"a location allowing no hel1", withLocations("fsn1", "nbg1")}} {
+		label       string
+		types       func(*handler.Config)
+		entry, what string
+	}{
+		{"no type snapshot", func(*handler.Config) {}, `resource "gateway"`, "does not hold"},
+		{"a location allowing no hel1", withLocations("fsn1", "nbg1"), `resource "spare"`, `input "location"`},
+	} {
 		t.Run(tc.label, func(t *testing.T) {
 			present := fixed(contract.Observation{State: contract.Present})
 			cfg := handler.Config{Resource: &blockResource{}, Manifest: []byte(spareManifest), JWKSURL: "https://jwks.example/jwks.json",
@@ -571,8 +575,8 @@ func TestNew_RefusesAConditionTheTypeSnapshotCannotJudge(t *testing.T) {
 
 			_, err := handler.New(cfg)
 
-			if err == nil || !strings.Contains(err.Error(), `resource "spare"`) || !strings.Contains(err.Error(), `input "location"`) {
-				t.Errorf("handler.New with %s = %v, want an error naming resource \"spare\" and input \"location\"", tc.label, err)
+			if err == nil || !strings.Contains(err.Error(), tc.entry) || !strings.Contains(err.Error(), tc.what) {
+				t.Errorf("handler.New with %s = %v, want an error naming %s and %q", tc.label, err, tc.entry, tc.what)
 			}
 		})
 	}
