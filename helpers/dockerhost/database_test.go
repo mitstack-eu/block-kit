@@ -126,6 +126,10 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 			edit: func(d *contract.Desired) {
 				d.Instances = map[string]contract.InstanceConfig{"github": {Config: map[string]string{"owner": "other-account"}}}
 			}},
+		{name: "a password secret the host cannot keep a generated value under", class: "invalid-param", says: `the password secret "../blog/title"`,
+			before: func(_ *testing.T, e *dockerhosttest.Database) {
+				e.DB.PasswordSecret = func(contract.Desired) string { return "../blog/title" }
+			}},
 		{name: "a GitHub API base off the allowlist", class: "untrusted-api-base", says: "github api base rejected",
 			edit: func(d *contract.Desired) {
 				d.Instances = map[string]contract.InstanceConfig{"github": {Endpoint: "https://api.github.example.org"}}
@@ -152,6 +156,21 @@ func TestDatabase_RefusesWhatItCannotLandAndWritesNothing(t *testing.T) {
 				t.Errorf("a refused subscribe left shop holding %v; want it as it was, %v", slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(held)))
 			}
 		})
+	}
+}
+
+func TestDatabase_NamesThePasswordSecretTheBlockChoosesForASubscriptionAndPasswordWhenItChoosesNone(t *testing.T) {
+	for chosen, secret := range map[string]string{"": "password", "WORDPRESS_DB_PASSWORD": "WORDPRESS_DB_PASSWORD"} {
+		e := newDBEnv(t)
+		e.DB.PasswordSecret = func(d contract.Desired) string { return d.Params["passwordSecret"] }
+		d := e.Desired("shop", map[string]string{"passwordSecret": chosen})
+
+		e.Land(t, d)
+
+		source := "generated:" + dbBlock + ":" + secret
+		if got, out := e.Main()["shop/"+dbBlock+".env.names"], e.Observe(t, d).Outputs["passwordSecret"]; got != dockerhost.PasswordVariable+"="+source+"\n" || out != source {
+			t.Errorf("choosing %q, the env.names reads %q and passwordSecret %q; want %s=%s and %s", chosen, got, out, dockerhost.PasswordVariable, source, source)
+		}
 	}
 }
 
