@@ -313,13 +313,19 @@ implementing `handler.TeardownReporter`. Once an unsubscribe or a validate
 proves every resource absent, the handler calls its `TeardownDetail`. The
 engine settles a teardown on a validate it sends after the unsubscribe
 answer, so both answers carry the detail. A non-empty detail
-answers as the absent answer's `statusDetail`, such as opentofu-operator's
-list of objects under the app's AppId whose tags name another subscription.
-The handler asks nothing while a resource still stands. It also asks nothing
-on a read-only validate that carries neither `settlesAt` nor a recorded
-resource, because that subscription was never subscribed and has no teardown
-to report. The engine sends such a validate before a first subscribe, under a
-subscription id it never stores.
+answers as the absent answer's `statusDetail`, the answer's free-text field,
+such as opentofu-operator's list of objects under the app's AppId whose tags
+name another subscription. The handler asks nothing while a resource still
+stands.
+
+It also asks nothing on the check before a subscribe, one of the validates
+[A validate that must write nothing](#a-validate-that-must-write-nothing)
+lists. The engine sends that check under a subscription id it never stores, so
+nothing was ever created under it and there is no teardown to report. The
+handler knows the check by what it lacks: it names no resource, carries no
+`settling`, and carries neither `settlesAt`, the time of the call a validate
+settles, nor `recordedResources`, the resources the engine recorded for the
+subscription. A validate that has any one of these still asks.
 
 Each observer is handed the identity and type `EnsureResources` reported for
 its resource. When nothing was reported, it gets what the engine recorded,

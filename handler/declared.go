@@ -76,12 +76,17 @@ func (h *Handler) dispatchDeclared(ctx context.Context, req contract.Request, se
 
 	run := &declaredRun{h: h, d: d, secrets: secrets, connectionSecrets: d.SecretValues().Connections,
 		resources: resources, outcomes: map[string]contract.ResourceOutcome{}, started: h.now(),
-		reportsTeardown: !req.ReadOnly() || req.SettlesAt != nil || len(req.RecordedResources) > 0}
+		reportsTeardown: asksTeardownReport(req)}
 	status, resp := run.serveBlock(ctx, operation)
 	if operation == "validate" && ctx.Err() != nil {
 		run.logEnded()
 	}
 	return status, resp
+}
+
+// asksTeardownReport is false only on a whole-block validate that settles nothing and carries neither settlesAt nor a record, as one sent before a first subscribe does, since nothing was created under its subscription to be left alone.
+func asksTeardownReport(req contract.Request) bool {
+	return !req.ReadOnly() || req.Resource != "" || req.SettlesAt != nil || len(req.RecordedResources) > 0
 }
 
 func (h *Handler) typeObserved(operation string, d contract.Desired) (namedResource, bool) {
@@ -141,8 +146,7 @@ type declaredRun struct {
 	deleteOutputs map[string]string
 	deleteKept    map[string][]contract.Kept
 	// healthCheck is set on a validate, the only verb whose kit observation may be a full read and whose observations answer findings.
-	healthCheck bool
-	// reportsTeardown is false on a read-only validate carrying neither settlesAt nor a record, since its subscription was never subscribed and so has no teardown to report.
+	healthCheck     bool
 	reportsTeardown bool
 
 	// connectionSecrets are the values an output or an identity is refused for, since an app secret such as APP_URL may rightly equal an output.
