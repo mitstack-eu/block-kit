@@ -149,35 +149,55 @@ is blank.
 
 ## A resource catching up with a change
 
-Some resources take a known time to follow a change already made. The app's
-container on a Docker host is one. The host runs an agent that pulls the
-host's Git repository every minute, so after a pull request merges into the
-app's main branch, the container keeps running the previous commit until the
-agent has pulled the new one, started it and reported it to the platform.
+Some resources take a known time to follow a change already made. An app's
+container on a Docker host is one. The host runs an agent that pulls the main
+branch of the host's Git repository every minute. That repository is the one
+the Docker host block keeps, with each app's compose files in a folder named for
+the app. After a commit to its main changes an app's files, the container keeps
+running the commit before until the agent has pulled the new one, started it
+and reported it to the platform.
 
 While that runs, the observer answers `Unknown` and sets `CatchingUp` to a
-`contract.CatchingUp`. Its `Since` is the time the change was committed, and
-its `By` is the time the resource should have caught up, which must be later
-than `Since`. The docker-app-slice block reads `committed`, the commit time of
-main's head `head`, through `ghapi.Client.CommittedAt`, and takes the bound
-from the kit's `helpers/dockerhost` package:
+`contract.CatchingUp`, whose two fields are each a `time.Time`. `Since` is
+when the change was committed. `By` is when the resource should have caught
+up, and it must be later than `Since`.
+
+docker-app-slice, the block that places one app on a Docker host, sets the
+field this way. Its `head` is the commit main points at, which
+`ghapi.Client.HeadCommit` returns. `ghapi.Client.CommittedAt` returns when
+that commit was committed, in UTC, and the bound comes from the kit's
+`helpers/dockerhost` package:
 
 ```go
+committed, err := client.CommittedAt(ctx, "acme/acme-docker-host", head)
+if err != nil {
+	return contract.Observation{State: contract.Unknown, StatusDetail: "when main's head was committed cannot be read"}, nil
+}
 return contract.Observation{State: contract.Unknown,
 	StatusDetail: "the host has not yet synced main's head " + head,
 	CatchingUp:   &contract.CatchingUp{Since: committed, By: committed.Add(dockerhost.CatchUpBound)},
 }, nil
 ```
 
-The platform's scheduled health check of a running part reads the answer by
-`By`. Until `By`, the resource's check reads pending and the part's health
-reads `deploying`, and the console shows the time `By` names. After `By`,
-the check reads failed and the part reads `unhealthy`, with a reason such as
-`resource "container" stalled since 2026-11-18T00:23:41Z`.
+Only the platform's scheduled health check reads the field. That check runs
+every resource's observer for a running part, one whose subscribe has finished.
+A subscribe or an upgrade, including its wait after the call for the resource
+to be in place, reads the answer as any other `Unknown`. Its
+[`settleBudget`](manifest.md#the-lifecycle-keys), how long the platform keeps
+waiting after a call, runs as before.
+
+The health check compares the time it runs with `By`:
+
+| When the check runs | The resource's check reads | The part's health reads |
+|---|---|---|
+| Before `By` | `pending`, still catching up | `deploying`, a change on its way while the one before keeps serving, and the console shows the time `By` names |
+| At `By` or after | `failed` | `unhealthy`, broken until someone acts, with a reason such as `resource "container" stalled since 2026-11-18T00:23:41Z` |
+
+A pending check beside a failed one reads `unhealthy`, naming the failed check.
 
 Take `By` from the provider's documented timings, never from a guess. For a
 Docker host that is `dockerhost.CatchUpBound`, which
-[Running a command in an app's container](helpers.md#running-a-command-in-an-apps-container)
+[How long a host takes to run a commit](helpers.md#how-long-a-host-takes-to-run-a-commit)
 explains. An observer that never sets the field is read as before. One that
 sees the resource fail while it catches up, such as a container that exited,
 answers `Present` with `Unhealthy` instead, and the platform reads that

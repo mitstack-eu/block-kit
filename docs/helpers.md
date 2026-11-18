@@ -1053,14 +1053,6 @@ minutes, after the commit, in UTC to the second, and a host that finds the
 request later refuses it. `service` is the process the run names, or the
 entry.
 
-`dockerhost.CatchUpBound` is 26 minutes, the longest the host's agent may take
-to report a commit to main running. It adds four timings the hcloud-docker-host
-README documents: the agent's one-minute pull, the release command's 15-minute
-limit, the five-minute wait for the app to report healthy, and the five-minute
-node report. An observer sets it as the bound of a resource catching up, as
-[A resource catching up with a change](observe.md#a-resource-catching-up-with-a-change)
-explains.
-
 The host lists each run under `host.runs` of its node report, which
 `helpers/dockerhost/testdata/node-report-runs.json` holds as the golden, and
 `dockerhost.ReportedRun` types. A run that ended carries `exitCode` and
@@ -1085,6 +1077,24 @@ running carries neither, only its `digest` and `startedAt`:
 
 `Run` keeps whatever output the report carries, so the host alone decides how
 much of it to keep.
+
+### How long a host takes to run a commit
+
+`dockerhost.CatchUpBound` is 26 minutes. It is the longest the host's agent
+may take from a commit to main of the host's Git repository to its report that
+the commit runs. The bound adds four timings the hcloud-docker-host README
+documents:
+
+| Timing | Length |
+|---|---|
+| The agent's pull of main | 1 minute |
+| The limit on the app's release command | 15 minutes |
+| The wait for the app to report healthy | 5 minutes |
+| The interval between node reports | 5 minutes |
+
+An observer uses it as the `By` of a resource catching up, as
+[A resource catching up with a change](observe.md#a-resource-catching-up-with-a-change)
+explains.
 
 ### How a block waits for its final backup
 
@@ -2065,6 +2075,11 @@ in that tree with `TreePaths`, which refuses a listing GitHub truncated past
 100,000 entries. `ReadFileAt` then reads one file at that commit, and
 `CommitChanges` commits onto it, wrapping `ghapi.ErrNotFastForward` when main
 has moved on since.
+
+`CommittedAt(ctx, repo, revision)` returns when a commit was committed, as a
+`time.Time` in UTC. It refuses a revision that is not a full lowercase hex SHA
+before any request. An observer uses it as the `Since` of
+[a resource catching up with a change](observe.md#a-resource-catching-up-with-a-change).
 
 A block that lands its commit on a ref of its own, such as a pull request's
 branch, reads that branch's head with `BranchHead`, which answers `""` for a
