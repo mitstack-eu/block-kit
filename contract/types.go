@@ -261,6 +261,7 @@ type CallOutcome struct {
 	Unhealthy       *Unhealthy        `json:"unhealthy,omitempty"`
 	Removing        *Removing         `json:"removing,omitempty"`
 	WaitingOnPerson *WaitingOnPerson  `json:"waitingOnPerson,omitempty"`
+	CatchingUp      *CatchingUp       `json:"catchingUp,omitempty"`
 	Findings        []Finding         `json:"findings,omitempty"`
 }
 
@@ -337,6 +338,7 @@ type Observation struct {
 	Unhealthy       *Unhealthy
 	Removing        *Removing
 	WaitingOnPerson *WaitingOnPerson
+	CatchingUp      *CatchingUp
 	Findings        []Finding
 	// OwnSecrets are the block's own secrets, which the handler returns beside the answer's outputs whatever State reads.
 	OwnSecrets map[string]string
@@ -356,6 +358,12 @@ type Removing struct {
 // WaitingOnPerson, read beside State Unknown alone, says only a person can move the resource on, so the engine runs no settle budget: Action says in plain words what they do and where, and is never blank.
 type WaitingOnPerson struct {
 	Action string `json:"action"`
+}
+
+// CatchingUp, read beside State Unknown alone, says the resource is moving to a change made at Since and should have caught up by By, so the engine reads it deploying until By and stalled after.
+type CatchingUp struct {
+	Since time.Time `json:"since"`
+	By    time.Time `json:"by"`
 }
 
 type requiredField struct {

@@ -659,6 +659,19 @@ func TestBlockLevel_AValidateCarriesTheActionOfAResourceWaitingOnAPersonWithRequ
 	}
 }
 
+func TestBlockLevel_AValidateCarriesWhenAResourceCatchingUpBeganAndShouldBeDone(t *testing.T) {
+	cloud, catchingUp := standingCloud(), &contract.CatchingUp{Since: time.Date(2026, 11, 18, 0, 23, 41, 0, time.UTC), By: time.Date(2026, 11, 18, 0, 49, 41, 0, time.UTC)}
+	obs := blockObservers(cloud)
+	obs["b"] = fixed(contract.Observation{State: contract.Unknown, StatusDetail: "the host has not synced main's head", CatchingUp: catchingUp})
+
+	status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: asObservers(obs), op: "validate", fields: recordedAll()})
+
+	wantOK(t, status, resp)
+	if o := resp.Resources["b"].Observe; o == nil || !reflect.DeepEqual(o.CatchingUp, catchingUp) {
+		t.Errorf("b observe = %+v, want its catch-up %+v", o, catchingUp)
+	}
+}
+
 func TestBlockLevel_ValidateObservesEachResourceOnceAndNamesTheReplacementsTheBlockPlans(t *testing.T) {
 	cloud := standingCloud()
 	block, obs := planningBlock{blockResource: &blockResource{cloud: cloud}, replaces: []string{"b"}}, blockObservers(cloud)

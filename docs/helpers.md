@@ -1078,6 +1078,25 @@ running carries neither, only its `digest` and `startedAt`:
 `Run` keeps whatever output the report carries, so the host alone decides how
 much of it to keep.
 
+### How long a host takes to run a commit
+
+`dockerhost.CatchUpBound` is 26 minutes. It is the longest the host's agent
+may take from a commit to main of the host's Git repository to the node report
+that says the commit runs. The agent takes four steps one after another, so
+the bound adds the longest each may take. The hcloud-docker-host block, which
+sets up the host, documents each timing:
+
+| Step | Longest it takes |
+|---|---|
+| The agent's next pull of main | 1 minute |
+| The app's release command, which the agent stops at its limit | 15 minutes |
+| The wait for the app's new containers to report healthy | 5 minutes |
+| The host's next node report | 5 minutes |
+
+An observer uses it as the `By` of a resource catching up, as
+[A resource catching up with a change](observe.md#a-resource-catching-up-with-a-change)
+explains.
+
 ### How a block waits for its final backup
 
 A per-app block that keeps data on the host takes a last backup before it
@@ -2057,6 +2076,13 @@ in that tree with `TreePaths`, which refuses a listing GitHub truncated past
 100,000 entries. `ReadFileAt` then reads one file at that commit, and
 `CommitChanges` commits onto it, wrapping `ghapi.ErrNotFastForward` when main
 has moved on since.
+
+`CommittedAt(ctx, repo, revision)` returns when a commit was committed, as a
+`time.Time` in UTC, where `repo` is `owner/name`. It reads the committer's
+date, the time the commit was written to the repository, such as when a pull
+request merged. The author's date can be older, since a rebase keeps it. It refuses a revision that is not a full lowercase hex SHA
+before any request. An observer uses it as the `Since` of
+[a resource catching up with a change](observe.md#a-resource-catching-up-with-a-change).
 
 A block that lands its commit on a ref of its own, such as a pull request's
 branch, reads that branch's head with `BranchHead`, which answers `""` for a

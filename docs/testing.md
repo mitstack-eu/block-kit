@@ -100,6 +100,9 @@ that sends `Removing` beside any state but present, or with a blank
 also fails an observe that sends `WaitingOnPerson` beside any state but
 unknown, or with a blank `Action`, as
 [A resource waiting on a person](observe.md#a-resource-waiting-on-a-person)
+explains. It fails an observe that sends `CatchingUp` beside any state but
+unknown, or with no `Since`, or with a `By` no later than its `Since`, as
+[A resource catching up with a change](observe.md#a-resource-catching-up-with-a-change)
 explains.
 
 The tagging guard checks both directions. Everything the provider lists must

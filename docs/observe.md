@@ -25,6 +25,7 @@ behind the block's back. It returns a `contract.Observation`:
 | `Unhealthy` | Read only beside `Present`: the failure a resource that stands still meets, as [the next section](#a-resource-that-stands-but-fails) explains |
 | `Removing` | Read only beside `Present`: what a removal under way waits on, as [A resource being removed](#a-resource-being-removed) explains |
 | `WaitingOnPerson` | Read only beside `Unknown`: what a person must do before the resource can move on, as [A resource waiting on a person](#a-resource-waiting-on-a-person) explains |
+| `CatchingUp` | Read only beside `Unknown`: when a change the resource is moving to was made, and when it should be done, as [A resource catching up with a change](#a-resource-catching-up-with-a-change) explains |
 | `Findings` | Read only on a `validate`: what the block will do for the app and what stops it, as [the README](../README.md#what-a-validate-tells-a-builder) explains |
 
 The `contract.ResourceRef` an observer receives carries the resource's name,
@@ -145,6 +146,73 @@ the observer, which fails the subscription with your words.
 The handler scrubs request secrets from `Action`, and `kittest.AssertBlock`
 fails a `WaitingOnPerson` beside any state but `Unknown`, or one whose `Action`
 is blank.
+
+## A resource catching up with a change
+
+Some resources take a known time to follow a change already made. An app's
+container on a Docker host is one. A Docker host is a server the
+hcloud-docker-host block sets up to run apps in Docker containers. That block
+keeps a Git repository for the host, with each app's compose files in a folder
+named for the app.
+
+The host runs an agent that pulls the main branch of that repository every
+minute. After a commit to its main changes an app's files, the container keeps
+running the commit before until the agent has pulled the new one and started
+it. The host's node report, the signed status it sends the platform every five
+minutes, names the commit the agent last synced.
+
+While the resource catches up, the observer answers `Unknown` and sets
+`CatchingUp` to a `contract.CatchingUp`, whose two fields are each a
+`time.Time`. `Since` is when the change was committed. `By` is when the
+resource should have caught up, and it must be later than `Since`.
+
+docker-app-slice, the block that places one app on a Docker host, sets the
+field this way. It reads `head`, the commit main points at, with
+`ghapi.Client.HeadCommit`, and `synced` from the host's newest node report.
+When the two differ and the app's own files differ between them, the app is
+catching up. `ghapi.Client.CommittedAt` then returns when `head` was
+committed, and the bound comes from the kit's `helpers/dockerhost` package:
+
+```go
+if synced == head || !appFilesDiffer {
+	return contract.Observation{State: contract.Present}, nil
+}
+committed, err := client.CommittedAt(ctx, "acme/acme-docker-host", head)
+if err != nil {
+	return contract.Observation{State: contract.Unknown, StatusDetail: "when main's head was committed cannot be read"}, nil
+}
+return contract.Observation{State: contract.Unknown,
+	StatusDetail: "the host has not yet synced main's head " + head,
+	CatchingUp:   &contract.CatchingUp{Since: committed, By: committed.Add(dockerhost.CatchUpBound)},
+}, nil
+```
+
+Only the platform's scheduled health check reads the field. A part is one
+block an app subscribes to, and a running part is one whose subscribe has
+finished. The health check runs every resource's observer for each running
+part. A subscribe or an upgrade, including its wait after the call for the
+resource to be in place, reads the answer as any other `Unknown`. Its
+[`settleBudget`](manifest.md#the-lifecycle-keys), how long the platform keeps
+waiting after a call, runs as before.
+
+The platform sets both readings below by comparing the time its check runs
+with `By`. The console, the platform's web pages for an app, shows them on the
+part:
+
+| When the check runs | The resource's check reads | The part's health reads |
+|---|---|---|
+| Before `By` | `pending`, still catching up | `deploying`, a change on its way while the one before keeps serving, and the console shows the time `By` names |
+| At `By` or after | `failed` | `unhealthy`, broken until someone acts, with a reason naming `Since`, such as `resource "container" stalled since 2026-11-18T00:23:41Z` |
+
+A pending check beside a failed one reads `unhealthy`, naming the failed check.
+
+Take `By` from the provider's documented timings, never from a guess. For a
+Docker host that is `dockerhost.CatchUpBound`, which
+[How long a host takes to run a commit](helpers.md#how-long-a-host-takes-to-run-a-commit)
+explains. An observer that never sets the field is read as before. One that
+sees the resource fail while it catches up, such as a container that exited,
+answers `Present` with `Unhealthy` instead, and the platform reads that
+failure.
 
 ## The observers the kit ships
 

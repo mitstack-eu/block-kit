@@ -281,6 +281,10 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 		{"an observe waiting on a person encodes the action beside unknown", contract.Response{Resources: map[string]contract.ResourceOutcome{
 			"app": {Observe: &contract.CallOutcome{State: contract.Unknown, WaitingOnPerson: &contract.WaitingOnPerson{Action: "approve pull request 4"}}}}},
 			`{"outputs":null,"resources":{"app":{"observe":{"state":"unknown","waitingOnPerson":{"action":"approve pull request 4"}}}}}`, true},
+		{"an observe catching up with a change encodes when it began and when it should be done beside unknown", contract.Response{Resources: map[string]contract.ResourceOutcome{
+			"container": {Observe: &contract.CallOutcome{State: contract.Unknown, CatchingUp: &contract.CatchingUp{
+				Since: time.Date(2026, 11, 18, 0, 23, 41, 0, time.UTC), By: time.Date(2026, 11, 18, 0, 49, 41, 0, time.UTC)}}}}},
+			`{"outputs":null,"resources":{"container":{"observe":{"state":"unknown","catchingUp":{"since":"2026-11-18T00:23:41Z","by":"2026-11-18T00:49:41Z"}}}}}`, true},
 		{"an observe carrying a plan and a blocker encodes each with its kind, text and fix", contract.CallOutcome{State: contract.Absent, Findings: []contract.Finding{
 			{Kind: contract.FindingPlan, Text: "adds the build workflow"}, {Kind: contract.FindingBlocker, Text: "the Dockerfile names no port", Fix: "add an EXPOSE line"}}},
 			`{"state":"absent","findings":[{"kind":"plan","text":"adds the build workflow"},{"kind":"blocker","text":"the Dockerfile names no port","fix":"add an EXPOSE line"}]}`, false},
@@ -506,6 +510,22 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 				if !hasType(removing, "object") || !slices.Contains(sortedStrings(removing["required"]), "waitsOn") || !hasType(schemaAt(t, doc, removing, "properties", "waitsOn"), "string") {
 					t.Errorf("resource outcome %q removing = %v, want an object requiring the string waitsOn", verb, removing)
 				}
+			}
+		}},
+		{"catchingUp is an object requiring the date-times since and by under each call, from version 1.15.0", func(t *testing.T) {
+			for _, verb := range []string{"ensure", "observe", "delete"} {
+				catchingUp := schemaAt(t, doc, calls, verb, "properties", "catchingUp")
+				if !hasType(catchingUp, "object") || !slices.Equal(sortedStrings(catchingUp["required"]), []string{"by", "since"}) {
+					t.Errorf("resource outcome %q catchingUp = %v, want an object requiring since and by", verb, catchingUp)
+				}
+				for _, field := range []string{"since", "by"} {
+					if f := schemaAt(t, doc, catchingUp, "properties", field); !hasType(f, "string") || f["format"] != "date-time" {
+						t.Errorf("resource outcome %q catchingUp.%s = %v, want a string of format date-time", verb, field, f)
+					}
+				}
+			}
+			if version, _ := doc["version"].(string); !atLeastVersion(version, 1, 15, 0) {
+				t.Errorf("response.schema.json version = %q, want at least 1.15.0, the version that adds catchingUp", version)
 			}
 		}},
 		{"every field the types encode is declared", func(t *testing.T) {

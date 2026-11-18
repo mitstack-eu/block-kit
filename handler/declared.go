@@ -532,6 +532,10 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 	if w := obs.WaitingOnPerson; w != nil {
 		waiting = &contract.WaitingOnPerson{Action: safe.Scrub(w.Action, r.secrets...)}
 	}
+	var catchingUp *contract.CatchingUp
+	if c := obs.CatchingUp; c != nil {
+		catchingUp = &contract.CatchingUp{Since: c.Since, By: c.By}
+	}
 	var findings []contract.Finding
 	if r.healthCheck {
 		for _, f := range obs.Findings {
@@ -550,6 +554,7 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 		Unhealthy:       unhealthy,
 		Removing:        removing,
 		WaitingOnPerson: waiting,
+		CatchingUp:      catchingUp,
 		Findings:        findings,
 	}, nil
 }

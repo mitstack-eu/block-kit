@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 	"github.com/mitstack-eu/block-kit/capabilities/github/landing"
@@ -1307,6 +1308,10 @@ func TestCheckBlock(t *testing.T) {
 	waitingOnPerson := func(action string) mutation {
 		return amended(func(o *contract.Observation) { o.WaitingOnPerson = &contract.WaitingOnPerson{Action: action} }, false)
 	}
+	catchingUp := func(after time.Duration) mutation {
+		since := time.Date(2026, 11, 18, 0, 23, 41, 0, time.UTC)
+		return amended(func(o *contract.Observation) { o.CatchingUp = &contract.CatchingUp{Since: since, By: since.Add(after)} }, false)
+	}
 	waitingOnce := func(b *fakeBlock, in *kittest.Block) {
 		in.Config.Observers["aws.ebs-volume"] = &waitingOnceObserver{inner: providerObserver{p: b.p}}
 	}
@@ -1382,6 +1387,10 @@ func TestCheckBlock(t *testing.T) {
 			[][]string{{`resource "aws.ebs-volume"`, "observed present", "only an unknown resource"}}, true},
 		{"a resource answered waiting on a person with no action fails, naming the resource", host(waitingOnPerson(" ")),
 			[][]string{{`resource "aws.ebs-volume"`, "action"}}, true},
+		{"a present resource answered catching up fails, since only an unknown resource catches up", host(catchingUp(time.Minute)),
+			[][]string{{`resource "aws.ebs-volume"`, "observed present", "only an unknown resource"}}, true},
+		{"a resource answered catching up by no time after it began fails, naming the resource", host(catchingUp(0)),
+			[][]string{{`resource "aws.ebs-volume"`, "by after since"}}, true},
 		{"a present resource answered removing, naming what the removal waits on, passes", host(removing("the volume to detach from its instance", false)), nil, true},
 		{"a resource answered removing while absent fails, since only a present resource is being removed", host(removing("the volume to detach from its instance", true)),
 			[][]string{{`resource "aws.ebs-volume"`, "observed absent", "only a present resource"}}, true},
