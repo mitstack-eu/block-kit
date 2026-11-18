@@ -150,7 +150,7 @@ func (h *Handler) dispatchVerb(ctx context.Context, req contract.Request, secret
 	case req.Operation == contract.OperationRestore:
 		return h.restore(ctx, req, secrets)
 	}
-	return h.dispatchDeclared(ctx, req.Operation, req.Desired(), secrets)
+	return h.dispatchDeclared(ctx, req, secrets)
 }
 
 // refuseSecretValues is never handed SecretOutputs, where a secret is returned on purpose, and matches exact values so a value merely containing a secret is left alone.

@@ -315,7 +315,11 @@ engine settles a teardown on a validate it sends after the unsubscribe
 answer, so both answers carry the detail. A non-empty detail
 answers as the absent answer's `statusDetail`, such as opentofu-operator's
 list of objects under the app's AppId whose tags name another subscription.
-The handler asks nothing while a resource still stands.
+The handler asks nothing while a resource still stands. It also asks nothing
+on a read-only validate that carries neither `settlesAt` nor a recorded
+resource, because that subscription was never subscribed and has no teardown
+to report. The engine sends such a validate before a first subscribe, under a
+subscription id it never stores.
 
 Each observer is handed the identity and type `EnsureResources` reported for
 its resource. When nothing was reported, it gets what the engine recorded,
