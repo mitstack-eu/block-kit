@@ -20,7 +20,6 @@ type SnapshotInput struct {
 	AllowedValues []string `json:"allowedValues,omitempty"`
 }
 
-// SnapshotType is one resource type of a snapshot.
 type SnapshotType struct {
 	ID           string            `json:"id"`
 	Capability   string            `json:"capability"`

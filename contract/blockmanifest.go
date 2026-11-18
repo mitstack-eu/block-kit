@@ -181,12 +181,11 @@ type ManifestResource struct {
 	Type  string   `json:"type"`
 	Types []string `json:"types,omitempty"`
 	// Many makes the entry stand for zero or more members, which the block reports under the names IsMember accepts.
-	Many bool `json:"many,omitempty"`
-	// When creates the entry only for a request whose value of one input it lists; without it the entry is always created.
+	Many bool               `json:"many,omitempty"`
 	When *ResourceCondition `json:"when,omitempty"`
 }
 
-// ResourceCondition names an input of the block's resource types and the values of it a resource entry is created for.
+// ResourceCondition names an input of the block's resource types and the values of it a resource entry is created for; an entry without one is always created.
 type ResourceCondition struct {
 	Input  string   `json:"input"`
 	Values []string `json:"values"`
