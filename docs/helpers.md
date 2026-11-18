@@ -1210,7 +1210,7 @@ The `Database` then writes four files in the app's directory, in one commit:
 | File | What it holds |
 |---|---|
 | `<block>.compose.yaml` | The Compose file that runs the engine's image as the container `<app>-<Service>` on the app's own network, `app-<app>`, with no port published on the host |
-| `<block>.env.names` | The one line `DB_PASSWORD=generated:<block>:password`. The host reads this file into the database container's own environment. It makes a random password once, keeps it on the host, and hands it to the container as `DB_PASSWORD` |
+| `<block>.env.names` | The one line `DB_PASSWORD=generated:<block>:password`, or the secret the block's `PasswordSecret` names in place of `password`. The host reads this file into the database container's own environment. It makes a random password once, keeps it on the host, and hands it to the container as `DB_PASSWORD` |
 | `<block>.backup` | The lines `service=`, `command=` with the engine's dump, `restore=` with its restore and `every=24h`, which tell the host how and how often to back the database up |
 | `reservations/<block>.json` | The CPU, memory and disk the database reserves, which "Sizing an app against what the host holds" reads |
 
@@ -1241,6 +1241,14 @@ writes `DB_PASSWORD=generated:docker-postgres:password`, or any variable name
 it chooses, into the app's `env.names`. The host then fills that variable from
 the same password the database's container reads.
 
+A block whose databases already keep their password under another secret sets
+`PasswordSecret`, a function that reads that secret's name from the
+subscription's request. The host then keeps the password it holds, since the
+`env.names` line and the `passwordSecret` output name that secret. A function
+returning `WORDPRESS_DB_PASSWORD` for docker-mariadb writes
+`DB_PASSWORD=generated:docker-mariadb:WORDPRESS_DB_PASSWORD`. A nil function,
+or one returning an empty name, keeps `password`.
+
 #### When a subscribe is refused
 
 The `Database` writes nothing, and answers a refusal naming its class, when
@@ -1249,7 +1257,7 @@ any of these holds:
 | Class | When |
 |---|---|
 | `app-taken` | The app's directory already holds this block's compose file for another subscription |
-| `invalid-param` | An input does not parse |
+| `invalid-param` | An input does not parse, or the block's `PasswordSecret` names a secret that is neither a lowercase slug nor a variable name |
 | `disk-fixed` | An upgrade asks for a disk other than the volume's, which the host cannot resize |
 | `host-takes-no-backups` | The host's node report says its backups fail, such as for a host made without a backup public key |
 | `host-absent` | The platform reads the database's host absent |

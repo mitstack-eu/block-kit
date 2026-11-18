@@ -41,6 +41,8 @@ type Database struct {
 	Type    string
 	Engine  Engine
 	Reports observe.NodeReportsAPI
+	// PasswordSecret names, from a subscription's request, the host secret holding its password; nil or "" keeps "password".
+	PasswordSecret func(d contract.Desired) string
 	// GitHub makes the client of the host's repository, nil for one that waits 30 seconds at most.
 	GitHub func(base, token string) *ghapi.Client
 	Now    func() time.Time
@@ -66,6 +68,8 @@ type Engine struct {
 var (
 	appRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	subIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	// secretRe is a name the host's agent keeps a generated value under: a lowercase slug or a variable name.
+	secretRe = regexp.MustCompile(`^(?:[a-z0-9][a-z0-9-]*|[A-Za-z_][A-Za-z0-9_]*)$`)
 )
 
 func (db Database) now() time.Time {
@@ -81,7 +85,8 @@ type target struct {
 
 type request struct {
 	target
-	size Reservation
+	size     Reservation
+	password string
 }
 
 func readTarget(d contract.Desired) (target, error) {
@@ -99,7 +104,7 @@ func readTarget(d contract.Desired) (target, error) {
 	return t, nil
 }
 
-func readRequest(d contract.Desired) (request, error) {
+func (db Database) readRequest(d contract.Desired) (request, error) {
 	t, err := readTarget(d)
 	if err != nil {
 		return request{}, err
@@ -114,7 +119,26 @@ func readRequest(d contract.Desired) (request, error) {
 	if size.DiskBytes, err = readParam(d.Params, paramDisk, defaultDisk, ParseSize); err != nil {
 		return request{}, err
 	}
-	return request{target: t, size: size}, nil
+	password, err := db.passwordSource(d)
+	if err != nil {
+		return request{}, err
+	}
+	return request{target: t, size: size, password: password}, nil
+}
+
+// passwordSource is the host secret the subscription's password is kept under, as an env.names source.
+func (db Database) passwordSource(d contract.Desired) (string, error) {
+	name := passwordSecretName
+	if db.PasswordSecret != nil {
+		if chosen := db.PasswordSecret(d); chosen != "" {
+			name = chosen
+		}
+	}
+	if !secretRe.MatchString(name) {
+		return "", handler.Refuse("invalid-param",
+			"the password secret %q is neither a lowercase slug of letters, digits and dashes nor a variable name of letters, digits and underscores", name)
+	}
+	return "generated:" + db.Block + ":" + name, nil
 }
 
 func readParam(params map[string]string, name, fallback string, parse func(string) (int64, error)) (int64, error) {

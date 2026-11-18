@@ -24,7 +24,7 @@ const (
 // EnsureResources writes the database's files into its app's directory on subscribe and upgrade, once every check
 // passes, so a refusal writes nothing.
 func (db Database) EnsureResources(ctx context.Context, d contract.Desired) ([]contract.CreatedResource, error) {
-	r, err := readRequest(d)
+	r, err := db.readRequest(d)
 	if err != nil {
 		return nil, err
 	}

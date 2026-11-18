@@ -69,7 +69,7 @@ func keepsThePasswordOnTheHost(t *testing.T, d *Database) {
 	if !slices.Equal(got, want) {
 		t.Errorf("shop holds %v; want %v alone", got, want)
 	}
-	if got, want := d.Main()[b+".env.names"], dockerhost.PasswordVariable+"=generated:"+d.DB.Block+":password\n"; got != want {
+	if got, want := d.Main()[b+".env.names"], dockerhost.PasswordVariable+"="+passwordSource(d)+"\n"; got != want {
 		t.Errorf("the database's env.names is %q; want %q alone, the password the host generates and keeps", got, want)
 	}
 	e := d.DB.Engine
@@ -86,10 +86,19 @@ func outputsTheConnection(t *testing.T, d *Database) {
 	obs := d.Observe(t, d.Desired("shop", nil))
 
 	want := map[string]string{"host": "shop-" + d.Service, "port": d.DB.Engine.Port, "dbName": dockerhost.DatabaseName,
-		"username": dockerhost.DatabaseUser, "passwordSecret": "generated:" + d.DB.Block + ":password"}
+		"username": dockerhost.DatabaseUser, "passwordSecret": passwordSource(d)}
 	if obs.State != contract.Present || !maps.Equal(obs.Outputs, want) {
 		t.Errorf("ObserveResource = %s with outputs %v; want present with %v", obs.State, obs.Outputs, want)
 	}
+}
+
+// passwordSource is the secret the block's PasswordSecret names for shop, or "password" when it names none.
+func passwordSource(d *Database) string {
+	name := "password"
+	if d.DB.PasswordSecret != nil && d.DB.PasswordSecret(d.Desired("shop", nil)) != "" {
+		name = d.DB.PasswordSecret(d.Desired("shop", nil))
+	}
+	return "generated:" + d.DB.Block + ":" + name
 }
 
 func refusesWhatDoesNotFit(t *testing.T, d *Database) {
