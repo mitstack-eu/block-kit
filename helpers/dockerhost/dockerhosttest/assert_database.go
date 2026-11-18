@@ -92,7 +92,7 @@ func outputsTheConnection(t *testing.T, d *Database) {
 	}
 }
 
-// passwordSource is the secret the block's PasswordSecret names for shop, or "password" when it names none.
+// passwordSource is the env.names source of shop's password: the secret PasswordSecret names, or "password" when it names none.
 func passwordSource(d *Database) string {
 	if d.DB.PasswordSecret != nil {
 		if name := d.DB.PasswordSecret(d.Desired("shop", nil)); name != "" {
