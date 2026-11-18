@@ -110,7 +110,7 @@ func rankOf(s checkState) holdRank {
 
 // removalUnderWay is what the subscription's open removal pull request waits on while a check main requires is queued, running or failed on it, or while a review main requires is missing, and empty otherwise.
 func (a api) removalUnderWay(ctx context.Context, subscription string) (string, error) {
-	pr, found, err := a.openPullRequest(ctx, BranchPrefix(subscription)+"remove")
+	pr, found, err := a.openPullRequest(ctx, removalBranch(subscription))
 	if err != nil || !found {
 		return "", err
 	}

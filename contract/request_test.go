@@ -284,6 +284,11 @@ func TestDecodeRequest_CarriesWhatTheRequestNamesOntoDesired(t *testing.T) {
 			wantField(t, "Replace", req.Replace, want)
 			wantField(t, "Desired().Replace", d.Replace, want)
 		}},
+		{"the app's delete marker reaches Desired", func(m map[string]any) {
+			m["operation"], m["appDeleting"] = "unsubscribe", true
+		}, func(t *testing.T, req contract.Request, d contract.Desired) {
+			wantField(t, "AppDeleting, Desired().AppDeleting", []bool{req.AppDeleting, d.AppDeleting}, []bool{true, true})
+		}},
 		{"recorded resources and requirement types reach Desired, at the request's time", func(m map[string]any) {
 			m["operation"], m["recordedResources"], m["requirementTypes"] = "unsubscribe", recorded, requirementTypes
 		}, func(t *testing.T, req contract.Request, d contract.Desired) {
@@ -509,6 +514,8 @@ func TestRequestMarshal_EncodesEachResourceFieldUnderItsWireNameOnlyWhenSet(t *t
 		{"no unsubscribing marker when unset", contract.Request{}, "resourceUnsubscribing", nil},
 		{"the resources a confirmed replacement names", contract.Request{Operation: "upgrade", Replacing: true, Replace: []string{"node-fsn1"}}, "replace", []any{"node-fsn1"}},
 		{"no replace key on an upgrade that replaces nothing", contract.Request{Operation: "upgrade"}, "replace", nil},
+		{"the app's delete marker", contract.Request{Operation: "unsubscribe", AppDeleting: true}, "appDeleting", true},
+		{"no app's delete marker outside an app's delete", contract.Request{Operation: "unsubscribe"}, "appDeleting", nil},
 		{"no resource type when unset", contract.Request{}, "resourceType", nil},
 		{"no never-active key when it may have been active", contract.Request{}, "neverActive", nil},
 		{"the settling marker, on the validate that settles a verb", contract.Request{Operation: "validate", Settling: true}, "settling", true},
@@ -609,6 +616,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 				t.Errorf("properties.resourceUnsubscribing type = %v, want boolean", schemaTypes(prop))
 			}
 		}},
+		{"appDeleting", func(t *testing.T, prop map[string]any) {
+			if !hasType(prop, "boolean") {
+				t.Errorf("properties.appDeleting type = %v, want boolean", schemaTypes(prop))
+			}
+		}},
 		{"settling", func(t *testing.T, prop map[string]any) {
 			if !hasType(prop, "boolean") {
 				t.Errorf("properties.settling type = %v, want boolean", schemaTypes(prop))
@@ -690,11 +702,11 @@ func TestEnvelopeSchema_DeclaresEachOptionalRequestFieldByItsShape(t *testing.T)
 	}
 }
 
-func TestEnvelopeSchema_IsVersion1_18_0(t *testing.T) {
+func TestEnvelopeSchema_IsVersion1_19_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
-	if doc["version"] != "1.18.0" {
-		t.Errorf("envelope.schema.json version = %v, want 1.18.0: it adds the optional field replace, a minor change from 1.17.0, which added the optional field settling", doc["version"])
+	if doc["version"] != "1.19.0" {
+		t.Errorf("envelope.schema.json version = %v, want 1.19.0: it adds the optional field appDeleting, a minor change from 1.18.0, which added the optional field replace", doc["version"])
 	}
 }
 
