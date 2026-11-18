@@ -85,8 +85,8 @@ type target struct {
 
 type request struct {
 	target
-	size     Reservation
-	password string
+	size           Reservation
+	passwordSource string
 }
 
 func readTarget(d contract.Desired) (target, error) {
@@ -119,11 +119,11 @@ func (db Database) readRequest(d contract.Desired) (request, error) {
 	if size.DiskBytes, err = readParam(d.Params, paramDisk, defaultDisk, ParseSize); err != nil {
 		return request{}, err
 	}
-	password, err := db.passwordSource(d)
+	source, err := db.passwordSource(d)
 	if err != nil {
 		return request{}, err
 	}
-	return request{target: t, size: size, password: password}, nil
+	return request{target: t, size: size, passwordSource: source}, nil
 }
 
 // passwordSource is the host secret the subscription's password is kept under, as an env.names source.

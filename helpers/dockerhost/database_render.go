@@ -139,11 +139,11 @@ func sizeText(bytes int64) string {
 	return strconv.FormatInt(bytes/bytesPerMiB, 10) + "MiB"
 }
 
-// outputs are the connection the database hands its app's other blocks, the password named by the secret holding it.
-func (db Database) outputs(t target, password string) map[string]string {
+// outputs are the connection the database hands its app's other blocks, with the host's name for the password and never the password itself.
+func (db Database) outputs(t target, passwordSource string) map[string]string {
 	return map[string]string{
 		"host": db.container(t), "port": db.Engine.Port, "dbName": DatabaseName, "username": DatabaseUser,
-		"passwordSecret": password,
+		"passwordSecret": passwordSource,
 	}
 }
 
@@ -163,7 +163,7 @@ func (db Database) renderFiles(r request) (map[string]string, error) {
 	}
 	return map[string]string{
 		appPath(r.app, db.fileCompose()):     composeText,
-		appPath(r.app, db.fileEnvNames()):    PasswordVariable + "=" + r.password + "\n",
+		appPath(r.app, db.fileEnvNames()):    PasswordVariable + "=" + r.passwordSource + "\n",
 		appPath(r.app, db.fileBackup()):      db.renderBackup(),
 		appPath(r.app, db.fileReservation()): string(reservation) + "\n",
 	}, nil
