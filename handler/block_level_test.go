@@ -569,7 +569,8 @@ func TestBlockLevel_AnUnsubscribeOrValidateAnswersTheBlocksTeardownDetailOnlyOnc
 		{"a read-only validate carrying a record asks once", "validate", recordedAll(), false, 1},
 		{"a read-only validate carrying a record while b stands asks nothing", "validate", recordedAll(), true, 0},
 		{"a read-only validate carrying settlesAt and no record asks once", "validate", map[string]any{"settlesAt": "2026-11-18T02:31:38Z"}, false, 1},
-		{"a settling validate carrying no record asks once", "validate", map[string]any{"settling": true, "settlesAt": "2026-11-18T02:31:38Z"}, false, 1},
+		{"a settling validate carrying neither settlesAt nor a record asks once", "validate", map[string]any{"settling": true}, false, 1},
+		{"a read-only validate naming b and carrying neither settlesAt nor a record asks once", "validate", map[string]any{"resource": "b", "resourceType": "aws.iam-role"}, false, 1},
 		{"a read-only validate carrying neither settlesAt nor a record, as before a subscribe, asks nothing", "validate", nil, false, 0},
 	}
 	for _, tc := range cases {
