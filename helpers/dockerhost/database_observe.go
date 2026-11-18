@@ -70,6 +70,10 @@ func (db Database) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 	if err != nil {
 		return contract.Observation{}, err
 	}
+	source, err := db.passwordSource(r.Desired)
+	if err != nil {
+		return contract.Observation{}, err
+	}
 	repo, err := db.dial(r.Desired)
 	if err != nil {
 		return contract.Observation{}, err
@@ -130,7 +134,7 @@ func (db Database) ObserveResource(ctx context.Context, r contract.ResourceRef) 
 		runs = c.Name + " reads " + c.State
 	}
 	obs := contract.Observation{
-		State: contract.Present, Identity: db.identity(repo, t), Outputs: db.outputs(t),
+		State: contract.Present, Identity: db.identity(repo, t), Outputs: db.outputs(t, source),
 		StatusDetail: fmt.Sprintf("the host synced %s's database as main's head %s holds it, and %s", t.app, snap.head, runs),
 		Unhealthy:    unhealthy,
 	}
