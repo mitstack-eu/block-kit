@@ -18,8 +18,15 @@ import (
 // RunDeadline is how long after its commit a host may start a run, the release command's limit, so a request the host finds later is refused rather than run late.
 const RunDeadline = 15 * time.Minute
 
-// CatchUpBound is how long after a commit to main the host's agent may take to report it running: one sync interval, the release command's limit, the health wait and one report interval.
-const CatchUpBound = time.Minute + RunDeadline + 5*time.Minute + 5*time.Minute
+// The host agent's timings as the hcloud-docker-host README documents them: it pulls the repository every minute, waits up to five minutes for a released app to report healthy, and sends a node report every five minutes.
+const (
+	agentSyncInterval   = time.Minute
+	agentHealthWait     = 5 * time.Minute
+	agentReportInterval = 5 * time.Minute
+)
+
+// CatchUpBound is how long after a commit to main the host's agent may take to report it running.
+const CatchUpBound = agentSyncInterval + RunDeadline + agentHealthWait + agentReportInterval
 
 const (
 	runRequestSuffix = ".run-request"

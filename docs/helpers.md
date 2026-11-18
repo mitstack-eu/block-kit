@@ -1050,11 +1050,16 @@ reads, and `dockerhost.RunRequestFile` types:
 `serverId` is the host's `execTarget`, so a host that finds the request on
 another server refuses it. `deadline` is `dockerhost.RunDeadline`, 15
 minutes, after the commit, in UTC to the second, and a host that finds the
-request later refuses it. `dockerhost.CatchUpBound`, 26 minutes, is how long
-after a commit to main the host may take to report it running: one sync
-interval of a minute, the release limit, the five-minute health wait and one
-five-minute report interval. `service` is the process the run names, or the
+request later refuses it. `service` is the process the run names, or the
 entry.
+
+`dockerhost.CatchUpBound` is 26 minutes, the longest the host's agent may take
+to report a commit to main running. It adds four timings the hcloud-docker-host
+README documents: the agent's one-minute pull, the release command's 15-minute
+limit, the five-minute wait for the app to report healthy, and the five-minute
+node report. An observer sets it as the bound of a resource catching up, as
+[A resource catching up with a change](observe.md#a-resource-catching-up-with-a-change)
+explains.
 
 The host lists each run under `host.runs` of its node report, which
 `helpers/dockerhost/testdata/node-report-runs.json` holds as the golden, and

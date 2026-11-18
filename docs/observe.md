@@ -149,11 +149,18 @@ is blank.
 
 ## A resource catching up with a change
 
-A resource can take a known while to follow a change. A Docker host pulls its
-repository on a timer, so after a merge to main the container still runs the
-old commit until the host syncs, releases and reports. Its observer answers
-`Unknown` and sets `CatchingUp` to a `contract.CatchingUp`, whose `Since` is
-when the change was made and `By` is when the resource should have caught up:
+Some resources take a known time to follow a change already made. The app's
+container on a Docker host is one. The host runs an agent that pulls the
+host's Git repository every minute, so after a pull request merges into the
+app's main branch, the container keeps running the previous commit until the
+agent has pulled the new one, started it and reported it to the platform.
+
+While that runs, the observer answers `Unknown` and sets `CatchingUp` to a
+`contract.CatchingUp`. Its `Since` is the time the change was committed, and
+its `By` is the time the resource should have caught up, which must be later
+than `Since`. The docker-app-slice block reads `committed`, the commit time of
+main's head `head`, through `ghapi.Client.CommittedAt`, and takes the bound
+from the kit's `helpers/dockerhost` package:
 
 ```go
 return contract.Observation{State: contract.Unknown,
@@ -162,13 +169,19 @@ return contract.Observation{State: contract.Unknown,
 }, nil
 ```
 
-Until `By`, the platform reads the resource's health as `deploying`, not
-failed. After `By`, it reads the resource failed, with a reason naming the
-stall and `Since`. Take `By` from the provider's own documented timings, never
-from a guess. `dockerhost.CatchUpBound` is that bound for a Docker host.
+The platform's scheduled health check of a running part reads the answer by
+`By`. Until `By`, the resource's check reads pending and the part's health
+reads `deploying`, and the console shows the time `By` names. After `By`,
+the check reads failed and the part reads `unhealthy`, with a reason such as
+`resource "container" stalled since 2026-11-18T00:23:41Z`.
 
-An observer that never sets the field is read as before, and one that sees the
-resource fail while it catches up answers that failure instead.
+Take `By` from the provider's documented timings, never from a guess. For a
+Docker host that is `dockerhost.CatchUpBound`, which
+[Running a command in an app's container](helpers.md#running-a-command-in-an-apps-container)
+explains. An observer that never sets the field is read as before. One that
+sees the resource fail while it catches up, such as a container that exited,
+answers `Present` with `Unhealthy` instead, and the platform reads that
+failure.
 
 ## The observers the kit ships
 
