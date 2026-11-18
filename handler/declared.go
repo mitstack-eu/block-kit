@@ -76,7 +76,7 @@ func (h *Handler) dispatchDeclared(ctx context.Context, req contract.Request, se
 
 	run := &declaredRun{h: h, d: d, secrets: secrets, connectionSecrets: d.SecretValues().Connections,
 		resources: resources, outcomes: map[string]contract.ResourceOutcome{}, started: h.now(),
-		reportsTeardown: asksTeardownReport(req)}
+		asksTeardownReport: asksTeardownReport(req)}
 	status, resp := run.serveBlock(ctx, operation)
 	if operation == "validate" && ctx.Err() != nil {
 		run.logEnded()
@@ -146,8 +146,8 @@ type declaredRun struct {
 	deleteOutputs map[string]string
 	deleteKept    map[string][]contract.Kept
 	// healthCheck is set on a validate, the only verb whose kit observation may be a full read and whose observations answer findings.
-	healthCheck     bool
-	reportsTeardown bool
+	healthCheck        bool
+	asksTeardownReport bool
 
 	// connectionSecrets are the values an output or an identity is refused for, since an app secret such as APP_URL may rightly equal an output.
 	connectionSecrets []string
@@ -294,10 +294,10 @@ func (r *declaredRun) removalAnswer(ctx context.Context, detail string) (int, co
 	return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(detail, r.secrets...), Resources: r.outcomes}
 }
 
-// absentAnswer answers absent:true once every resource is proven absent, carrying a TeardownReporter's detail when the run reports a teardown.
+// absentAnswer answers absent:true once every resource is proven absent, carrying a TeardownReporter's detail when the run asks for it.
 func (r *declaredRun) absentAnswer(ctx context.Context, outputs map[string]string) (int, contract.Response) {
 	var detail string
-	if reporter, ok := r.h.resource.(TeardownReporter); ok && r.reportsTeardown {
+	if reporter, ok := r.h.resource.(TeardownReporter); ok && r.asksTeardownReport {
 		var err error
 		if detail, err = reporter.TeardownDetail(ctx, r.d); err != nil {
 			status, resp := r.h.errorResponse(err, r.secrets)
