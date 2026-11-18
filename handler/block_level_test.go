@@ -4,6 +4,7 @@ package handler_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"reflect"
 	"slices"
@@ -483,6 +484,75 @@ func TestBlockLevel_AValidateNamingAMemberAsksItsEntrysObserverAboutThatMemberAl
 	}
 	if o := resp.Resources["cloud-worker/2"].Observe; len(resp.Resources) != 1 || o == nil || o.State != contract.Present {
 		t.Errorf("resources = %+v, want cloud-worker/2 alone, present", resp.Resources)
+	}
+}
+
+var spareManifest = v1betaManifest("spare-block", []string{"{ name: gateway, type: hetzner.server }", "{ name: spare, type: hetzner.server, when: { input: location, values: [hel1] } }"})
+
+func withLocations(allowed ...string) func(*handler.Config) {
+	return func(c *handler.Config) {
+		c.Types = contract.TypeSnapshot{Version: 1, Types: []contract.SnapshotType{{ID: "hetzner.server", Inputs: []contract.SnapshotInput{{Name: "location", Default: "nbg1", AllowedValues: allowed}}}}}
+	}
+}
+
+func TestBlockLevel_EnsuresAndObservesOnlyTheEntriesARequestsInputsIncludeBarOneNamedOrUnsubscribed(t *testing.T) {
+	recorded := map[string]any{"gateway": map[string]any{"type": "hetzner.server", "identity": map[string]any{"id": "1"}}, "spare": map[string]any{"type": "hetzner.server", "identity": map[string]any{"id": "2"}}}
+	at := func(location string, more ...string) map[string]any {
+		fields := map[string]any{"params": map[string]string{"location": location}, "recordedResources": recorded}
+		if len(more) > 0 {
+			fields["resource"], fields["resourceType"], fields["resourceIdentity"] = more[0], "hetzner.server", map[string]any{"id": "2"}
+		}
+		return fields
+	}
+	cases := []struct {
+		label, op string
+		fields    map[string]any
+		want      string
+	}{
+		{"a subscribe at fsn1 leaves the spare out", "subscribe", at("fsn1"), "gateway"},
+		{"a subscribe at no location leaves it out by the default nbg1", "subscribe", at(""), "gateway"},
+		{"a subscribe at hel1 includes it", "subscribe", at("hel1"), "gateway,spare"},
+		{"an upgrade to fsn1 leaves it out", "upgrade", at("fsn1"), "gateway"},
+		{"a validate of the block at fsn1 leaves it out", "validate", at("fsn1"), "gateway"},
+		{"a validate naming the spare at fsn1 observes it", "validate", at("fsn1", "spare"), "spare"},
+		{"an unsubscribe at fsn1 observes it", "unsubscribe", at("fsn1"), "gateway,spare"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			state := contract.Present
+			if tc.op == "unsubscribe" {
+				state = contract.Absent
+			}
+			obs := map[string]*observer{"gateway": fixed(contract.Observation{State: state}), "spare": fixed(contract.Observation{State: state})}
+
+			status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: newFakeCloud()}, obs: asObservers(obs), op: tc.op, fields: tc.fields,
+				config: []func(*handler.Config){withManifest(spareManifest), withLocations("fsn1", "nbg1", "hel1")}})
+
+			wantOK(t, status, resp)
+			if got := strings.Join(slices.Sorted(maps.Keys(resp.Resources)), ","); got != tc.want {
+				t.Errorf("%s answered resources %q, want %q", tc.op, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNew_RefusesAConditionTheTypeSnapshotCannotJudge(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		types func(*handler.Config)
+	}{{"no type snapshot", func(*handler.Config) {}}, {"a location allowing no hel1", withLocations("fsn1", "nbg1")}} {
+		t.Run(tc.label, func(t *testing.T) {
+			present := fixed(contract.Observation{State: contract.Present})
+			cfg := handler.Config{Resource: &blockResource{}, Manifest: []byte(spareManifest), JWKSURL: "https://jwks.example/jwks.json",
+				Observers: map[string]handler.Observer{"gateway": present, "spare": present}}
+			tc.types(&cfg)
+
+			_, err := handler.New(cfg)
+
+			if err == nil || !strings.Contains(err.Error(), `resource "spare"`) || !strings.Contains(err.Error(), `input "location"`) {
+				t.Errorf("handler.New with %s = %v, want an error naming resource \"spare\" and input \"location\"", tc.label, err)
+			}
+		})
 	}
 }
 

@@ -15,7 +15,7 @@ func checkRow(t *testing.T, row contract.ManifestVerdict, opts contract.CheckOpt
 	if err != nil {
 		t.Fatalf("ParseManifest(%s): %v", row.Name, err)
 	}
-	if err := contract.CheckManifest(m.Block, platformSnapshot(t).Holds, opts); err != nil {
+	if err := contract.CheckManifest(m.Block, platformSnapshot(t), opts); err != nil {
 		return err.Error()
 	}
 	return ""

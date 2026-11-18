@@ -208,7 +208,7 @@ func TestCheckManifest_AcceptsAConnectionOfEachMechanism(t *testing.T) {
 				t.Fatalf("ParseManifest: %v", err)
 			}
 
-			if err := contract.CheckManifest(m.Block, platformSnapshot(t).Holds, contract.CheckOptions{}); err != nil {
+			if err := contract.CheckManifest(m.Block, platformSnapshot(t), contract.CheckOptions{}); err != nil {
 				t.Errorf("CheckManifest refused a %s connection: %v", name, err)
 			}
 		})
