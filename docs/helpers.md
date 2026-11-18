@@ -19,6 +19,7 @@ package has [a page of its own](gitops.md).
 | `helpers/lease` | Runs a program on its node that needs a short-lived credential of a resource the block requires or provides, such as a snapshot's upload link |
 | `helpers/hostexec` | Runs a shell script on a server over AWS Systems Manager or SSH |
 | `helpers/dockerhost` | Sets up a host that runs apps as Docker containers behind a caddy edge, sizes and observes an app on one, or runs an app's database on one |
+| `helpers/dotenv` | Lists the names a file of `NAME=value` lines in an app's repository assigns, through `Names`, and leaves every value behind, as [The settings an app reads](../README.md#the-settings-an-app-reads) describes |
 | `helpers/reach` | Serves an app at a URL and reports whether it answers |
 | `helpers/healthz` | Serves its health check, which every block does |
 | `helpers/reportproof` | Has its nodes sign the reports they post to mitstack |

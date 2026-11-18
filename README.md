@@ -142,6 +142,94 @@ when the answer differs from the file. `kittest.CheckResponse` fails an answer
 that carries a blocker finding but is no refusal, since the engine would read
 it as a pass.
 
+### The settings an app reads
+
+A block that starts an app can say on a `validate` which settings the app
+reads and what fills each one. Its observer returns them in
+`Observation.Settings`, a `contract.Settings`. Its `File` names the file the
+block read in the app's repository, `Branch` and `Commit` say where it read
+the file, and `Found` says whether the file was there. Each of its
+`Variables` is a `contract.Setting` holding the variable's `Name`, a
+`Source`, which takes one of five values, and for some sources a `Secret`
+naming an app secret or a `Block` naming a block. An app secret is a value the app's
+owner stores in mitstack under a lower-case name, such as `app-key`, which
+the block hands the app as a variable.
+
+| `Source` | What fills the setting |
+|---|---|
+| `contract.SettingFromSecret`, `secret` | The app secret that `Secret` names |
+| `contract.SettingFromBlock`, `block` | A value the block that `Block` names gives, such as a database's password |
+| `contract.SettingFromRepository`, `repository` | The app's repository itself |
+| `contract.SettingRunWithout`, `run-without` | Nothing, and the app runs without it |
+| `contract.SettingMissing`, `missing` | Nothing yet, and `Secret` names the app secret that would fill it, when one can |
+
+A block answers `repository` for a setting the app's repository itself
+fills, such as a value its own config file sets, and `run-without` for one
+the app starts without. `missing` is for a setting the app needs and nothing
+fills yet. A block that cannot tell these apart answers `missing`.
+
+A setting carries names and never a value. The `helpers/dotenv` package's
+`Names` reads the names a file of `NAME=value` lines assigns and leaves
+their values behind. The handler reads settings on a `validate` alone, as it
+reads findings. It answers 500 for a source outside the five, and for any
+name equal to one of the request's secret values, without printing the
+value. An answer with no settings carries no `settings` key, so a block that
+fills none answers as before. Here the block read `config/.env.dist` and
+found five settings. The resource reads `absent` because the validate ran
+before the block created anything, and a missing setting is reported, not
+refused. The answer, from
+[`examples/validate-settings-answer.json`](examples/validate-settings-answer.json):
+
+```json
+{
+  "outputs": null,
+  "absent": true,
+  "resources": {
+    "ci-workflows": {
+      "observe": {
+        "state": "absent",
+        "type": "github.workflow-file",
+        "settings": {
+          "file": "config/.env.dist",
+          "branch": "main",
+          "commit": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+          "found": true,
+          "variables": [
+            {
+              "name": "APP_KEY",
+              "source": "missing",
+              "secret": "app-key"
+            },
+            {
+              "name": "MAIL_PASSWORD",
+              "source": "secret",
+              "secret": "mail-password"
+            },
+            {
+              "name": "DB_PASSWORD",
+              "source": "block",
+              "block": "docker-postgres"
+            },
+            {
+              "name": "LOG_CHANNEL",
+              "source": "repository"
+            },
+            {
+              "name": "FEATURE_FLAG_URL",
+              "source": "run-without"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+`TestDeclared_AValidateWithSettingsAnswersTheBytesTheReadmeShows` in
+`handler/declared_test.go` serves that validate through the handler and fails
+when the answer differs from the file.
+
 ### A check that needs a created app
 
 A builder runs a dry run before the app exists, so its request carries no
@@ -195,6 +283,7 @@ provider and in `capabilities` per provider:
 | `helpers/events` | A block that reports its own progress during long work | Progress reports to mitstack while a long call runs |
 | `helpers/credrefresh` | A block whose short-lived credential must outlive one call | A cache that renews a credential before it expires |
 | `helpers/hostexec` | A block that runs a shell script on a server | One script run over AWS Systems Manager or SSH |
+| `helpers/dotenv` | A block that reads which settings an app reads from a file in its repository | `Names`, which reads the names a file of `NAME=value` lines assigns and leaves every value behind |
 | `helpers/dockerhost` | A block that builds a host running apps as Docker containers, or lands an app on one | The host's setup: Docker alone, the `appnet` network, a caddy edge routing each hostname to its app, sshd locked to key login, the sizes each app reserves on it, the reader of the host's newest node report and the commit its agent last synced, `SubscriptionLogs`, which reads one subscription's own containers' output from that report, and `FinalBackup`, an unsubscribe's wait for the host to upload a last backup |
 | `helpers/reach` | A block that serves an app at a URL | A probe that records whether the app answers |
 | `helpers/delivery` | A block that waits on an app's build and deploy | The type of the answer mitstack gives when a block asks what happened to one commit of an app: the gates' verdict, how the build ended and why, the deploy's state and the phase they add up to. Two sample answers in `helpers/delivery/testdata`, one healthy and one whose build mitstack itself could not serve, are the files mitstack's own tests prove it writes |
