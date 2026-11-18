@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/capabilities/github/ghapi"
 )
@@ -321,6 +322,10 @@ var revisionCalls = map[string]func(c *ghapi.Client, repo, rev string) error{
 		_, _, err := c.CommitParentAndPaths(context.Background(), repo, rev)
 		return err
 	},
+	"CommittedAt": func(c *ghapi.Client, repo, rev string) error {
+		_, err := c.CommittedAt(context.Background(), repo, rev)
+		return err
+	},
 	"CommitChanges": func(c *ghapi.Client, repo, rev string) error {
 		_, err := c.CommitChanges(context.Background(), repo, rev, "m", map[string]*string{"a.yaml": strp("a\n")})
 		return err
@@ -387,4 +392,17 @@ func TestRevisionCalls_RefuseAnUnsafeRepositoryOrRevisionBeforeAnyRequest(t *tes
 			}
 		})
 	}
+}
+
+func TestCommittedAt_ReadsWhenTheCommitWasCommitted(t *testing.T) {
+	commit := get(gitops + "/git/commits/" + shaParent)
+	committedAt := func(c *ghapi.Client) (any, error) { return c.CommittedAt(context.Background(), revRepo, shaParent) }
+	runAPICases(t, []apiCase{
+		{name: "CommittedAt returns the committer's date", routes: map[string][]reply{commit: {{body: `{"tree":{"sha":"` + shaRev1 + `"},"committer":{"date":"2026-11-18T00:23:41Z"}}`}}},
+			call: committedAt, want: time.Date(2026, 11, 18, 0, 23, 41, 0, time.UTC), requests: []string{commit}},
+		{name: "CommittedAt fails on a commit answer with no committer date", routes: map[string][]reply{commit: {{body: `{"tree":{"sha":"` + shaRev1 + `"}}`}}},
+			call: committedAt, want: time.Time{}, err: errAny, errHas: "committer date", requests: []string{commit}},
+		{name: "CommittedAt fails on any other status", routes: map[string][]reply{commit: {notFound}},
+			call: committedAt, want: time.Time{}, err: errAny, errHas: "returned 404", requests: []string{commit}},
+	})
 }

@@ -42,6 +42,17 @@ func TestFake_ListsMainsTreeRecursivelyAndNamesItsHead(t *testing.T) {
 	}
 }
 
+func TestFake_AnswersWhenEachCommitWasCommitted(t *testing.T) {
+	f := landingtest.New(t, repo)
+	f.Seed(map[string]string{"shop/compose.yaml": "{}\n"})
+
+	at, err := client(f).CommittedAt(context.Background(), repo, f.Head())
+
+	if want := f.CommittedAt(f.Head()); err != nil || at.IsZero() || !at.Equal(want) {
+		t.Errorf("CommittedAt = %v, %v; want the fake's own time %v", at, err, want)
+	}
+}
+
 func TestFake_RemoveTakesFilesOffMainInANewCommit(t *testing.T) {
 	f := landingtest.New(t, repo)
 	f.Seed(map[string]string{"shop/compose.yaml": "{}\n", "blog/compose.yaml": "{}\n"})
