@@ -309,13 +309,32 @@ implementing only `Delete` is served as before. The code is `deleteBlock` in
 `handler/block.go`, and `landing.Remove` returns the list in its `Result.Kept`.
 
 A block whose teardown leaves something alone on purpose names it by
-implementing `handler.TeardownReporter`. Once an unsubscribe or a validate
-proves every resource absent, the handler calls its `TeardownDetail`. The
-engine settles a teardown on a validate it sends after the unsubscribe
-answer, so both answers carry the detail. A non-empty detail
-answers as the absent answer's `statusDetail`, such as opentofu-operator's
-list of objects under the app's AppId whose tags name another subscription.
-The handler asks nothing while a resource still stands.
+implementing `handler.TeardownReporter`:
+
+```go
+type TeardownReporter interface {
+	TeardownDetail(ctx context.Context, d contract.Desired) (string, error)
+}
+```
+
+Once an unsubscribe or a validate proves every resource absent, the handler
+calls `TeardownDetail`. The engine settles a teardown on a validate it sends
+after the unsubscribe answer, so both answers carry the detail. A non-empty
+detail answers as the absent answer's `statusDetail`, the answer's free-text
+field, and an error answers the call as any other error from your block does.
+opentofu-operator, for example, reads every object tagged with the app's id
+after its teardown, and its detail names each one whose tags give another
+subscription as its owner, which it left alone on purpose. The handler asks
+nothing while a resource still stands.
+
+It also asks nothing on the check before a subscribe, one of the validates
+[A validate that must write nothing](#a-validate-that-must-write-nothing)
+lists. The engine sends that check under a subscription id it never stores, so
+nothing was ever created under it and there is no teardown to report. The
+handler knows the check by what it lacks: it names no resource, carries no
+`settling`, and carries neither `settlesAt`, the time of the call a validate
+settles, nor `recordedResources`, the resources the engine recorded for the
+subscription. A validate that has any one of these still asks.
 
 Each observer is handed the identity and type `EnsureResources` reported for
 its resource. When nothing was reported, it gets what the engine recorded,
