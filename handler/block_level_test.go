@@ -558,7 +558,6 @@ func (b *teardownReportingBlock) TeardownDetail(context.Context, contract.Desire
 }
 
 func TestBlockLevel_AnUnsubscribeOrValidateAnswersTheBlocksTeardownDetailOnlyOnceItProvesEveryResourceAbsent(t *testing.T) {
-	settled := map[string]any{"settlesAt": "2026-11-18T02:31:38Z"}
 	cases := []struct {
 		name, op string
 		fields   map[string]any
@@ -569,26 +568,24 @@ func TestBlockLevel_AnUnsubscribeOrValidateAnswersTheBlocksTeardownDetailOnlyOnc
 		{"an unsubscribe leaving b standing asks nothing", "unsubscribe", recordedAll(), true, 0},
 		{"a read-only validate carrying a record asks once", "validate", recordedAll(), false, 1},
 		{"a read-only validate carrying a record while b stands asks nothing", "validate", recordedAll(), true, 0},
-		{"a read-only validate carrying settlesAt and no record asks once", "validate", settled, false, 1},
-		{"a settling validate carrying no record asks once", "validate", map[string]any{"settling": true, "settlesAt": settled["settlesAt"]}, false, 1},
+		{"a read-only validate carrying settlesAt and no record asks once", "validate", map[string]any{"settlesAt": "2026-11-18T02:31:38Z"}, false, 1},
+		{"a settling validate carrying no record asks once", "validate", map[string]any{"settling": true, "settlesAt": "2026-11-18T02:31:38Z"}, false, 1},
 		{"a read-only validate carrying neither settlesAt nor a record, as before a subscribe, asks nothing", "validate", nil, false, 0},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cloud := standingCloud()
-			cloud.standing["b"] = tc.standing
-			if tc.op == "validate" {
-				cloud.deleteAll()
-			}
-			block := &teardownReportingBlock{blockResource: &blockResource{cloud: cloud}}
+		cloud := standingCloud()
+		cloud.standing["b"] = tc.standing
+		if tc.op == "validate" {
+			cloud.deleteAll()
+		}
+		block := &teardownReportingBlock{blockResource: &blockResource{cloud: cloud}}
 
-			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: tc.op, fields: tc.fields})
+		status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(blockObservers(cloud)), op: tc.op, fields: tc.fields})
 
-			wantOK(t, status, resp)
-			if absent := resp.Absent != nil && *resp.Absent; absent == tc.standing || block.asked != tc.asks || strings.Contains(resp.StatusDetail, "parameter/decoy") != (tc.asks == 1) {
-				t.Errorf("absent %v, statusDetail = %q after %d ask(s), want absent %t carrying the block's detail only after %d ask(s)", absent, resp.StatusDetail, block.asked, !tc.standing, tc.asks)
-			}
-		})
+		wantOK(t, status, resp)
+		if absent := resp.Absent != nil && *resp.Absent; absent == tc.standing || block.asked != tc.asks || strings.Contains(resp.StatusDetail, "parameter/decoy") != (tc.asks == 1) {
+			t.Errorf("%s: absent %v, statusDetail = %q after %d ask(s), want absent %t carrying the block's detail only after %d ask(s)", tc.name, absent, resp.StatusDetail, block.asked, !tc.standing, tc.asks)
+		}
 	}
 }
 
