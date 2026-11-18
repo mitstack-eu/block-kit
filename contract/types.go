@@ -264,6 +264,7 @@ type CallOutcome struct {
 	WaitingOnPerson *WaitingOnPerson  `json:"waitingOnPerson,omitempty"`
 	CatchingUp      *CatchingUp       `json:"catchingUp,omitempty"`
 	Findings        []Finding         `json:"findings,omitempty"`
+	Settings        *Settings         `json:"settings,omitempty"`
 }
 
 type FindingKind string
@@ -278,6 +279,33 @@ type Finding struct {
 	Kind FindingKind `json:"kind"`
 	Text string      `json:"text"`
 	Fix  string      `json:"fix,omitempty"`
+}
+
+type SettingSource string
+
+const (
+	SettingFromSecret     SettingSource = "secret"
+	SettingFromBlock      SettingSource = "block"
+	SettingFromRepository SettingSource = "repository"
+	SettingRunWithout     SettingSource = "run-without"
+	SettingMissing        SettingSource = "missing"
+)
+
+// Setting is one variable an app reads, by name and never by value. Source says what fills it: an app secret, a block, the repository itself, nothing as the app runs without it, or nothing yet. Secret names the app secret that fills it, or would fill it when Source is missing, and Block names the block that gives it.
+type Setting struct {
+	Name   string        `json:"name"`
+	Source SettingSource `json:"source"`
+	Secret string        `json:"secret,omitempty"`
+	Block  string        `json:"block,omitempty"`
+}
+
+// Settings, answered on a validate alone, names the file in an app's repository a validate read the app's settings from, at which branch and commit, whether it was there, and each variable it names.
+type Settings struct {
+	File      string    `json:"file"`
+	Branch    string    `json:"branch"`
+	Commit    string    `json:"commit,omitempty"`
+	Found     bool      `json:"found"`
+	Variables []Setting `json:"variables,omitempty"`
 }
 
 // Kept is a file an unsubscribe left in an app's repository, naming no content, and Reason is "changed" when the app changed it after the landing.
@@ -342,6 +370,7 @@ type Observation struct {
 	WaitingOnPerson *WaitingOnPerson
 	CatchingUp      *CatchingUp
 	Findings        []Finding
+	Settings        *Settings
 	// OwnSecrets are the block's own secrets, which the handler returns beside the answer's outputs whatever State reads.
 	OwnSecrets map[string]string
 }

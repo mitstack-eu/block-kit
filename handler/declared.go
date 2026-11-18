@@ -553,6 +553,13 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 			findings = append(findings, contract.Finding{Kind: f.Kind, Text: safe.Scrub(f.Text, r.secrets...), Fix: safe.Scrub(f.Fix, r.secrets...)})
 		}
 	}
+	var settings *contract.Settings
+	if r.healthCheck && obs.Settings != nil {
+		var err error
+		if settings, err = r.answeredSettings(nr.name, *obs.Settings); err != nil {
+			return nil, err
+		}
+	}
 	return &contract.CallOutcome{
 		State:           obs.State,
 		Outputs:         obs.Outputs,
@@ -564,7 +571,33 @@ func (r *declaredRun) observed(nr namedResource, obs contract.Observation) (*con
 		WaitingOnPerson: waiting,
 		CatchingUp:      catchingUp,
 		Findings:        findings,
+		Settings:        settings,
 	}, nil
+}
+
+// answeredSettings refuses a setting whose source is outside the set, and any name equal to a request secret's value, since a setting carries names and never a value.
+func (r *declaredRun) answeredSettings(name string, s contract.Settings) (*contract.Settings, error) {
+	answered := s
+	answered.Variables = nil
+	names := []string{s.File, s.Branch, s.Commit}
+	for _, v := range s.Variables {
+		names = append(names, v.Name, v.Secret, v.Block)
+	}
+	for _, n := range names {
+		if n != "" && slices.Contains(r.secrets, n) {
+			return nil, fmt.Errorf("resource %q answered a setting carrying a secret value", name)
+		}
+	}
+	for _, v := range s.Variables {
+		switch v.Source {
+		case contract.SettingFromSecret, contract.SettingFromBlock, contract.SettingFromRepository, contract.SettingRunWithout, contract.SettingMissing:
+		default:
+			return nil, fmt.Errorf("resource %q answered setting %q from source %q, which is none of %q, %q, %q, %q and %q", name, v.Name, v.Source,
+				contract.SettingFromSecret, contract.SettingFromBlock, contract.SettingFromRepository, contract.SettingRunWithout, contract.SettingMissing)
+		}
+		answered.Variables = append(answered.Variables, v)
+	}
+	return &answered, nil
 }
 
 // answeredCause leaves a cause whole when the type snapshot lists it under typ's failures, the one source naming it a cause word rather than a secret, and scrubs any other cause.
