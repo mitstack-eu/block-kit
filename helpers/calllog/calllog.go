@@ -107,7 +107,6 @@ func Client(c *http.Client, opts ...Option) *http.Client {
 	return &wrapped
 }
 
-// RoundTrip carries the call and writes its line once the answer's status arrives or the call fails.
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	next := t.next
 	if next == nil {
@@ -132,10 +131,12 @@ func answer(ctx context.Context, resp *http.Response, err error) string {
 		return strconv.Itoa(resp.StatusCode)
 	}
 	var netErr net.Error
+	// A client's timeout over a wrapped transport closes the request's Cancel channel, which can end the call before ctx.Err reads the passed deadline.
+	deadline, bounded := ctx.Deadline()
 	switch {
 	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
 		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
+	case errors.Is(err, context.DeadlineExceeded), bounded && !time.Now().Before(deadline), errors.As(err, &netErr) && netErr.Timeout():
 		return "timeout"
 	}
 	return "error"
