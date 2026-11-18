@@ -1,0 +1,16 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: storage-server
+  name: Storage server
+  owner: acme
+spec:
+  version: 1.0.0
+  description: Keeps one Hetzner server for each app, with a spare volume in hel1.
+  resources:
+    - { name: server, type: hetzner.server }
+    - { name: spare-volume, type: hetzner.volume, when: { input: controlPlaneSize, values: ["3"] } }
+  lifecycle:
+    endpoint: https://storage-server.example.com/hook
+    operations: [subscribe, unsubscribe, upgrade, validate]
+    contract: kit/v1

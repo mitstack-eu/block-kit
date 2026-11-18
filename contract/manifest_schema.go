@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 )
 
@@ -36,7 +37,7 @@ func GenerateManifestSchema() ([]byte, error) {
 		"the resources it creates by exact type, the resources it provides, the state it keeps, its lifecycle and its observability. " +
 		"Generated from the operator kit's contract.BlockManifest types; ParseManifest also refuses a resource name used twice " +
 		"or holding a slash, a requirement reference used twice, an entry listing several types without a name, " +
-		"a provides entry that names no resource or one marked many, a state name used twice or outside lowercase kebab case, and a handover other than none or snapshot."
+		"a provides entry that names no resource or one marked many or carrying when, a state name used twice or outside lowercase kebab case, and a handover other than none or snapshot."
 	doc["$defs"] = map[string]any{
 		"typeId": map[string]any{
 			"description": "A resource type id: a community type <capability>.<name>, or an org's private type @<org>/<capability>.<name>, in lowercase kebab case.",
@@ -66,9 +67,16 @@ func typeSchema(t reflect.Type, required bool) (map[string]any, error) {
 	switch t {
 	case requirementType:
 		return entrySchema("A requirement: a type id, or an object of its type, its name, many and optional, which accepts one offer or none and is never set beside many.",
-			"optional"), nil
+			map[string]any{"optional": map[string]any{"type": "boolean"}}), nil
 	case resourceType:
-		return entrySchema("A resource the block creates: a type id, or an object of its type, its name and many."), nil
+		return entrySchema("A resource the block creates: a type id, or an object of its type, its name, many and when, which creates it only for the listed values of one input of the block's resource types.",
+			map[string]any{"when": map[string]any{
+				"type": "object", "additionalProperties": false, "required": []any{"input", "values"},
+				"properties": map[string]any{
+					"input":  map[string]any{"type": "string", "minLength": 1},
+					"values": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}},
+				},
+			}}), nil
 	case durationType:
 		return map[string]any{"description": "A positive Go duration, such as 75m.", "type": "string"}, nil
 	}
@@ -127,15 +135,13 @@ func structSchema(t reflect.Type) (map[string]any, error) {
 	return s, nil
 }
 
-func entrySchema(description string, flags ...string) map[string]any {
+func entrySchema(description string, extra map[string]any) map[string]any {
 	props := map[string]any{
 		"type": map[string]any{"$ref": typeIDsRef},
 		"name": map[string]any{"type": "string", "minLength": 1},
 		"many": map[string]any{"type": "boolean"},
 	}
-	for _, flag := range flags {
-		props[flag] = map[string]any{"type": "boolean"}
-	}
+	maps.Copy(props, extra)
 	return map[string]any{
 		"description": description,
 		"oneOf": []any{

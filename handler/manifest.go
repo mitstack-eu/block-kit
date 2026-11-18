@@ -125,6 +125,26 @@ func units[V any](declared []namedResource, held map[string]V) []namedResource {
 	return out
 }
 
+// included keeps the declared entries the request's inputs include, judged over every declared entry since the block's inputs are merged across them.
+func (h *Handler) included(params map[string]string) []namedResource {
+	all := make([]contract.ManifestResource, len(h.declared))
+	for i, nr := range h.declared {
+		all[i] = nr.declaration
+	}
+	keep := contract.IncludedResources(all, h.types, params)
+	return slices.DeleteFunc(slices.Clone(h.declared), func(nr namedResource) bool {
+		return !slices.ContainsFunc(keep, func(r contract.ManifestResource) bool { return r.Name == nr.declaration.Name })
+	})
+}
+
+// checkConditions refuses a resource condition Config.Types cannot judge, since the handler could not tell which entries a request includes.
+func checkConditions(cfg Config, declared manifestDeclarations) error {
+	if err := contract.CheckResourceConditions(declared.resources, cfg.Types); err != nil {
+		return fmt.Errorf("handler: Config.Types: %w", err)
+	}
+	return nil
+}
+
 // observedResources refuses a declared resource with no observer, an observer under an undeclared name, and an entry marked many whose members the block cannot report.
 func observedResources(cfg Config, declared manifestDeclarations) ([]namedResource, error) {
 	declaredSet := make(map[string]bool, len(declared.resources))

@@ -121,6 +121,15 @@ reporting a member, the check drops it from the record, as the engine does. It
 then sends a validate naming that member, which must read absent, and runs the
 tagging guard again, so a server the block left behind fails by its id.
 
+A resource entry with `when` is held to the same standard. On a subscribe, an
+upgrade and a validate, the check reads only the entries the request's inputs
+include, as the handler serves them, and on an unsubscribe it reads every
+entry. When an upgrade's inputs leave out an entry that was created, the check
+drops it from the record, sends a validate naming it, which must read absent,
+and runs the tagging guard again. A block that leaves the resource standing
+fails the validate. It fails again by the listed object's id when no other
+recorded resource or part of its type accounts for that object.
+
 A requirement listing more than one type runs the check once per listed type,
 with `Requirements` giving each type's outputs, and each problem names the
 type. `kittest.CheckBlock` does the same work and returns the problems as

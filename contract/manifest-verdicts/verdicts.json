@@ -33,5 +33,9 @@
   {"manifest": "connection-mechanism-unknown.yaml", "refusal": "spec.connection.mechanism: \"password\" is not one of oidc, oauth-app, stored-token"},
   {"manifest": "connection-token-field-twice.yaml", "refusal": "spec.connection.tokenSchema[1]: the field \"public_key\" is listed twice"},
   {"manifest": "kinds-not-kebab.yaml", "refusal": "spec.kinds[0]: \"Parcel\" is not a resource kind in lowercase kebab case"},
-  {"manifest": "reach-not-a-slug.yaml", "refusal": "spec.reach.capability: \"GitHub\" is not a capability slug"}
+  {"manifest": "reach-not-a-slug.yaml", "refusal": "spec.reach.capability: \"GitHub\" is not a capability slug"},
+  {"manifest": "resource-when-accepted.yaml", "refusal": ""},
+  {"manifest": "resource-when-input-undeclared.yaml", "refusal": "spec.resources[1].when: resource \"spare-volume\" names input \"controlPlaneSize\", which none of the block's resource types declares"},
+  {"manifest": "resource-when-value-not-allowed.yaml", "refusal": "spec.resources[1].when: resource \"spare-volume\" is created for value \"ams1\" of input \"location\", which allows only fsn1, nbg1, hel1"},
+  {"manifest": "resource-when-input-without-allowed-values.yaml", "refusal": "spec.resources[1].when: resource \"spare-volume\" names input \"volumeSize\", which declares no allowed values to check the listed ones against"}
 ]

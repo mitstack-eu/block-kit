@@ -371,6 +371,17 @@ func unitNames[V any](spec contract.ManifestSpec, held map[string]V) []string {
 	return names
 }
 
+// included is the spec holding only the resource entries the current request's inputs include, as the handler serves a subscribe, an upgrade and a validate.
+func (c *blockCheck) included() contract.ManifestSpec {
+	spec := c.spec
+	spec.Resources = contract.IncludedResources(c.spec.Resources, c.in.Config.Types, c.desired.Params)
+	return spec
+}
+
+func (c *blockCheck) includes(entry string) bool {
+	return slices.ContainsFunc(c.included().Resources, func(r contract.ManifestResource) bool { return r.Name == entry })
+}
+
 func (c *blockCheck) problem(format string, args ...any) {
 	c.problems = append(c.problems, fmt.Sprintf(format, args...)+c.label)
 }
@@ -384,7 +395,7 @@ func (c *blockCheck) run() {
 	if !ok {
 		return
 	}
-	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+	for _, name := range unitNames(c.included(), c.desired.RecordedResources) {
 		if len(c.desired.RecordedResources[name].Identity) == 0 {
 			c.resourceProblem(name, "observed present after subscribe with no identity, so the check cannot lose it from the provider; report each resource's identity through handler.ResourceReporter or the Observation its observer returns")
 		}
@@ -433,7 +444,7 @@ func (c *blockCheck) commitContributions(resp contract.Response) {
 	if !ok {
 		return
 	}
-	for _, name := range unitNames(c.spec, resp.Resources) {
+	for _, name := range unitNames(c.included(), resp.Resources) {
 		o := resp.Resources[name].Observe
 		if o == nil || o.Type != "github.scaffold-contribution" {
 			continue
@@ -492,7 +503,7 @@ type changedFile struct {
 // changeALandedFile reads each file-landing resource's record and, in each repository, changes the first file a record created there, as an app edits a landed file; it returns nil for a block that lands no files.
 func (c *blockCheck) changeALandedFile() *landedFiles {
 	var names []string
-	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+	for _, name := range unitNames(c.included(), c.desired.RecordedResources) {
 		if landing.LandsFiles(c.desired.RecordedResources[name].Type) {
 			names = append(names, name)
 		}
@@ -609,7 +620,7 @@ func (c *blockCheck) recordReported(recorded map[string]contract.RecordedResourc
 	if recorded == nil {
 		recorded = make(map[string]contract.RecordedResource, len(c.spec.Resources))
 	}
-	for _, name := range unitNames(c.spec, resp.Resources) {
+	for _, name := range unitNames(c.included(), resp.Resources) {
 		for _, call := range []*contract.CallOutcome{resp.Resources[name].Ensure, resp.Resources[name].Observe} {
 			if call == nil {
 				continue
@@ -625,18 +636,20 @@ func (c *blockCheck) recordReported(recorded map[string]contract.RecordedResourc
 	return recorded
 }
 
-// dropUnreported moves into dropped each recorded member the answer carries no ensure outcome for, unless the answer carries none at all and is pending, as a block answers while it waits before ensuring.
+// dropUnreported moves into dropped each recorded member the answer carries no ensure outcome for, unless the answer carries none at all and is pending, as a block answers while it waits before ensuring, and each recorded resource of an entry the inputs now leave out.
 func (c *blockCheck) dropUnreported(recorded map[string]contract.RecordedResource, resp contract.Response, dropped map[string]contract.RecordedResource) {
-	if resp.Pending && !ensuredAny(resp) {
-		return
-	}
+	waiting := resp.Pending && !ensuredAny(resp)
 	held := sortedKeys(recorded)
 	for _, entry := range c.spec.Resources {
-		if !entry.Many {
+		leftOut := !c.includes(entry.Name)
+		if (!entry.Many || waiting) && !leftOut {
 			continue
 		}
 		for _, name := range entry.Names(held) {
-			if resp.Resources[name].Ensure == nil {
+			if _, ok := recorded[name]; !ok {
+				continue
+			}
+			if leftOut || resp.Resources[name].Ensure == nil {
 				dropped[name] = recorded[name]
 				delete(recorded, name)
 			}
@@ -653,7 +666,7 @@ func ensuredAny(resp contract.Response) bool {
 	return false
 }
 
-// proveDroppedAbsent validates each dropped member by name, as the engine proves a member absent before the operation that dropped it settles, then checks the provider again for a stray object.
+// proveDroppedAbsent validates each dropped member or left-out resource by name, as the engine proves a member absent before the operation that dropped it settles, then checks the provider again for a stray object.
 func (c *blockCheck) proveDroppedAbsent(operation string, dropped map[string]contract.RecordedResource) {
 	if len(dropped) == 0 {
 		return
@@ -665,7 +678,12 @@ func (c *blockCheck) proveDroppedAbsent(operation string, dropped map[string]con
 		if !ok {
 			continue
 		}
-		if o := resp.Resources[name].Observe; o == nil || o.State != contract.Absent {
+		o := resp.Resources[name].Observe
+		switch entry, _, _ := strings.Cut(name, "/"); {
+		case o != nil && o.State == contract.Absent:
+		case !c.includes(entry):
+			c.resourceProblem(name, "the %s's inputs leave it out, but a validate naming it does not observe it absent; Ensure removes a resource the inputs leave out", operation)
+		default:
 			c.resourceProblem(name, "the %s stopped reporting it, but a validate naming it does not observe it absent; Ensure removes a member it stops reporting", operation)
 		}
 	}
@@ -676,7 +694,7 @@ func (c *blockCheck) settled(resp contract.Response) bool {
 	if c.snapshotting != nil {
 		return !resp.Pending
 	}
-	for _, name := range unitNames(c.spec, resp.Resources) {
+	for _, name := range unitNames(c.included(), resp.Resources) {
 		o := resp.Resources[name].Observe
 		if o == nil || o.State != contract.Present || (c.afterRestore && o.Unhealthy != nil) {
 			return false
@@ -691,7 +709,7 @@ func (c *blockCheck) unsettled(operation string, resp contract.Response) {
 		return
 	}
 	named := false
-	for _, name := range unitNames(c.spec, resp.Resources) {
+	for _, name := range unitNames(c.included(), resp.Resources) {
 		o := resp.Resources[name].Observe
 		switch {
 		case o != nil && o.State != contract.Present:
@@ -1021,7 +1039,7 @@ func (c *blockCheck) taggedRoom() map[string]int {
 // upgrade flags a stateful declared type when Upgrade is nil, since its replacement cannot be proved.
 func (c *blockCheck) upgrade() bool {
 	if c.in.Upgrade == nil {
-		for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+		for _, name := range unitNames(c.included(), c.desired.RecordedResources) {
 			typ := c.desired.RecordedResources[name].Type
 			if t, ok := c.in.Config.Types.Lookup(typ); ok && t.Stateful {
 				c.resourceProblem(name, "its type %s is stateful, but Upgrade is nil, so the check cannot prove an upgrade names its replacement", typ)
@@ -1042,7 +1060,7 @@ func (c *blockCheck) upgrade() bool {
 		return false
 	}
 	c.ran[guardReplacement] = true
-	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+	for _, name := range unitNames(c.included(), c.desired.RecordedResources) {
 		was, is := before[name], c.desired.RecordedResources[name]
 		if len(was.Identity) == 0 || maps.Equal(was.Identity, is.Identity) || slices.Contains(validated.Replaces, name) {
 			continue
@@ -1061,7 +1079,7 @@ func (c *blockCheck) upgrade() bool {
 func (c *blockCheck) observesTheProvider() bool {
 	var lost []string
 	c.emptyIdentityUnsubscribe()
-	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+	for _, name := range unitNames(c.included(), c.desired.RecordedResources) {
 		r := c.desired.RecordedResources[name]
 		if len(r.Identity) == 0 {
 			continue

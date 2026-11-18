@@ -182,6 +182,14 @@ type ManifestResource struct {
 	Types []string `json:"types,omitempty"`
 	// Many makes the entry stand for zero or more members, which the block reports under the names IsMember accepts.
 	Many bool `json:"many,omitempty"`
+	// When creates the entry only for a request whose value of one input it lists; without it the entry is always created.
+	When *ResourceCondition `json:"when,omitempty"`
+}
+
+// ResourceCondition names an input of the block's resource types and the values of it a resource entry is created for.
+type ResourceCondition struct {
+	Input  string   `json:"input"`
+	Values []string `json:"values"`
 }
 
 var memberKeyPattern = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)

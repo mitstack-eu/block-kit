@@ -55,7 +55,7 @@ func checkAgainstSnapshot(m contract.Manifest, target, apiURL string) (note stri
 	if err != nil {
 		return "", fmt.Errorf("%s: %v", typeSnapshotFile, err)
 	}
-	if err := contract.CheckManifest(m.Block, snap.Holds, contract.CheckOptions{}); err != nil {
+	if err := contract.CheckManifest(m.Block, snap, contract.CheckOptions{}); err != nil {
 		return "", err
 	}
 	if apiURL == "" {

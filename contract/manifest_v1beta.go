@@ -18,7 +18,7 @@ var (
 // v1betaDecoder refuses every null, and every plain scalar YAML reads as a number or a boolean where a string is declared.
 var v1betaDecoder = manifestDecoder{version: ManifestAPIVersion, tag: "json"}
 
-// decodeBlockManifest also holds what the types cannot say: type is block or capability, names and references are unique, no resource name holds a slash, and every provides entry names a resource not marked many.
+// decodeBlockManifest also holds what the types cannot say: type is block or capability, names and references are unique, no resource name holds a slash, and every provides entry names a resource neither marked many nor carrying when.
 func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 	b := &BlockManifest{}
 	if err := v1betaDecoder.decode(root, reflect.ValueOf(b).Elem(), ""); err != nil {
@@ -35,6 +35,7 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 		return nil, err
 	}
 	markedMany := make(map[string]bool, len(b.Spec.Resources))
+	conditional := make(map[string]bool, len(b.Spec.Resources))
 	for i, r := range b.Spec.Resources {
 		if strings.Contains(r.Name, "/") && r.Name == r.Type {
 			return nil, fmt.Errorf("spec.resources[%d].name: %q is the id of a private type, which holds a slash, so name the resource without a slash", i, r.Name)
@@ -46,6 +47,7 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 			return nil, fmt.Errorf("spec.resources[%d].name: %q names an earlier resource too, and a resource name appears once in a block", i, r.Name)
 		}
 		markedMany[r.Name] = r.Many
+		conditional[r.Name] = r.When != nil
 	}
 	refs := make(map[string]int, len(b.Spec.Requires))
 	for i, q := range b.Spec.Requires {
@@ -62,6 +64,9 @@ func decodeBlockManifest(root *yamlNode) (*BlockManifest, error) {
 		}
 		if marked {
 			return nil, fmt.Errorf("spec.provides[%d]: %q is marked many, and an entry marked many is never provided, since a binding names one resource", i, p)
+		}
+		if conditional[p] {
+			return nil, fmt.Errorf("spec.provides[%d]: %q carries when, and an entry created only for some values is never provided, since a binding needs the resource to exist", i, p)
 		}
 	}
 	if err := checkContinuity(b.Spec.Continuity); err != nil {
@@ -93,6 +98,7 @@ type manifestEntry struct {
 	types    []string
 	many     bool
 	optional bool
+	when     *ResourceCondition
 }
 
 // requirement refuses optional beside many, since many already accepts no offer and also accepts two.
@@ -113,7 +119,7 @@ func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, e
 	if err != nil {
 		return ManifestResource{}, err
 	}
-	r := ManifestResource{Name: e.name, Types: e.types, Many: e.many}
+	r := ManifestResource{Name: e.name, Types: e.types, Many: e.many, When: e.when}
 	if len(e.types) == 1 {
 		r.Type = e.types[0]
 		if r.Name == "" {
@@ -123,7 +129,7 @@ func (d manifestDecoder) resource(n *yamlNode, path string) (ManifestResource, e
 	return r, nil
 }
 
-// entry refuses a key that is not a field of an entry, optional on an entry that is no requirement, and an entry listing several types without a name.
+// entry refuses a key that is not a field of an entry, optional on an entry that is no requirement, when on a requirement, and an entry listing several types without a name.
 func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (manifestEntry, error) {
 	if n.kind == yamlScalar {
 		id, err := typeID(n, path)
@@ -154,6 +160,8 @@ func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (mani
 			err = d.decode(val, reflect.ValueOf(&e.many).Elem(), keyPath)
 		case key == "optional" && requirement:
 			err = d.decode(val, reflect.ValueOf(&e.optional).Elem(), keyPath)
+		case key == "when" && !requirement:
+			e.when, err = d.condition(val, keyPath)
 		default:
 			err = fmt.Errorf("%s is not a field of a %s manifest", keyPath, d.version)
 		}
@@ -169,6 +177,21 @@ func (d manifestDecoder) entry(n *yamlNode, path string, requirement bool) (mani
 			path, strings.Join(e.types, ", "))
 	}
 	return e, nil
+}
+
+// condition refuses a condition naming no input or listing no value, since either would leave its entry never created.
+func (d manifestDecoder) condition(n *yamlNode, path string) (*ResourceCondition, error) {
+	c := &ResourceCondition{}
+	if err := d.decode(n, reflect.ValueOf(c).Elem(), path); err != nil {
+		return nil, err
+	}
+	if c.Input == "" {
+		return nil, fmt.Errorf("%s is required and must not be empty", fieldPath(path, "input"))
+	}
+	if len(c.Values) == 0 {
+		return nil, fmt.Errorf("%s is required and must not be empty", fieldPath(path, "values"))
+	}
+	return c, nil
 }
 
 func typeList(n *yamlNode, path string) ([]string, error) {

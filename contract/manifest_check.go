@@ -34,8 +34,8 @@ const (
 // semverPattern is strict SemVer 2.0.0, so it refuses a leading v and a fourth number.
 var semverPattern = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 
-// CheckManifest refuses what the platform refuses at apply short of the checks that need its database, judging each type by serves.
-func CheckManifest(b *BlockManifest, serves func(typeID string) bool, opts CheckOptions) error {
+// CheckManifest refuses what the platform refuses at apply short of the checks that need its database, judging each type and each resource condition by the types the platform serves.
+func CheckManifest(b *BlockManifest, types TypeCatalogue, opts CheckOptions) error {
 	if err := checkMetadata(b.Metadata); err != nil {
 		return err
 	}
@@ -54,7 +54,10 @@ func CheckManifest(b *BlockManifest, serves func(typeID string) bool, opts Check
 	if b.Spec.Observability != nil {
 		return fmt.Errorf("spec.observability: a %s manifest declares none, since each resource type declares the metric series of its resources", ManifestAPIVersion)
 	}
-	return checkTypes(b.Spec, serves, "the types the platform serves")
+	if err := checkTypes(b.Spec, types.Holds, "the types the platform serves"); err != nil {
+		return err
+	}
+	return CheckResourceConditions(b.Spec.Resources, types)
 }
 
 func checkMetadata(m ManifestMetadata) error {

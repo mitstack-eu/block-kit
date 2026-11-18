@@ -49,7 +49,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 			return status, resp
 		}
 		r.d.VerbAt = r.h.now()
-		r.resources = units(r.h.declared, reported)
+		r.resources = units(r.h.included(r.d.Params), reported)
 		r.setRefs(reported)
 		r.ensured(reported)
 		return r.withOwnSecrets(r.ensureEach(ctx))
@@ -65,6 +65,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		}
 		r.deleteOutputs = outputs
 		r.d.VerbAt = r.h.now()
+		// Unsubscribe reaches every declared entry, since one the inputs leave out may still stand.
 		r.resources = units(r.h.declared, r.d.RecordedResources)
 		r.setRefs(nil)
 		for name, ref := range r.refs {
@@ -80,7 +81,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
-		r.resources = units(r.h.declared, r.d.RecordedResources)
+		r.resources = units(r.h.included(r.d.Params), r.d.RecordedResources)
 		r.setRefs(nil)
 		status, resp := r.withOwnSecrets(r.validateEach(ctx))
 		if status == http.StatusOK {

@@ -64,7 +64,7 @@ func ownObservers(in Block, spec contract.ManifestSpec, ran map[string]bool) []s
 
 // probeReads validates each kit-observed resource twice, since the first may be a full read, and counts the provider reads of the second, a probe, against its type's maxReads.
 func (c *blockCheck) probeReads() {
-	for _, name := range unitNames(c.spec, c.desired.RecordedResources) {
+	for _, name := range unitNames(c.included(), c.desired.RecordedResources) {
 		rec := c.desired.RecordedResources[name]
 		t, ok := c.in.Config.Types.Lookup(rec.Type)
 		if !ok || !t.KitObserved() {

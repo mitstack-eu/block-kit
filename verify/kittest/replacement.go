@@ -147,7 +147,7 @@ func (d *drill) snapshot() (string, bool) {
 
 // recreate loses each stateful resource from the provider and upgrades, so the block creates the server again as the engine's reinstall does.
 func (d *drill) recreate(ctx context.Context) bool {
-	for _, name := range unitNames(d.spec, d.desired.RecordedResources) {
+	for _, name := range unitNames(d.included(), d.desired.RecordedResources) {
 		r := d.desired.RecordedResources[name]
 		if t, ok := d.in.Block.Config.Types.Lookup(r.Type); !ok || !t.Stateful || len(r.Identity) == 0 {
 			continue
