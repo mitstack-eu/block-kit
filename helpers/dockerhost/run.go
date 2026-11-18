@@ -18,6 +18,9 @@ import (
 // RunDeadline is how long after its commit a host may start a run, the release command's limit, so a request the host finds later is refused rather than run late.
 const RunDeadline = 15 * time.Minute
 
+// CatchUpBound is how long after a commit to main the host's agent may take to report it running: one sync interval, the release command's limit, the health wait and one report interval.
+const CatchUpBound = time.Minute + RunDeadline + 5*time.Minute + 5*time.Minute
+
 const (
 	runRequestSuffix = ".run-request"
 	execKindGitPull  = "git-pull"

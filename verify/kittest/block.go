@@ -345,6 +345,8 @@ type blockCheck struct {
 	failedRemovals map[string]bool
 	// failedWaits holds each resource whose waitingOnPerson answer already failed, for the same reason.
 	failedWaits map[string]bool
+	// failedCatchUps holds each resource whose catchingUp answer already failed, for the same reason.
+	failedCatchUps map[string]bool
 	// holdsNothing holds each scaffold contribution with a landing record for which the check wrote no file onto main and main holds no file the record created, so GitHub holds nothing of it for a lister to list.
 	holdsNothing map[string]bool
 	// afterRestore makes a resource settle only once it reads healthy, as the engine observes a replaced resource.
@@ -790,6 +792,7 @@ func (c *blockCheck) answeredOK(operation string, status int, resp contract.Resp
 		c.unhealthyCauses(resp)
 		c.removingWaits(resp)
 		c.waitsOnPersonNameAction(resp)
+		c.catchingUpBounds(resp)
 		return status, resp, true
 	}
 	named := false
@@ -874,6 +877,28 @@ func (c *blockCheck) waitsOnPersonNameAction(resp contract.Response) {
 			c.failedWaits = map[string]bool{}
 		}
 		c.failedWaits[name] = true
+	}
+}
+
+// catchingUpBounds fails an observe answering a resource catching up beside a state other than unknown, which the engine never reads, or with times that do not set by after since, since the platform reads the resource failed once by passes.
+func (c *blockCheck) catchingUpBounds(resp contract.Response) {
+	for _, name := range sortedKeys(resp.Resources) {
+		o := resp.Resources[name].Observe
+		if o == nil || o.CatchingUp == nil || c.failedCatchUps[name] {
+			continue
+		}
+		switch since, by := o.CatchingUp.Since, o.CatchingUp.By; {
+		case since.IsZero() || !by.After(since):
+			c.resourceProblem(name, "observed catchingUp with since %s and by %s, which must set by after since", since, by)
+		case o.State != contract.Unknown:
+			c.resourceProblem(name, "observed %s with catchingUp, but only an unknown resource catches up", o.State)
+		default:
+			continue
+		}
+		if c.failedCatchUps == nil {
+			c.failedCatchUps = map[string]bool{}
+		}
+		c.failedCatchUps[name] = true
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Request is one call the fake received, with the Authorization header it carried.
@@ -35,6 +36,7 @@ type review struct{ user, state string }
 type commit struct {
 	tree   map[string]string
 	parent string
+	at     time.Time
 }
 
 // Fake serves one repository, whose owner the installation covers whole unless CoverSelectedRepositories says otherwise.
@@ -117,6 +119,13 @@ func (f *Fake) Head() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.refs["heads/main"]
+}
+
+// CommittedAt is when the fake made commit sha, which its commit answer gives as the committer's date.
+func (f *Fake) CommittedAt(sha string) time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.commits[sha].at
 }
 
 // BeforeWrite runs hook ahead of each request but a GET, outside the fake's lock so it may change main, and answers 422
@@ -439,7 +448,8 @@ func (f *Fake) readCommit(sha string) (int, any) {
 	if c.parent != "" {
 		parents = append(parents, map[string]any{"sha": c.parent})
 	}
-	return http.StatusOK, map[string]any{"sha": sha, "tree": map[string]any{"sha": f.treeID(c.tree)}, "parents": parents}
+	return http.StatusOK, map[string]any{"sha": sha, "tree": map[string]any{"sha": f.treeID(c.tree)}, "parents": parents,
+		"committer": map[string]any{"date": c.at.Format(time.RFC3339)}}
 }
 
 // listTree lists a tree's every file, as GitHub's recursive listing does, holding no directory entry.
@@ -710,7 +720,7 @@ func (f *Fake) treeID(tree map[string]string) string {
 func (f *Fake) commit(treeID, parent string) string {
 	sum := sha1.Sum([]byte(fmt.Sprintf("%s %s %d", treeID, parent, len(f.commits))))
 	sha := hex.EncodeToString(sum[:])
-	f.commits[sha] = commit{tree: maps.Clone(f.trees[treeID]), parent: parent}
+	f.commits[sha] = commit{tree: maps.Clone(f.trees[treeID]), parent: parent, at: time.Now().UTC().Truncate(time.Second)}
 	return sha
 }
 

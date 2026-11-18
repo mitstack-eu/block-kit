@@ -25,6 +25,7 @@ behind the block's back. It returns a `contract.Observation`:
 | `Unhealthy` | Read only beside `Present`: the failure a resource that stands still meets, as [the next section](#a-resource-that-stands-but-fails) explains |
 | `Removing` | Read only beside `Present`: what a removal under way waits on, as [A resource being removed](#a-resource-being-removed) explains |
 | `WaitingOnPerson` | Read only beside `Unknown`: what a person must do before the resource can move on, as [A resource waiting on a person](#a-resource-waiting-on-a-person) explains |
+| `CatchingUp` | Read only beside `Unknown`: when a change the resource is moving to was made, and when it should be done, as [A resource catching up with a change](#a-resource-catching-up-with-a-change) explains |
 | `Findings` | Read only on a `validate`: what the block will do for the app and what stops it, as [the README](../README.md#what-a-validate-tells-a-builder) explains |
 
 The `contract.ResourceRef` an observer receives carries the resource's name,
@@ -145,6 +146,29 @@ the observer, which fails the subscription with your words.
 The handler scrubs request secrets from `Action`, and `kittest.AssertBlock`
 fails a `WaitingOnPerson` beside any state but `Unknown`, or one whose `Action`
 is blank.
+
+## A resource catching up with a change
+
+A resource can take a known while to follow a change. A Docker host pulls its
+repository on a timer, so after a merge to main the container still runs the
+old commit until the host syncs, releases and reports. Its observer answers
+`Unknown` and sets `CatchingUp` to a `contract.CatchingUp`, whose `Since` is
+when the change was made and `By` is when the resource should have caught up:
+
+```go
+return contract.Observation{State: contract.Unknown,
+	StatusDetail: "the host has not yet synced main's head " + head,
+	CatchingUp:   &contract.CatchingUp{Since: committed, By: committed.Add(dockerhost.CatchUpBound)},
+}, nil
+```
+
+Until `By`, the platform reads the resource's health as `deploying`, not
+failed. After `By`, it reads the resource failed, with a reason naming the
+stall and `Since`. Take `By` from the provider's own documented timings, never
+from a guess. `dockerhost.CatchUpBound` is that bound for a Docker host.
+
+An observer that never sets the field is read as before, and one that sees the
+resource fail while it catches up answers that failure instead.
 
 ## The observers the kit ships
 

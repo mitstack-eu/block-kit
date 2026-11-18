@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
@@ -78,6 +79,25 @@ func (c *Client) CommitTree(ctx context.Context, repoFullName, revision string) 
 		return "", err
 	}
 	return c.commitTree(ctx, repo, revision)
+}
+
+// CommittedAt returns when commit revision was committed, refusing before any request a revision that is not a full lowercase hex SHA.
+func (c *Client) CommittedAt(ctx context.Context, repoFullName, revision string) (time.Time, error) {
+	repo, err := SafeRepo(repoFullName)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if err := checkRevision(revision); err != nil {
+		return time.Time{}, err
+	}
+	commit, err := c.gitCommit(ctx, repo, revision)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if commit.Committer.Date.IsZero() {
+		return time.Time{}, fmt.Errorf("ghapi: GET git/commits/%s carries no committer date", revision)
+	}
+	return commit.Committer.Date.UTC(), nil
 }
 
 // ReadFileAt reports a missing path as absent with no error, and since GitHub also answers 404 for an unknown revision a caller that must tell them apart checks CommitTree.
@@ -370,24 +390,37 @@ func (c *Client) branchRef(ctx context.Context, repo, escapedBranch string) (sha
 	return sha, true, nil
 }
 
+type gitCommit struct {
+	Tree struct {
+		SHA string `json:"sha"`
+	} `json:"tree"`
+	Committer struct {
+		Date time.Time `json:"date"`
+	} `json:"committer"`
+}
+
 func (c *Client) commitTree(ctx context.Context, repo, sha string) (string, error) {
-	path := "/repos/" + repo + "/git/commits/" + url.PathEscape(sha)
-	status, raw, _, err := c.get(ctx, path, maxCommitBody)
+	commit, err := c.gitCommit(ctx, repo, sha)
 	if err != nil {
 		return "", err
 	}
+	return c.answeredSHA("GET /repos/"+repo+"/git/commits/"+url.PathEscape(sha), commit.Tree.SHA)
+}
+
+func (c *Client) gitCommit(ctx context.Context, repo, sha string) (gitCommit, error) {
+	path := "/repos/" + repo + "/git/commits/" + url.PathEscape(sha)
+	status, raw, _, err := c.get(ctx, path, maxCommitBody)
+	if err != nil {
+		return gitCommit{}, err
+	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("ghapi: github GET git/commits returned %d: %s", status, safe.LogSafe(string(raw), c.Token))
+		return gitCommit{}, fmt.Errorf("ghapi: github GET git/commits returned %d: %s", status, safe.LogSafe(string(raw), c.Token))
 	}
-	var commit struct {
-		Tree struct {
-			SHA string `json:"sha"`
-		} `json:"tree"`
-	}
+	var commit gitCommit
 	if err := json.Unmarshal(raw, &commit); err != nil {
-		return "", fmt.Errorf("ghapi: decode commit from GET %s: %w", path, err)
+		return gitCommit{}, fmt.Errorf("ghapi: decode commit from GET %s: %w", path, err)
 	}
-	return c.answeredSHA("GET "+path, commit.Tree.SHA)
+	return commit, nil
 }
 
 // get refuses a 2xx answer longer than limit, cuts a refusal's text to limit, and returns the body unscrubbed for the caller to pass through safe.LogSafe.

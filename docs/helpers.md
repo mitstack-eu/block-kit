@@ -1050,7 +1050,10 @@ reads, and `dockerhost.RunRequestFile` types:
 `serverId` is the host's `execTarget`, so a host that finds the request on
 another server refuses it. `deadline` is `dockerhost.RunDeadline`, 15
 minutes, after the commit, in UTC to the second, and a host that finds the
-request later refuses it. `service` is the process the run names, or the
+request later refuses it. `dockerhost.CatchUpBound`, 26 minutes, is how long
+after a commit to main the host may take to report it running: one sync
+interval of a minute, the release limit, the five-minute health wait and one
+five-minute report interval. `service` is the process the run names, or the
 entry.
 
 The host lists each run under `host.runs` of its node report, which
