@@ -3,11 +3,12 @@ package calllog_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -27,30 +28,28 @@ const (
 	token   = "tok-calllog-sentinel-5d1e"
 	project = "3f2a9c1e-77b0-4c1e-9e55-1a2b3c4d5e6f"
 	stall   = 50 * time.Millisecond
+	// timed is the least a stalled call's line may read, since the stall starts before the call's own clock does.
+	timed = 40 * time.Millisecond
 )
 
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
-	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
+	buf, prev := &bytes.Buffer{}, log.Writer()
+	log.SetOutput(buf)
 	t.Cleanup(func() { log.SetOutput(prev) })
-	return &buf
+	return buf
 }
 
-func lines(logs *bytes.Buffer) []map[string]string {
-	var out []map[string]string
+func lines(logs *bytes.Buffer) (out []map[string]string) {
 	for _, l := range strings.Split(logs.String(), "\n") {
-		_, rest, ok := strings.Cut(l, "calllog: ")
-		if !ok {
-			continue
+		if _, rest, ok := strings.Cut(l, "calllog: "); ok {
+			fields := map[string]string{}
+			for _, kv := range strings.Fields(rest) {
+				k, v, _ := strings.Cut(kv, "=")
+				fields[k] = v
+			}
+			out = append(out, fields)
 		}
-		fields := map[string]string{}
-		for _, kv := range strings.Fields(rest) {
-			k, v, _ := strings.Cut(kv, "=")
-			fields[k] = v
-		}
-		out = append(out, fields)
 	}
 	return out
 }
@@ -70,8 +69,7 @@ func newServer(t *testing.T, status int) *httptest.Server {
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte("{}"))
 	}))
-	t.Cleanup(srv.Close)
-	t.Cleanup(func() { close(released) })
+	t.Cleanup(func() { close(released); srv.Close() })
 	return srv
 }
 
@@ -82,14 +80,11 @@ func TestTransport_EachCallWritesOneLineNamingItsRouteAndAnswerAndNothingItCarri
 		return ctx
 	}
 	cases := []struct {
-		name          string
-		status        int
-		method, path  string
-		client        *http.Client
-		ctx           func(context.Context) context.Context
-		subscription  string
-		route, answer string
-		atLeast       time.Duration
+		name, method, path, subscription, route, answer string
+		status                                          int
+		client                                          *http.Client
+		ctx                                             func(context.Context) context.Context
+		atLeast                                         time.Duration
 	}{
 		{name: "a GET answered 200 names its route with {id} and no query or header value", status: http.StatusOK, method: http.MethodGet,
 			path: "/cockpit/v1/projects/" + project + "/data-sources?project_id=" + project + "&token=" + token, subscription: "sub_a",
@@ -97,9 +92,9 @@ func TestTransport_EachCallWritesOneLineNamingItsRouteAndAnswerAndNothingItCarri
 		{name: "a call answered 404 names the status", status: http.StatusNotFound, method: http.MethodDelete, path: "/v1/servers/42",
 			subscription: "sub_a", route: "/v1/servers/{id}", answer: "404"},
 		{name: "a call whose context is cancelled after 50 ms reads canceled", method: http.MethodGet, path: "/v1/servers", ctx: cancelled,
-			subscription: "sub_a", route: "/v1/servers", answer: "canceled", atLeast: stall},
+			subscription: "sub_a", route: "/v1/servers", answer: "canceled", atLeast: timed},
 		{name: "a call that reaches the client timeout reads timeout", method: http.MethodGet, path: "/v1/servers", client: &http.Client{Timeout: stall},
-			subscription: "sub_a", route: "/v1/servers", answer: "timeout", atLeast: stall},
+			subscription: "sub_a", route: "/v1/servers", answer: "timeout", atLeast: timed},
 		{name: "a call under no subscription names none", status: http.StatusOK, method: http.MethodGet, path: "/v1/servers",
 			subscription: "-", route: "/v1/servers", answer: "200"},
 		{name: "a client wrapped twice still writes one line", status: http.StatusOK, method: http.MethodGet, path: "/v1/servers",
@@ -107,12 +102,8 @@ func TestTransport_EachCallWritesOneLineNamingItsRouteAndAnswerAndNothingItCarri
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			logs := captureLog(t)
-			srv := newServer(t, tc.status)
-			client := &http.Client{}
-			if tc.client != nil {
-				client = tc.client
-			}
+			logs, srv := captureLog(t), newServer(t, tc.status)
+			client := cmp.Or(tc.client, &http.Client{})
 			ctx := context.Background()
 			if tc.subscription != "-" {
 				ctx = calllog.WithSubscription(ctx, tc.subscription)
@@ -163,6 +154,22 @@ func TestRoute_NamesEachSegmentThatIsNotAWordOrAFixedSegmentAsAnId(t *testing.T)
 	}
 	if got, want := calllog.Host(project+".metrics.cockpit.fr-par.scw.cloud:443"), "{id}.metrics.cockpit.fr-par.scw.cloud:443"; got != want {
 		t.Errorf("Host = %q; want %q, a label that is no word or number read as an id", got, want)
+	}
+}
+
+func TestTransport_ANilTransportSendsThroughTheDefaultTransportStandingAtTheCall(t *testing.T) {
+	logs, srv, client, prev := captureLog(t), newServer(t, http.StatusTeapot), calllog.Client(&http.Client{}), http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = prev })
+	http.DefaultTransport = &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}}
+
+	if resp, err := client.Get("http://default-transport.invalid/"); err == nil {
+		resp.Body.Close()
+	}
+
+	if got := lines(logs); len(got) != 1 || got[0]["answer"] != "418" {
+		t.Errorf("logs = %q; want one line answered 418 by the server the replaced default transport dials", logs)
 	}
 }
 
@@ -220,15 +227,13 @@ func TestKitClients_EachWritesOneLineForOneCall(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			logs := captureLog(t)
-			srv := newServer(t, http.StatusOK)
+			logs, srv := captureLog(t), newServer(t, http.StatusOK)
 
 			tc.call(calllog.WithSubscription(context.Background(), "sub_a"), srv.URL)
 
-			got := lines(logs)
-			host, _ := url.Parse(srv.URL)
-			if len(got) != 1 || got[0]["subscription"] != "sub_a" || got[0]["method"] != tc.method || got[0]["host"] != host.Host || got[0]["route"] != tc.route || strings.Contains(logs.String(), token) {
-				t.Errorf("logs = %q; want one line naming sub_a, %s, %s and route %s, and not the token", logs, tc.method, host.Host, tc.route)
+			got, host := lines(logs), strings.TrimPrefix(srv.URL, "http://")
+			if len(got) != 1 || got[0]["subscription"] != "sub_a" || got[0]["method"] != tc.method || got[0]["host"] != host || got[0]["route"] != tc.route || strings.Contains(logs.String(), token) {
+				t.Errorf("logs = %q; want one line naming sub_a, %s, %s and route %s, and not the token", logs, tc.method, host, tc.route)
 			}
 		})
 	}
