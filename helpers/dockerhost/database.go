@@ -126,7 +126,6 @@ func (db Database) readRequest(d contract.Desired) (request, error) {
 	return request{target: t, size: size, passwordSource: source}, nil
 }
 
-// passwordSource is the host secret the subscription's password is kept under, as an env.names source.
 func (db Database) passwordSource(d contract.Desired) (string, error) {
 	name := passwordSecretName
 	if db.PasswordSecret != nil {
