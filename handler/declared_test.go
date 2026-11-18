@@ -191,17 +191,94 @@ func TestDeclared_AValidateWithFindingsAnswersTheBytesTheReadmeShows(t *testing.
 		{Kind: contract.FindingPlan, Text: "adds .github/workflows/build.yml, which builds the image from the Dockerfile at the repository root"},
 		{Kind: contract.FindingBlocker, Text: "the Dockerfile names no port, so the host cannot route requests to the app", Fix: "add an EXPOSE line naming the port the app listens on"},
 	})
+	answersTheExample(t, raw, "validate-answer.json")
+}
+
+// answersTheExample fails t unless raw, indented, is byte for byte the README's example answer in examples/<example>.
+func answersTheExample(t *testing.T, raw []byte, example string) {
+	t.Helper()
 	var indented bytes.Buffer
 	if err := json.Indent(&indented, raw, "", "  "); err != nil {
 		t.Fatalf("json.Indent(%s): %v", raw, err)
 	}
-	want, err := os.ReadFile("../examples/validate-answer.json")
+	want, err := os.ReadFile("../examples/" + example)
 	if err != nil {
 		t.Fatalf("reading the answer the README shows: %v", err)
 	}
 	if indented.String()+"\n" != string(want) {
-		t.Errorf("the validate answers\n%s\nbut examples/validate-answer.json, which the README shows, holds\n%s", indented.String(), want)
+		t.Errorf("the validate answers\n%s\nbut examples/%s, which the README shows, holds\n%s", indented.String(), example, want)
 	}
+}
+
+// readmeSettings is the settings entry examples/validate-settings-answer.json shows.
+var readmeSettings = contract.Settings{File: "config/.env.dist", Branch: "main", Commit: "9fceb02d0ae598e95dc970b74767f19372d61af8", Found: true, Variables: []contract.Setting{
+	{Name: "APP_KEY", Source: contract.SettingMissing, Secret: "app-key"},
+	{Name: "MAIL_PASSWORD", Source: contract.SettingFromSecret, Secret: "mail-password"},
+	{Name: "DB_PASSWORD", Source: contract.SettingFromBlock, Block: "docker-postgres"},
+	{Name: "LOG_CHANNEL", Source: contract.SettingFromRepository},
+	{Name: "FEATURE_FLAG_URL", Source: contract.SettingRunWithout},
+}}
+
+func TestDeclared_AValidateAnswersEachSettingItsObserverReadAndASubscribeAnswersNone(t *testing.T) {
+	read := &readmeSettings
+	for op, want := range map[string]*contract.Settings{"validate": read, "subscribe": nil} {
+		t.Run(op, func(t *testing.T) {
+			cloud := standingCloud()
+			obs := asObservers(blockObservers(cloud))
+			obs["a"] = fixed(contract.Observation{State: contract.Present, Settings: read})
+
+			status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: cloud}, obs: obs, op: op})
+
+			got := resp.Resources["a"].Observe
+			if status != http.StatusOK || got == nil || !reflect.DeepEqual(got.Settings, want) {
+				t.Fatalf("%s = %d %q, a observe %+v; want 200 carrying settings %+v", op, status, resp.Error, got, want)
+			}
+		})
+	}
+}
+
+func TestDeclared_AValidateRefusesASettingOfAnUnknownSourceOrHoldingASecretsValueWithoutNamingTheValue(t *testing.T) {
+	const token = "ghp_setting-leak-7a3f9c21"
+	cases := []struct {
+		label   string
+		setting contract.Setting
+		names   string
+	}{
+		{"a source outside the set", contract.Setting{Name: "APP_KEY", Source: "environment"}, `"environment"`},
+		{"a name equal to a secret's value", contract.Setting{Name: token, Source: contract.SettingMissing}, "secret"},
+		{"a secret equal to a secret's value", contract.Setting{Name: "APP_KEY", Source: contract.SettingFromSecret, Secret: token}, "secret"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			obs := asObservers(blockObservers(standingCloud()))
+			obs["a"] = fixed(contract.Observation{State: contract.Present, Settings: &contract.Settings{File: ".env.example", Branch: "main", Found: true, Variables: []contract.Setting{tc.setting}}})
+
+			status, resp := serveBlock(t, blockCall{r: &blockResource{}, obs: obs, op: "validate", fields: githubToken(token)})
+
+			answer, err := json.Marshal(resp)
+			if err != nil {
+				t.Fatalf("json.Marshal(%+v): %v", resp, err)
+			}
+			if status != http.StatusInternalServerError || !strings.Contains(resp.Error, tc.names) {
+				t.Fatalf("validate = %d %q; want 500 with an error naming %s", status, resp.Error, tc.names)
+			}
+			if strings.Contains(string(answer), token) {
+				t.Errorf("answer %s; want no trace of the secret's value", answer)
+			}
+		})
+	}
+}
+
+func TestDeclared_AValidateWithSettingsAnswersTheBytesTheReadmeShows(t *testing.T) {
+	manifest := v1betaManifest("app-build", []string{"{ name: ci-workflows, type: github.workflow-file }"})
+	absent := fixed(contract.Observation{State: contract.Absent, Settings: &readmeSettings})
+	x := newHarness(t, &blockResource{}, withManifest(manifest), func(c *handler.Config) {
+		c.Observers = map[string]handler.Observer{"ci-workflows": absent}
+	})
+
+	_, raw := x.post(map[string]any{"operation": "validate"})
+
+	answersTheExample(t, raw, "validate-settings-answer.json")
 }
 
 const s3Snapshot = `{"version": 1, "types": [{"id": "aws.s3-bucket", "capability": "aws", "kind": "object-storage", "scope": "per-app",
