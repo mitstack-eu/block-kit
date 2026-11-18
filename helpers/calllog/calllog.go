@@ -82,13 +82,10 @@ type transport struct {
 	fixed []string
 }
 
-// Transport wraps next, or http.DefaultTransport when nil, so each call it carries writes one line; a transport already wrapped comes back as it is.
+// Transport wraps next, or when nil the http.DefaultTransport of each call's time, so each call it carries writes one line; a transport already wrapped comes back as it is.
 func Transport(next http.RoundTripper, opts ...Option) http.RoundTripper {
 	if wrapped, ok := next.(*transport); ok {
 		return wrapped
-	}
-	if next == nil {
-		next = http.DefaultTransport
 	}
 	t := &transport{next: next}
 	for _, opt := range opts {
@@ -112,8 +109,12 @@ func Client(c *http.Client, opts ...Option) *http.Client {
 
 // RoundTrip carries the call and writes its line once the answer's status arrives or the call fails.
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	next := t.next
+	if next == nil {
+		next = http.DefaultTransport
+	}
 	started := time.Now()
-	resp, err := t.next.RoundTrip(req)
+	resp, err := next.RoundTrip(req)
 	line := Line{
 		Subscription: subscription(req.Context()),
 		Method:       req.Method,
