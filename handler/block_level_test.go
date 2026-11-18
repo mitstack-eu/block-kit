@@ -536,6 +536,28 @@ func TestBlockLevel_EnsuresAndObservesOnlyTheEntriesARequestsInputsIncludeBarOne
 	}
 }
 
+func TestBlockLevel_RefusesAValueTheInputDoesNotAllowAndAReportOfAnEntryTheInputsLeaveOut(t *testing.T) {
+	spare := []contract.CreatedResource{{Name: "spare", Type: "hetzner.server", Identity: map[string]string{"id": "2"}}}
+	for _, tc := range []struct {
+		label, location, class string
+		report                 []contract.CreatedResource
+		want                   []string
+	}{
+		{"a subscribe at ams1", "ams1", "input-value", nil, []string{`resource "spare"`, `input "location"`, `"ams1"`}},
+		{"a subscribe at fsn1 reporting the spare", "fsn1", "undeclared-resource", spare, []string{`resource "spare"`, "leave it out"}},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			present := fixed(contract.Observation{State: contract.Present})
+			block := reportingBlock{blockResource: &blockResource{cloud: newFakeCloud()}, report: tc.report}
+
+			status, resp := serveBlock(t, blockCall{r: block, obs: asObservers(map[string]*observer{"gateway": present, "spare": present}), op: "subscribe",
+				fields: map[string]any{"params": map[string]string{"location": tc.location}}, config: []func(*handler.Config){withManifest(spareManifest), withLocations("fsn1", "nbg1", "hel1")}})
+
+			wantRefusal(t, status, resp, tc.class, tc.want...)
+		})
+	}
+}
+
 func TestNew_RefusesAConditionTheTypeSnapshotCannotJudge(t *testing.T) {
 	for _, tc := range []struct {
 		label string

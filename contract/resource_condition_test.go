@@ -1,6 +1,6 @@
 package contract_test
 
-// IncludedResources keeps the entries a request's inputs include, and CheckResourceConditions judges each condition by the inputs every declaring type gives.
+// IncludedResources keeps the entries a request's inputs include and refuses a request it cannot place, and CheckResourceConditions judges each condition by the inputs every declaring type gives.
 
 import (
 	"strings"
@@ -38,17 +38,24 @@ func TestIncludedResources_KeepsTheEntriesTheInputsInclude(t *testing.T) {
 		resources []contract.ManifestResource
 		params    map[string]string
 		want      []string
+		refusal   string
 	}{
-		{"a value the condition lists includes the entry", beside(plainServer, "hetzner.server", false, "hel1"), map[string]string{"location": "hel1"}, []string{"server", "spare"}},
-		{"a value it does not list leaves the entry out", beside(plainServer, "hetzner.server", false, "hel1"), map[string]string{"location": "fsn1"}, []string{"server"}},
-		{"no value takes the default the declaring types share", beside(plainServer, "hetzner.volume", false, "nbg1"), nil, []string{"server", "spare"}},
-		{"an empty value takes that default too", beside(plainServer, "hetzner.volume", false, "nbg1"), map[string]string{"location": ""}, []string{"server", "spare"}},
-		{"no value, with declaring types giving two defaults, leaves the entry out", beside(plainServer, "hetzner.primary-ip", false, "fsn1"), nil, []string{"server"}},
+		{"a value the condition lists includes the entry", beside(plainServer, "hetzner.server", false, "hel1"), map[string]string{"location": "hel1"}, []string{"server", "spare"}, ""},
+		{"a value it does not list leaves the entry out", beside(plainServer, "hetzner.server", false, "hel1"), map[string]string{"location": "fsn1"}, []string{"server"}, ""},
+		{"no value takes the default the declaring types share", beside(plainServer, "hetzner.volume", false, "nbg1"), nil, []string{"server", "spare"}, ""},
+		{"an empty value takes that default too", beside(plainServer, "hetzner.volume", false, "nbg1"), map[string]string{"location": ""}, []string{"server", "spare"}, ""},
+		{"no value, with declaring types giving two defaults, is refused", beside(plainServer, "hetzner.primary-ip", false, "fsn1"), nil, nil,
+			`resource "spare" is created only for some values of input "location", but the request gives it no value and its types give no one default`},
+		{"a value the input does not allow is refused", beside(plainServer, "hetzner.server", false, "hel1"), map[string]string{"location": "ams1"}, nil,
+			`resource "spare" is created only for some values of input "location", but the request gives it "ams1", which the input does not allow (it allows fsn1, nbg1, hel1)`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			included := contract.IncludedResources(tc.resources, conditionSnapshot(), tc.params)
+			included, err := contract.IncludedResources(tc.resources, conditionSnapshot(), tc.params)
 
+			if refusal := errText(err); refusal != tc.refusal {
+				t.Errorf("IncludedResources(%v) refused %q, want %q", tc.params, refusal, tc.refusal)
+			}
 			var got []string
 			for _, r := range included {
 				got = append(got, r.Name)
@@ -72,19 +79,24 @@ func TestCheckResourceConditions_JudgesAConditionByTheInputsEveryDeclaringTypeGi
 		{"an input only an entry marked many declares", beside(plainNetwork, "hetzner.server", true, "hel1"),
 			`spec.resources[1].when: resource "spare" names input "location", which none of the block's resource types declares`},
 		{"a type the snapshot does not hold", beside(plainNetwork, "hetzner.no-such-type", false, "hel1"),
-			`spec.resources[1].when: resource "spare" names input "location", which none of the block's resource types declares`},
+			`spec.resources[1]: resource "spare" lists type "hetzner.no-such-type", which the type snapshot does not hold, so a condition cannot read the inputs it declares`},
+		{"a type the snapshot does not hold beside a condition on another entry", beside(contract.ManifestResource{Name: "server", Type: "hetzner.no-such-type", Types: []string{"hetzner.no-such-type"}}, "hetzner.server", false, "hel1"),
+			`spec.resources[0]: resource "server" lists type "hetzner.no-such-type", which the type snapshot does not hold, so a condition cannot read the inputs it declares`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			err := contract.CheckResourceConditions(tc.resources, conditionSnapshot())
+			got := errText(contract.CheckResourceConditions(tc.resources, conditionSnapshot()))
 
-			got := ""
-			if err != nil {
-				got = err.Error()
-			}
 			if got != tc.want {
 				t.Errorf("CheckResourceConditions refused %q, want %q", got, tc.want)
 			}
 		})
 	}
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
