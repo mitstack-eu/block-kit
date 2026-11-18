@@ -43,6 +43,24 @@ func TestCheckManifest_GivesEachRowOfTheSharedTableItsVerdict(t *testing.T) {
 	}
 }
 
+func TestCheckManifest_RefusesABlockWhoseManifestListsRunNamingRun(t *testing.T) {
+	var listsRun contract.ManifestVerdict
+	for _, row := range verdictRows(t) {
+		if row.Name == "operation-run.yaml" {
+			listsRun = row
+		}
+	}
+	if listsRun.Manifest == nil {
+		t.Fatal("the verdict table has no operation-run.yaml row")
+	}
+
+	got := checkRow(t, listsRun, contract.CheckOptions{})
+
+	if !strings.Contains(got, `"run"`) {
+		t.Errorf("CheckManifest(operation-run.yaml) refused %q; want a refusal naming \"run\"", got)
+	}
+}
+
 func TestCheckManifest_HoldsSnapshotAndRestoreToTheStateTheManifestDeclares(t *testing.T) {
 	var accepted contract.ManifestVerdict
 	for _, row := range verdictRows(t) {
