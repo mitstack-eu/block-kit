@@ -1081,16 +1081,17 @@ much of it to keep.
 ### How long a host takes to run a commit
 
 `dockerhost.CatchUpBound` is 26 minutes. It is the longest the host's agent
-may take from a commit to main of the host's Git repository to its report that
-the commit runs. The bound adds four timings the hcloud-docker-host README
-documents:
+may take from a commit to main of the host's Git repository to the node report
+that says the commit runs. The agent takes four steps one after another, so
+the bound adds the longest each may take. The hcloud-docker-host block, which
+sets up the host, documents each timing:
 
-| Timing | Length |
+| Step | Longest it takes |
 |---|---|
-| The agent's pull of main | 1 minute |
-| The limit on the app's release command | 15 minutes |
-| The wait for the app to report healthy | 5 minutes |
-| The interval between node reports | 5 minutes |
+| The agent's next pull of main | 1 minute |
+| The app's release command, which the agent stops at its limit | 15 minutes |
+| The wait for the app's new containers to report healthy | 5 minutes |
+| The host's next node report | 5 minutes |
 
 An observer uses it as the `By` of a resource catching up, as
 [A resource catching up with a change](observe.md#a-resource-catching-up-with-a-change)
@@ -2077,7 +2078,9 @@ in that tree with `TreePaths`, which refuses a listing GitHub truncated past
 has moved on since.
 
 `CommittedAt(ctx, repo, revision)` returns when a commit was committed, as a
-`time.Time` in UTC. It refuses a revision that is not a full lowercase hex SHA
+`time.Time` in UTC, where `repo` is `owner/name`. It reads the committer's
+date, the time the commit was written to the repository, such as when a pull
+request merged. The author's date can be older, since a rebase keeps it. It refuses a revision that is not a full lowercase hex SHA
 before any request. An observer uses it as the `Since` of
 [a resource catching up with a change](observe.md#a-resource-catching-up-with-a-change).
 
