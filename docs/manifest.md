@@ -203,9 +203,8 @@ inputs leave out an entry that was created, the block's Ensure removes it, and
 
 `provides` names resources from the block's own `resources`, and never an
 entry marked many or carrying `when`, because a binding names one resource
-that exists. The outputs of a
-provided resource, such as a host's address, reach the other blocks of the app
-that require its type.
+that exists. The outputs of a provided resource, such as a host's address,
+reach the other blocks of the app that require its type.
 
 A binding is one value the engine hands the block from a resource. It is
 written `requires.<reference>.outputs.<output>` for an output of the resource
@@ -405,8 +404,8 @@ curl -fsS https://api.mitstack.dev/v1/resource-types/snapshots/latest -o type-sn
 `contract.ParseTypeSnapshot` reads a snapshot, and
 `contract.CheckManifestTypes` refuses a manifest entry listing a type the
 snapshot does not hold. `contract.CheckManifest` also judges each resource's
-`when` against the inputs the snapshot lists for its types. A block passes the snapshot to `handler.New` as
-`Config.Types`.
+`when` against the inputs the snapshot lists for its types. A block passes the
+snapshot to `handler.New` as `Config.Types`.
 
 | Snapshot field | What it means |
 |---|---|
