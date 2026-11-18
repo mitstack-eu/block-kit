@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/mitstack-eu/block-kit/helpers/calllog"
 )
 
 // Callback carries the ingest URL and bearer token mitstack injects into the signed webhook envelope.
@@ -32,7 +34,7 @@ type envelopeKey struct{}
 
 // WithEnvelope stashes the events envelope on ctx so downstream code can emit without threading the request.
 func WithEnvelope(ctx context.Context, env Envelope) context.Context {
-	return context.WithValue(ctx, envelopeKey{}, &env)
+	return context.WithValue(calllog.WithSubscription(ctx, env.SubscriptionID), envelopeKey{}, &env)
 }
 
 // EnvelopeFrom returns the envelope WithEnvelope stashed on ctx, which may still hold a nil Callback, and false when there is none.
@@ -60,7 +62,7 @@ func PlatformFrom(ctx context.Context) (baseURL, token string, err error) {
 }
 
 // Short timeout so a slow or dead ingest endpoint never blocks lifecycle handling for long.
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+var httpClient = &http.Client{Timeout: 10 * time.Second, Transport: calllog.Transport(nil)}
 
 type operatorEvent struct {
 	SubscriptionID string `json:"subscriptionId"`

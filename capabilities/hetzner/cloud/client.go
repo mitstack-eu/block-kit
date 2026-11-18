@@ -14,6 +14,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
+	"github.com/mitstack-eu/block-kit/helpers/calllog"
 )
 
 // Endpoint is the Cloud API, which a block never takes from a request.
@@ -33,7 +34,7 @@ func New(token string) *Client { return NewAt(Endpoint, token) }
 
 // NewAt calls the API at base, which only a test's fake sets.
 func NewAt(base, token string) *Client {
-	return &Client{base: base, token: token, http: &http.Client{Timeout: timeout}}
+	return &Client{base: base, token: token, http: &http.Client{Timeout: timeout, Transport: calllog.Transport(nil)}}
 }
 
 // Error is an error answer of the API, such as 422 must_be_unassigned.

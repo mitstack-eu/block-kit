@@ -11,6 +11,7 @@ package has [a page of its own](gitops.md).
 |---|---|
 | `helpers/safe` | Logs a value from a request, or calls an API whose host a request names |
 | `helpers/bounded` | Calls an API with its own HTTP client and reads the answer |
+| `helpers/calllog` | Calls an API with an HTTP client of its own, which then logs one line per call |
 | `helpers/guardedhttp` | Is a capability operator that calls its vendor with an org's credential |
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/reqcache` | Wants a read repeated within one request to cost one call, for a source of its own that cannot change under the request |
@@ -102,6 +103,80 @@ cuts a refusal's text to `limit`, since the status already says what happened.
 ```go
 raw, err := bounded.Read(resp, "GET /server/42", 1<<20)
 // err: GET /server/42: the answer is longer than 1048576 bytes
+```
+
+## Logging each call a client makes
+
+A subscription is one app's use of a block. A lifecycle call is a request the
+platform sends a block for one subscription, such as a subscribe or a validate,
+as [Serving lifecycle calls](handler.md) describes. When a call your block
+makes while serving one is slow or fails, you need to know which call it was. A body or
+a header can carry a credential, so the line leaves them out.
+`helpers/calllog` wraps an `*http.Client` so that each call it makes writes
+one log line. The line names the subscription, the method, the host, the route
+and the answer, and says how many milliseconds the call took. It never holds
+the query, a header value or a body.
+
+```text
+calllog: subscription=sub_681cd5ccfbb0 method=GET host=api.scaleway.com route=/cockpit/v1/regions/fr-par/data-sources answer=200 ms=212
+```
+
+The kit's own clients already write this line. They are
+[`guardedhttp`](#calling-a-vendor-with-an-orgs-credential), the [Hetzner
+Cloud](#keeping-a-hetzner-cloud-servers-public-address) and
+[Robot](#adopting-a-hetzner-dedicated-server) clients,
+[`ghapi`](#calling-the-github-api), [`lease`](#asking-the-platform-for-a-lease)
+and [`events`](#reporting-progress-and-reading-the-platform), and a block
+needs no wrapping of its own for them. A block that builds its own client wraps
+it once:
+
+```go
+var httpClient = calllog.Client(&http.Client{Timeout: 10 * time.Second})
+```
+
+Wrapping a client that already writes the line returns it unchanged, so a call
+never writes two lines.
+
+The fields follow these rules:
+
+| Field | What it holds |
+|---|---|
+| `subscription` | The id of the subscription whose lifecycle call the block is serving. The handler puts it on the request's context, so your code passes nothing. A call made outside a served call reads `-` |
+| `host` | The host and port. Each label, the part of the host name between two dots, reads `{id}` unless it is a word or a number |
+| `route` | The path. Each segment, the part between two slashes, reads `{id}` unless it is a word, as in `/v1/servers/{id}` |
+| `answer` | The status, or `canceled` when the request's context was cancelled, `timeout` when a deadline passed, and `error` for any other failure |
+| `ms` | The time until the status arrived or the call failed, so reading the body is not counted |
+
+A word is lowercase letters, which `-` or `_` may join, as in `data-sources`,
+or a version such as `v1`. In a route, a number or a UUID holds a digit, so it
+is no word and reads `{id}`. In a host, a label made only of digits is kept, so
+an address such as `127.0.0.1` stays whole.
+A client that follows a redirect writes one line for each hop.
+
+An identifier made only of lowercase letters reads as a word and stays in the
+line. Some APIs name a thing that way, as GitHub does with an owner, a
+repository and a branch. A client for such an API passes `calllog.FixedSegments`
+with every fixed word its routes hold, and any other segment then reads `{id}`.
+`ghapi` does this:
+
+```go
+var client = calllog.Client(&http.Client{}, calllog.FixedSegments("repos", "git", "ref", "heads"))
+```
+
+With those words, the path `/repos/acme/gitops/git/ref/heads/main` reads
+`/repos/{id}/{id}/git/ref/heads/{id}`.
+
+A validate is the call the platform sends to learn what stands. The handler
+answers it by observing each resource the block's manifest declares, as [What
+the handler calls for each call](handler.md#what-the-handler-calls-for-each-call)
+describes. When the platform ends a validate's request before the block answers,
+the handler writes one more line, formatted by `calllog.Ended`. It says how long
+the validate ran and the resource it had reached. The lines of the calls it was waiting on come before
+that line, each marked `canceled`, or `timeout` when a deadline ended the
+request.
+
+```text
+validate: subscription sub_681cd5ccfbb0: the request ended after 5s at resource "scaleway.cockpit"
 ```
 
 ## Reporting progress and reading the platform

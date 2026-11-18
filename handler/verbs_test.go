@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -88,6 +89,8 @@ func TestRefusedClass(t *testing.T) {
 	}
 }
 
+var eventsCallLine = regexp.MustCompile(`(?m)^.* calllog: subscription=sub-1 method=POST host=\S+ route=/ answer=200 ms=\d+\n`)
+
 func TestServe_ARefusalKeepsTheClassItsBlockChoseAndMasksEachSecretInTheTextAroundIt(t *testing.T) {
 	const detail = "the host runs amd64 and the image is arm64"
 	appSecretHost := map[string]any{"appSecrets": map[string]any{"DB_HOST": "host"}}
@@ -120,8 +123,8 @@ func TestServe_ARefusalKeepsTheClassItsBlockChoseAndMasksEachSecretInTheTextArou
 			if got := events.recorded(); len(got) != 1 || got[0].Detail != wantError {
 				t.Errorf("events = %+v, want one failed event whose detail reads %q", got, wantError)
 			}
-			if got := logged.String(); !strings.HasSuffix(got, tc.wantLog) || strings.Count(got, "\n") != strings.Count(tc.wantLog, "\n") {
-				t.Errorf("log = %q, want it to hold only a line ending %q", got, tc.wantLog)
+			if got, rest := logged.String(), eventsCallLine.ReplaceAllString(logged.String(), ""); strings.Count(got, "\n") != strings.Count(rest, "\n")+1 || !strings.HasSuffix(rest, tc.wantLog) || strings.Count(rest, "\n") != strings.Count(tc.wantLog, "\n") {
+				t.Errorf("log = %q, want the events call's line and only a line ending %q", got, tc.wantLog)
 			}
 			kittest.AssertNoSecret(t, "response body", string(raw), tc.hidden...)
 		})

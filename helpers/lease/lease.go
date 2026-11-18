@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mitstack-eu/block-kit/helpers/bounded"
+	"github.com/mitstack-eu/block-kit/helpers/calllog"
 )
 
 const (
@@ -113,13 +114,13 @@ func (p Platform) request(ctx context.Context, resource string, want any) (*http
 
 func (p Platform) client() *http.Client {
 	if p.HTTPClient != nil {
-		return p.HTTPClient
+		return calllog.Client(p.HTTPClient)
 	}
 	return defaultClient
 }
 
 // defaultClient follows no redirect, since a redirect would carry the ask to a host the caller did not name.
-var defaultClient = &http.Client{Timeout: askTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+var defaultClient = &http.Client{Timeout: askTimeout, Transport: calllog.Transport(nil), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
 func (p Platform) now() time.Time {
 	if p.Clock != nil {
