@@ -94,11 +94,12 @@ func outputsTheConnection(t *testing.T, d *Database) {
 
 // passwordSource is the secret the block's PasswordSecret names for shop, or "password" when it names none.
 func passwordSource(d *Database) string {
-	name := "password"
-	if d.DB.PasswordSecret != nil && d.DB.PasswordSecret(d.Desired("shop", nil)) != "" {
-		name = d.DB.PasswordSecret(d.Desired("shop", nil))
+	if d.DB.PasswordSecret != nil {
+		if name := d.DB.PasswordSecret(d.Desired("shop", nil)); name != "" {
+			return "generated:" + d.DB.Block + ":" + name
+		}
 	}
-	return "generated:" + d.DB.Block + ":" + name
+	return "generated:" + d.DB.Block + ":password"
 }
 
 func refusesWhatDoesNotFit(t *testing.T, d *Database) {
