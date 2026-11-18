@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"time"
 )
@@ -87,11 +86,6 @@ type Request struct {
 	Retire  []string        `json:"retire,omitempty"`
 	Caller  *LeaseCaller    `json:"caller,omitempty"`
 
-	// RunID, Command and Process are read on a run alone.
-	RunID   string `json:"runId,omitempty"`
-	Command string `json:"command,omitempty"`
-	Process string `json:"process,omitempty"`
-
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 
 	CapabilitySlug    string            `json:"capabilitySlug,omitempty"`
@@ -101,36 +95,15 @@ type Request struct {
 // HandoverOutputKey is the output a snapshot publishes the handover of unit under, and the key of the prior output a restore reads it from.
 func HandoverOutputKey(unit string) string { return "handover." + unit }
 
-// OperationIssue asks a capability for one app's credential, OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook, OperationVerifyConnection asks a capability's operator whether the credential an org entered works, before any subscription exists, OperationLease asks a block for a short-lived credential of a resource it provides, or to retire the ones it minted, OperationRun asks a block to run a builder's one-off command in a fresh container of the app, OperationSnapshot asks a block to snapshot one declared state and publish its handover only once a scratch restore of the snapshot passes, and OperationRestore asks it to put that state back from the handover.
+// OperationIssue asks a capability for one app's credential, OperationLogs asks a block for one subscription's recent lines on /logs, never on /hook, OperationVerifyConnection asks a capability's operator whether the credential an org entered works, before any subscription exists, OperationLease asks a block for a short-lived credential of a resource it provides, or to retire the ones it minted, OperationSnapshot asks a block to snapshot one declared state and publish its handover only once a scratch restore of the snapshot passes, and OperationRestore asks it to put that state back from the handover.
 const (
 	OperationIssue            = "issue"
 	OperationLogs             = "logs"
 	OperationVerifyConnection = "verify-connection"
 	OperationLease            = "lease"
-	OperationRun              = "run"
 	OperationSnapshot         = "snapshot"
 	OperationRestore          = "restore"
 )
-
-// MaxRunCommandLength is the longest command a run carries, in printable ASCII characters.
-const MaxRunCommandLength = 1000
-
-// RunRequest is what a run asks of a block: run Command once for the run ID in Process, the block's entry when empty.
-type RunRequest struct {
-	ID      string
-	Command string
-	Process string
-}
-
-// RunResult is an ended run, a non-zero exit included, or on a pending answer only that the run is queued or a started run's start and digest.
-type RunResult struct {
-	ExitCode  int       `json:"exitCode"`
-	Output    string    `json:"output"`
-	Digest    string    `json:"digest,omitempty"`
-	StartedAt time.Time `json:"startedAt,omitzero"`
-	EndedAt   time.Time `json:"endedAt,omitzero"`
-	Queued    bool      `json:"queued,omitempty"`
-}
 
 // MaxLeaseLife is the longest a leased credential may live, since a credential that lives longer is no lease.
 const MaxLeaseLife = 24 * time.Hour
@@ -239,7 +212,6 @@ type Response struct {
 	Credential *Credential       `json:"credential,omitempty"`
 	OwnSecrets map[string]string `json:"ownSecrets,omitempty"`
 	Lease      *Lease            `json:"lease,omitempty"`
-	Run        *RunResult        `json:"run,omitempty"`
 	Verdict    string            `json:"verdict,omitempty"`
 }
 
@@ -454,7 +426,6 @@ var validOperations = map[string]bool{
 
 	OperationVerifyConnection: true,
 	OperationLease:            true,
-	OperationRun:              true,
 	OperationSnapshot:         true,
 	OperationRestore:          true,
 }
@@ -488,17 +459,12 @@ func DecodeRequest(raw []byte) (Request, error) {
 
 	if !validOperations[req.Operation] {
 		return Request{}, fmt.Errorf(
-			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, run, snapshot, restore, got %q",
+			"contract: envelope field %q must be one of subscribe, unsubscribe, upgrade, validate, issue, logs, verify-connection, lease, snapshot, restore, got %q",
 			"operation", req.Operation)
 	}
 
 	if req.Operation == OperationLease {
 		if err := checkLease(req); err != nil {
-			return Request{}, err
-		}
-	}
-	if req.Operation == OperationRun {
-		if err := checkRun(req); err != nil {
 			return Request{}, err
 		}
 	}
@@ -547,30 +513,6 @@ func (r Request) Lease() LeaseRequest {
 		l.Caller = *r.Caller
 	}
 	return l
-}
-
-var (
-	runIDRe   = regexp.MustCompile(`^run_[0-9a-f]{12}$`)
-	commandRe = regexp.MustCompile(`^[ -~]+$`)
-	processRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
-)
-
-// checkRun enforces the rules for a run that envelope.schema.json documents, since DecodeRequest never validates a request against the schema, so a change to either needs the other.
-func checkRun(req Request) error {
-	if !runIDRe.MatchString(req.RunID) {
-		return fmt.Errorf("contract: envelope field %q must be run_ and twelve lowercase hex characters, got %q", "runId", req.RunID)
-	}
-	if len(req.Command) > MaxRunCommandLength || !commandRe.MatchString(req.Command) {
-		return fmt.Errorf("contract: envelope field %q must be one line of at most %d printable ASCII characters", "command", MaxRunCommandLength)
-	}
-	if req.Process != "" && !processRe.MatchString(req.Process) {
-		return fmt.Errorf("contract: envelope field %q must be lowercase letters, digits, hyphens and underscores, got %q", "process", req.Process)
-	}
-	return nil
-}
-
-func (r Request) Run() RunRequest {
-	return RunRequest{ID: r.RunID, Command: r.Command, Process: r.Process}
 }
 
 // DecodeResponse decodes raw into a Response, naming the JSON field of any type mismatch.

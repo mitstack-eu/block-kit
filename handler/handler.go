@@ -77,7 +77,7 @@ type Snapshotter interface {
 	Restore(ctx context.Context, d contract.Desired, unit, handover string) error
 }
 
-// Config wires a Handler; Resource, Manifest and JWKSURL are required, a nil Logs answers GET /logs with 404, SubscriptionLogs, required exactly when the manifest lists the operation logs, answers a signed POST /logs with the lines of the subscription its request names, and Run, required exactly when the manifest lists run, runs a builder's command and answers pending through Wait until it ended.
+// Config wires a Handler; Resource, Manifest and JWKSURL are required, a nil Logs answers GET /logs with 404, and SubscriptionLogs, required exactly when the manifest lists the operation logs, answers a signed POST /logs with the lines of the subscription its request names.
 type Config struct {
 	Resource Resource
 
@@ -104,8 +104,6 @@ type Config struct {
 	Logs *webhook.LogBuffer
 
 	SubscriptionLogs func(ctx context.Context, d contract.Desired) ([]string, error)
-
-	Run func(ctx context.Context, d contract.Desired, r contract.RunRequest) (contract.RunResult, error)
 
 	// Verifier answers a verify-connection, and is required exactly when the manifest lists that operation, which a capability whose only operation it is serves with no Resource.
 	Verifier ConnectionVerifier
@@ -140,7 +138,6 @@ type Handler struct {
 	logs      *webhook.LogBuffer
 
 	subscriptionLogs func(ctx context.Context, d contract.Desired) ([]string, error)
-	runFunction      func(ctx context.Context, d contract.Desired, r contract.RunRequest) (contract.RunResult, error)
 
 	verifier ConnectionVerifier
 
@@ -180,9 +177,6 @@ func New(cfg Config) (*Handler, error) {
 	if err := checkSubscriptionLogs(cfg, declared); err != nil {
 		return nil, err
 	}
-	if err := checkRun(cfg, declared); err != nil {
-		return nil, err
-	}
 	leaser, err := checkLeaser(cfg, declared)
 	if err != nil {
 		return nil, err
@@ -208,7 +202,6 @@ func New(cfg Config) (*Handler, error) {
 		replay:           cfg.Replay,
 		logs:             cfg.Logs,
 		subscriptionLogs: cfg.SubscriptionLogs,
-		runFunction:      cfg.Run,
 		verifier:         cfg.Verifier,
 		now:              cfg.Now,
 		idempotency:      newIdempotencyCache(),

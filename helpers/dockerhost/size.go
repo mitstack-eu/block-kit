@@ -10,6 +10,8 @@ import (
 	"github.com/mitstack-eu/block-kit/handler"
 )
 
+const classHostAbsent = "host-absent"
+
 const (
 	millisPerCPU = 1000
 	bytesPerMiB  = int64(1) << 20
