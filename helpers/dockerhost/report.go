@@ -8,11 +8,22 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/handler"
 	"github.com/mitstack-eu/block-kit/observe"
 )
+
+const (
+	agentSyncInterval        = time.Minute
+	agentReleaseCommandLimit = 15 * time.Minute
+	agentHealthWait          = 5 * time.Minute
+	agentReportInterval      = 5 * time.Minute
+)
+
+// CatchUpBound is how long after a commit to main the host's agent may take to report it running: the sum of the agent timings the hcloud-docker-host README documents.
+const CatchUpBound = agentSyncInterval + agentReleaseCommandLimit + agentHealthWait + agentReportInterval
 
 // SyncedCommitSince is the first hcloud-docker-host release whose node report names the commit its agent last synced.
 const SyncedCommitSince = "0.8.0"

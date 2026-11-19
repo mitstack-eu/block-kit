@@ -26,7 +26,6 @@ type manifestDeclarations struct {
 	capability    bool
 	logs          bool
 	leases        bool
-	runs          bool
 	snapshots     bool
 	snapshotUnits []string
 	verifies      bool
@@ -57,7 +56,6 @@ func readManifestDeclarations(manifest []byte) (manifestDeclarations, error) {
 		capability:    m.Block.Type == contract.ManifestTypeCapability,
 		logs:          slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLogs),
 		leases:        slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationLease),
-		runs:          slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationRun),
 		snapshots:     slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationSnapshot) || slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationRestore),
 		verifies:      slices.Contains(m.Block.Spec.Lifecycle.Operations, contract.OperationVerifyConnection),
 		verifyOnly:    slices.Equal(m.Block.Spec.Lifecycle.Operations, []string{contract.OperationVerifyConnection}),
