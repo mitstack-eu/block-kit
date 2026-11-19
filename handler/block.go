@@ -84,12 +84,15 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		}
 		return r.deleteEach(ctx)
 	case "validate":
+		r.resources = units(included, r.d.RecordedResources)
+		r.setRefs(nil)
 		replaces, planned, err := r.planReplacements(ctx)
+		if w, ok := waiting(err); ok {
+			return r.withOwnSecrets(r.converging(w.Detail, false))
+		}
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
-		r.resources = units(included, r.d.RecordedResources)
-		r.setRefs(nil)
 		status, resp := r.withOwnSecrets(r.validateEach(ctx))
 		if status == http.StatusOK {
 			resp.Replaces = replaces

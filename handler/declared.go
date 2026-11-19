@@ -74,7 +74,7 @@ func (h *Handler) dispatchDeclared(ctx context.Context, req contract.Request, se
 		resources = []namedResource{nr}
 	}
 
-	run := &declaredRun{h: h, d: d, secrets: secrets, connectionSecrets: d.SecretValues().Connections,
+	run := &declaredRun{h: h, d: d, operation: operation, secrets: secrets, connectionSecrets: d.SecretValues().Connections,
 		resources: resources, outcomes: map[string]contract.ResourceOutcome{}, started: h.now(),
 		asksTeardownReport: asksTeardownReport(req)}
 	status, resp := run.serveBlock(ctx, operation)
@@ -138,6 +138,7 @@ func (h *Handler) declaredResource(name string) (namedResource, bool) {
 type declaredRun struct {
 	h             *Handler
 	d             contract.Desired
+	operation     string
 	secrets       []string
 	resources     []namedResource
 	outcomes      map[string]contract.ResourceOutcome
@@ -357,11 +358,14 @@ func (r *declaredRun) blockers() []string {
 	return out
 }
 
-// validateObserved never polls, answers redrive when any resource observed Unknown reports its work finished, and an Observe error is classified, never folded into pending, and stops the probe there.
+// validateObserved never polls, answers redrive when any resource observed Unknown reports its work finished, and an Observe error is classified, never folded into pending, and stops the probe there; a Waiting error answers the resources unknown.
 func (r *declaredRun) validateObserved(ctx context.Context) (int, contract.Response) {
 	ctx = reqcache.Snapshot(ctx)
 	if c, ok := r.h.resource.(Converger); ok {
 		detail, done, err := c.Converging(ctx, r.d)
+		if w, ok := waiting(err); ok {
+			return r.converging(w.Detail, false)
+		}
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
@@ -420,7 +424,7 @@ func (r *declaredRun) validateObserved(ctx context.Context) (int, contract.Respo
 	return http.StatusOK, resp
 }
 
-// converging answers every resource unknown with the block's detail, and redrive once its work finished, keeping the identity each was handed.
+// converging answers every resource unknown with the detail the block's convergence read or a held call gave, and redrive once its work finished, keeping the identity each was handed.
 func (r *declaredRun) converging(detail string, done bool) (int, contract.Response) {
 	if detail == "" {
 		detail = "the work the last subscribe left running has finished, so the next subscribe reports what it made"
@@ -609,8 +613,18 @@ func (r *declaredRun) answeredCause(typ, cause string) string {
 	return safe.Scrub(cause, r.secrets...)
 }
 
-// fail answers as errorResponse classifies err, carrying every resource outcome recorded so far.
+// fail answers as errorResponse classifies err, carrying every resource outcome recorded so far, and answers a Waiting err with the resource unknown, pending or absent:false on an unsubscribe, since what stands is unread rather than failed.
 func (r *declaredRun) fail(name string, entry *contract.ResourceOutcome, call **contract.CallOutcome, err error) (int, contract.Response) {
+	if w, ok := waiting(err); ok {
+		detail, ref := safe.Scrub(w.Detail, r.secrets...), r.refs[name]
+		*call = &contract.CallOutcome{State: contract.Unknown, StatusDetail: detail, Identity: ref.Identity, Type: ref.Type}
+		r.outcomes[name] = *entry
+		if r.operation == "unsubscribe" {
+			absent := false
+			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: detail, Resources: r.outcomes}
+		}
+		return http.StatusOK, contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: detail, Resources: r.outcomes, ResourceSecretOutputs: r.resourceSecretOutputs}
+	}
 	status, resp := r.h.errorResponse(err, r.secrets)
 	*call = &contract.CallOutcome{Error: resp.Error, StatusDetail: resp.StatusDetail}
 	r.outcomes[name] = *entry
