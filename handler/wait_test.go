@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -39,8 +38,6 @@ func (waitingReporter) EnsureResources(context.Context, contract.Desired) ([]con
 	return []contract.CreatedResource{{Name: "r", Type: "aws.vpc", Identity: map[string]string{"vpcId": "vpc-1"}}}, handler.Wait("%s", waitDetail)
 }
 
-const fromReporter = "EnsureResources, having made r"
-
 type signalWaitingBlock struct{ waitingBlock }
 
 func (signalWaitingBlock) Ensure(context.Context, contract.Desired) error {
@@ -54,7 +51,7 @@ func (signalWaitingBlock) Delete(context.Context, contract.Desired) (map[string]
 const fromSignalWait = "Ensure, waiting for a signal"
 
 func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetailAndOnlyAWaitForASignalAsksForTheSubscribeAgain(t *testing.T) {
-	blocks := map[string]handler.Resource{"Ensure": waitingBlock{}, fromReporter: waitingReporter{}, fromSignalWait: signalWaitingBlock{}}
+	blocks := map[string]handler.Resource{"Ensure": waitingBlock{}, "EnsureResources, having made r": waitingReporter{}, fromSignalWait: signalWaitingBlock{}}
 	for _, op := range []string{"subscribe", "upgrade", "unsubscribe"} {
 		for from, block := range blocks {
 			t.Run(op+" from "+from, func(t *testing.T) {
@@ -75,8 +72,8 @@ func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetailAndOnlyAWaitForASigna
 				if calls := len(obs.calls()); calls != 0 {
 					t.Errorf("the resource was observed %d times, want none once the block waits", calls)
 				}
-				if e := resp.Resources["r"].Ensure; from == fromReporter && op != "unsubscribe" && (e == nil || e.Identity["vpcId"] != "vpc-1") {
-					t.Errorf("%s answered resource r's ensure %+v, want the identity the ensure reported before it waited", op, e)
+				if _, reports := block.(handler.ResourceReporter); reports && op != "unsubscribe" && (resp.Resources["r"].Ensure == nil || resp.Resources["r"].Ensure.Identity["vpcId"] != "vpc-1") {
+					t.Errorf("%s answered resource r's ensure %+v, want the identity the ensure reported before it waited", op, resp.Resources["r"].Ensure)
 				}
 			})
 		}
@@ -85,14 +82,14 @@ func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetailAndOnlyAWaitForASigna
 
 const joinedFailure = "deleting primary IP 203.0.113.7: Hetzner Cloud answered 422"
 
+var joined = errors.Join(handler.Wait("%s", waitDetail), errors.New(joinedFailure))
+
 type joinedWaitBlock struct{}
 
-func (joinedWaitBlock) Ensure(context.Context, contract.Desired) error {
-	return errors.Join(handler.Wait("%s", waitDetail), errors.New(joinedFailure))
-}
+func (joinedWaitBlock) Ensure(context.Context, contract.Desired) error { return joined }
 
 func (joinedWaitBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
-	return nil, fmt.Errorf("deleting: %w", errors.Join(handler.Wait("%s", waitDetail), errors.New(joinedFailure)))
+	return nil, fmt.Errorf("deleting: %w", joined)
 }
 
 func TestServe_AWaitJoinedWithAFailureAnswersTheFailure(t *testing.T) {
@@ -146,59 +143,31 @@ func TestServe_AnUnsubscribeWaitingOnARemovalAnswersEachResourcesObserveAndKeeps
 	}
 }
 
-var heldAt = time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
+type cloudBlock func(ctx context.Context, step string) error
 
-const heldToken = "held-cloud-token"
-
-type cloudBlock struct {
-	c     *cloud.Client
-	calls string
-}
-
-func refusedCloud(t *testing.T, calls string) (cloudBlock, *atomic.Int64, string) {
-	t.Helper()
-	f, sent := cloudtest.New(t, heldToken), &atomic.Int64{}
-	f.Hook = func(w http.ResponseWriter, _ *http.Request) bool {
-		sent.Add(1)
-		w.Header().Set("RateLimit-Reset", strconv.FormatInt(heldAt.Add(30*time.Minute).Unix(), 10))
-		cloudtest.Refuse(w, http.StatusTooManyRequests, "rate_limit_exceeded", "Limit of '5000' requests per hour for ip '192.0.2.10' reached.")
-		return true
-	}
-	host := strings.TrimSuffix(strings.TrimPrefix(f.URL(), "http://"), "/v1")
-	return cloudBlock{cloud.NewHolds(func() time.Time { return heldAt }).Client(f.URL(), heldToken), calls}, sent, calllog.Host(host)
-}
-
-func (b cloudBlock) call(ctx context.Context, step string) error {
-	if b.calls != step {
-		return nil
-	}
-	return b.c.KeepPrimaryIPs(ctx, map[string]string{"block": "test-block", "subscription": "sub-1"})
-}
-
-func (b cloudBlock) Ensure(ctx context.Context, _ contract.Desired) error {
-	return b.call(ctx, "block")
-}
+func (b cloudBlock) Ensure(ctx context.Context, _ contract.Desired) error { return b(ctx, "block") }
 
 func (b cloudBlock) Delete(ctx context.Context, _ contract.Desired) (map[string]string, error) {
-	return nil, b.call(ctx, "block")
+	return nil, b(ctx, "block")
 }
 
 func (b cloudBlock) PlanReplacements(ctx context.Context, _ contract.Desired) ([]string, error) {
-	return nil, b.call(ctx, "plan")
+	return nil, b(ctx, "plan")
 }
 
 func (b cloudBlock) Converging(ctx context.Context, _ contract.Desired) (string, bool, error) {
-	return "", false, b.call(ctx, "converge")
+	return "", false, b(ctx, "converge")
 }
 
 func (b cloudBlock) ObserveResource(ctx context.Context, _ contract.ResourceRef) (contract.Observation, error) {
-	return contract.Observation{State: contract.Present}, b.call(ctx, "observe")
+	return contract.Observation{State: contract.Present}, b(ctx, "observe")
 }
 
 func TestServe_AHeldHetznerCallAnswersAStepWaitingAndAValidateUnknownNamingInUTCWhenTheHoldEnds(t *testing.T) {
-	const endsUTC = "2026-11-19T20:01:00Z"
-	held := (&cloud.RateLimited{Until: heldAt.Add(time.Minute)}).Error()
-	cases := []struct{ name, op, calls string }{
+	const endsUTC, token = "2026-11-19T20:01:00Z", "held-cloud-token"
+	at := time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
+	held := (&cloud.RateLimited{Until: at.Add(time.Minute)}).Error()
+	for _, tc := range []struct{ name, op, calls string }{
 		{"a subscribe whose ensure is held answers waiting", "subscribe", "block"},
 		{"an upgrade whose ensure is held answers waiting", "upgrade", "block"},
 		{"an unsubscribe whose delete is held answers not yet absent", "unsubscribe", "block"},
@@ -208,10 +177,22 @@ func TestServe_AHeldHetznerCallAnswersAStepWaitingAndAValidateUnknownNamingInUTC
 		{"a validate whose observation is held answers the resource unknown", "validate", "observe"},
 		{"a validate whose replacement plan is held answers the resource unknown", "validate", "plan"},
 		{"a validate whose convergence read is held answers the resource unknown", "validate", "converge"},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b, sent, host := refusedCloud(t, tc.calls)
+			f, sent := cloudtest.New(t, token), &atomic.Int64{}
+			f.Hook = func(w http.ResponseWriter, _ *http.Request) bool {
+				sent.Add(1)
+				w.Header().Set("RateLimit-Reset", fmt.Sprint(at.Add(30*time.Minute).Unix()))
+				cloudtest.Refuse(w, http.StatusTooManyRequests, "rate_limit_exceeded", "Limit of '5000' requests per hour for ip '192.0.2.10' reached.")
+				return true
+			}
+			client := cloud.NewHolds(func() time.Time { return at }).Client(f.URL(), token)
+			b := cloudBlock(func(ctx context.Context, step string) error {
+				if step != tc.calls {
+					return nil
+				}
+				return client.KeepPrimaryIPs(ctx, map[string]string{"block": "test-block", "subscription": "sub-1"})
+			})
 			logs, x := captureLog(t), newHarness(t, b, func(cfg *handler.Config) { cfg.Observers = map[string]handler.Observer{"r": b} })
 
 			for i := range 2 {
@@ -227,11 +208,8 @@ func TestServe_AHeldHetznerCallAnswersAStepWaitingAndAValidateUnknownNamingInUTC
 					t.Errorf("%s %d answered resource r's observe %+v; want state unknown with statusDetail %q and no error", tc.op, i+1, o, held)
 				}
 			}
-			if got := sent.Load(); got != 1 {
-				t.Errorf("%d calls reached Hetzner over two %ss; want 1, the second answered by the hold", got, tc.op)
-			}
-			if want := "calls: subscription=sub-1 verb=" + tc.op + " " + host + "=1\n"; strings.Count(logs.String(), "calls: ") != 1 || !strings.Contains(logs.String(), want) {
-				t.Errorf("logs = %q; want the one call count line %q, for the request that reached Hetzner and none for the held one", logs, want)
+			if want := "calls: subscription=sub-1 verb=" + tc.op + " " + calllog.Host(strings.TrimSuffix(strings.TrimPrefix(f.URL(), "http://"), "/v1")) + "=1\n"; sent.Load() != 1 || strings.Count(logs.String(), "calls: ") != 1 || !strings.Contains(logs.String(), want) {
+				t.Errorf("%d calls reached Hetzner over two %ss and logs = %q; want 1, the second answered by the hold, and the one call count line %q for it", sent.Load(), tc.op, logs, want)
 			}
 		})
 	}
