@@ -54,8 +54,8 @@ func lines(logs *bytes.Buffer) (out []map[string]string) {
 	return out
 }
 
-// newServer answers status at once, or holds the call until its client gives up when status is zero.
-func newServer(t *testing.T, status int) *httptest.Server {
+// newServer answers status at once with each of headers set, or holds the call until its client gives up when status is zero.
+func newServer(t *testing.T, status int, headers map[string]string) *httptest.Server {
 	t.Helper()
 	released := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +65,9 @@ func newServer(t *testing.T, status int) *httptest.Server {
 			case <-released:
 			}
 			return
+		}
+		for k, v := range headers {
+			w.Header().Set(k, v)
 		}
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte("{}"))
@@ -102,7 +105,7 @@ func TestTransport_EachCallWritesOneLineNamingItsRouteAndAnswerAndNothingItCarri
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			logs, srv := captureLog(t), newServer(t, tc.status)
+			logs, srv := captureLog(t), newServer(t, tc.status, nil)
 			client := cmp.Or(tc.client, &http.Client{})
 			ctx := context.Background()
 			if tc.subscription != "-" {
@@ -158,7 +161,7 @@ func TestRoute_NamesEachSegmentThatIsNotAWordOrAFixedSegmentAsAnId(t *testing.T)
 }
 
 func TestTransport_ANilTransportSendsThroughTheDefaultTransportStandingAtTheCall(t *testing.T) {
-	logs, srv, client, prev := captureLog(t), newServer(t, http.StatusTeapot), calllog.Client(&http.Client{}), http.DefaultTransport
+	logs, srv, client, prev := captureLog(t), newServer(t, http.StatusTeapot, nil), calllog.Client(&http.Client{}), http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = prev })
 	http.DefaultTransport = &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
@@ -227,7 +230,7 @@ func TestKitClients_EachWritesOneLineForOneCall(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			logs, srv := captureLog(t), newServer(t, http.StatusOK)
+			logs, srv := captureLog(t), newServer(t, http.StatusOK, nil)
 
 			tc.call(calllog.WithSubscription(context.Background(), "sub_a"), srv.URL)
 
@@ -241,19 +244,6 @@ func TestKitClients_EachWritesOneLineForOneCall(t *testing.T) {
 
 const correlation = "corr-calllog-sentinel-81c4"
 
-// headerServer answers every call 200 with each of headers set.
-func headerServer(t *testing.T, headers map[string]string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		for k, v := range headers {
-			w.Header().Set(k, v)
-		}
-		_, _ = w.Write([]byte("{}"))
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 func get(t *testing.T, ctx context.Context, client *http.Client, url string) {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -263,25 +253,10 @@ func get(t *testing.T, ctx context.Context, client *http.Client, url string) {
 	}
 }
 
-// countLine is the fields of a per-request call count line, cut at each field's first "=".
-func countLine(t *testing.T, line string) map[string]string {
-	t.Helper()
-	rest, ok := strings.CutPrefix(line, "calls: ")
-	if !ok {
-		t.Fatalf("count line = %q; want it to open with %q", line, "calls: ")
-	}
-	fields := map[string]string{}
-	for _, kv := range strings.Fields(rest) {
-		k, v, _ := strings.Cut(kv, "=")
-		fields[k] = v
-	}
-	return fields
-}
-
 func TestTransport_EachLineCarriesHetznersRemainingFigureAndTheRequestsCountLineNamesEachHostsCalls(t *testing.T) {
 	logs := captureLog(t)
-	hetzner := headerServer(t, map[string]string{"RateLimit-Limit": "3600", "RateLimit-Remaining": "3597", "RateLimit-Reset": "1763582400", "X-Correlation-Id": correlation})
-	other := headerServer(t, nil)
+	hetzner := newServer(t, http.StatusOK, map[string]string{"RateLimit-Limit": "3600", "RateLimit-Remaining": "3597", "RateLimit-Reset": "1763582400", "X-Correlation-Id": correlation})
+	other := newServer(t, http.StatusOK, nil)
 	hetznerHost, otherHost := strings.TrimPrefix(hetzner.URL, "http://"), strings.TrimPrefix(other.URL, "http://")
 	ctx := calllog.Counting(calllog.WithSubscription(context.Background(), "sub_a"))
 	client := calllog.Client(&http.Client{})
@@ -296,61 +271,50 @@ func TestTransport_EachLineCarriesHetznersRemainingFigureAndTheRequestsCountLine
 		t.Fatalf("logs = %q; want one calllog line per call, 3", logs)
 	}
 	for _, l := range got {
-		want := ""
-		if l["host"] == hetznerHost {
-			want = "3597"
-		}
-		if l["RateLimit-Remaining"] != want {
+		if want := map[string]string{hetznerHost: "3597"}[l["host"]]; l["RateLimit-Remaining"] != want {
 			t.Errorf("line %v carries RateLimit-Remaining %q; want %q, the response's own header", l, l["RateLimit-Remaining"], want)
 		}
 	}
 	if s := logs.String(); strings.Contains(s, "3600") || strings.Contains(s, "1763582400") || strings.Contains(s, correlation) {
 		t.Errorf("logs = %q; want no header value but RateLimit-Remaining's", s)
 	}
-	want := map[string]string{"subscription": "sub_a", "verb": "subscribe", hetznerHost: "2", otherHost: "1"}
-	if !counted || !reflect.DeepEqual(countLine(t, count), want) {
-		t.Errorf("Counted = %q, %v; want a line holding %v", count, counted, want)
+	first, second := hetznerHost+"=2", otherHost+"=1"
+	if otherHost < hetznerHost {
+		first, second = second, first
+	}
+	if want := "calls: subscription=sub_a verb=subscribe " + first + " " + second; !counted || count != want {
+		t.Errorf("Counted = %q, %v; want %q, its hosts in name order", count, counted, want)
 	}
 }
 
 func TestTransport_ALineLeavesOutARemainingFigureThatIsNoWholeNumber(t *testing.T) {
-	cases := []struct{ name, value string }{
-		{"a missing header leaves the field out", ""},
-		{"a value carrying more than a number leaves the field out and is not logged", "3597 " + token},
-		{"a negative figure leaves the field out", "-1"},
+	cases := map[string]map[string]string{
+		"a missing header leaves the field out":                                      nil,
+		"a value carrying more than a number leaves the field out and is not logged": {"RateLimit-Remaining": "3597 " + token},
+		"a negative figure leaves the field out":                                     {"RateLimit-Remaining": "-1"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			logs, headers := captureLog(t), map[string]string{}
-			if tc.value != "" {
-				headers["RateLimit-Remaining"] = tc.value
-			}
-			srv := headerServer(t, headers)
+	for name, headers := range cases {
+		t.Run(name, func(t *testing.T) {
+			logs, srv := captureLog(t), newServer(t, http.StatusOK, headers)
 
 			get(t, calllog.WithSubscription(context.Background(), "sub_a"), calllog.Client(&http.Client{}), srv.URL+"/v1/servers")
 
-			got := lines(logs)
-			if len(got) != 1 {
-				t.Fatalf("logs = %q; want exactly one calllog line", logs)
-			}
-			if _, carried := got[0]["RateLimit-Remaining"]; carried || strings.Contains(logs.String(), token) {
-				t.Errorf("line = %v in logs %q; want no RateLimit-Remaining field and not the token", got[0], logs)
+			if s := logs.String(); len(lines(logs)) != 1 || strings.Contains(s, "RateLimit-Remaining") || strings.Contains(s, token) {
+				t.Errorf("logs = %q; want exactly one calllog line, with no RateLimit-Remaining field and not the token", s)
 			}
 		})
 	}
 }
 
 func TestCounted_WritesNoLineForARequestThatMadeNoCall(t *testing.T) {
-	cases := []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"a counted request that made no call", calllog.Counting(calllog.WithSubscription(context.Background(), "sub_a"))},
-		{"a request that was never counted", calllog.WithSubscription(context.Background(), "sub_a")},
+	uncounted := calllog.WithSubscription(context.Background(), "sub_a")
+	cases := map[string]context.Context{
+		"a counted request that made no call": calllog.Counting(uncounted),
+		"a request that was never counted":    uncounted,
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			line, counted := calllog.Counted(tc.ctx, "validate")
+	for name, ctx := range cases {
+		t.Run(name, func(t *testing.T) {
+			line, counted := calllog.Counted(ctx, "validate")
 
 			if counted || line != "" {
 				t.Errorf("Counted = %q, %v; want no line", line, counted)
@@ -360,14 +324,13 @@ func TestCounted_WritesNoLineForARequestThatMadeNoCall(t *testing.T) {
 }
 
 func TestCounted_CountsACallUnderTheRequestOnlyOnce(t *testing.T) {
-	srv := headerServer(t, nil)
+	srv := newServer(t, http.StatusOK, nil)
 	ctx := calllog.Counting(calllog.WithSubscription(context.Background(), "sub_a"))
-	host := strings.TrimPrefix(srv.URL, "http://")
 
 	get(t, calllog.Counting(ctx), calllog.Client(calllog.Client(&http.Client{})), srv.URL+"/v1/servers")
 	line, counted := calllog.Counted(ctx, "upgrade")
 
-	if want := map[string]string{"subscription": "sub_a", "verb": "upgrade", host: "1"}; !counted || !reflect.DeepEqual(countLine(t, line), want) {
-		t.Errorf("Counted = %q, %v; want %v", line, counted, want)
+	if want := "calls: subscription=sub_a verb=upgrade " + strings.TrimPrefix(srv.URL, "http://") + "=1"; !counted || line != want {
+		t.Errorf("Counted = %q, %v; want %q", line, counted, want)
 	}
 }
