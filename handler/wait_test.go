@@ -1,13 +1,12 @@
-// A block that returns handler.Wait, or whose Hetzner Cloud call is held, answers pending with its detail rather than failed.
+// A block that returns handler.Wait, or whose Hetzner Cloud call is held, answers waiting with its detail rather than failed, unless a failure is joined to the wait.
 package handler_test
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -41,6 +40,14 @@ func (waitingReporter) EnsureResources(context.Context, contract.Desired) ([]con
 	return nil, handler.Wait("%s", waitDetail)
 }
 
+type waitingMaker struct{ waitingReporter }
+
+func (waitingMaker) EnsureResources(context.Context, contract.Desired) ([]contract.CreatedResource, error) {
+	return []contract.CreatedResource{{Name: "r", Type: "aws.vpc", Identity: map[string]string{"vpcId": "vpc-1"}}}, handler.Wait("%s", waitDetail)
+}
+
+const fromMaker = "EnsureResources, having made r"
+
 type signalWaitingBlock struct{ waitingBlock }
 
 func (signalWaitingBlock) Ensure(context.Context, contract.Desired) error {
@@ -54,7 +61,7 @@ func (signalWaitingBlock) Delete(context.Context, contract.Desired) (map[string]
 const fromSignalWait = "Ensure, waiting for a signal"
 
 func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetailAndOnlyAWaitForASignalAsksForTheSubscribeAgain(t *testing.T) {
-	blocks := map[string]handler.Resource{"Ensure": waitingBlock{}, "EnsureResources": waitingReporter{}, fromSignalWait: signalWaitingBlock{}}
+	blocks := map[string]handler.Resource{"Ensure": waitingBlock{}, "EnsureResources": waitingReporter{}, fromMaker: waitingMaker{}, fromSignalWait: signalWaitingBlock{}}
 	for _, op := range []string{"subscribe", "upgrade", "unsubscribe"} {
 		for from, block := range blocks {
 			t.Run(op+" from "+from, func(t *testing.T) {
@@ -79,8 +86,38 @@ func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetailAndOnlyAWaitForASigna
 				if calls := len(obs.calls()); calls != 0 {
 					t.Errorf("the resource was observed %d times, want none once the block waits", calls)
 				}
+				if e := resp.Resources["r"].Ensure; from == fromMaker && op != "unsubscribe" && (e == nil || e.Identity["vpcId"] != "vpc-1") {
+					t.Errorf("%s answered resource r's ensure %+v, want the identity the ensure reported before it waited", op, e)
+				}
 			})
 		}
+	}
+}
+
+const joinedFailure = "deleting primary IP 203.0.113.7: Hetzner Cloud answered 422"
+
+type joinedWaitBlock struct{}
+
+func (joinedWaitBlock) Ensure(context.Context, contract.Desired) error {
+	return errors.Join(handler.Wait("%s", waitDetail), errors.New(joinedFailure))
+}
+
+func (joinedWaitBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
+	return nil, fmt.Errorf("deleting: %w", errors.Join(handler.Wait("%s", waitDetail), errors.New(joinedFailure)))
+}
+
+func TestServe_AWaitJoinedWithAFailureAnswersTheFailure(t *testing.T) {
+	for _, op := range []string{"subscribe", "unsubscribe"} {
+		t.Run(op, func(t *testing.T) {
+			obs := fixed(contract.Observation{State: contract.Present})
+			x := newHarness(t, joinedWaitBlock{}, func(c *handler.Config) { c.Observers = map[string]handler.Observer{"r": obs} })
+
+			status, resp := x.answer(map[string]any{"operation": op})
+
+			if status != http.StatusInternalServerError || resp.Pending || resp.Absent != nil || !strings.Contains(resp.Error, joinedFailure) {
+				t.Errorf("%s answered %d, pending %v, absent %v, error %q; want 500 with an error naming %q", op, status, resp.Pending, resp.Absent, resp.Error, joinedFailure)
+			}
+		})
 	}
 }
 
@@ -124,7 +161,6 @@ var heldAt = time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
 
 const heldToken = "held-cloud-token"
 
-// refusedCloud is a Hetzner Cloud fake refusing every call for the rate limit, returned with a client whose holds read a clock standing at heldAt, the count of calls reaching the fake, and the fake's host as the call log names it.
 func refusedCloud(t *testing.T) (*cloud.Client, *atomic.Int64, string) {
 	t.Helper()
 	f := cloudtest.New(t, heldToken)
@@ -144,127 +180,87 @@ func refusedCloud(t *testing.T) (*cloud.Client, *atomic.Int64, string) {
 
 var heldLabels = map[string]string{"block": "test-block", "subscription": "sub-1"}
 
-type quietBlock struct{}
-
-func (quietBlock) Ensure(context.Context, contract.Desired) error { return nil }
-
-func (quietBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
-	return nil, nil
+type cloudBlock struct {
+	c     *cloud.Client
+	calls string
 }
 
-type cloudCallingBlock struct{ c *cloud.Client }
-
-func (b cloudCallingBlock) Ensure(ctx context.Context, _ contract.Desired) error {
+func (b cloudBlock) keep(ctx context.Context, step string) error {
+	if b.calls != step {
+		return nil
+	}
 	return b.c.KeepPrimaryIPs(ctx, heldLabels)
 }
 
-func (b cloudCallingBlock) Delete(ctx context.Context, _ contract.Desired) (map[string]string, error) {
+func (b cloudBlock) Ensure(ctx context.Context, _ contract.Desired) error {
+	return b.keep(ctx, "block")
+}
+
+func (b cloudBlock) Delete(ctx context.Context, _ contract.Desired) (map[string]string, error) {
+	if b.calls != "block" {
+		return nil, nil
+	}
 	return nil, b.c.DeletePrimaryIPs(ctx, heldLabels)
 }
 
-type cloudPlanner struct {
-	quietBlock
-	c *cloud.Client
+func (b cloudBlock) PlanReplacements(ctx context.Context, _ contract.Desired) ([]string, error) {
+	return nil, b.keep(ctx, "plan")
 }
 
-func (b cloudPlanner) PlanReplacements(ctx context.Context, _ contract.Desired) ([]string, error) {
-	return nil, b.c.KeepPrimaryIPs(ctx, heldLabels)
+func (b cloudBlock) Converging(ctx context.Context, _ contract.Desired) (string, bool, error) {
+	return "", false, b.keep(ctx, "converge")
 }
 
-type cloudConverger struct {
-	quietBlock
-	c *cloud.Client
-}
-
-func (b cloudConverger) Converging(ctx context.Context, _ contract.Desired) (string, bool, error) {
-	return "", false, b.c.KeepPrimaryIPs(ctx, heldLabels)
-}
-
-type cloudObserver struct{ c *cloud.Client }
-
-func (o cloudObserver) ObserveResource(ctx context.Context, _ contract.ResourceRef) (contract.Observation, error) {
-	if err := o.c.KeepPrimaryIPs(ctx, heldLabels); err != nil {
+func (b cloudBlock) ObserveResource(ctx context.Context, _ contract.ResourceRef) (contract.Observation, error) {
+	if err := b.keep(ctx, "observe"); err != nil {
 		return contract.Observation{}, err
 	}
 	return contract.Observation{State: contract.Present}, nil
 }
 
-// countLines are the per-request call count lines in logs, each as its fields.
-func countLines(logs *bytes.Buffer) (out []map[string]string) {
-	for _, l := range strings.Split(logs.String(), "\n") {
-		if _, rest, ok := strings.Cut(l, "calls: "); ok {
-			fields := map[string]string{}
-			for _, kv := range strings.Fields(rest) {
-				k, v, _ := strings.Cut(kv, "=")
-				fields[k] = v
-			}
-			out = append(out, fields)
-		}
-	}
-	return out
-}
-
-type answered struct {
-	status int
-	resp   contract.Response
-}
-
 func TestServe_AHeldHetznerCallAnswersAStepWaitingAndAValidateUnknownNamingInUTCWhenTheHoldEnds(t *testing.T) {
 	const endsUTC = "2026-11-19T20:01:00Z"
 	held := (&cloud.RateLimited{Until: heldAt.Add(time.Minute)}).Error()
-	callingBlock := func(c *cloud.Client) handler.Resource { return cloudCallingBlock{c} }
-	quiet := func(*cloud.Client) handler.Resource { return quietBlock{} }
-	present := func(*cloud.Client) handler.Observer { return fixed(contract.Observation{State: contract.Present}) }
-	reading := func(c *cloud.Client) handler.Observer { return cloudObserver{c} }
-	cases := []struct {
-		name, op string
-		block    func(*cloud.Client) handler.Resource
-		observer func(*cloud.Client) handler.Observer
-		// unknown is set when the answer carries resource r, which then reads unknown.
-		unknown bool
-	}{
-		{"a subscribe whose ensure is held answers waiting", "subscribe", callingBlock, present, false},
-		{"an upgrade whose ensure is held answers waiting", "upgrade", callingBlock, present, false},
-		{"an unsubscribe whose delete is held answers not yet absent", "unsubscribe", callingBlock, present, false},
-		{"a subscribe whose observation is held answers waiting with the resource unknown", "subscribe", quiet, reading, true},
-		{"an upgrade whose observation is held answers waiting with the resource unknown", "upgrade", quiet, reading, true},
-		{"an unsubscribe whose observation is held answers not yet absent with the resource unknown", "unsubscribe", quiet, reading, true},
-		{"a validate whose observation is held answers the resource unknown", "validate", quiet, reading, true},
-		{"a validate whose replacement plan is held answers the resource unknown", "validate", func(c *cloud.Client) handler.Resource { return cloudPlanner{c: c} }, present, true},
-		{"a validate whose convergence read is held answers the resource unknown", "validate", func(c *cloud.Client) handler.Resource { return cloudConverger{c: c} }, present, true},
+	cases := []struct{ name, op, calls string }{
+		{"a subscribe whose ensure is held answers waiting", "subscribe", "block"},
+		{"an upgrade whose ensure is held answers waiting", "upgrade", "block"},
+		{"an unsubscribe whose delete is held answers not yet absent", "unsubscribe", "block"},
+		{"a subscribe whose observation is held answers waiting with the resource unknown", "subscribe", "observe"},
+		{"an upgrade whose observation is held answers waiting with the resource unknown", "upgrade", "observe"},
+		{"an unsubscribe whose observation is held answers not yet absent with the resource unknown", "unsubscribe", "observe"},
+		{"a validate whose observation is held answers the resource unknown", "validate", "observe"},
+		{"a validate whose replacement plan is held answers the resource unknown", "validate", "plan"},
+		{"a validate whose convergence read is held answers the resource unknown", "validate", "converge"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, sent, host := refusedCloud(t)
 			logs := captureLog(t)
-			x := newHarness(t, tc.block(c), func(cfg *handler.Config) { cfg.Observers = map[string]handler.Observer{"r": tc.observer(c)} })
+			b := cloudBlock{c, tc.calls}
+			x := newHarness(t, b, func(cfg *handler.Config) { cfg.Observers = map[string]handler.Observer{"r": b} })
 
-			var answers []answered
-			for range 2 {
+			for i := range 2 {
 				status, resp := x.answer(map[string]any{"operation": tc.op})
-				answers = append(answers, answered{status, resp})
-			}
 
-			for i, a := range answers {
-				if a.status != http.StatusOK || a.resp.StatusDetail != held || !strings.Contains(a.resp.StatusDetail, endsUTC) || a.resp.Error != "" {
-					t.Errorf("%s %d answered %d with statusDetail %q and error %q; want 200 with %q, naming %s", tc.op, i+1, a.status, a.resp.StatusDetail, a.resp.Error, held, endsUTC)
+				if status != http.StatusOK || resp.StatusDetail != held || !strings.Contains(resp.StatusDetail, endsUTC) || resp.Error != "" {
+					t.Errorf("%s %d answered %d with statusDetail %q and error %q; want 200 with %q, naming %s", tc.op, i+1, status, resp.StatusDetail, resp.Error, held, endsUTC)
 				}
-				if tc.op == "unsubscribe" && (a.resp.Absent == nil || *a.resp.Absent) {
-					t.Errorf("unsubscribe %d answered absent %v; want absent:false", i+1, a.resp.Absent)
+				if tc.op == "unsubscribe" && (resp.Absent == nil || *resp.Absent) {
+					t.Errorf("unsubscribe %d answered absent %v; want absent:false", i+1, resp.Absent)
 				}
-				if tc.op != "unsubscribe" && (!a.resp.Pending || a.resp.Absent != nil) {
-					t.Errorf("%s %d answered pending %v and absent %v; want pending:true and no absent, so nothing reads missing", tc.op, i+1, a.resp.Pending, a.resp.Absent)
+				if tc.op != "unsubscribe" && (!resp.Pending || resp.Absent != nil) {
+					t.Errorf("%s %d answered pending %v and absent %v; want pending:true and no absent", tc.op, i+1, resp.Pending, resp.Absent)
 				}
-				if o := a.resp.Resources["r"].Observe; tc.unknown && (o == nil || o.State != contract.Unknown || o.StatusDetail != held || o.Error != "") {
+				if o := resp.Resources["r"].Observe; tc.calls != "block" && (o == nil || o.State != contract.Unknown || o.StatusDetail != held || o.Error != "") {
 					t.Errorf("%s %d answered resource r's observe %+v; want state unknown with statusDetail %q and no error", tc.op, i+1, o, held)
 				}
 			}
 			if got := sent.Load(); got != 1 {
 				t.Errorf("%d calls reached Hetzner over two %ss; want 1, the second answered by the hold", got, tc.op)
 			}
-			want := []map[string]string{{"subscription": "sub-1", "verb": tc.op, host: "1"}}
-			if got := countLines(logs); !reflect.DeepEqual(got, want) {
-				t.Errorf("call count lines = %v in logs %q; want %v, one for the request that reached Hetzner and none for the held one", got, logs, want)
+			want := "calls: subscription=sub-1 verb=" + tc.op + " " + host + "=1\n"
+			if strings.Count(logs.String(), "calls: ") != 1 || !strings.Contains(logs.String(), want) {
+				t.Errorf("logs = %q; want the one call count line %q, for the request that reached Hetzner and none for the held one", logs, want)
 			}
 		})
 	}

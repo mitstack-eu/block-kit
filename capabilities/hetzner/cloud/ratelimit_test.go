@@ -39,19 +39,22 @@ func (c *testClock) set(now time.Time) {
 	c.now = now
 }
 
-// limiter counts every call that reaches the fake and refuses each for the rate limit while refusing is set, naming reset unless it is zero.
 type limiter struct {
-	reset    time.Time
-	refusing atomic.Bool
-	sent     atomic.Int64
+	reset             time.Time
+	refusing, failing atomic.Bool
+	sent              atomic.Int64
 }
 
 func (l *limiter) hook(w http.ResponseWriter, _ *http.Request) bool {
 	l.sent.Add(1)
-	if !l.refusing.Load() {
+	switch {
+	case l.failing.Load():
+		cloudtest.Refuse(w, http.StatusServiceUnavailable, "unavailable", "The service is temporarily unavailable.")
+	case l.refusing.Load():
+		refuseForTheLimit(w, l.reset)
+	default:
 		return false
 	}
-	refuseForTheLimit(w, l.reset)
 	return true
 }
 
@@ -65,7 +68,6 @@ func refuseForTheLimit(w http.ResponseWriter, reset time.Time) {
 	cloudtest.Refuse(w, http.StatusTooManyRequests, "rate_limit_exceeded", "Limit of '5000' requests per hour for ip '192.0.2.10' reached.")
 }
 
-// newLimited serves a fake that refuses every call until the test says otherwise, to a client whose holds read clock.
 func newLimited(t *testing.T, reset time.Time) (*limiter, *testClock, *cloud.Client) {
 	t.Helper()
 	f := cloudtest.New(t, testToken)
@@ -76,7 +78,6 @@ func newLimited(t *testing.T, reset time.Time) (*limiter, *testClock, *cloud.Cli
 	return l, clock, cloud.NewHolds(clock.Now).Client(f.URL(), testToken)
 }
 
-// holdEnd is when the hold err names ends, and false when err is no hold.
 func holdEnd(err error) (time.Time, bool) {
 	var held *cloud.RateLimited
 	if !errors.As(err, &held) || !errors.Is(err, cloud.ErrRateLimited) {
@@ -149,6 +150,10 @@ func TestTransport_HoldEndsByRateLimitReset(t *testing.T) {
 			{"the second refusal holds until the reset, not two minutes", refusedAt.Add(time.Minute), true, refusedAt.Add(2 * time.Minute), 2},
 			{"the call at the reset goes out", refusedAt.Add(2 * time.Minute), false, time.Time{}, 3},
 		}},
+		{"a reset already passed by the operator's clock is ignored", refusedAt.Add(-10 * time.Second), []step{
+			{"the refusal holds one minute", refusedAt, true, refusedAt.Add(time.Minute), 1},
+			{"a call half way through is answered by the hold, unsent", refusedAt.Add(30 * time.Second), true, refusedAt.Add(time.Minute), 1},
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -171,6 +176,27 @@ func TestTransport_RefusalWithoutResetTakesTheGrowingHold(t *testing.T) {
 	}
 
 	runSteps(t, l, clock, c, steps)
+}
+
+func TestTransport_AServerFailureLeavesTheHoldToDouble(t *testing.T) {
+	l, clock, c := newLimited(t, time.Time{})
+	_ = c.KeepPrimaryIPs(ctx, ours)
+	clock.set(refusedAt.Add(time.Minute))
+	l.failing.Store(true)
+
+	failed := c.KeepPrimaryIPs(ctx, ours)
+	l.failing.Store(false)
+	refused := c.KeepPrimaryIPs(ctx, ours)
+
+	if failed == nil || errors.Is(failed, cloud.ErrRateLimited) {
+		t.Errorf("the call meeting the server failure = %v; want that failure", failed)
+	}
+	if until, held := holdEnd(refused); !held || !until.Equal(refusedAt.Add(3*time.Minute)) {
+		t.Errorf("the refusal after the server failure = %v; want the hold doubled to two minutes, ending %s", refused, refusedAt.Add(3*time.Minute))
+	}
+	if got := l.sent.Load(); got != 3 {
+		t.Errorf("%d calls reached Hetzner; want 3", got)
+	}
 }
 
 // The cloudtest fake serves one token, and this test needs two on one host, so a hold keyed by anything but the token fails it.
