@@ -689,7 +689,7 @@ func TestEnvelopeSchema_IsVersion2_0_0(t *testing.T) {
 	doc := jsonObject(t, contract.EnvelopeSchema)
 
 	if doc["version"] != "2.0.0" {
-		t.Errorf("envelope.schema.json version = %v, want 2.0.0: its operation enum drops run, a breaking change from 1.19.0, which added the optional field appDeleting", doc["version"])
+		t.Errorf("envelope.schema.json version = %v, want 2.0.0", doc["version"])
 	}
 }
 
