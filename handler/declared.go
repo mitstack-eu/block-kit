@@ -358,7 +358,7 @@ func (r *declaredRun) blockers() []string {
 	return out
 }
 
-// validateObserved never polls, answers redrive when any resource observed Unknown reports its work finished, and an Observe error is classified, never folded into pending, and stops the probe there; a Waiting error answers the resources unknown.
+// validateObserved never polls, answers redrive when any resource observed Unknown reports its work finished, and stops the probe at an Observe error, which a wait answers unknown and anything else classifies; a wait from the convergence read answers every resource unknown.
 func (r *declaredRun) validateObserved(ctx context.Context) (int, contract.Response) {
 	ctx = reqcache.Snapshot(ctx)
 	if c, ok := r.h.resource.(Converger); ok {

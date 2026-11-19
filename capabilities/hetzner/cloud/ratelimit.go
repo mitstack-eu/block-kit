@@ -85,9 +85,9 @@ func (t *holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	resp, err := t.next.RoundTrip(req)
 	switch {
-	case err != nil:
-		t.holds.unanswered(key, probe)
-		return nil, err
+	case err != nil || resp.StatusCode >= http.StatusInternalServerError:
+		t.holds.inconclusive(key, probe)
+		return resp, err
 	case resp.StatusCode != http.StatusTooManyRequests:
 		t.holds.answered(key, probe)
 		return resp, nil
@@ -120,7 +120,8 @@ func (h *Holds) answered(key [sha256.Size]byte, probe *hold) {
 	}
 }
 
-func (h *Holds) unanswered(key [sha256.Size]byte, probe *hold) {
+// inconclusive keeps the hold for the next call to test, since neither a lost call nor a server failure says the limit has passed.
+func (h *Holds) inconclusive(key [sha256.Size]byte, probe *hold) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if probe != nil && h.held[key] == probe {
@@ -139,8 +140,9 @@ func (h *Holds) refused(key [sha256.Size]byte, probe *hold, header http.Header) 
 	if probe != nil {
 		length = min(2*probe.length, longestHold)
 	}
-	until := h.now().Add(length)
-	if reset, ok := resetTime(header); ok && reset.Before(until) {
+	now := h.now()
+	until := now.Add(length)
+	if reset, ok := resetTime(header); ok && reset.After(now) && reset.Before(until) {
 		until = reset
 	}
 	h.held[key] = &hold{until: until, length: length}
