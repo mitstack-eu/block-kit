@@ -60,7 +60,6 @@ type Converger interface {
 	Converging(ctx context.Context, d contract.Desired) (detail string, finished bool, err error)
 }
 
-// CredentialIssuer, when a capability's block-level Resource implements it, answers an issue with the named app's credential and when it expires.
 type CredentialIssuer interface {
 	IssueCredential(ctx context.Context, d contract.Desired, appID string) (contract.Credential, error)
 }
