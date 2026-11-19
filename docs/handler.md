@@ -478,6 +478,16 @@ describes. The handler observes nothing on that call. The engine asks again,
 as it does for any pending answer, and the wait counts against the block's
 settle budget.
 
+An observer that returns a `*handler.Waiting` answers 200 as well, with that
+resource's observe `unknown` and the detail as its `statusDetail`. The call
+answers `pending:true`, or `absent:false` on an `unsubscribe`. On a `validate`,
+a `PlanReplacements` or a `Converging` that returns one answers `pending:true`
+with every resource `unknown`. The kit's Hetzner Cloud client returns such a
+wait for each call it holds after a rate-limit refusal, as [Holding calls after
+a Hetzner Cloud rate-limit
+refusal](helpers.md#holding-calls-after-a-hetzner-cloud-rate-limit-refusal)
+describes.
+
 `handler.WaitForSignal(format, args...)` builds the same wait for a call that
 changed nothing because it waits on what another subscription reports, such as
 a Docker host that has sent no node report yet. A node report is the state a

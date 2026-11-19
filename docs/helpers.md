@@ -36,7 +36,7 @@ package has [a page of its own](gitops.md).
 | `helpers/tftpl` | Renders in Go an OpenTofu template its module also renders with `templatefile` |
 | `capabilities/github/ghapi` | Calls the GitHub REST API, or reads the GitHub account or App id a request carries |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
-| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, reads a server's `serverType` input, or waits on the Cloud actions its calls start |
+| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, reads a server's `serverType` input, waits on the Cloud actions its calls start, or calls Hetzner Cloud through hcloud-go and needs its calls held after a rate-limit refusal |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
@@ -115,11 +115,13 @@ makes while serving one is slow or fails, you need to know which call it was. A 
 a header can carry a credential, so the line leaves them out.
 `helpers/calllog` wraps an `*http.Client` so that each call it makes writes
 one log line. The line names the subscription, the method, the host, the route
-and the answer, and says how many milliseconds the call took. It never holds
-the query, a header value or a body.
+and the answer, and says how many milliseconds the call took. When the answer
+says how many calls its rate limit has left, the line carries that figure too.
+It never holds the query, a body or any other header value.
 
 ```text
 calllog: subscription=sub_681cd5ccfbb0 method=GET host=api.scaleway.com route=/cockpit/v1/regions/fr-par/data-sources answer=200 ms=212
+calllog: subscription=sub_681cd5ccfbb0 method=GET host=api.hetzner.cloud route=/v1/primary_ips answer=200 ms=95 RateLimit-Remaining=3597
 ```
 
 The kit's own clients already write this line. They are
@@ -147,6 +149,7 @@ The fields follow these rules:
 | `route` | The path. Each segment, the part between two slashes, reads `{id}` unless it is a word, as in `/v1/servers/{id}` |
 | `answer` | The status, or `canceled` when the request's context was cancelled, `timeout` when a deadline passed, and `error` for any other failure |
 | `ms` | The time until the status arrived or the call failed, so reading the body is not counted |
+| `RateLimit-Remaining` | The calls the API says are left before its rate limit refuses one, read from the answer's header of that name, which Hetzner Cloud sends. The field is left out when the header is missing or holds anything but a whole number |
 
 A word is lowercase letters, which `-` or `_` may join, as in `data-sources`,
 or a version such as `v1`. In a route, a number or a UUID holds a digit, so it
@@ -166,6 +169,29 @@ var client = calllog.Client(&http.Client{}, calllog.FixedSegments("repos", "git"
 
 With those words, the path `/repos/acme/gitops/git/ref/heads/main` reads
 `/repos/{id}/{id}/git/ref/heads/{id}`.
+
+Hetzner's API reference documents a rate limit for each project. A refusal
+Hetzner sent on 19 November 2026 also named a limit of 5,000 calls an hour for
+the IP address the calls came from. Whether this figure tracks the
+5,000-an-hour limit per address or only the per-project limit Hetzner documents
+is unproven.
+
+The handler also writes one line for each lifecycle call it serves that made
+calls through these clients. The line names the subscription, the verb and how
+many calls went to each host, so you can see which subscription spends a
+token's budget:
+
+```text
+calls: subscription=sub_681cd5ccfbb0 verb=validate api.hetzner.cloud=4
+```
+
+Only a call made under the request's context is counted. A call your block
+makes under `context.Background()` still writes its own line, but adds nothing
+to this one. A lifecycle call that made no counted call writes no such line. A
+Hetzner Cloud call the kit [holds after a rate-limit
+refusal](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal) never reaches
+Hetzner, so it writes no call line and is not counted. The handler sets this up
+through `calllog.Counting` and `calllog.Counted`, so your block calls neither.
 
 A validate is the call the platform sends to learn what stands. The handler
 answers it by observing each resource the block's manifest declares, as [What
@@ -2320,6 +2346,73 @@ When the call's time runs out first, the call fails with that error, and the
 engine retries it, as [Errors, refusals and
 panics](handler.md#errors-refusals-and-panics) explains. How often the waiter
 asks Hetzner is your client's own setting, such as hcloud-go's `WithPollOpts`.
+
+## Holding calls after a Hetzner Cloud rate-limit refusal
+
+Hetzner Cloud answers `429 rate_limit_exceeded` once a token's budget of calls
+is spent, and its API reference says the budget refills by one call a second.
+A client that keeps calling in the meantime spends each call as it comes back,
+for every block on that token. The kit's Hetzner Cloud client therefore holds a
+refused token's calls, so the budget refills before the next call goes out.
+
+The hold works in four steps:
+
+1. The first refusal holds the token for one minute.
+2. While the hold stands, a call on that token answers at once with a
+   `*cloud.RateLimited` error and sends nothing. The call does not sleep.
+3. When the hold ends, the next call goes out alone. A success ends the hold,
+   and another refusal holds the token for twice as long, up to an hour.
+4. No hold ends later than the `RateLimit-Reset` time Hetzner sends with the
+   refusal, the second its whole budget is back. A refusal without that header
+   takes the growing hold alone.
+
+The hold covers one token. It keeps a SHA-256 hash of the token rather than the
+token itself, and a refusal on one token never holds a call on another. A
+refusal for the limit per IP address therefore holds only the token whose call
+met it. Holds live in the operator's memory, so a restarted operator learns of
+the limit again from its first refused call.
+
+`cloud.RateLimited` wraps a `handler.Waiting`, so the handler answers the
+lifecycle call as it answers `handler.Wait`. The status detail names when the
+hold ends, in UTC:
+
+```text
+Hetzner Cloud refused this token's calls for its rate limit, so none is sent until 2026-11-19T20:01:00Z
+```
+
+| Where the held call was made | What the handler answers |
+|---|---|
+| `EnsureResources` or `Ensure`, on `subscribe` or `upgrade` | `pending: true`, with the hold's text as its status detail |
+| `Delete`, on `unsubscribe` | `absent: false`, with the hold's text |
+| An observer, on `subscribe`, `upgrade` or `validate` | `pending: true`, with that resource unknown |
+| An observer, on `unsubscribe` | `absent: false`, with that resource unknown |
+| `PlanReplacements` or `Converging`, on `validate` | `pending: true`, with every resource unknown |
+
+Your code tells a held call apart with `errors.Is(err, cloud.ErrRateLimited)`.
+`errors.As` into a `*cloud.RateLimited` gives its `Until`, the time the hold
+ends.
+
+`cloud.New` holds its calls already. A block whose own client is hcloud-go,
+Hetzner's Go client, hands it the kit's HTTP client, so both clients meet one
+hold per token:
+
+```go
+client := hcloud.NewClient(hcloud.WithToken(token), hcloud.WithHTTPClient(cloud.HTTPClient()))
+```
+
+hcloud-go sends a refused call again when it reads the refusal itself. Through
+`cloud.HTTPClient` it reads the kit's error instead. hcloud-go v2.49.0 sends a
+call again after such an error only when the error reports a timeout, and
+`cloud.RateLimited` reports none. `cloud.HTTPClient` carries the kit client's
+60-second timeout.
+
+In a test, `cloud.NewHolds(now)` makes holds that read the time from a clock
+your test sets, and `holds.Client(fake.URL(), token)` and `holds.HTTPClient()`
+call through them. A `Fake.Hook` that sets a `RateLimit-Reset` header and
+answers `cloudtest.Refuse(w, http.StatusTooManyRequests,
+"rate_limit_exceeded", message)` stands in for Hetzner's refusal. The hold
+lives in `capabilities/hetzner/cloud/ratelimit.go`, and `ratelimit_test.go`
+beside it proves each step above.
 
 ## Adopting a Hetzner dedicated server
 
