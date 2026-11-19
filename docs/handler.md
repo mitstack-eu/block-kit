@@ -476,7 +476,10 @@ or `Ensure` for a block without it, returns one answers 200 with
 call's `progress` event repeats, as [Lifecycle events](#lifecycle-events)
 describes. The handler observes nothing on that call. The engine asks again,
 as it does for any pending answer, and the wait counts against the block's
-settle budget.
+settle budget. A resource `EnsureResources` returns beside the wait is
+recorded in the answer's `resources`, as it is beside a failure. A wait joined
+with another error, as `errors.Join` builds it, is no wait: the handler
+answers that error as it answers any other.
 
 An observer that returns a `*handler.Waiting` answers 200 as well, with that
 resource's observe `unknown` and the detail as its `statusDetail`. The call

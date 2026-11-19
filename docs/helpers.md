@@ -2360,11 +2360,15 @@ The hold works in four steps:
 1. The first refusal holds the token for one minute.
 2. While the hold stands, a call on that token answers at once with a
    `*cloud.RateLimited` error and sends nothing. The call does not sleep.
-3. When the hold ends, the next call goes out alone. A success ends the hold,
-   and another refusal holds the token for twice as long, up to an hour.
+3. When the hold ends, the next call goes out alone. Any answer but a refusal
+   or a server failure ends the hold, and another refusal holds the token for
+   twice as long, up to an hour. A call that gets no answer, or a server
+   failure of 500 or above, says nothing of the limit. The hold stays, so the
+   call after it goes out alone in turn and the next refusal still doubles it.
 4. No hold ends later than the `RateLimit-Reset` time Hetzner sends with the
-   refusal, the second its whole budget is back. A refusal without that header
-   takes the growing hold alone.
+   refusal, the second its whole budget is back. A refusal without that header,
+   or with a time the operator's clock has already passed, takes the growing
+   hold alone.
 
 The hold covers one token. It keeps a SHA-256 hash of the token rather than the
 token itself, and a refusal on one token never holds a call on another. A
@@ -2382,11 +2386,15 @@ Hetzner Cloud refused this token's calls for its rate limit, so none is sent unt
 
 | Where the held call was made | What the handler answers |
 |---|---|
-| `EnsureResources` or `Ensure`, on `subscribe` or `upgrade` | `pending: true`, with the hold's text as its status detail |
+| `EnsureResources` or `Ensure`, on `subscribe` or `upgrade` | `pending: true`, with the hold's text as its status detail and each resource `EnsureResources` returned beside the error |
 | `Delete`, on `unsubscribe` | `absent: false`, with the hold's text |
 | An observer, on `subscribe`, `upgrade` or `validate` | `pending: true`, with that resource unknown |
 | An observer, on `unsubscribe` | `absent: false`, with that resource unknown |
 | `PlanReplacements` or `Converging`, on `validate` | `pending: true`, with every resource unknown |
+
+When your code joins a held call's error with another failure, as
+`errors.Join` does, the handler answers the failure, so the hold never hides
+it.
 
 Your code tells a held call apart with `errors.Is(err, cloud.ErrRateLimited)`.
 `errors.As` into a `*cloud.RateLimited` gives its `Until`, the time the hold
