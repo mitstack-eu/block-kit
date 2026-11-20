@@ -72,7 +72,7 @@
       "type": "string"
     },
     "lookAgainAt": {
-      "description": "The earliest time the answer can change, in UTC, set when the block knows when its wait ends, such as the end of a provider's rate-limit hold. The engine reads it as advice on when to send the call again. An engine that does not read it asks as before, so an answer is valid with or without it.",
+      "description": "The earliest time the answer can change, in UTC, set when the block knows when its wait ends, such as the end of a provider's rate-limit hold. An engine may read it to wait until then before sending the call again. An engine that does not read it asks as before, so an answer is valid with or without it.",
       "type": "string",
       "format": "date-time"
     },
