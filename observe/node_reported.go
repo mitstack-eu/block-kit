@@ -148,11 +148,29 @@ type reportedObject struct {
 }
 
 type reportBody struct {
-	MadeAt                        *time.Time      `json:"madeAt"`
+	MadeAt                        *time.Time      `json:"-"`
 	SubscriptionResources         json.RawMessage `json:"subscriptionResources"`
 	SubscriptionResourcesComplete bool            `json:"subscriptionResourcesComplete"`
 	SubscriptionResourceKinds     []string        `json:"subscriptionResourceKinds"`
 	ArgoCD                        json.RawMessage `json:"argocd"`
+}
+
+// readBody takes madeAt from the top level of the body, never from inside its state member.
+func readBody(raw json.RawMessage) (reportBody, error) {
+	var body reportBody
+	state, err := ReportState(raw)
+	if err != nil {
+		return body, err
+	}
+	var top struct {
+		MadeAt *time.Time `json:"madeAt"`
+	}
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return body, err
+	}
+	err = json.Unmarshal(state, &body)
+	body.MadeAt = top.MadeAt
+	return body, err
 }
 
 // Application is one Argo CD Application as a node report carries it, its Objects nil when the report carries no list of what it applied, as one cut to fit its size does.
@@ -295,8 +313,8 @@ func (o NodeReported) readNewest(ctx context.Context, d contract.Desired, cluste
 	var newest *reportBody
 	var newestAt time.Time
 	for _, report := range got.Reports {
-		var body reportBody
-		if err := json.Unmarshal(report.Body, &body); err != nil {
+		body, err := readBody(report.Body)
+		if err != nil {
 			return nil, "", fmt.Errorf("observe: reading the node report received at %s: %w", report.ReceivedAt.Format(time.RFC3339), err)
 		}
 		at := report.ReceivedAt
