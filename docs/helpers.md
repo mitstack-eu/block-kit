@@ -2360,7 +2360,7 @@ call a client makes](#logging-each-call-a-client-makes) explains. hcloud-go
 v2.49.0 asks every half second by default, so an action that takes a minute
 costs 120 calls. The kit's schedule, `cloud.PollBackoff`, waits longer the
 longer an action runs. A quick action is still seen within a second or two,
-and a long one costs a few calls.
+and once an action has run for fifteen seconds it costs four calls a minute.
 
 The schedule waits one second before the first ask, then two, four and eight
 seconds, and fifteen seconds before every later ask. An action that ends
@@ -2381,7 +2381,7 @@ client := hcloud.NewClient(
 hcloud-go calls `PollBackoff` with the number of asks it has made so far,
 starting at zero, and waits what it returns before the next ask.
 `PollBackoff` has the shape of hcloud-go's `BackoffFunc`, a function from that
-number to a wait, so the kit needs no hcloud-go of its own. When an ask meets
+number to a wait, so the kit does not import hcloud-go. When an ask meets
 a [rate-limit hold](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal),
 hcloud-go returns the hold's error at once and the wait ends.
 
