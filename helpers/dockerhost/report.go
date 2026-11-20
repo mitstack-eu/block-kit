@@ -30,8 +30,8 @@ const SyncedCommitSince = "0.8.0"
 
 // Report is a Docker host's newest node report, read the same way by every block whose app runs on the host, each reader decoding its own part alone.
 type Report struct {
-	body    json.RawMessage
-	absence *contract.Absence
+	body, state json.RawMessage
+	absence     *contract.Absence
 }
 
 // NewestReport reads the newest of the host subscription's node reports, found false while the host has sent none, except that a host the platform attests absent answers a report holding no volume without reading any.
@@ -40,7 +40,8 @@ func NewestReport(ctx context.Context, api observe.NodeReportsAPI, d contract.De
 		return Report{}, false, handler.Refuse("host-binding", "the host binding carries no subscriptionId, so the host's node reports cannot be read")
 	}
 	if absence, ok := d.AttestedAbsent(hostSubscription); ok {
-		return Report{body: json.RawMessage(`{"host":{"volumes":[]}}`), absence: &absence}, true, nil
+		none := json.RawMessage(`{"host":{"volumes":[]}}`)
+		return Report{body: none, state: none, absence: &absence}, true, nil
 	}
 	reports, err := newestReports(ctx, api, d, hostSubscription)
 	if err != nil {
@@ -72,12 +73,13 @@ func newestReports(ctx context.Context, api observe.NodeReportsAPI, d contract.D
 	return api.NodeReports(ctx, d, hostSubscription)
 }
 
-// ReadReport reads a node report body its caller already holds, such as the platform reading a host's newest report itself, and fails only a body that is not JSON.
+// ReadReport reads a node report body its caller already holds, such as the platform reading a host's newest report itself, and fails only a body that is not JSON or whose state member is not an object.
 func ReadReport(body []byte) (Report, error) {
-	if err := json.Unmarshal(body, new(json.RawMessage)); err != nil {
+	state, err := observe.ReportState(body)
+	if err != nil {
 		return Report{}, fmt.Errorf("decoding the host's node report: %w", err)
 	}
-	return Report{body: body}, nil
+	return Report{body: body, state: state}, nil
 }
 
 // reportedCapacity holds pointers, so a capacity missing a measure names it rather than counting it as zero.
@@ -98,7 +100,7 @@ const allocatablePath = "host.capacity.allocatable"
 
 // capacity reads host.capacity alone, and a report naming neither a capacity nor an error yields none with an empty unread.
 func (r Report) capacity() (allocatable Allocatable, given bool, unread string) {
-	if len(r.body) == 0 {
+	if len(r.state) == 0 {
 		return Allocatable{}, false, ""
 	}
 	var parts reportedCapacity
@@ -156,9 +158,43 @@ func (r Report) CapacityError() string {
 	return unread
 }
 
-// Decode reads the report's body into v, for the fields only one block reads.
+// Decode reads the report's state member into v, or its whole body when it carries none, for the fields only one block reads.
 func (r Report) Decode(v any) error {
-	return json.Unmarshal(r.body, v)
+	return json.Unmarshal(r.state, v)
+}
+
+// beside is the output a report carries outside its state member, each container at the place its state lists it under the same app.
+type beside struct {
+	Host struct {
+		Apps map[string][]struct {
+			Logs        *string     `json:"logs"`
+			HealthCheck HealthCheck `json:"healthCheck"`
+		} `json:"apps"`
+		Releases map[string]struct {
+			Output string `json:"output"`
+		} `json:"releases"`
+	} `json:"host"`
+}
+
+// withOutput sets on each container and release its state member lists the output the body holds for it, which is the body's own when the report carries no state member.
+func (r Report) withOutput(apps map[string][]Container, releases map[string]releaseOutput) error {
+	var out beside
+	if err := json.Unmarshal(r.body, &out); err != nil {
+		return err
+	}
+	for app, containers := range apps {
+		for i := range containers {
+			containers[i].Logs, containers[i].HealthCheck = nil, HealthCheck{}
+			if i < len(out.Host.Apps[app]) {
+				containers[i].Logs, containers[i].HealthCheck = out.Host.Apps[app][i].Logs, out.Host.Apps[app][i].HealthCheck
+			}
+		}
+	}
+	for app, release := range releases {
+		release.Output = out.Host.Releases[app].Output
+		releases[app] = release
+	}
+	return nil
 }
 
 type reportedAgent struct {
@@ -226,6 +262,9 @@ func SubscriptionLogs(ctx context.Context, api observe.NodeReportsAPI, d contrac
 	}
 	var out reportedOutput
 	if err := report.Decode(&out); err != nil {
+		return nil, fmt.Errorf("decoding the host's newest node report: %w", err)
+	}
+	if err := report.withOutput(out.Host.Apps, out.Host.Releases); err != nil {
 		return nil, fmt.Errorf("decoding the host's newest node report: %w", err)
 	}
 	owns := func(label string) bool { return label != "" && label == d.SubscriptionID }

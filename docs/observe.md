@@ -635,6 +635,69 @@ reports. A block that passes an API of its own reads it only when that API
 also implements `observe.ClusterReportsAPI`, and otherwise keeps the last
 row's answer.
 
+### The state member of a report
+
+A node report may carry a `state` member, an object holding every member a
+health judgement reads. A health judgement is the check of a resource that a
+new report starts. The member keeps what a judgement reads apart from what
+changes on every run, such as a log line, so two reports of an unchanged
+source can carry the same `state`. Every reader on this page takes its judged
+members from `state` when the report carries one, and so does every reader of
+a Docker host's report in `helpers/dockerhost`. A report without `state` is
+read whole, as the sections above describe.
+
+A sender that writes `state` follows four rules:
+
+| Rule | What it means for the sender |
+|---|---|
+| `state` holds every member a judgement reads | `subscriptionResources`, `subscriptionResourcesComplete`, `subscriptionResourceKinds` and `argocd` sit inside it, under the names and in the shape this page gives them |
+| `state` holds nothing that changes while the source stands still | It carries no log, command output, generated name, temporary path or time of one run |
+| No member is written both inside and outside `state` | A reader takes a judged member from `state` alone and never reads the copy beside it |
+| What says when the report was made stays outside `state` | `madeAt` sits at the top level, beside `state` |
+
+The namespace report from
+[Observing a resource the platform cannot reach](#observing-a-resource-the-platform-cannot-reach),
+written with `state`, reads:
+
+```json
+{
+  "madeAt": "2026-10-23T09:00:00Z",
+  "state": {
+    "subscriptionResources": [
+      {"kind": "Namespace", "name": "app-alpha", "namespace": null, "subscription": "sub-1"}
+    ],
+    "subscriptionResourceKinds": ["Namespace", "ServiceAccount"]
+  }
+}
+```
+
+A Docker host's report keeps each container's output beside `state`, because
+a log line changes on every run. A container's `logs` and `healthCheck` sit
+under `host.apps.<app>` at the top level, at the same place in the list as the
+container `state` lists under that app. A release's `output` sits under
+`host.releases.<app>`. `dockerhost.ReadReport` joins each one to the container
+or release `state` holds at that place. So `SubscriptionLogs` and the
+database's observer quote a log as they do from a report without `state`. A
+container with nothing beside it reads with no logs, as from a host release
+that sends none:
+
+```json
+{
+  "state": {"host": {"apps": {"shop": [
+    {"container": "shop-web", "subscription": "sub_shop", "image": "ghcr.io/acme/shop@sha256:9f00", "state": "exited"}
+  ]}}},
+  "host": {"apps": {"shop": [
+    {"logs": "PHP Fatal error: Uncaught PDOException\n"}
+  ]}}
+}
+```
+
+A `state` member that is not an object, such as `[]` or `null`, fails the
+read with an error naming the member, and the reader never falls back to the
+top level. `observe.ReportState` in `observe/report_state.go` is the one
+function that picks the members a reader judges, so every reader applies one
+rule to both forms of a report.
+
 ## Listing what a subscription holds
 
 Every object a block creates carries the subscription's id as a tag, or the

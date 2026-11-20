@@ -172,5 +172,8 @@ func (r Report) AppContainers(app string) ([]Container, error) {
 	if err := r.Decode(&listed); err != nil {
 		return nil, fmt.Errorf("decoding app %s's containers from the host's newest node report: %w", app, err)
 	}
+	if err := r.withOutput(listed.Host.Apps, nil); err != nil {
+		return nil, fmt.Errorf("decoding app %s's containers from the host's newest node report: %w", app, err)
+	}
 	return listed.Host.Apps[app], nil
 }
