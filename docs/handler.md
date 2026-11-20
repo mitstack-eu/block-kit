@@ -495,6 +495,28 @@ describes. That `429` is Hetzner's own answer, which the client turns into a
 wait. It never reaches the handler as a `*handler.Refused`, so the engine
 never reads it as a permanent refusal.
 
+A wait that knows when it ends names that time in its `LookAgainAt` field. The
+answer then carries it as `lookAgainAt`, the earliest time the answer can
+change, written in UTC in RFC 3339 form whatever zone your code gave it. The
+kit's Hetzner Cloud client sets the field to the end of its hold, so a held
+`subscribe` answers like this:
+
+```json
+{"outputs": null, "pending": true, "statusDetail": "Hetzner Cloud refused this token's calls for its rate limit, so none is sent until 2026-11-19T20:01:00Z", "lookAgainAt": "2026-11-19T20:01:00Z"}
+```
+
+The same field comes with an `unsubscribe` that answers `absent:false`, a
+`validate` that answers its resources `unknown`, and a `snapshot` that answers
+`pending:true`. A wait with no known end leaves the field out. `handler.Wait`
+sets no time, and neither do the two builders below, so a wait of your own
+that knows its end sets `LookAgainAt` on the `handler.Waiting` it builds.
+
+The engine treats `lookAgainAt` as advice on when to ask again. An engine that
+does not read the field asks as it always has, so an answer is valid with or
+without it. `contract.Response` in `contract/types.go` declares the field,
+`handler.Waiting` in `handler/block.go` carries it, and `cloud.RateLimited` in
+`capabilities/hetzner/cloud/ratelimit.go` fills it from its `Until`.
+
 `handler.WaitForSignal(format, args...)` builds the same wait for a call that
 changed nothing because it waits on what another subscription reports, such as
 a Docker host that has sent no node report yet. A node report is the state a
@@ -539,7 +561,9 @@ can report the removal under way, as
 observe that fails is recorded as that resource's error, and the answer still
 waits. An observe that returns a `*handler.Waiting`, such as a Hetzner Cloud
 call the kit holds after a rate-limit refusal, records that resource `unknown`
-with the wait's detail instead, and no error. `landing.Remove` returns this wait while its pull request waits on a
+with the wait's detail instead, and no error. That held observe adds no
+`lookAgainAt` to the answer, since only the `Delete`'s own wait decides when
+the removal can change. `landing.Remove` returns this wait while its pull request waits on a
 required check.
 
 When `Delete` returns any other error, the handler answers that error at once and

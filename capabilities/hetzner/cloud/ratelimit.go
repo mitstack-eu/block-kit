@@ -34,7 +34,9 @@ func (e *RateLimited) Error() string {
 
 func (e *RateLimited) Is(target error) bool { return target == ErrRateLimited }
 
-func (e *RateLimited) Unwrap() error { return &handler.Waiting{Detail: e.Error()} }
+func (e *RateLimited) Unwrap() error {
+	return &handler.Waiting{Detail: e.Error(), LookAgainAt: e.Until}
+}
 
 // Holds keeps each held token by a SHA-256 of the token in the operator's memory, so a restarted operator learns of the limit again from its first refused call.
 type Holds struct {
