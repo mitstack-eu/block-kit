@@ -155,21 +155,10 @@ type reportBody struct {
 	ArgoCD                        json.RawMessage `json:"argocd"`
 }
 
-// readBody takes madeAt from the top level of the body, never from inside its state member.
 func readBody(raw json.RawMessage) (reportBody, error) {
 	var body reportBody
-	state, err := ReportState(raw)
-	if err != nil {
-		return body, err
-	}
-	var top struct {
-		MadeAt *time.Time `json:"madeAt"`
-	}
-	if err := json.Unmarshal(raw, &top); err != nil {
-		return body, err
-	}
-	err = json.Unmarshal(state, &body)
-	body.MadeAt = top.MadeAt
+	madeAt, err := DecodeReport(raw, &body)
+	body.MadeAt = madeAt
 	return body, err
 }
 

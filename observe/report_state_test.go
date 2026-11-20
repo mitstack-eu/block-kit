@@ -1,6 +1,6 @@
 package observe_test
 
-// A node report carrying a state member is judged from that member alone, one without it is judged whole, and a state that is not an object fails naming the member.
+// A node report carrying a state member is judged from that member alone, one without it is judged whole, a state that is not an object fails naming the member, and a report is dated by its top-level madeAt alone.
 
 import (
 	"context"
@@ -72,22 +72,31 @@ func TestReportState_EveryReaderIgnoresTopLevelJudgedMembers(t *testing.T) {
 		{"a state whose Synced Application applied nothing beside a top level listing the secret", appliedRef("secret", "argocd"), credentials(), credentials("Healthy"), contract.Absent, unread},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
-			got, health, err := observe.NodeReported{API: received(t, withState(tc.state, tc.top))}.ObserveHealth(context.Background(), tc.ref)
+			api := received(t, withState(tc.state, tc.top))
+			got, health, err := observe.NodeReported{API: api}.ObserveHealth(context.Background(), tc.ref)
+			madeAt, decodeErr := observe.DecodeReport(api.reports[0].Body, &struct{}{})
 
 			wantObservation(t, tc.ref, got, err, tc.want, nil, "")
-			if health != tc.health {
-				t.Errorf("health = %+v, want %+v", health, tc.health)
+			if health != tc.health || decodeErr != nil || madeAt == nil || !madeAt.Equal(verbAt.Add(30*time.Second)) {
+				t.Errorf("health = %+v, want %+v; DecodeReport = madeAt %v, %v, want the top-level madeAt alone", health, tc.health, madeAt, decodeErr)
 			}
 		})
 	}
 }
 
-func TestReportState_RefusesAStateThatIsNotAnObject(t *testing.T) {
+func TestReportState_RefusesAStateThatIsNotAnObjectAndDatesAReportByItsTopLevelMadeAtAlone(t *testing.T) {
 	for _, state := range []any{[]any{}, nil, "healthy", 7, true} {
-		_, why, err := readCredentials(received(t, withState(state, credentials())))
+		api := received(t, withState(state, credentials()))
+		_, why, err := readCredentials(api)
+		madeAt, decodeErr := observe.DecodeReport(api.reports[0].Body, &struct{}{})
 
-		if err == nil || !strings.Contains(err.Error(), "state member") {
-			t.Errorf("ArgoCDApplication over a state member holding %v = %q, %v; want an error naming the state member, never a read of the top-level argocd", state, why, err)
+		if err == nil || !strings.Contains(err.Error(), "state member") || decodeErr == nil || madeAt != nil || !strings.Contains(decodeErr.Error(), "state member") {
+			t.Errorf("over a state member holding %v, ArgoCDApplication = %q, %v and DecodeReport = madeAt %v, %v; want each to fail naming the state member, never a read of the top-level argocd", state, why, err, madeAt, decodeErr)
+		}
+	}
+	for body, fails := range map[string]bool{`{"state":{"madeAt":"2026-10-07T12:00:30Z"}}`: false, `{"madeAt":"yesterday","state":{}}`: true, `[]`: true} {
+		if madeAt, err := observe.DecodeReport([]byte(body), &struct{}{}); madeAt != nil || (err != nil) != fails {
+			t.Errorf("DecodeReport(%s) = madeAt %v, %v; want no madeAt, and an error only for a body or a top-level madeAt it cannot decode", body, madeAt, err)
 		}
 	}
 }
