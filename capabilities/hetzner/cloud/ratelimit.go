@@ -99,7 +99,6 @@ func (t *holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return nil, t.holds.refused(key, probe, resp.Header)
 }
 
-// admit answers a call on a held token with its hold, and returns the first call once a hold has ended as that hold's probe.
 func (h *Holds) admit(key [sha256.Size]byte) (probe *hold, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -150,6 +149,14 @@ func (h *Holds) refused(key [sha256.Size]byte, probe *hold, header http.Header) 
 	h.held[key] = &hold{until: until, streak: streak}
 	return &RateLimited{Until: until}
 }
+
+const (
+	firstPoll   = time.Second
+	longestPoll = 15 * time.Second
+)
+
+// PollBackoff is the BackoffFunc a block hands hcloud-go's action waiter through hcloud.WithPollOpts: a short first wait sees a quick action soon, and the waits grow to longestPoll since every ask spends a call of the budget all operators on one address share.
+func PollBackoff(retries int) time.Duration { return grow(firstPoll, longestPoll, retries) }
 
 // grow is the package's one growth rule, shared by the hold and PollBackoff: first doubled n times, stopping at ceiling so no count overflows.
 func grow(first, ceiling time.Duration, n int) time.Duration {

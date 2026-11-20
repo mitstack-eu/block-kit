@@ -2387,11 +2387,12 @@ number to a wait, so the kit does not import hcloud-go. When an ask meets
 a [rate-limit hold](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal),
 hcloud-go returns the hold's error at once and the wait ends.
 
-The schedule lives in `capabilities/hetzner/cloud/poll.go`, and
-`poll_test.go` beside it checks each wait and the seven asks against
-hcloud-go's 120. The schedule and the rate-limit hold grow by one rule, the
-`grow` function in `ratelimit.go`, which doubles a first wait up to a
-ceiling: fifteen seconds for the schedule and an hour for the hold.
+The schedule lives beside the rate-limit hold in
+`capabilities/hetzner/cloud/ratelimit.go`, and `poll_test.go` checks each
+wait and the seven asks against hcloud-go's 120. The schedule and the hold
+grow by one rule, the `grow` function in the same file, which doubles a first
+wait up to a ceiling: fifteen seconds for the schedule and an hour for the
+hold.
 
 ## Holding calls after a Hetzner Cloud rate-limit refusal
 
