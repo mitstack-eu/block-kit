@@ -2359,8 +2359,9 @@ the budget that every operator on mitstack's address shares, as [Logging each
 call a client makes](#logging-each-call-a-client-makes) explains. hcloud-go
 v2.49.0 asks every half second by default, so an action that takes a minute
 costs 120 calls. The kit's schedule, `cloud.PollBackoff`, waits longer the
-longer an action runs. A quick action is still seen within a second or two,
-and once an action has run for fifteen seconds it costs four calls a minute.
+longer an action runs. An action that ends within a second is seen at the
+first ask, one that ends within three seconds at the second, and once an
+action has run for fifteen seconds it costs four calls a minute.
 
 The schedule waits one second before the first ask, then two, four and eight
 seconds, and fifteen seconds before every later ask. An action that ends
@@ -2378,17 +2379,19 @@ client := hcloud.NewClient(
 )
 ```
 
-hcloud-go calls `PollBackoff` with the number of asks it has made so far,
-starting at zero, and waits what it returns before the next ask.
+hcloud-go names each ask a poll, which gives `PollBackoff` its name. It calls
+`PollBackoff` with the number of asks it has made so far, starting at zero,
+and waits what it returns before the next ask.
 `PollBackoff` has the shape of hcloud-go's `BackoffFunc`, a function from that
 number to a wait, so the kit does not import hcloud-go. When an ask meets
 a [rate-limit hold](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal),
 hcloud-go returns the hold's error at once and the wait ends.
 
 The schedule lives in `capabilities/hetzner/cloud/poll.go`, and
-`poll_test.go` beside it proves each figure above. The schedule and the
-rate-limit hold grow by one rule, the `grow` function in `ratelimit.go`, which
-doubles a first wait up to a ceiling.
+`poll_test.go` beside it checks each wait and the seven asks against
+hcloud-go's 120. The schedule and the rate-limit hold grow by one rule, the
+`grow` function in `ratelimit.go`, which doubles a first wait up to a
+ceiling: fifteen seconds for the schedule and an hour for the hold.
 
 ## Holding calls after a Hetzner Cloud rate-limit refusal
 
