@@ -739,9 +739,25 @@ none, and never a `madeAt` from inside `state`. `observe.NodeReported` reads
 its own members through it, so your block dates a report by the same rule as
 the kit, in both forms of a report.
 
+`DecodeReport` decodes only what `ReportState` picks. A cluster keeps every
+member a judgement reads there, so `DecodeReport` gives a block all of them. A Docker host
+keeps its judged members in `state.host`, and its container and release output
+in the top-level `host`, which `DecodeReport` never reads. A block on a Docker
+host reads that output through `dockerhost.NewestReport` and methods such as
+`report.AppContainers`, which join each container to its output, as
+[Reading what the host last synced](helpers.md#reading-what-the-host-last-synced)
+describes.
+
 The function below reads a report's `subscriptionResources` list and says
-whether the report was made after the verb. It compiles in a block that
-imports `encoding/json`, `fmt`, `time` and the kit's `observe` package:
+whether the report was made after the verb. The verb is the platform's
+lifecycle call that the block is answering, such as a deploy or a removal, and
+`verbAt` is the `VerbAt` of the `contract.Desired` that call hands the block,
+the time the verb began. The function takes one `observe.NodeReport`, as
+`observe.NodeReportsClient{}.NodeReports(ctx, d, cluster)` lists a cluster
+subscription's reports, which
+[Observing a resource the platform cannot reach](#observing-a-resource-the-platform-cannot-reach)
+describes. It compiles in a block that imports `encoding/json`, `fmt`, `time`
+and the kit's `observe` package:
 
 ```go
 func listMadeAfter(report observe.NodeReport, verbAt time.Time) (json.RawMessage, bool, error) {
@@ -757,12 +773,20 @@ func listMadeAfter(report observe.NodeReport, verbAt time.Time) (json.RawMessage
 ```
 
 A value that keeps the date beside its members tags that field `json:"-"`.
-Any field that decodes `madeAt` would take one from inside `state`, and the
-rules above say a reader never reads one there.
+When the report carries `state`, `DecodeReport` decodes the contents of
+`state` into your value, so a field named for `madeAt` would take one from
+inside `state`, and the rules above say a reader never reads one there. The
+right date is the one `DecodeReport` returns, which your block sets on that
+field itself.
+
 `DecodeReport` fails a `state` that is not an object, as `ReportState` does.
-It also fails a top-level `madeAt` that is not a time, since then no reader
-can tell when the report was made. When only the decode into your value
-fails, it returns the top-level `madeAt` beside the error.
+It also fails a top-level `madeAt` that is not a time, such as
+`"madeAt": "yesterday"`, since then no reader can tell when the report was
+made. Both failures return no `madeAt` beside the error. The decode into your
+value can also fail on its own, when a member does not fit its field, such as
+a list where your field is a string. Then `DecodeReport` returns the top-level
+`madeAt` beside the error, and Go's `json.Unmarshal` still fills the fields
+that fit.
 
 ## Listing what a subscription holds
 

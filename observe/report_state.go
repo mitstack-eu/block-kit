@@ -22,7 +22,7 @@ func ReportState(body json.RawMessage) (json.RawMessage, error) {
 	return state, nil
 }
 
-// DecodeReport decodes the members of a node report body that ReportState picks into v and returns the body's top-level madeAt, nil when the body carries none and never one from inside its state member, and returned beside the error when only the decode into v fails.
+// DecodeReport decodes the members of a node report body that ReportState picks into v and returns the body's top-level madeAt, nil when the body carries none and never one from inside its state member, and returns it beside the error when only the decode into v fails.
 func DecodeReport(body json.RawMessage, v any) (*time.Time, error) {
 	state, err := ReportState(body)
 	if err != nil {
