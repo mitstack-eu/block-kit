@@ -15,7 +15,7 @@ func ReportState(body json.RawMessage) (json.RawMessage, error) {
 	var notObject *json.UnmarshalTypeError
 	switch {
 	case errors.As(err, &notObject):
-		// A body that is not an object carries no state member, so its reader fails it as it did before state.
+		// A body that is not an object has no state member, so the reader decoding it whole fails it.
 		return body, nil
 	case err != nil:
 		return nil, err

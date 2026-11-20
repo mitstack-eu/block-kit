@@ -163,13 +163,13 @@ func (r Report) Decode(v any) error {
 	return json.Unmarshal(r.state, v)
 }
 
-// containerOutput is what a report carries for one container outside its state member.
+// containerOutput is the part of a container's entry read from the whole body, never from its state member.
 type containerOutput struct {
 	Logs        *string     `json:"logs"`
 	HealthCheck HealthCheck `json:"healthCheck"`
 }
 
-// withContainerOutput sets on each container its state member lists the output the body holds at the same place under the same app, which is the container's own when the report carries no state member.
+// withContainerOutput sets each container's logs and health check from the entry at its index under the same app in the whole body, since a state member holds neither.
 func (r Report) withContainerOutput(apps map[string][]Container) error {
 	var out struct {
 		Host struct {
@@ -195,7 +195,7 @@ func (r Report) withContainerOutput(apps map[string][]Container) error {
 	return nil
 }
 
-// withReleaseOutput sets on each release its state member lists the output the body holds for the same app.
+// withReleaseOutput sets each release's output from the release under the same app in the whole body, since a state member holds none.
 func (r Report) withReleaseOutput(releases map[string]releaseOutput) error {
 	var out struct {
 		Host struct {

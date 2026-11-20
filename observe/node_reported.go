@@ -155,7 +155,7 @@ type reportBody struct {
 	ArgoCD                        json.RawMessage `json:"argocd"`
 }
 
-// readBody reads a report's judged members from what ReportState returns, and its madeAt from the top level, where it stays.
+// readBody takes madeAt from the top level of the body, never from inside its state member.
 func readBody(raw json.RawMessage) (reportBody, error) {
 	var body reportBody
 	state, err := ReportState(raw)
