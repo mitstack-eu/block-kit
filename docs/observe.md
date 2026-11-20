@@ -772,6 +772,14 @@ func listMadeAfter(report observe.NodeReport, verbAt time.Time) (json.RawMessage
 }
 ```
 
+The function's `false` covers two cases: a report made before the verb, and a
+report that carries no top-level `madeAt`. The kit's own reader tells them
+apart. `observe.NodeReported` counts a report with no `madeAt` when its
+`receivedAt`, the time the platform received it, is after the verb, and an
+object such a report lists reads present. Such a report never proves an object
+is gone, so for an object it does not list, `NodeReported` answers unknown
+instead of absent. A block's own reader follows the same rule.
+
 A value that keeps the date beside its members tags that field `json:"-"`.
 When the report carries `state`, `DecodeReport` decodes the contents of
 `state` into your value, so a field named for `madeAt` would take one from
