@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -107,6 +108,30 @@ func TestServe_AWaitJoinedWithAFailureAnswersTheFailure(t *testing.T) {
 	}
 }
 
+var heldRead = &cloud.RateLimited{Until: time.Date(2026, time.November, 19, 20, 1, 0, 0, time.UTC)}
+
+func TestServe_AHeldReadAnswersPendingWithTheSecretOutputsAlreadyObservedPresent(t *testing.T) {
+	const deployArn = "arn:aws:iam::1:role/deploy"
+	for _, op := range []string{"subscribe", "upgrade", "validate"} {
+		t.Run(op, func(t *testing.T) {
+			obs := roleObservers(map[string]string{"deploy-role": deployArn, "audit-role": "arn:aws:iam::1:role/audit"})
+			obs["ecr-push-role"] = &observer{err: fmt.Errorf("reading the role: %w", heldRead)}
+
+			status, resp := serveRoleBlock(t, context.Background(), op, obs)
+
+			if status != http.StatusOK || !resp.Pending || resp.StatusDetail != heldRead.Error() {
+				t.Fatalf("%s answered %d, pending %v, statusDetail %q; want 200, pending, %q", op, status, resp.Pending, resp.StatusDetail, heldRead.Error())
+			}
+			if want := map[string]string{"roleArn": deployArn}; !maps.Equal(resp.SecretOutputs, want) {
+				t.Errorf("SecretOutputs = %v, want %v: deploy-role was observed present before the read of ecr-push-role was held", resp.SecretOutputs, want)
+			}
+			if want := map[string]string{"roleArn": deployArn}; !maps.Equal(resp.ResourceSecretOutputs["deploy-role"], want) || len(resp.ResourceSecretOutputs) != 1 {
+				t.Errorf("ResourceSecretOutputs = %v, want deploy-role's %v alone", resp.ResourceSecretOutputs, want)
+			}
+		})
+	}
+}
+
 type removalWaitingBlock struct{ waitingBlock }
 
 func (removalWaitingBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
@@ -121,9 +146,15 @@ func TestServe_AnUnsubscribeWaitingOnARemovalAnswersEachResourcesObserveAndKeeps
 		want func(*contract.CallOutcome) bool
 	}{
 		{"made unsubscribing, with the removal it reports", fixed(contract.Observation{State: contract.Present, Removing: &contract.Removing{WaitsOn: waitsOn}}),
-			func(o *contract.CallOutcome) bool { return o.State == contract.Present && o.Removing != nil && o.Removing.WaitsOn == waitsOn }},
+			func(o *contract.CallOutcome) bool {
+				return o.State == contract.Present && o.Removing != nil && o.Removing.WaitsOn == waitsOn
+			}},
 		{"with the failed read's error and no removing", &observer{err: fmt.Errorf("github answered 502")},
 			func(o *contract.CallOutcome) bool { return o.Error != "" && o.Removing == nil }},
+		{"unknown, with the held read's detail and no error", &observer{err: heldRead},
+			func(o *contract.CallOutcome) bool {
+				return o.State == contract.Unknown && o.StatusDetail == heldRead.Error() && o.Error == "" && o.Type == "aws.vpc"
+			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			x := newHarness(t, removalWaitingBlock{}, func(c *handler.Config) { c.Observers = map[string]handler.Observer{"r": tc.obs} })

@@ -266,8 +266,50 @@ func TestTransport_RefusalIsNoTimeout(t *testing.T) {
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestTransport_ACallThatPanicsLeavesTheHoldForTheNextCallToTest(t *testing.T) {
+	clock := &testClock{now: refusedAt}
+	answer, sent := http.StatusTooManyRequests, 0
+	rt := cloud.HoldTransport(cloud.NewHolds(clock.Now), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		sent++
+		if answer == 0 {
+			panic("the transport failed mid-call")
+		}
+		return &http.Response{StatusCode: answer, Header: http.Header{}, Body: http.NoBody, Request: r}, nil
+	}))
+	call := func() (*http.Response, error) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://cloud.test/v1/primary_ips", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		return rt.RoundTrip(req)
+	}
+	_, refused := call()
+	clock.set(refusedAt.Add(time.Minute))
+	answer = 0
+	var panicked any
+	func() {
+		defer func() { panicked = recover() }()
+		_, _ = call()
+	}()
+	answer = http.StatusOK
+
+	resp, err := call()
+
+	if _, held := holdEnd(refused); !held || panicked == nil {
+		t.Fatalf("the first call = %v and the probe panicked with %v; want the hold, then the probe's panic reaching its caller", refused, panicked)
+	}
+	if err != nil || resp == nil || resp.StatusCode != http.StatusOK || sent != 3 {
+		t.Errorf("the call after the panicking probe = %v, %v with %d calls sent; want it sent as the next probe and answered 200, 3 calls sent", resp, err, sent)
+	}
+}
+
+var processRuns atomic.Int64
+
 func TestNewAtAndHTTPClient_ShareTheOperatorsHolds(t *testing.T) {
-	const sharedToken = "process-holds-token"
+	// The package's holds outlive one run of this test, so each run takes a token no earlier run held.
+	sharedToken := "process-holds-token-" + strconv.FormatInt(processRuns.Add(1), 10)
 	f := cloudtest.New(t, sharedToken)
 	l := &limiter{reset: time.Now().Add(30 * time.Minute)}
 	l.refusing.Store(true)
