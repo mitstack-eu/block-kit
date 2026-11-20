@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mitstack-eu/block-kit/contract"
+	"github.com/mitstack-eu/block-kit/helpers/calllog"
 	"github.com/mitstack-eu/block-kit/helpers/events"
 	"github.com/mitstack-eu/block-kit/helpers/reqcache"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
@@ -21,10 +22,13 @@ import (
 // A pending:true answer, or an unsubscribe answered absent:false, is never replayed so the engine's re-drive observes the resource again. The cache key carries the named resource and unit, and an empty idempotencyKey or a validate skips the cache because a replayed probe would report a state the resource may have left; an issue or a lease skips it because a replayed credential may have expired.
 func (h *Handler) dispatchRequest(w http.ResponseWriter, r *http.Request, req contract.Request) {
 	secrets := req.SecretValues().All()
-	ctx := requestContext(r.Context(), req)
+	ctx := calllog.Counting(requestContext(r.Context(), req))
 
 	run := func() (int, []byte, bool) {
 		status, resp := h.dispatchVerbRecovering(ctx, req, secrets)
+		if line, ok := calllog.Counted(ctx, req.Operation, secrets...); ok {
+			log.Print(line)
+		}
 		settled := answerSettled(req.Operation, resp)
 		h.emitVerbEvent(ctx, req.Operation, status, resp, settled)
 
