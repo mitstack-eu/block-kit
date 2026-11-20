@@ -2349,7 +2349,50 @@ The context bounds the wait, so it lasts no longer than the call it serves.
 When the call's time runs out first, the call fails with that error, and the
 engine retries it, as [Errors, refusals and
 panics](handler.md#errors-refusals-and-panics) explains. How often the waiter
-asks Hetzner is your client's own setting, such as hcloud-go's `WithPollOpts`.
+asks Hetzner is your client's own setting, such as hcloud-go's `WithPollOpts`,
+and the kit gives one schedule for it.
+
+### How often the waiter asks Hetzner
+
+Each ask about an action is a call to Hetzner Cloud. It spends one call of
+the budget that every operator on mitstack's address shares, as [Logging each
+call a client makes](#logging-each-call-a-client-makes) explains. hcloud-go
+v2.49.0 asks every half second by default, so an action that takes a minute
+costs 120 calls. The kit's schedule, `cloud.PollBackoff`, waits longer the
+longer an action runs. An action that ends within a second is seen at the
+first ask, one that ends within three seconds at the second, and once an
+action has run for fifteen seconds it costs four calls a minute.
+
+The schedule waits one second before the first ask, then two, four and eight
+seconds, and fifteen seconds before every later ask. An action that ends
+after a minute is asked about at 1, 3, 7, 15, 30, 45 and 60 seconds, seven
+asks in all.
+
+A block hands the schedule to its hcloud-go client with one option, beside
+the kit's HTTP client:
+
+```go
+client := hcloud.NewClient(
+	hcloud.WithToken(token),
+	hcloud.WithHTTPClient(cloud.HTTPClient()),
+	hcloud.WithPollOpts(hcloud.PollOpts{BackoffFunc: cloud.PollBackoff}),
+)
+```
+
+hcloud-go names each ask a poll, which gives `PollBackoff` its name. It calls
+`PollBackoff` with the number of asks it has made so far, starting at zero,
+and waits what it returns before the next ask.
+`PollBackoff` has the shape of hcloud-go's `BackoffFunc`, a function from that
+number to a wait, so the kit does not import hcloud-go. When an ask meets
+a [rate-limit hold](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal),
+hcloud-go returns the hold's error at once and the wait ends.
+
+The schedule lives beside the rate-limit hold in
+`capabilities/hetzner/cloud/ratelimit.go`, and `poll_test.go` checks each
+wait and the seven asks against hcloud-go's 120. The schedule and the hold
+grow by one rule, the `grow` function in the same file, which doubles a first
+wait up to a ceiling: fifteen seconds for the schedule and an hour for the
+hold.
 
 ## Holding calls after a Hetzner Cloud rate-limit refusal
 
