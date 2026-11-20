@@ -83,10 +83,13 @@ func (t *holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		return nil, err
 	}
+	if probe != nil {
+		// Deferred, it frees the probe after a failed call or a panic in next alike, and does nothing once answered or refused has replaced the hold.
+		defer t.holds.inconclusive(key, probe)
+	}
 	resp, err := t.next.RoundTrip(req)
 	switch {
 	case err != nil || resp.StatusCode >= http.StatusInternalServerError:
-		t.holds.inconclusive(key, probe)
 		return resp, err
 	case resp.StatusCode != http.StatusTooManyRequests:
 		t.holds.answered(key, probe)
@@ -120,7 +123,7 @@ func (h *Holds) answered(key [sha256.Size]byte, probe *hold) {
 	}
 }
 
-// inconclusive keeps the hold for the next call to test, since neither a lost call nor a server failure says the limit has passed.
+// inconclusive keeps the hold for the next call to test, since neither a lost call, a server failure nor a panic says the limit has passed.
 func (h *Holds) inconclusive(key [sha256.Size]byte, probe *hold) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

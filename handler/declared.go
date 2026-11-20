@@ -194,7 +194,7 @@ func (r *declaredRun) ensureEach(ctx context.Context) (int, contract.Response) {
 		entry := r.outcomes[nr.name]
 		obs, err := r.observeOnce(ctx, nr, &entry)
 		if err != nil {
-			return r.fail(nr.name, &entry, &entry.Observe, err)
+			return r.fail(nr.name, &entry, &entry.Observe, secretOutputs, err)
 		}
 		r.outcomes[nr.name] = entry
 		if obs.State != contract.Present {
@@ -249,7 +249,7 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 
 		obs, err := r.observeOnce(ctx, nr, &entry)
 		if err != nil {
-			return r.fail(nr.name, &entry, &entry.Observe, err)
+			return r.fail(nr.name, &entry, &entry.Observe, nil, err)
 		}
 		r.outcomes[nr.name] = entry
 		if obs.State != contract.Absent {
@@ -274,7 +274,7 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	return r.absentAnswer(ctx, outputs)
 }
 
-// removalAnswer answers absent:false with detail and each resource deleteEach would observe, recording a failed observe on its resource, since the wait decides the answer.
+// removalAnswer answers absent:false with detail and each resource deleteEach would observe, recording a held observe as unknown and a failed one as its error on its resource, since the wait decides the answer.
 func (r *declaredRun) removalAnswer(ctx context.Context, detail string) (int, contract.Response) {
 	for i := len(r.resources) - 1; i >= 0 && ctx.Err() == nil; i-- {
 		nr := r.resources[i]
@@ -285,7 +285,10 @@ func (r *declaredRun) removalAnswer(ctx context.Context, detail string) (int, co
 			continue
 		}
 		entry := r.outcomes[nr.name]
-		if _, err := r.observeOnce(ctx, nr, &entry); err != nil {
+		_, err := r.observeOnce(ctx, nr, &entry)
+		if w, held := waiting(err); held {
+			entry.Observe = r.unread(nr.name, w.Detail)
+		} else if err != nil {
 			_, failed := r.h.errorResponse(err, r.secrets)
 			entry.Observe = &contract.CallOutcome{Error: failed.Error, StatusDetail: failed.StatusDetail}
 		}
@@ -385,7 +388,7 @@ func (r *declaredRun) validateObserved(ctx context.Context) (int, contract.Respo
 		var entry contract.ResourceOutcome
 		obs, err := r.observeOnce(ctx, nr, &entry)
 		if err != nil {
-			return r.fail(nr.name, &entry, &entry.Observe, err)
+			return r.fail(nr.name, &entry, &entry.Observe, secretOutputs, err)
 		}
 		r.outcomes[nr.name] = entry
 
@@ -613,21 +616,27 @@ func (r *declaredRun) answeredCause(typ, cause string) string {
 	return safe.Scrub(cause, r.secrets...)
 }
 
-// fail answers as errorResponse classifies err, carrying every resource outcome recorded so far, and answers a Waiting err with the resource unknown, pending or absent:false on an unsubscribe, since what stands is unread rather than failed.
-func (r *declaredRun) fail(name string, entry *contract.ResourceOutcome, call **contract.CallOutcome, err error) (int, contract.Response) {
+// fail answers as errorResponse classifies err, carrying every resource outcome recorded so far, and answers a Waiting err with the resource unknown, pending with the secret outputs gathered so far or absent:false on an unsubscribe, since what stands is unread rather than failed.
+func (r *declaredRun) fail(name string, entry *contract.ResourceOutcome, call **contract.CallOutcome, secretOutputs map[string]string, err error) (int, contract.Response) {
 	if w, ok := waiting(err); ok {
-		detail, ref := safe.Scrub(w.Detail, r.secrets...), r.refs[name]
-		*call = &contract.CallOutcome{State: contract.Unknown, StatusDetail: detail, Identity: ref.Identity, Type: ref.Type}
+		*call = r.unread(name, w.Detail)
 		r.outcomes[name] = *entry
+		detail := (*call).StatusDetail
 		if r.operation == "unsubscribe" {
 			absent := false
 			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: detail, Resources: r.outcomes}
 		}
-		return http.StatusOK, contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: detail, Resources: r.outcomes, ResourceSecretOutputs: r.resourceSecretOutputs}
+		return http.StatusOK, contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: detail, Resources: r.outcomes, SecretOutputs: secretOutputs, ResourceSecretOutputs: r.resourceSecretOutputs}
 	}
 	status, resp := r.h.errorResponse(err, r.secrets)
 	*call = &contract.CallOutcome{Error: resp.Error, StatusDetail: resp.StatusDetail}
 	r.outcomes[name] = *entry
 	resp.Resources = r.outcomes
 	return status, resp
+}
+
+// unread is the outcome of a call on resource name that a wait answered, which leaves the resource unknown rather than failed.
+func (r *declaredRun) unread(name, detail string) *contract.CallOutcome {
+	ref := r.refs[name]
+	return &contract.CallOutcome{State: contract.Unknown, StatusDetail: safe.Scrub(detail, r.secrets...), Identity: ref.Identity, Type: ref.Type}
 }
