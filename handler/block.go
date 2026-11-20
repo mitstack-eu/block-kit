@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -150,21 +149,28 @@ type OwnSecretsReporter interface {
 	EnsureResourcesOwning(ctx context.Context, d contract.Desired) (created []contract.CreatedResource, ownSecrets map[string]string, err error)
 }
 
-// waiting finds no wait in a join holding any error that does not wait, so a failure beside a held call is answered rather than hidden.
+// waiting finds no wait in a join holding any error that does not wait, so a failure beside a held call is answered rather than hidden, and ends a join of waits at its earliest end, or at none when a member names none, since that member could end at any moment.
 func waiting(err error) (*Waiting, bool) {
 	switch e := err.(type) {
 	case *Waiting:
 		return e, true
 	case interface{ Unwrap() []error }:
-		var first *Waiting
+		var joined *Waiting
 		for _, member := range e.Unwrap() {
 			w, ok := waiting(member)
 			if !ok {
 				return nil, false
 			}
-			first = cmp.Or(first, w)
+			if joined == nil {
+				first := *w
+				joined = &first
+				continue
+			}
+			if w.LookAgainAt.IsZero() || w.LookAgainAt.Before(joined.LookAgainAt) {
+				joined.LookAgainAt = w.LookAgainAt
+			}
 		}
-		return first, first != nil
+		return joined, joined != nil
 	case interface{ Unwrap() error }:
 		return waiting(e.Unwrap())
 	}
