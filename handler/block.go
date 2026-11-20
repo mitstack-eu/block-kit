@@ -1,12 +1,12 @@
 package handler
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mitstack-eu/block-kit/contract"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
@@ -46,7 +46,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		reported, err := r.ensureBlock(ctx, included)
 		if w, ok := waiting(err); ok {
 			r.ensured(reported)
-			resp := contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
+			resp := contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: safe.Scrub(w.Detail, r.secrets...), LookAgainAt: w.lookAgainAt()}
 			if len(r.outcomes) > 0 {
 				resp.Resources = r.outcomes
 			}
@@ -71,7 +71,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		switch {
 		case waits && !w.Removal:
 			absent := false
-			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
+			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(w.Detail, r.secrets...), LookAgainAt: w.lookAgainAt()}
 		case err != nil && !waits:
 			return r.h.errorResponse(err, r.secrets)
 		}
@@ -85,7 +85,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 			r.refs[name] = ref
 		}
 		if waits {
-			return r.removalAnswer(ctx, w.Detail)
+			return r.removalAnswer(ctx, w)
 		}
 		return r.deleteEach(ctx)
 	case "validate":
@@ -93,7 +93,7 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		r.setRefs(nil)
 		replaces, planned, err := r.planReplacements(ctx)
 		if w, ok := waiting(err); ok {
-			return r.withOwnSecrets(r.converging(w.Detail, false))
+			return r.withOwnSecrets(r.held(w))
 		}
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
@@ -116,9 +116,19 @@ type Waiting struct {
 	Removal bool
 	// Redrive answers redrive beside pending, which the engine reads on a subscribe alone and answers by sending the subscribe again on the next signal about the subscription rather than settling it through validate.
 	Redrive bool
+	// LookAgainAt, when set, is when the wait ends, which the answer carries as lookAgainAt in UTC.
+	LookAgainAt time.Time
 }
 
 func (e *Waiting) Error() string { return e.Detail }
+
+func (e *Waiting) lookAgainAt() *time.Time {
+	if e.LookAgainAt.IsZero() {
+		return nil
+	}
+	at := e.LookAgainAt.UTC()
+	return &at
+}
 
 func Wait(format string, args ...any) error {
 	return &Waiting{Detail: fmt.Sprintf(format, args...)}
@@ -139,21 +149,28 @@ type OwnSecretsReporter interface {
 	EnsureResourcesOwning(ctx context.Context, d contract.Desired) (created []contract.CreatedResource, ownSecrets map[string]string, err error)
 }
 
-// waiting finds no wait in a join holding any error that does not wait, so a failure beside a held call is answered rather than hidden.
+// waiting finds no wait in a join holding any error that does not wait, so a failure beside a held call is answered rather than hidden, and ends a join of waits at its earliest end, or at none when a member names none, since that member could end at any moment.
 func waiting(err error) (*Waiting, bool) {
 	switch e := err.(type) {
 	case *Waiting:
 		return e, true
 	case interface{ Unwrap() []error }:
-		var first *Waiting
+		var joined *Waiting
 		for _, member := range e.Unwrap() {
 			w, ok := waiting(member)
 			if !ok {
 				return nil, false
 			}
-			first = cmp.Or(first, w)
+			if joined == nil {
+				first := *w
+				joined = &first
+				continue
+			}
+			if w.LookAgainAt.IsZero() || w.LookAgainAt.Before(joined.LookAgainAt) {
+				joined.LookAgainAt = w.LookAgainAt
+			}
 		}
-		return first, first != nil
+		return joined, joined != nil
 	case interface{ Unwrap() error }:
 		return waiting(e.Unwrap())
 	}

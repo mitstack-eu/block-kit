@@ -201,6 +201,8 @@ type Response struct {
 	LastError     string            `json:"lastError,omitempty"`
 	Absent        *bool             `json:"absent,omitempty"`
 	Redrive       bool              `json:"redrive,omitempty"`
+	// LookAgainAt is the earliest time the answer can change, offered so an engine may wait until then before asking again.
+	LookAgainAt *time.Time `json:"lookAgainAt,omitempty"`
 	// Resources has no entry for a resource the verb never reached.
 	Resources map[string]ResourceOutcome `json:"resources,omitempty"`
 	// Replaces names, on a validate, the resources an upgrade would replace rather than change in place.

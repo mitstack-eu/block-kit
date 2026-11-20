@@ -274,8 +274,8 @@ func (r *declaredRun) deleteEach(ctx context.Context) (int, contract.Response) {
 	return r.absentAnswer(ctx, outputs)
 }
 
-// removalAnswer answers absent:false with detail and each resource deleteEach would observe, recording a held observe as unknown and a failed one as its error on its resource, since the wait decides the answer.
-func (r *declaredRun) removalAnswer(ctx context.Context, detail string) (int, contract.Response) {
+// removalAnswer answers absent:false with the removal's wait and each resource deleteEach would observe, recording a held observe as unknown and a failed one as its error on its resource, since the removal's wait alone decides the answer.
+func (r *declaredRun) removalAnswer(ctx context.Context, removal *Waiting) (int, contract.Response) {
 	for i := len(r.resources) - 1; i >= 0 && ctx.Err() == nil; i-- {
 		nr := r.resources[i]
 		if r.d.RecordedResources[nr.name].State == contract.Absent {
@@ -295,7 +295,7 @@ func (r *declaredRun) removalAnswer(ctx context.Context, detail string) (int, co
 		r.outcomes[nr.name] = entry
 	}
 	absent := false
-	return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(detail, r.secrets...), Resources: r.outcomes}
+	return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: safe.Scrub(removal.Detail, r.secrets...), LookAgainAt: removal.lookAgainAt(), Resources: r.outcomes}
 }
 
 // absentAnswer answers absent:true once every resource is proven absent, carrying a TeardownReporter's detail when the run asks for it.
@@ -367,7 +367,7 @@ func (r *declaredRun) validateObserved(ctx context.Context) (int, contract.Respo
 	if c, ok := r.h.resource.(Converger); ok {
 		detail, done, err := c.Converging(ctx, r.d)
 		if w, ok := waiting(err); ok {
-			return r.converging(w.Detail, false)
+			return r.held(w)
 		}
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
@@ -438,6 +438,13 @@ func (r *declaredRun) converging(detail string, done bool) (int, contract.Respon
 		r.outcomes[nr.name] = contract.ResourceOutcome{Observe: &contract.CallOutcome{State: contract.Unknown, StatusDetail: detail, Identity: ref.Identity, Type: ref.Type}}
 	}
 	return http.StatusOK, contract.Response{Pending: true, Redrive: done, StatusDetail: detail, Resources: r.outcomes}
+}
+
+// held answers as converging for a call a wait held, naming when the wait ends.
+func (r *declaredRun) held(w *Waiting) (int, contract.Response) {
+	status, resp := r.converging(w.Detail, false)
+	resp.LookAgainAt = w.lookAgainAt()
+	return status, resp
 }
 
 // logEnded writes one line for a validate whose request ended, naming no output or identity value, since the caller reads only that its deadline passed.
@@ -624,9 +631,9 @@ func (r *declaredRun) fail(name string, entry *contract.ResourceOutcome, call **
 		detail := (*call).StatusDetail
 		if r.operation == "unsubscribe" {
 			absent := false
-			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: detail, Resources: r.outcomes}
+			return http.StatusOK, contract.Response{Absent: &absent, StatusDetail: detail, LookAgainAt: w.lookAgainAt(), Resources: r.outcomes}
 		}
-		return http.StatusOK, contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: detail, Resources: r.outcomes, SecretOutputs: secretOutputs, ResourceSecretOutputs: r.resourceSecretOutputs}
+		return http.StatusOK, contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: detail, LookAgainAt: w.lookAgainAt(), Resources: r.outcomes, SecretOutputs: secretOutputs, ResourceSecretOutputs: r.resourceSecretOutputs}
 	}
 	status, resp := r.h.errorResponse(err, r.secrets)
 	*call = &contract.CallOutcome{Error: resp.Error, StatusDetail: resp.StatusDetail}

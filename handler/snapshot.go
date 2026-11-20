@@ -22,7 +22,7 @@ func (h *Handler) snapshot(ctx context.Context, req contract.Request, secrets []
 	}
 	handover, err := h.snapshotter.Snapshot(ctx, req.Desired(), req.Unit)
 	if w, ok := waiting(err); ok {
-		return http.StatusOK, contract.Response{Pending: true, Redrive: true, StatusDetail: safe.Scrub(w.Detail, secrets...)}
+		return http.StatusOK, contract.Response{Pending: true, Redrive: true, StatusDetail: safe.Scrub(w.Detail, secrets...), LookAgainAt: w.lookAgainAt()}
 	}
 	if err != nil {
 		return h.errorResponse(fmt.Errorf("handler: the snapshot of %q published no handover: %w", req.Unit, err), secrets)

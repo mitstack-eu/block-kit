@@ -17,6 +17,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/cloud"
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/cloud/cloudtest"
+	"github.com/mitstack-eu/block-kit/handler"
 )
 
 var refusedAt = time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
@@ -176,6 +177,86 @@ func TestTransport_RefusalWithoutResetTakesTheGrowingHold(t *testing.T) {
 	}
 
 	runSteps(t, l, clock, c, steps)
+}
+
+func TestRateLimited_WaitsUntilItsHoldEnds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reset time.Time
+		want  time.Time
+	}{
+		{"a refusal held for the growing pause waits until the pause ends", time.Time{}, refusedAt.Add(time.Minute)},
+		{"a refusal held until Hetzner's reset waits until the reset", refusedAt.Add(20 * time.Second), refusedAt.Add(20 * time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, c := newLimited(t, tc.reset)
+
+			for _, call := range []string{"the refused call", "the call the hold answers unsent"} {
+				err := c.KeepPrimaryIPs(ctx, ours)
+
+				var w *handler.Waiting
+				if !errors.As(err, &w) || !w.LookAgainAt.Equal(tc.want) {
+					t.Errorf("%s = %v with wait %+v; want a wait to look again at %s", call, err, w, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// stalledHetzner refuses every call for the limit and holds back its answer to call number stalled until release, closing reached once that call arrives.
+func stalledHetzner(t *testing.T, stalled int64) (*cloud.Client, *testClock, <-chan struct{}, func()) {
+	t.Helper()
+	f := cloudtest.New(t, testToken)
+	reached, released := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(released) })
+	t.Cleanup(release)
+	var sent atomic.Int64
+	f.Hook = func(w http.ResponseWriter, _ *http.Request) bool {
+		if sent.Add(1) == stalled {
+			close(reached)
+			<-released
+		}
+		refuseForTheLimit(w, time.Time{})
+		return true
+	}
+	clock := &testClock{now: refusedAt}
+	return cloud.NewHolds(clock.Now).Client(f.URL(), testToken), clock, reached, release
+}
+
+func TestRateLimited_NamesNoEndOnceItsHoldHasPassed(t *testing.T) {
+	ended := refusedAt.Add(time.Minute)
+	for name, run := range map[string]func(t *testing.T) error{
+		"a call arriving while the probe sent after the hold's end has no answer": func(t *testing.T) error {
+			c, clock, reached, release := stalledHetzner(t, 2)
+			_ = c.KeepPrimaryIPs(ctx, ours)
+			clock.set(ended.Add(time.Minute))
+			probe := make(chan error, 1)
+			go func() { probe <- c.KeepPrimaryIPs(ctx, ours) }()
+			<-reached
+			defer func() { release(); <-probe }()
+			return c.KeepPrimaryIPs(ctx, ours)
+		},
+		"a refusal answered after the hold another call's refusal started has ended": func(t *testing.T) error {
+			c, clock, reached, release := stalledHetzner(t, 1)
+			slow := make(chan error, 1)
+			go func() { slow <- c.KeepPrimaryIPs(ctx, ours) }()
+			<-reached
+			_ = c.KeepPrimaryIPs(ctx, ours)
+			clock.set(ended.Add(time.Minute))
+			release()
+			return <-slow
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := run(t)
+
+			var held *cloud.RateLimited
+			var w *handler.Waiting
+			if !errors.As(err, &held) || !errors.Is(err, cloud.ErrRateLimited) || !held.Until.IsZero() || !errors.As(err, &w) || !w.LookAgainAt.IsZero() || strings.Contains(err.Error(), "0001") {
+				t.Errorf("the call = %v with wait %+v; want a hold naming no end, since the one it met ended at %s, and a message naming no year 0001", err, w, ended)
+			}
+		})
+	}
 }
 
 func TestTransport_AServerFailureLeavesTheHoldToDouble(t *testing.T) {

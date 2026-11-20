@@ -25,16 +25,22 @@ const (
 
 // RateLimited is a refused or held call's error, which wraps a handler.Waiting so the kit's handler answers the step waiting, and has no Timeout method, since hcloud-go's retry policy sends a call again when a net.Error reports a timeout.
 type RateLimited struct {
+	// Until is when the hold ends, and zero once it has ended while no call has yet shown the limit passed, as for a call meeting the probe in flight or a refusal answered late.
 	Until time.Time
 }
 
 func (e *RateLimited) Error() string {
+	if e.Until.IsZero() {
+		return "Hetzner Cloud refused this token's calls for its rate limit, and no call has shown the limit passed since its hold ended"
+	}
 	return "Hetzner Cloud refused this token's calls for its rate limit, so none is sent until " + e.Until.UTC().Format(time.RFC3339)
 }
 
 func (e *RateLimited) Is(target error) bool { return target == ErrRateLimited }
 
-func (e *RateLimited) Unwrap() error { return &handler.Waiting{Detail: e.Error()} }
+func (e *RateLimited) Unwrap() error {
+	return &handler.Waiting{Detail: e.Error(), LookAgainAt: e.Until}
+}
 
 // Holds keeps each held token by a SHA-256 of the token in the operator's memory, so a restarted operator learns of the limit again from its first refused call.
 type Holds struct {
@@ -107,7 +113,7 @@ func (h *Holds) admit(key [sha256.Size]byte) (probe *hold, err error) {
 	case cur == nil:
 		return nil, nil
 	case cur.probing || h.now().Before(cur.until):
-		return nil, &RateLimited{Until: cur.until}
+		return nil, h.limited(cur.until)
 	}
 	cur.probing = true
 	return cur, nil
@@ -135,7 +141,7 @@ func (h *Holds) refused(key [sha256.Size]byte, probe *hold, header http.Header) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if cur := h.held[key]; cur != nil && cur != probe {
-		return &RateLimited{Until: cur.until}
+		return h.limited(cur.until)
 	}
 	streak := 0
 	if probe != nil {
@@ -147,6 +153,13 @@ func (h *Holds) refused(key [sha256.Size]byte, probe *hold, header http.Header) 
 		until = reset
 	}
 	h.held[key] = &hold{until: until, streak: streak}
+	return &RateLimited{Until: until}
+}
+
+func (h *Holds) limited(until time.Time) *RateLimited {
+	if !h.now().Before(until) {
+		return &RateLimited{}
+	}
 	return &RateLimited{Until: until}
 }
 
