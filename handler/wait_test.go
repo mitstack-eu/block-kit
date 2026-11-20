@@ -1,4 +1,4 @@
-// A block that returns handler.Wait, or whose Hetzner Cloud call is held, answers waiting with its detail rather than failed, unless a failure is joined to the wait, and names the wait's end as lookAgainAt only when the wait knows it.
+// A block that returns handler.Wait, or whose Hetzner Cloud call is held, answers waiting with its detail rather than failed, unless a failure is joined to the wait, and names the wait's end as lookAgainAt only when the wait knows it, and the earliest end of joined waits only when each knows its own.
 package handler_test
 
 import (
@@ -84,7 +84,12 @@ func TestServe_AWaitFromTheBlockAnswersPendingWithItsDetailAndOnlyAWaitForASigna
 
 const joinedFailure = "deleting primary IP 203.0.113.7: Hetzner Cloud answered 422"
 
-var joined = errors.Join(handler.Wait("%s", waitDetail), errors.New(joinedFailure))
+var joined = errors.Join(timedWait(0), errors.New(joinedFailure))
+
+// timedWait is a wait that names its end, heldRead's end plus after.
+func timedWait(after time.Duration) error {
+	return &handler.Waiting{Detail: waitDetail, LookAgainAt: heldRead.Until.Add(after)}
+}
 
 type joinedWaitBlock struct{}
 
@@ -102,8 +107,8 @@ func TestServe_AWaitJoinedWithAFailureAnswersTheFailure(t *testing.T) {
 
 			status, resp := x.answer(map[string]any{"operation": op})
 
-			if status != http.StatusInternalServerError || resp.Pending || resp.Absent != nil || !strings.Contains(resp.Error, joinedFailure) {
-				t.Errorf("%s answered %d, pending %v, absent %v, error %q; want 500 with an error naming %q", op, status, resp.Pending, resp.Absent, resp.Error, joinedFailure)
+			if status != http.StatusInternalServerError || resp.Pending || resp.Absent != nil || !strings.Contains(resp.Error, joinedFailure) || resp.LookAgainAt != nil {
+				t.Errorf("%s answered %d, pending %v, absent %v, error %q, lookAgainAt %v; want 500 with an error naming %q and no lookAgainAt", op, status, resp.Pending, resp.Absent, resp.Error, resp.LookAgainAt, joinedFailure)
 			}
 		})
 	}
@@ -250,6 +255,8 @@ func TestHandler_HeldStepNamesLookAgainAt(t *testing.T) {
 	for _, tc := range []lookAgainCase{
 		{"a subscribe whose block waits until a time it names in another zone", "subscribe", &kittest.FakeResource{EnsureErr: &handler.Waiting{Detail: waitDetail, LookAgainAt: heldRead.Until.In(time.FixedZone("CEST", 2*60*60))}}, true, &heldRead.Until},
 		{"an unsubscribe whose block waits on a removal until a time it names", "unsubscribe", &kittest.FakeResource{DeleteErr: &handler.Waiting{Detail: waitDetail, Removal: true, LookAgainAt: heldRead.Until}}, true, &heldRead.Until},
+		{"a subscribe whose block joins two waits names the earlier end when it comes first", "subscribe", &kittest.FakeResource{EnsureErr: errors.Join(timedWait(0), timedWait(time.Hour))}, true, &heldRead.Until},
+		{"a subscribe whose block joins two waits names the earlier end when it comes second", "subscribe", &kittest.FakeResource{EnsureErr: errors.Join(timedWait(time.Hour), timedWait(0))}, true, &heldRead.Until},
 	} {
 		t.Run(tc.name, tc.check)
 	}
@@ -266,6 +273,8 @@ func TestHandler_AnswerWithoutAHoldOmitsLookAgainAt(t *testing.T) {
 		{"a subscribe waiting on something with no known end answers pending", "subscribe", &kittest.FakeResource{EnsureErr: handler.Wait("%s", waitDetail)}, true, nil},
 		{"an unsubscribe waiting on something with no known end answers absent false", "unsubscribe", &kittest.FakeResource{DeleteErr: handler.Wait("%s", waitDetail)}, true, nil},
 		{"an unsubscribe waiting on a removal with no known end, whose observation is held, answers absent false, since the removal decides when it can change", "unsubscribe", &kittest.FakeResource{DeleteErr: handler.WaitOnRemoval("%s", waitDetail), ObserveErr: heldRead}, true, nil},
+		{"a subscribe whose block joins a wait with no known end before a timed one answers pending", "subscribe", &kittest.FakeResource{EnsureErr: errors.Join(handler.Wait("%s", waitDetail), timedWait(0))}, true, nil},
+		{"a subscribe whose block joins a timed wait before one with no known end answers pending", "subscribe", &kittest.FakeResource{EnsureErr: errors.Join(timedWait(0), handler.Wait("%s", waitDetail))}, true, nil},
 		{"a subscribe that finishes answers", "subscribe", &kittest.FakeResource{}, false, nil},
 		{"a validate of a present resource answers", "validate", &kittest.FakeResource{Count: 1}, false, nil},
 	} {
