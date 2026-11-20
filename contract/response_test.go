@@ -43,6 +43,13 @@ func TestDecodeResponse_CarriesEveryGoldenFieldOntoTheResponse(t *testing.T) {
 			if absent, ok := m["absent"].(bool); ok {
 				want.Absent = &absent
 			}
+			if s, ok := m["lookAgainAt"].(string); ok {
+				at, err := time.Parse(time.RFC3339, s)
+				if err != nil {
+					t.Fatalf("%s lookAgainAt %q is not RFC 3339: %v", name, s, err)
+				}
+				want.LookAgainAt = &at
+			}
 
 			got := decodeResponse(t, raw)
 
@@ -53,10 +60,13 @@ func TestDecodeResponse_CarriesEveryGoldenFieldOntoTheResponse(t *testing.T) {
 
 func TestDecodeResponse_EveryResponseGoldenDecodesAsBefore(t *testing.T) {
 	f, tr := false, true
+	holdEnds := time.Date(2026, time.November, 19, 20, 1, 0, 0, time.UTC)
 	want := map[string]contract.Response{
-		"absent":               {Absent: &tr},
-		"error":                {Error: "subscription quota exceeded for this org"},
-		"last-error":           {LastError: "timed out waiting for the load balancer to become healthy"},
+		"absent":     {Absent: &tr},
+		"error":      {Error: "subscription quota exceeded for this org"},
+		"last-error": {LastError: "timed out waiting for the load balancer to become healthy"},
+		"look-again-at": {Pending: true, LookAgainAt: &holdEnds,
+			StatusDetail: "Hetzner Cloud refused this token's calls for its rate limit, so none is sent until 2026-11-19T20:01:00Z"},
 		"null-outputs":         {},
 		"outputs":              {Outputs: map[string]string{"instanceId": "i-0123456789abcdef0", "endpoint": "https://example.apps.mitstack.dev"}},
 		"pending":              {Pending: true, StatusDetail: "waiting for the VPC to finish provisioning"},
@@ -238,6 +248,7 @@ func TestObservationResponse_MarksAbsenceByState(t *testing.T) {
 }
 
 func TestWire_EncodesEachValueExactly(t *testing.T) {
+	holdEnds := time.Date(2026, 11, 19, 20, 1, 0, 0, time.UTC)
 	cases := []struct {
 		label    string
 		value    any
@@ -256,6 +267,10 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 			Credential: json.RawMessage(`{"links":{}}`), ExpiresAt: time.Date(2026, 7, 15, 23, 15, 6, 0, time.UTC)}},
 			`{"outputs":null,"lease":{"credential":{"links":{}},"expiresAt":"2026-07-15T23:15:06Z"}}`, true},
 		{"a response that leases nothing encodes as before", contract.Response{Lease: nil}, `{"outputs":null}`, true},
+		{"a held answer encodes the time it can next change as lookAgainAt", contract.Response{Pending: true, StatusDetail: "held", LookAgainAt: &holdEnds},
+			`{"outputs":null,"pending":true,"statusDetail":"held","lookAgainAt":"2026-11-19T20:01:00Z"}`, true},
+		{"an answer naming no time leaves lookAgainAt out", contract.Response{Pending: true, StatusDetail: "held", LookAgainAt: nil},
+			`{"outputs":null,"pending":true,"statusDetail":"held"}`, true},
 		{"a validate answer from a block that planned its replacements carries plannedReplacements beside replaces",
 			contract.Response{Replaces: []string{"server"}, PlannedReplacements: true}, `{"outputs":null,"replaces":["server"],"plannedReplacements":true}`, true},
 		{"a validate answer from a block that planned no replacement still carries plannedReplacements",
@@ -301,6 +316,7 @@ func TestWire_EncodesEachValueExactly(t *testing.T) {
 }
 
 func TestResponse_RoundTripsThroughJSONUnderItsWireNames(t *testing.T) {
+	holdEnds := time.Date(2026, 11, 19, 20, 1, 0, 0, time.UTC)
 	cases := []struct {
 		label   string
 		in      contract.Response
@@ -330,6 +346,12 @@ func TestResponse_RoundTripsThroughJSONUnderItsWireNames(t *testing.T) {
 				}
 			}
 		}},
+		{"a time to look again", contract.Response{Pending: true, LookAgainAt: &holdEnds},
+			func(t *testing.T, m map[string]any) {
+				if at, _ := m["lookAgainAt"].(string); at != "2026-11-19T20:01:00Z" {
+					t.Errorf("encoded response %v has lookAgainAt %q, want 2026-11-19T20:01:00Z", m, at)
+				}
+			}},
 		{"resources by name", contract.Response{
 			Outputs: map[string]string{"vpcId": "vpc-0abc"},
 			Resources: map[string]contract.ResourceOutcome{
@@ -447,6 +469,17 @@ func TestResponseSchema_DeclaresEachFieldTheResponseTypesEncode(t *testing.T) {
 			}
 			if version, _ := doc["version"].(string); !atLeastVersion(version, 1, 13, 0) {
 				t.Errorf("response.schema.json version = %q, want at least 1.13.0, the version that adds plannedReplacements", version)
+			}
+		}},
+		{"lookAgainAt is an optional date-time from version 1.17.0", func(t *testing.T) {
+			if slices.Contains(sortedStrings(doc["required"]), "lookAgainAt") {
+				t.Error(`response.schema.json requires "lookAgainAt", but an answer naming no time, or from a block on an older kit, must stay valid`)
+			}
+			if f := schemaAt(t, doc, props, "lookAgainAt"); !hasType(f, "string") || f["format"] != "date-time" {
+				t.Errorf("properties.lookAgainAt = %v, want a string of format date-time", f)
+			}
+			if version, _ := doc["version"].(string); !atLeastVersion(version, 1, 17, 0) {
+				t.Errorf("response.schema.json version = %q, want at least 1.17.0, the version that adds lookAgainAt", version)
 			}
 		}},
 		{"resources is an optional object of outcomes by name", func(t *testing.T) {

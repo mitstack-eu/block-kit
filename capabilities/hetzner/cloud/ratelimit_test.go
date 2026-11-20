@@ -17,6 +17,7 @@ import (
 
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/cloud"
 	"github.com/mitstack-eu/block-kit/capabilities/hetzner/cloud/cloudtest"
+	"github.com/mitstack-eu/block-kit/handler"
 )
 
 var refusedAt = time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
@@ -176,6 +177,30 @@ func TestTransport_RefusalWithoutResetTakesTheGrowingHold(t *testing.T) {
 	}
 
 	runSteps(t, l, clock, c, steps)
+}
+
+func TestRateLimited_WaitsUntilItsHoldEnds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reset time.Time
+		want  time.Time
+	}{
+		{"a refusal held for the growing pause waits until the pause ends", time.Time{}, refusedAt.Add(time.Minute)},
+		{"a refusal held until Hetzner's reset waits until the reset", refusedAt.Add(20 * time.Second), refusedAt.Add(20 * time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, c := newLimited(t, tc.reset)
+
+			for _, call := range []string{"the refused call", "the call the hold answers unsent"} {
+				err := c.KeepPrimaryIPs(ctx, ours)
+
+				var w *handler.Waiting
+				if !errors.As(err, &w) || !w.LookAgainAt.Equal(tc.want) {
+					t.Errorf("%s = %v with wait %+v; want a wait to look again at %s", call, err, w, tc.want)
+				}
+			}
+		})
+	}
 }
 
 func TestTransport_AServerFailureLeavesTheHoldToDouble(t *testing.T) {

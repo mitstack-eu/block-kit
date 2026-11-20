@@ -3,6 +3,7 @@ package handler_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -185,9 +186,33 @@ func (b cloudBlock) ObserveResource(ctx context.Context, _ contract.ResourceRef)
 	return contract.Observation{State: contract.Present}, b(ctx, "observe")
 }
 
+// heldEndsUTC is heldRead.Until as the wire carries it.
+const heldEndsUTC = "2026-11-19T20:01:00Z"
+
+// heldCloud is a block whose Hetzner Cloud call on step meets a 429 and is held until heldRead.Until, with the fake and the count of calls that reached it.
+func heldCloud(t *testing.T, step string) (cloudBlock, *cloudtest.Fake, *atomic.Int64) {
+	t.Helper()
+	const token = "held-cloud-token"
+	at := heldRead.Until.Add(-time.Minute)
+	f, sent := cloudtest.New(t, token), &atomic.Int64{}
+	f.Hook = func(w http.ResponseWriter, _ *http.Request) bool {
+		sent.Add(1)
+		w.Header().Set("RateLimit-Reset", fmt.Sprint(at.Add(30*time.Minute).Unix()))
+		cloudtest.Refuse(w, http.StatusTooManyRequests, "rate_limit_exceeded", "Limit of '5000' requests per hour for ip '192.0.2.10' reached.")
+		return true
+	}
+	client := cloud.NewHolds(func() time.Time { return at }).Client(f.URL(), token)
+	return cloudBlock(func(ctx context.Context, called string) error {
+		if called != step {
+			return nil
+		}
+		return client.KeepPrimaryIPs(ctx, map[string]string{"block": "test-block", "subscription": "sub-1"})
+	}), f, sent
+}
+
 func TestServe_AHeldHetznerCallAnswersAStepWaitingAndAValidateUnknownNamingInUTCWhenTheHoldEnds(t *testing.T) {
-	const endsUTC, token = "2026-11-19T20:01:00Z", "held-cloud-token"
-	at, held := heldRead.Until.Add(-time.Minute), heldRead.Error()
+	const endsUTC = heldEndsUTC
+	held := heldRead.Error()
 	for _, tc := range []struct{ name, op, calls string }{
 		{"a subscribe whose ensure is held answers waiting", "subscribe", "block"},
 		{"an upgrade whose ensure is held answers waiting", "upgrade", "block"},
@@ -200,20 +225,7 @@ func TestServe_AHeldHetznerCallAnswersAStepWaitingAndAValidateUnknownNamingInUTC
 		{"a validate whose convergence read is held answers the resource unknown", "validate", "converge"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f, sent := cloudtest.New(t, token), &atomic.Int64{}
-			f.Hook = func(w http.ResponseWriter, _ *http.Request) bool {
-				sent.Add(1)
-				w.Header().Set("RateLimit-Reset", fmt.Sprint(at.Add(30*time.Minute).Unix()))
-				cloudtest.Refuse(w, http.StatusTooManyRequests, "rate_limit_exceeded", "Limit of '5000' requests per hour for ip '192.0.2.10' reached.")
-				return true
-			}
-			client := cloud.NewHolds(func() time.Time { return at }).Client(f.URL(), token)
-			b := cloudBlock(func(ctx context.Context, step string) error {
-				if step != tc.calls {
-					return nil
-				}
-				return client.KeepPrimaryIPs(ctx, map[string]string{"block": "test-block", "subscription": "sub-1"})
-			})
+			b, f, sent := heldCloud(t, tc.calls)
 			logs, x := captureLog(t), newHarness(t, b, func(cfg *handler.Config) { cfg.Observers = map[string]handler.Observer{"r": b} })
 
 			for i := range 2 {
@@ -231,6 +243,149 @@ func TestServe_AHeldHetznerCallAnswersAStepWaitingAndAValidateUnknownNamingInUTC
 			}
 			if want := "calls: subscription=sub-1 verb=" + tc.op + " " + calllog.Host(strings.TrimSuffix(strings.TrimPrefix(f.URL(), "http://"), "/v1")) + "=1\n"; sent.Load() != 1 || strings.Count(logs.String(), "calls: ") != 1 || !strings.Contains(logs.String(), want) {
 				t.Errorf("%d calls reached Hetzner over two %ss and logs = %q; want 1, the second answered by the hold, and the one call count line %q for it", sent.Load(), tc.op, logs, want)
+			}
+		})
+	}
+}
+
+// timedWaitBlock waits until a time it names itself, in whatever zone that time carries.
+type timedWaitBlock struct{ until time.Time }
+
+func (b timedWaitBlock) Ensure(context.Context, contract.Desired) error {
+	return fmt.Errorf("reading the server: %w", &handler.Waiting{Detail: waitDetail, LookAgainAt: b.until})
+}
+
+func (b timedWaitBlock) Delete(context.Context, contract.Desired) (map[string]string, error) {
+	return nil, &handler.Waiting{Detail: waitDetail, Removal: true, LookAgainAt: b.until}
+}
+
+type lookAgainCase struct {
+	name   string
+	op     string
+	serve  func(t *testing.T) *harness
+	fields map[string]any
+}
+
+func onCloud(step string) func(t *testing.T) *harness {
+	return func(t *testing.T) *harness {
+		t.Helper()
+		b, _, _ := heldCloud(t, step)
+		return newHarness(t, b, func(cfg *handler.Config) { cfg.Observers = map[string]handler.Observer{"r": b} })
+	}
+}
+
+func onBlock(r handler.Resource, obs handler.Observer) func(t *testing.T) *harness {
+	return func(t *testing.T) *harness {
+		t.Helper()
+		return newHarness(t, r, func(cfg *handler.Config) { cfg.Observers = map[string]handler.Observer{"r": obs} })
+	}
+}
+
+func onSnapshot(err error) func(t *testing.T) *harness {
+	return func(t *testing.T) *harness {
+		t.Helper()
+		block := newSnapshottingBlock("hnd_0001")
+		block.err = err
+		return newHarness(t, block, withManifest(snapshotManifest), func(cfg *handler.Config) { cfg.Observers = asObservers(blockObservers(newFakeCloud())) })
+	}
+}
+
+// answerOf posts the case's operation and returns the status, the conforming answer, and the lookAgainAt its body carries on the wire, if any.
+func answerOf(t *testing.T, tc lookAgainCase) (int, contract.Response, string, bool) {
+	t.Helper()
+	status, raw := tc.serve(t).post(map[string]any{"operation": tc.op}, tc.fields)
+	assertConforms(t, raw)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("%s answered %s, which is not a JSON object: %v", tc.op, raw, err)
+	}
+	wire, carried := fields["lookAgainAt"]
+	var at string
+	if carried {
+		if err := json.Unmarshal(wire, &at); err != nil {
+			t.Fatalf("%s answered lookAgainAt %s, which is not a JSON string: %v", tc.op, wire, err)
+		}
+	}
+	return status, decodeResponse(t, raw), at, carried
+}
+
+func TestHandler_HeldStepNamesLookAgainAt(t *testing.T) {
+	inCEST := heldRead.Until.In(time.FixedZone("CEST", 2*60*60))
+	present := fixed(contract.Observation{State: contract.Present})
+	for _, tc := range []lookAgainCase{
+		{"a subscribe whose ensure is held answers pending until the hold ends", "subscribe", onCloud("block"), nil},
+		{"an upgrade whose ensure is held answers pending until the hold ends", "upgrade", onCloud("block"), nil},
+		{"a subscribe whose observation is held answers pending until the hold ends", "subscribe", onCloud("observe"), nil},
+		{"an upgrade whose observation is held answers pending until the hold ends", "upgrade", onCloud("observe"), nil},
+		{"an unsubscribe whose delete is held answers absent false until the hold ends", "unsubscribe", onCloud("block"), nil},
+		{"an unsubscribe whose observation is held answers absent false until the hold ends", "unsubscribe", onCloud("observe"), nil},
+		{"a snapshot whose call is held answers pending until the hold ends", "snapshot", onSnapshot(fmt.Errorf("checking the scratch copy: %w", heldRead)), map[string]any{"unit": "app-data"}},
+		{"a subscribe whose block waits until a time it names in another zone answers pending naming that time in UTC", "subscribe", onBlock(timedWaitBlock{until: inCEST}, present), nil},
+		{"an unsubscribe whose block waits on a removal until a time it names in another zone answers absent false naming that time in UTC", "unsubscribe", onBlock(timedWaitBlock{until: inCEST}, present), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, resp, at, carried := answerOf(t, tc)
+
+			if status != http.StatusOK || resp.Error != "" {
+				t.Errorf("%s answered %d with error %q, want 200 and no error", tc.op, status, resp.Error)
+			}
+			if tc.op == "unsubscribe" && (resp.Absent == nil || *resp.Absent) || tc.op != "unsubscribe" && !resp.Pending {
+				t.Errorf("%s answered pending %v and absent %v; want absent:false on an unsubscribe and pending:true otherwise", tc.op, resp.Pending, resp.Absent)
+			}
+			if !carried || at != heldEndsUTC {
+				t.Errorf("%s answered lookAgainAt %q, carried %v; want %q, the hold's end in UTC", tc.op, at, carried, heldEndsUTC)
+			}
+		})
+	}
+}
+
+func TestHandler_HeldValidateNamesLookAgainAt(t *testing.T) {
+	for _, tc := range []lookAgainCase{
+		{"a validate whose observation is held answers the resource unknown until the hold ends", "validate", onCloud("observe"), nil},
+		{"a validate whose replacement plan is held answers the resource unknown until the hold ends", "validate", onCloud("plan"), nil},
+		{"a validate whose convergence read is held answers the resource unknown until the hold ends", "validate", onCloud("converge"), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, resp, at, carried := answerOf(t, tc)
+
+			if status != http.StatusOK || !resp.Pending || resp.Error != "" {
+				t.Errorf("validate answered %d, pending %v, error %q; want 200, pending and no error", status, resp.Pending, resp.Error)
+			}
+			if o := resp.Resources["r"].Observe; o == nil || o.State != contract.Unknown {
+				t.Errorf("validate answered resource r's observe %+v, want state unknown", o)
+			}
+			if !carried || at != heldEndsUTC {
+				t.Errorf("validate answered lookAgainAt %q, carried %v; want %q, the hold's end in UTC", at, carried, heldEndsUTC)
+			}
+		})
+	}
+}
+
+func TestHandler_AnswerWithoutAHoldOmitsLookAgainAt(t *testing.T) {
+	present := fixed(contract.Observation{State: contract.Present})
+	finishes := cloudBlock(func(context.Context, string) error { return nil })
+	for _, tc := range []struct {
+		lookAgainCase
+		waits bool
+	}{
+		{lookAgainCase{"a subscribe waiting on something with no known end answers pending with no lookAgainAt", "subscribe", onBlock(waitingBlock{}, present), nil}, true},
+		{lookAgainCase{"an unsubscribe waiting on something with no known end answers absent false with no lookAgainAt", "unsubscribe", onBlock(waitingBlock{}, present), nil}, true},
+		{lookAgainCase{"an unsubscribe waiting on a removal with no known end, whose observation is held, answers absent false with no lookAgainAt, since the removal decides when it ends", "unsubscribe", onBlock(removalWaitingBlock{}, &observer{err: heldRead}), nil}, true},
+		{lookAgainCase{"a snapshot waiting on something with no known end answers pending with no lookAgainAt", "snapshot", onSnapshot(handler.Wait("the scratch copy of app-data is restoring")), map[string]any{"unit": "app-data"}}, true},
+		{lookAgainCase{"a subscribe that finishes answers with no lookAgainAt", "subscribe", onBlock(finishes, finishes), nil}, false},
+		{lookAgainCase{"a validate of a present resource answers with no lookAgainAt", "validate", onBlock(finishes, finishes), nil}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, resp, at, carried := answerOf(t, tc.lookAgainCase)
+
+			if status != http.StatusOK || resp.Error != "" {
+				t.Errorf("%s answered %d with error %q, want 200 and no error", tc.op, status, resp.Error)
+			}
+			if waited := resp.Pending || resp.Absent != nil && !*resp.Absent; waited != tc.waits {
+				t.Errorf("%s answered pending %v and absent %v; want it waiting %v", tc.op, resp.Pending, resp.Absent, tc.waits)
+			}
+			if carried {
+				t.Errorf("%s answered lookAgainAt %q, want the field left out", tc.op, at)
 			}
 		})
 	}
