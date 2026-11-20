@@ -2356,11 +2356,12 @@ asks Hetzner is your client's own setting, such as hcloud-go's `WithPollOpts`.
 Hetzner Cloud answers `429 rate_limit_exceeded` once a token's budget of calls
 is spent, and its API reference says the budget refills by one call a second.
 [Logging each call a client makes](#logging-each-call-a-client-makes) explains
-the token, its budget and Hetzner's two limits. A client that keeps calling in
-the meantime spends each call as it comes back, for every block on that token.
-The kit's Hetzner Cloud client, the `capabilities/hetzner/cloud` package this
-section calls `cloud`, therefore holds a refused token's calls, so the budget
-refills before the next call goes out.
+the token, its budget and Hetzner's two limits. A client that keeps calling
+spends each call the moment it refills, so every block on that token keeps
+meeting refusals. The kit's Hetzner Cloud client, the
+`capabilities/hetzner/cloud` package this section calls `cloud`, therefore
+holds a refused token's calls, so the budget refills before the next call goes
+out.
 
 The hold works in four steps:
 
@@ -2369,9 +2370,10 @@ The hold works in four steps:
    `*cloud.RateLimited` error and sends nothing. The call does not sleep.
 3. When the hold ends, the next call goes out alone. Any answer but a refusal
    or a server failure ends the hold, and another refusal holds the token for
-   twice as long, up to an hour. A call that gets no answer, or a server
-   failure of 500 or above, says nothing of the limit. The hold stays, so the
-   call after it goes out alone in turn and the next refusal still doubles it.
+   twice as long, up to an hour. If that one call gets no answer, or a server
+   failure of 500 or above, nothing is known of the limit, so the token stays
+   held: the next call after it again goes out alone, and a refusal of that
+   call still doubles the hold.
 4. No hold ends later than the `RateLimit-Reset` time Hetzner sends with the
    refusal, a Unix time in seconds that names the second its whole budget is
    back. A refusal without that header,
@@ -2425,15 +2427,21 @@ refusal, because the kit's client turns it into a `*cloud.RateLimited` error
 before hcloud-go sees an answer. hcloud-go v2.49.0 sends a call again after an
 error from its HTTP client only when that error reports a timeout. A
 `cloud.RateLimited` reports none, so hcloud-go returns a held call's error at
-once. `cloud.HTTPClient` stops each call after the kit client's 60 seconds,
-where the HTTP client hcloud-go builds by default sets no time limit.
+once. `cloud.HTTPClient` gives up on a call after 60 seconds, the time limit
+`cloud.New`'s client also sets, where the HTTP client hcloud-go builds by
+default sets none.
+
+A block that calls Hetzner Cloud through an HTTP client of its own sends those
+calls through `cloud.HTTPClient()` as well, since a call that does not pass
+through it is never held.
 
 In a test, `cloud.NewHolds(now)` takes a `func() time.Time` your test controls
 and returns a `*cloud.Holds` whose holds read the time from it. Its
 `Client(fake.URL(), token)` and `HTTPClient()` call through those holds. A
 `cloudtest.Fake` whose `Hook` sets a `RateLimit-Reset` header, a Unix time in
 seconds, and answers `cloudtest.Refuse(w, http.StatusTooManyRequests,
-"rate_limit_exceeded", message)` stands in for Hetzner's refusal. The hold
+"rate_limit_exceeded", message)` stands in for Hetzner's refusal, where
+`message` is any text for the error body's `message` field. The hold
 lives in `capabilities/hetzner/cloud/ratelimit.go`, and `ratelimit_test.go`
 beside it proves each step above.
 

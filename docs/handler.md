@@ -491,7 +491,9 @@ one answers `pending:true` with every resource `unknown`. The kit's Hetzner
 Cloud client returns such a wait for each call it holds after Hetzner answers
 `429` for its rate limit, as [Holding calls after a Hetzner Cloud rate-limit
 refusal](helpers.md#holding-calls-after-a-hetzner-cloud-rate-limit-refusal)
-describes. That `429` is Hetzner's own answer, not a `*handler.Refused`.
+describes. That `429` is Hetzner's own answer, which the client turns into a
+wait. It never reaches the handler as a `*handler.Refused`, so the engine
+never reads it as a permanent refusal.
 
 `handler.WaitForSignal(format, args...)` builds the same wait for a call that
 changed nothing because it waits on what another subscription reports, such as
@@ -535,9 +537,9 @@ subscription, made with `Unsubscribing` set, so an observer
 can report the removal under way, as
 [A resource being removed](observe.md#a-resource-being-removed) describes. An
 observe that fails is recorded as that resource's error, and the answer still
-waits. An observe that returns a `*handler.Waiting`, such as a call the kit
-holds, records that resource `unknown` with the wait's detail instead, and no
-error. `landing.Remove` returns this wait while its pull request waits on a
+waits. An observe that returns a `*handler.Waiting`, such as a Hetzner Cloud
+call the kit holds after a rate-limit refusal, records that resource `unknown`
+with the wait's detail instead, and no error. `landing.Remove` returns this wait while its pull request waits on a
 required check.
 
 When `Delete` returns any other error, the handler answers that error at once and
