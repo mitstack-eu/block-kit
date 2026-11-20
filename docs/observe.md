@@ -735,27 +735,34 @@ A block that judges a list of its own from a cluster's report reads it
 through `observe.DecodeReport`, beside `ReportState` in the same file. The
 function decodes the members `ReportState` picks into the value you pass. It
 returns the report's top-level `madeAt`, which is nil when the report carries
-none. It never returns a `madeAt` from inside `state`. Your block then dates
-the report by the same rule as the kit's own readers, in both forms of a
-report. The kit's readers on this page call it too.
+none, and never a `madeAt` from inside `state`. `observe.NodeReported` reads
+its own members through it, so your block dates a report by the same rule as
+the kit, in both forms of a report.
 
-A block that reads a report's CloudNativePG list writes:
+The function below reads a report's `subscriptionResources` list and says
+whether the report was made after the verb. It compiles in a block that
+imports `encoding/json`, `fmt`, `time` and the kit's `observe` package:
 
 ```go
-var body struct {
-	CloudNativePG []cnpgObject `json:"cloudNativePG"`
-}
-madeAt, err := observe.DecodeReport(report.Body, &body)
-if err != nil {
-	return fmt.Errorf("reading the node report received at %s: %w", report.ReceivedAt, err)
+func listMadeAfter(report observe.NodeReport, verbAt time.Time) (json.RawMessage, bool, error) {
+	var body struct {
+		SubscriptionResources json.RawMessage `json:"subscriptionResources"`
+	}
+	madeAt, err := observe.DecodeReport(report.Body, &body)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading the node report received at %s: %w", report.ReceivedAt, err)
+	}
+	return body.SubscriptionResources, madeAt != nil && madeAt.After(verbAt), nil
 }
 ```
 
-Give the value no `madeAt` field of its own. A `madeAt` inside `state` would
-decode into it, and the rules above say a reader never reads one there.
-`DecodeReport` fails a `state` that is not an object, as `ReportState` does,
-and a body that is not an object. It also fails a top-level `madeAt` that is
-not a time, since then no reader can tell when the report was made.
+A value that keeps the date beside its members tags that field `json:"-"`.
+Any field that decodes `madeAt` would take one from inside `state`, and the
+rules above say a reader never reads one there.
+`DecodeReport` fails a `state` that is not an object, as `ReportState` does.
+It also fails a top-level `madeAt` that is not a time, since then no reader
+can tell when the report was made. When only the decode into your value
+fails, it returns the top-level `madeAt` beside the error.
 
 ## Listing what a subscription holds
 
