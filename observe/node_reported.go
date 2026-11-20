@@ -148,7 +148,7 @@ type reportedObject struct {
 }
 
 type reportBody struct {
-	MadeAt                        *time.Time      `json:"madeAt"`
+	MadeAt                        *time.Time      `json:"-"`
 	SubscriptionResources         json.RawMessage `json:"subscriptionResources"`
 	SubscriptionResourcesComplete bool            `json:"subscriptionResourcesComplete"`
 	SubscriptionResourceKinds     []string        `json:"subscriptionResourceKinds"`
@@ -162,13 +162,13 @@ func readBody(raw json.RawMessage) (reportBody, error) {
 	if err != nil {
 		return body, err
 	}
-	if err := json.Unmarshal(state, &body); err != nil {
-		return body, err
-	}
 	var top struct {
 		MadeAt *time.Time `json:"madeAt"`
 	}
-	err = json.Unmarshal(raw, &top)
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return body, err
+	}
+	err = json.Unmarshal(state, &body)
 	body.MadeAt = top.MadeAt
 	return body, err
 }

@@ -644,7 +644,8 @@ changes on every run, such as a log line, so two reports of an unchanged
 source can carry the same `state`. Every reader on this page takes its judged
 members from `state` when the report carries one, and so does every reader of
 a Docker host's report in `helpers/dockerhost`. A report without `state` is
-read whole, as the sections above describe.
+read whole, as the sections above describe. The name matches exactly, so a
+top-level `State` is an ordinary member of a report without `state`.
 
 A sender that writes `state` follows four rules:
 
@@ -653,7 +654,7 @@ A sender that writes `state` follows four rules:
 | `state` holds every member a judgement reads | `subscriptionResources`, `subscriptionResourcesComplete`, `subscriptionResourceKinds` and `argocd` sit inside it, under the names and in the shape this page gives them |
 | `state` holds nothing that changes while the source stands still | It carries no log, command output, generated name, temporary path or time of one run |
 | No member is written both inside and outside `state` | A reader takes a judged member from `state` alone and never reads the copy beside it |
-| What says when the report was made stays outside `state` | `madeAt` sits at the top level, beside `state` |
+| What says when the report was made stays outside `state` | `madeAt` sits at the top level, beside `state`, and a reader never reads a `madeAt` inside it |
 
 The namespace report from
 [Observing a resource the platform cannot reach](#observing-a-resource-the-platform-cannot-reach),
@@ -677,9 +678,15 @@ under `host.apps.<app>` at the top level, at the same place in the list as the
 container `state` lists under that app. A release's `output` sits under
 `host.releases.<app>`. `dockerhost.ReadReport` joins each one to the container
 or release `state` holds at that place. So `SubscriptionLogs` and the
-database's observer quote a log as they do from a report without `state`. A
-container with nothing beside it reads with no logs, as from a host release
-that sends none:
+database's observer quote a log as they do from a report without `state`.
+
+The list beside `state` names one entry for each container `state` lists
+under that app, in the same order, or is left out. An app with no list beside
+`state` reads with no logs, as from a host release that sends none. A list of
+any other length fails the read with an error naming the state member, since
+the reader could no longer tell whose output is whose. A list in another order
+cannot be caught, because its entries carry no container name. A report whose
+one container keeps its log beside `state` reads:
 
 ```json
 {

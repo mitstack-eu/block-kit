@@ -163,32 +163,49 @@ func (r Report) Decode(v any) error {
 	return json.Unmarshal(r.state, v)
 }
 
-// beside is the output a report carries outside its state member, each container at the place its state lists it under the same app.
-type beside struct {
-	Host struct {
-		Apps map[string][]struct {
-			Logs        *string     `json:"logs"`
-			HealthCheck HealthCheck `json:"healthCheck"`
-		} `json:"apps"`
-		Releases map[string]struct {
-			Output string `json:"output"`
-		} `json:"releases"`
-	} `json:"host"`
+// containerOutput is what a report carries for one container outside its state member.
+type containerOutput struct {
+	Logs        *string     `json:"logs"`
+	HealthCheck HealthCheck `json:"healthCheck"`
 }
 
-// withOutput sets on each container and release its state member lists the output the body holds for it, which is the body's own when the report carries no state member.
-func (r Report) withOutput(apps map[string][]Container, releases map[string]releaseOutput) error {
-	var out beside
+// withContainerOutput sets on each container its state member lists the output the body holds at the same place under the same app, which is the container's own when the report carries no state member.
+func (r Report) withContainerOutput(apps map[string][]Container) error {
+	var out struct {
+		Host struct {
+			Apps map[string][]containerOutput `json:"apps"`
+		} `json:"host"`
+	}
 	if err := json.Unmarshal(r.body, &out); err != nil {
 		return err
 	}
 	for app, containers := range apps {
-		for i := range containers {
-			containers[i].Logs, containers[i].HealthCheck = nil, HealthCheck{}
-			if i < len(out.Host.Apps[app]) {
-				containers[i].Logs, containers[i].HealthCheck = out.Host.Apps[app][i].Logs, out.Host.Apps[app][i].HealthCheck
-			}
+		beside := out.Host.Apps[app]
+		if len(beside) > 0 && len(beside) != len(containers) {
+			return fmt.Errorf("the report's state member lists %d containers of app %s and the output beside it %d, so no output can be matched to its container", len(containers), app, len(beside))
 		}
+		for i := range containers {
+			var output containerOutput
+			if len(beside) > 0 {
+				output = beside[i]
+			}
+			containers[i].Logs, containers[i].HealthCheck = output.Logs, output.HealthCheck
+		}
+	}
+	return nil
+}
+
+// withReleaseOutput sets on each release its state member lists the output the body holds for the same app.
+func (r Report) withReleaseOutput(releases map[string]releaseOutput) error {
+	var out struct {
+		Host struct {
+			Releases map[string]struct {
+				Output string `json:"output"`
+			} `json:"releases"`
+		} `json:"host"`
+	}
+	if err := json.Unmarshal(r.body, &out); err != nil {
+		return err
 	}
 	for app, release := range releases {
 		release.Output = out.Host.Releases[app].Output
@@ -264,7 +281,10 @@ func SubscriptionLogs(ctx context.Context, api observe.NodeReportsAPI, d contrac
 	if err := report.Decode(&out); err != nil {
 		return nil, fmt.Errorf("decoding the host's newest node report: %w", err)
 	}
-	if err := report.withOutput(out.Host.Apps, out.Host.Releases); err != nil {
+	if err := report.withContainerOutput(out.Host.Apps); err != nil {
+		return nil, fmt.Errorf("decoding the host's newest node report: %w", err)
+	}
+	if err := report.withReleaseOutput(out.Host.Releases); err != nil {
 		return nil, fmt.Errorf("decoding the host's newest node report: %w", err)
 	}
 	owns := func(label string) bool { return label != "" && label == d.SubscriptionID }

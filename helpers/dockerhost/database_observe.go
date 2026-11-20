@@ -37,7 +37,7 @@ func (db Database) readReport(ctx context.Context, d contract.Desired, hostSub s
 	if err := report.Decode(&body); err != nil {
 		return databaseReport{}, false, fmt.Errorf("decoding the host's newest node report: %w", err)
 	}
-	if err := report.withOutput(body.Host.Apps, nil); err != nil {
+	if err := report.withContainerOutput(body.Host.Apps); err != nil {
 		return databaseReport{}, false, fmt.Errorf("decoding the host's newest node report: %w", err)
 	}
 	return body, true, nil
