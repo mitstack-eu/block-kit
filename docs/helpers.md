@@ -36,7 +36,7 @@ package has [a page of its own](gitops.md).
 | `helpers/tftpl` | Renders in Go an OpenTofu template its module also renders with `templatefile` |
 | `capabilities/github/ghapi` | Calls the GitHub REST API, or reads the GitHub account or App id a request carries |
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
-| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, reads a server's `serverType` input, waits on the Cloud actions its calls start, or calls Hetzner Cloud through hcloud-go and needs its calls held after a rate-limit refusal |
+| `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, reads a server's `serverType` input, waits on the Cloud actions its calls start, or calls Hetzner Cloud through hcloud-go, Hetzner's Go client, and needs its calls held after Hetzner refuses one for its rate limit |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
 
 ## Keeping secrets out of logs and requests out of hosts
@@ -170,11 +170,14 @@ var client = calllog.Client(&http.Client{}, calllog.FixedSegments("repos", "git"
 With those words, the path `/repos/acme/gitops/git/ref/heads/main` reads
 `/repos/{id}/{id}/git/ref/heads/{id}`.
 
-Hetzner's API reference documents a rate limit for each project. A refusal
-Hetzner sent on 19 November 2026 also named a limit of 5,000 calls an hour for
-the IP address the calls came from. Whether this figure tracks the
-5,000-an-hour limit per address or only the per-project limit Hetzner documents
-is unproven.
+The `RateLimit-Remaining` field shows how close a block is to having its calls
+refused. A block calls Hetzner Cloud with an API token, which belongs to one
+Hetzner project. Hetzner's API reference limits each project to 3,600 calls an
+hour, refilled at one call a second, and this page calls the calls a token has
+left under its limit the token's budget. A refusal Hetzner sent on 19 November
+2026 named a second limit, of 5,000 calls an hour for the IP address the calls
+came from. Whether `RateLimit-Remaining` counts down the per-project limit or
+the per-address one is unproven.
 
 The handler also writes one line for each lifecycle call it serves that made
 calls through these clients. The line names the subscription, the verb and how
@@ -190,7 +193,8 @@ makes under `context.Background()` still writes its own line, but adds nothing
 to this one. A lifecycle call that made no counted call writes no such line. A
 Hetzner Cloud call the kit [holds after a rate-limit
 refusal](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal) never reaches
-Hetzner, so it writes no call line and is not counted. The handler sets this up
+Hetzner, so it writes no `calllog:` line of its own and adds nothing to the
+`calls:` line. The handler sets this up
 through `calllog.Counting` and `calllog.Counted`, so your block calls neither.
 
 A validate is the call the platform sends to learn what stands. The handler
@@ -2351,9 +2355,12 @@ asks Hetzner is your client's own setting, such as hcloud-go's `WithPollOpts`.
 
 Hetzner Cloud answers `429 rate_limit_exceeded` once a token's budget of calls
 is spent, and its API reference says the budget refills by one call a second.
-A client that keeps calling in the meantime spends each call as it comes back,
-for every block on that token. The kit's Hetzner Cloud client therefore holds a
-refused token's calls, so the budget refills before the next call goes out.
+[Logging each call a client makes](#logging-each-call-a-client-makes) explains
+the token, its budget and Hetzner's two limits. A client that keeps calling in
+the meantime spends each call as it comes back, for every block on that token.
+The kit's Hetzner Cloud client, the `capabilities/hetzner/cloud` package this
+section calls `cloud`, therefore holds a refused token's calls, so the budget
+refills before the next call goes out.
 
 The hold works in four steps:
 
@@ -2366,19 +2373,23 @@ The hold works in four steps:
    failure of 500 or above, says nothing of the limit. The hold stays, so the
    call after it goes out alone in turn and the next refusal still doubles it.
 4. No hold ends later than the `RateLimit-Reset` time Hetzner sends with the
-   refusal, the second its whole budget is back. A refusal without that header,
+   refusal, a Unix time in seconds that names the second its whole budget is
+   back. A refusal without that header,
    or with a time the operator's clock has already passed, takes the growing
    hold alone.
 
 The hold covers one token. It keeps a SHA-256 hash of the token rather than the
-token itself, and a refusal on one token never holds a call on another. A
-refusal for the limit per IP address therefore holds only the token whose call
-met it. Holds live in the operator's memory, so a restarted operator learns of
-the limit again from its first refused call.
+token itself, and a refusal on one token never holds a call on another. The
+limit per IP address spans every token whose calls come from that address, yet
+a refusal for it holds only the token whose call met it. A call on another
+token from the same address still goes out. Holds live in the operator's
+memory, so a restarted operator learns of the limit again from its first
+refused call.
 
-`cloud.RateLimited` wraps a `handler.Waiting`, so the handler answers the
-lifecycle call as it answers `handler.Wait`. The status detail names when the
-hold ends, in UTC:
+`cloud.RateLimited` wraps a
+[`handler.Waiting`](handler.md#errors-refusals-and-panics), so the handler
+answers the lifecycle call as it answers `handler.Wait`. The status detail
+names when the hold ends, in UTC:
 
 ```text
 Hetzner Cloud refused this token's calls for its rate limit, so none is sent until 2026-11-19T20:01:00Z
@@ -2388,9 +2399,9 @@ Hetzner Cloud refused this token's calls for its rate limit, so none is sent unt
 |---|---|
 | `EnsureResources` or `Ensure`, on `subscribe` or `upgrade` | `pending: true`, with the hold's text as its status detail and each resource `EnsureResources` returned beside the error |
 | `Delete`, on `unsubscribe` | `absent: false`, with the hold's text |
-| An observer, on `subscribe`, `upgrade` or `validate` | `pending: true`, with that resource unknown |
-| An observer, on `unsubscribe` | `absent: false`, with that resource unknown |
-| `PlanReplacements` or `Converging`, on `validate` | `pending: true`, with every resource unknown |
+| An observer, on `subscribe`, `upgrade` or `validate` | `pending: true`, with that resource unknown and the secret outputs of each provided resource already observed present |
+| An observer, on `unsubscribe`, including the observe a [removal wait](handler.md#errors-refusals-and-panics) makes | `absent: false`, with that resource unknown |
+| [`PlanReplacements`](handler.md#what-the-handler-calls-for-each-call) or [`Converging`](handler.md#work-that-outlasts-one-call), on `validate` | `pending: true`, with every resource unknown |
 
 When your code joins a held call's error with another failure, as
 `errors.Join` does, the handler answers the failure, so the hold never hides
@@ -2408,16 +2419,20 @@ hold per token:
 client := hcloud.NewClient(hcloud.WithToken(token), hcloud.WithHTTPClient(cloud.HTTPClient()))
 ```
 
-hcloud-go sends a refused call again when it reads the refusal itself. Through
-`cloud.HTTPClient` it reads the kit's error instead. hcloud-go v2.49.0 sends a
-call again after such an error only when the error reports a timeout, and
-`cloud.RateLimited` reports none. `cloud.HTTPClient` carries the kit client's
-60-second timeout.
+hcloud-go sends a call again on its own when it reads Hetzner's
+`rate_limit_exceeded` refusal. Through `cloud.HTTPClient` it never reads that
+refusal, because the kit's client turns it into a `*cloud.RateLimited` error
+before hcloud-go sees an answer. hcloud-go v2.49.0 sends a call again after an
+error from its HTTP client only when that error reports a timeout. A
+`cloud.RateLimited` reports none, so hcloud-go returns a held call's error at
+once. `cloud.HTTPClient` stops each call after the kit client's 60 seconds,
+where the HTTP client hcloud-go builds by default sets no time limit.
 
-In a test, `cloud.NewHolds(now)` makes holds that read the time from a clock
-your test sets, and `holds.Client(fake.URL(), token)` and `holds.HTTPClient()`
-call through them. A `Fake.Hook` that sets a `RateLimit-Reset` header and
-answers `cloudtest.Refuse(w, http.StatusTooManyRequests,
+In a test, `cloud.NewHolds(now)` takes a `func() time.Time` your test controls
+and returns a `*cloud.Holds` whose holds read the time from it. Its
+`Client(fake.URL(), token)` and `HTTPClient()` call through those holds. A
+`cloudtest.Fake` whose `Hook` sets a `RateLimit-Reset` header, a Unix time in
+seconds, and answers `cloudtest.Refuse(w, http.StatusTooManyRequests,
 "rate_limit_exceeded", message)` stands in for Hetzner's refusal. The hold
 lives in `capabilities/hetzner/cloud/ratelimit.go`, and `ratelimit_test.go`
 beside it proves each step above.
