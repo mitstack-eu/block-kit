@@ -6,17 +6,11 @@ import (
 	"fmt"
 )
 
-// ReportState returns the members of a node report body that a judgement reads: the body's state member when it carries one, and the body whole when it does not.
+// ReportState returns the members of a node report body that a judgement reads: its member keyed exactly "state" when it carries one, and otherwise the body whole, leaving a body that is not an object to fail in the reader that decodes it.
 func ReportState(body json.RawMessage) (json.RawMessage, error) {
-	// A map matches the key exactly, where a struct field would also take a top-level State as the state member.
-	var members map[string]json.RawMessage
-	err := json.Unmarshal(body, &members)
+	members, err := membersByExactKey(body)
 	state, carried := members["state"]
-	var notObject *json.UnmarshalTypeError
 	switch {
-	case errors.As(err, &notObject):
-		// A body that is not an object has no state member, so the reader decoding it whole fails it.
-		return body, nil
 	case err != nil:
 		return nil, err
 	case !carried:
@@ -25,4 +19,14 @@ func ReportState(body json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("the report's state member holds %.40s, which is not an object", state)
 	}
 	return state, nil
+}
+
+func membersByExactKey(body json.RawMessage) (map[string]json.RawMessage, error) {
+	var members map[string]json.RawMessage
+	err := json.Unmarshal(body, &members)
+	var notAnObject *json.UnmarshalTypeError
+	if errors.As(err, &notAnObject) {
+		return nil, nil
+	}
+	return members, err
 }
