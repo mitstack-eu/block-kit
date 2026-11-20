@@ -15,7 +15,7 @@ import (
 	"github.com/mitstack-eu/block-kit/observe"
 )
 
-// stateReport carries the host's judged members in its state member, beside a top-level host that contradicts each of them and holds each container's output at the place the state lists that container.
+// stateReport carries the host's judged members in its state member, beside a top-level host that contradicts each of them and holds each container's and the release's output where the state lists them.
 const stateReport = `{"state":{"host":{` +
 	`"capacity":{"allocatable":{"cpuMillis":3500,"memoryBytes":7516192768,"diskBytes":75161927680}},"agent":{"syncedCommit":"` + synced + `"},` +
 	`"apps":{"shop":[{"container":"shop-web","subscription":"sub_shop","image":"ghcr.io/acme/shop@sha256:9f00","state":"exited"},` +
@@ -90,7 +90,7 @@ func TestReportState_EveryReaderIgnoresTopLevelJudgedMembers(t *testing.T) {
 	}
 }
 
-// besideState moves each report the host sends into its state member, beside a top-level host that contradicts every judged member and holds the database container's output.
+// besideState moves each report the host sends into its state member, beside a top-level host that contradicts its capacity, agent, containers, volumes and backups and holds the database container's output.
 type besideState struct{ observe.NodeReportsAPI }
 
 func (b besideState) NodeReports(ctx context.Context, d contract.Desired, sub string) ([]observe.NodeReport, error) {

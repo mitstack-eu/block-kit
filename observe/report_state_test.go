@@ -1,6 +1,6 @@
 package observe_test
 
-// A node report carrying a state member is judged from that member alone, one without it is judged whole as before, and a state that is not an object fails naming the member.
+// A node report carrying a state member is judged from that member alone, one without it is judged whole, and a state that is not an object fails naming the member.
 
 import (
 	"context"
@@ -20,7 +20,6 @@ func withState(state any, top map[string]any) map[string]any {
 	return report
 }
 
-// credentials is a report whose Synced Application repository-credentials applied the secret once for each health given.
 func credentials(healths ...string) map[string]any {
 	applied := []map[string]any{}
 	for _, health := range healths {
