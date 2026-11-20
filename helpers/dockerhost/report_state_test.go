@@ -143,3 +143,43 @@ func TestReadReport_RefusesAStateThatIsNotAnObject(t *testing.T) {
 		}
 	}
 }
+
+func TestReadReport_ReadsAReportWithoutStateAsBefore(t *testing.T) {
+	containerNames := func(r dockerhost.Report) (string, error) {
+		containers, err := r.AppContainers("shop")
+		names := []string{}
+		for _, c := range containers {
+			names = append(names, c.Name)
+		}
+		return strings.Join(names, ","), err
+	}
+	for _, tc := range []struct {
+		label, body string
+		read        func(dockerhost.Report) (string, error)
+		want        string
+	}{
+		{"a top-level State member, which is not the state member", `{"State":7,"host":{"agent":{"syncedCommit":"` + synced + `"}}}`, dockerhost.Report.SyncedCommit, synced},
+		{"a releases member no container reader reads", `{"host":{"apps":{"shop":[{"container":"shop-web"}]},"releases":[]}}`, containerNames, "shop-web"},
+	} {
+		report, err := dockerhost.ReadReport([]byte(tc.body))
+		got := ""
+		if err == nil {
+			got, err = tc.read(report)
+		}
+
+		if err != nil || got != tc.want {
+			t.Errorf("reading a report holding %s = %q, %v; want %q, as before the state member", tc.label, got, err, tc.want)
+		}
+	}
+}
+
+func TestReadReport_RefusesOutputBesideStateListingADifferentNumberOfContainers(t *testing.T) {
+	report, err := dockerhost.ReadReport([]byte(`{"state":{"host":{"apps":{"shop":[{"container":"shop-web"},{"container":"shop-mariadb"}]}}},` +
+		`"host":{"apps":{"shop":[{"logs":"mariadbd: ready for connections.\n"}]}}}`))
+
+	containers, containersErr := report.AppContainers("shop")
+
+	if got, _ := json.Marshal(containers); err != nil || containersErr == nil || !strings.Contains(containersErr.Error(), "state member") {
+		t.Errorf("AppContainers(shop) = %s, %v, %v; want an error naming the state member, never one container's output quoted as another's", got, err, containersErr)
+	}
+}

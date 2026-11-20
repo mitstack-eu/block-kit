@@ -15,8 +15,8 @@ import (
 
 // withState is a report made after the verb whose state member holds state, beside the top-level members of top, which contradict it.
 func withState(state any, top map[string]any) map[string]any {
-	report := map[string]any{"state": state, "madeAt": verbAt.Add(30 * time.Second).Format(time.RFC3339Nano)}
-	maps.Copy(report, top)
+	report := maps.Clone(top)
+	report["state"], report["madeAt"] = state, verbAt.Add(30*time.Second).Format(time.RFC3339Nano)
 	return report
 }
 
@@ -36,7 +36,9 @@ func readCredentials(api observe.NodeReportsAPI) (observe.Application, string, e
 }
 
 func TestReportState_ReadersTakeJudgedMembersFromState(t *testing.T) {
-	report := withState(credentials("Degraded"), credentials("Healthy"))
+	state := credentials("Degraded")
+	state["madeAt"] = "not a time, since only the top level carries madeAt"
+	report := withState(state, credentials("Healthy"))
 	without := maps.Clone(report)
 	delete(without, "state")
 
@@ -44,7 +46,7 @@ func TestReportState_ReadersTakeJudgedMembersFromState(t *testing.T) {
 	whole, wholeWhy, wholeErr := readCredentials(received(t, without))
 
 	if inStateErr != nil || len(inState.Objects) != 1 || inState.Objects[0].Health.Status != "Degraded" {
-		t.Errorf("ArgoCDApplication over %v = %+v, %q, %v; want the secret its state reads Degraded", report, inState, inStateWhy, inStateErr)
+		t.Errorf("ArgoCDApplication over %v = %+v, %q, %v; want the secret its state reads Degraded, and the madeAt inside the state left unread", report, inState, inStateWhy, inStateErr)
 	}
 	if wholeErr != nil || len(whole.Objects) != 1 || whole.Objects[0].Health.Status != "Healthy" {
 		t.Errorf("ArgoCDApplication over %v = %+v, %q, %v; want the secret its top level reads Healthy", without, whole, wholeWhy, wholeErr)
@@ -83,12 +85,10 @@ func TestReportState_EveryReaderIgnoresTopLevelJudgedMembers(t *testing.T) {
 
 func TestReportState_RefusesAStateThatIsNotAnObject(t *testing.T) {
 	for _, state := range []any{[]any{}, nil, "healthy", 7, true} {
-		report := withState(state, credentials())
-
-		_, why, err := readCredentials(received(t, report))
+		_, why, err := readCredentials(received(t, withState(state, credentials())))
 
 		if err == nil || !strings.Contains(err.Error(), "state member") {
-			t.Errorf("ArgoCDApplication over %v = %q, %v; want an error naming the state member, never a read of the top-level argocd", report, why, err)
+			t.Errorf("ArgoCDApplication over a state member holding %v = %q, %v; want an error naming the state member, never a read of the top-level argocd", state, why, err)
 		}
 	}
 }
