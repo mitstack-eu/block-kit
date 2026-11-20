@@ -479,7 +479,8 @@ as it does for any pending answer, and the wait counts against the block's
 settle budget. A resource `EnsureResources` returns beside the wait is
 recorded in the answer's `resources`, as it is beside a failure. A wait joined
 with another error, as `errors.Join` builds it, is no wait: the handler
-answers that error as it answers any other.
+answers that error as it answers any other. A join of waits alone is a wait,
+as [When a wait names its end](#when-a-wait-names-its-end) describes.
 
 An observer that returns a `*handler.Waiting` answers 200 as well, with that
 resource's observe `unknown` and the detail as its `statusDetail`. The call
@@ -493,29 +494,9 @@ Cloud client returns such a wait for each call it holds after Hetzner answers
 refusal](helpers.md#holding-calls-after-a-hetzner-cloud-rate-limit-refusal)
 describes. That `429` is Hetzner's own answer, which the client turns into a
 wait. It never reaches the handler as a `*handler.Refused`, so the engine
-never reads it as a permanent refusal.
-
-A wait that knows when it ends names that time in its `LookAgainAt` field. The
-answer then carries it as `lookAgainAt`, the earliest time the answer can
-change, written in UTC in RFC 3339 form whatever zone your code gave it. The
-kit's Hetzner Cloud client sets the field to the end of its hold, so a held
-`subscribe` answers like this:
-
-```json
-{"outputs": null, "pending": true, "statusDetail": "Hetzner Cloud refused this token's calls for its rate limit, so none is sent until 2026-11-19T20:01:00Z", "lookAgainAt": "2026-11-19T20:01:00Z"}
-```
-
-The same field comes with an `unsubscribe` that answers `absent:false`, a
-`validate` that answers its resources `unknown`, and a `snapshot` that answers
-`pending:true`. A wait with no known end leaves the field out. `handler.Wait`
-sets no time, and neither do the two builders below, so a wait of your own
-that knows its end sets `LookAgainAt` on the `handler.Waiting` it builds.
-
-The engine treats `lookAgainAt` as advice on when to ask again. An engine that
-does not read the field asks as it always has, so an answer is valid with or
-without it. `contract.Response` in `contract/types.go` declares the field,
-`handler.Waiting` in `handler/block.go` carries it, and `cloud.RateLimited` in
-`capabilities/hetzner/cloud/ratelimit.go` fills it from its `Until`.
+never reads it as a permanent refusal. A wait that knows when it ends can say
+so in the answer, as [When a wait names its end](#when-a-wait-names-its-end)
+describes.
 
 `handler.WaitForSignal(format, args...)` builds the same wait for a call that
 changed nothing because it waits on what another subscription reports, such as
@@ -554,8 +535,10 @@ must write nothing before it returns this wait.
 whose removal has started and now moves outside the block, such as a pull
 request waiting on its checks. The `unsubscribe` still answers `absent:false`
 with the detail. The answer also carries the observe of each resource the
-engine has not recorded absent and whose type does not end with its
-subscription, made with `Unsubscribing` set, so an observer
+engine has not recorded absent and whose type `Config.Types` does not mark
+`endsWithSubscription`, the marker
+[What the handler calls for each call](#what-the-handler-calls-for-each-call)
+describes. The handler makes that observe with `Unsubscribing` set, so an observer
 can report the removal under way, as
 [A resource being removed](observe.md#a-resource-being-removed) describes. An
 observe that fails is recorded as that resource's error, and the answer still
@@ -563,7 +546,9 @@ waits. An observe that returns a `*handler.Waiting`, such as a Hetzner Cloud
 call the kit holds after a rate-limit refusal, records that resource `unknown`
 with the wait's detail instead, and no error. That held observe adds no
 `lookAgainAt` to the answer, since only the `Delete`'s own wait decides when
-the removal can change. `landing.Remove` returns this wait while its pull request waits on a
+the removal can change, as
+[When a wait names its end](#when-a-wait-names-its-end) sets out.
+`landing.Remove` returns this wait while its pull request waits on a
 required check.
 
 When `Delete` returns any other error, the handler answers that error at once and
@@ -599,6 +584,97 @@ the panic value. The handler logs the panic with the block, subscription and
 call, after scrubbing every request secret from a string or error value. It
 logs any other panic value only as its type, because printing it could show a
 secret in a form a scrub cannot find.
+
+## When a wait names its end
+
+A wait can tell the engine the earliest time its answer can change. The
+`LookAgainAt` field of a `handler.Waiting` is a `time.Time`, and the answer
+carries it as `lookAgainAt`. `contract.Response` in `contract/types.go`
+declares that field as a `*time.Time` with `omitempty`, so a wait whose
+`LookAgainAt` is the zero time leaves it out. `handler.Wait`,
+`handler.WaitForSignal` and `handler.WaitOnRemoval` each return an `error`
+holding a `*handler.Waiting` with no time. A wait of your own that knows its end
+builds the `handler.Waiting` itself, as this `Ensure` does for a provider that
+names when it takes calls again:
+
+```go
+func (b *recordBlock) Ensure(ctx context.Context, d contract.Desired) error {
+	retryAt, err := b.provider.CreateRecord(ctx, d)
+	if errors.Is(err, errProviderBusy) {
+		return &handler.Waiting{
+			Detail:      "the DNS provider takes no call before " + retryAt.UTC().Format(time.RFC3339),
+			LookAgainAt: retryAt,
+		}
+	}
+	return err
+}
+```
+
+The answer writes the time in UTC whatever zone your code gave it, in RFC 3339
+form to the nanosecond with trailing zeros dropped. A whole second reads
+`2026-11-19T20:01:00Z`, and any other time shows its fraction of a second.
+
+The kit's Hetzner Cloud client sets the field for each call it holds. A hold is
+the client keeping a token's calls unsent for a time after Hetzner refuses one
+of them for its rate limit. A held call returns a `*cloud.RateLimited` error,
+whose `Until` field is when the hold ends, and that time becomes the wait's
+`LookAgainAt`. A held `subscribe` answers like this:
+
+```json
+{"outputs": null, "pending": true, "statusDetail": "Hetzner Cloud refused this token's calls for its rate limit, so none is sent until 2026-11-19T20:01:00Z", "lookAgainAt": "2026-11-19T20:01:00Z"}
+```
+
+A hold's time is never in the past. Once a hold has ended and no call has yet
+shown the limit passed, `Until` is the zero time and the answer carries no
+`lookAgainAt`. That happens while the one call sent after the hold has no
+answer yet. It also happens to a call that went out before another call's
+refusal started the hold, when its own refusal arrives after that hold has
+ended. [Holding calls after a Hetzner Cloud rate-limit
+refusal](helpers.md#holding-calls-after-a-hetzner-cloud-rate-limit-refusal)
+describes the hold.
+
+The time is a lower bound, not a promise. The answer may stay the same after
+it, as when the call sent after a hold is refused again. The engine may also
+ask before it, so your block must answer an early call correctly, as it
+answers any other. A held Hetzner call asked early gives the same waiting
+answer and sends nothing. By the time the engine reads an answer, its time may
+already have passed, and the time then says only that the answer may already
+have changed.
+
+The engine does not read `lookAgainAt`. It asks again on the schedule it keeps
+for every pending answer, which [What brings a parked job
+forward](https://github.com/mitstack-eu/mitstack/blob/main/docs/reference/operator-settle-and-recovery.md#what-brings-a-parked-job-forward)
+in the platform repository sets out. The field is advice on when to ask again,
+so an answer is valid with or without it.
+
+One wait answers a call, unless your code joins several. Which wait that is
+depends on the call:
+
+| Call | The wait whose time the answer carries |
+|---|---|
+| `subscribe` or `upgrade` | The wait `EnsureResources`, or `Ensure`, returns. Without one, the wait of the first observer that returns one, since the handler observes no further resource after it |
+| `unsubscribe` | The wait `Delete` returns. When `Delete` succeeds, the wait of the first observer that returns one |
+| `validate` | The wait `PlanReplacements` or `Converging` returns. Without one, the wait of the first observer that returns one |
+| `snapshot` | The wait `Snapshot` returns |
+
+An observer's time therefore reaches the answer of every call but `snapshot`.
+A `WaitOnRemoval` wait is the exception on an `unsubscribe`: the observes it
+makes add no time, so the answer carries the `Delete`'s own time alone.
+
+When your code joins waits with `errors.Join`, the answer carries the earliest
+of their times, since the answer can change once any of them ends. It carries
+none when any joined wait names none, since that wait could end at any moment.
+A join holding any error other than a wait is answered as that failure, as
+[Errors, refusals and panics](#errors-refusals-and-panics) describes, and
+carries no `lookAgainAt`.
+
+A wait that asks for `redrive`, or one that carries a removal's observes, may
+name its end too. Build it as `&handler.Waiting{Detail: detail, Redrive: true,
+LookAgainAt: at}`, or with `Removal: true` in place of `Redrive`. The answer
+then carries `lookAgainAt` beside what `handler.WaitForSignal` or
+`handler.WaitOnRemoval` would give it. The engine reads the `redrive` as
+[Errors, refusals and panics](#errors-refusals-and-panics) describes, and the
+time adds the same advice it adds to any wait.
 
 ## Retries and the idempotency cache
 

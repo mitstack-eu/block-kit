@@ -2440,6 +2440,17 @@ names when the hold ends, in UTC:
 Hetzner Cloud refused this token's calls for its rate limit, so none is sent until 2026-11-19T20:01:00Z
 ```
 
+The answer also names that time as `lookAgainAt`, as
+[When a wait names its end](handler.md#when-a-wait-names-its-end) describes.
+Once the hold has ended and no call has yet shown the limit passed, the error
+names no end. That happens to a call made while the one call sent after the
+hold has no answer yet, and to a call refused after another call's hold has
+ended. Its status detail then reads:
+
+```text
+Hetzner Cloud refused this token's calls for its rate limit, and no call has shown the limit passed since its hold ended
+```
+
 | Where the held call was made | What the handler answers |
 |---|---|
 | `EnsureResources` or `Ensure`, on `subscribe` or `upgrade` | `pending: true`, with the hold's text as its status detail and each resource `EnsureResources` returned beside the error |
@@ -2454,7 +2465,7 @@ it.
 
 Your code tells a held call apart with `errors.Is(err, cloud.ErrRateLimited)`.
 `errors.As` into a `*cloud.RateLimited` gives its `Until`, the time the hold
-ends.
+ends, or the zero time when the error names no end.
 
 `cloud.New` holds its calls already. A block whose own client is hcloud-go,
 Hetzner's Go client, hands it the kit's HTTP client, so both clients meet one
