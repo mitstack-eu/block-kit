@@ -381,8 +381,8 @@ func TestHandler_AnswerWithoutAHoldOmitsLookAgainAt(t *testing.T) {
 			if status != http.StatusOK || resp.Error != "" {
 				t.Errorf("%s answered %d with error %q, want 200 and no error", tc.op, status, resp.Error)
 			}
-			if waited := resp.Pending || resp.Absent != nil && !*resp.Absent; waited != tc.waits {
-				t.Errorf("%s answered pending %v and absent %v; want it waiting %v", tc.op, resp.Pending, resp.Absent, tc.waits)
+			if waited := tc.op == "unsubscribe" && resp.Absent != nil && !*resp.Absent || tc.op != "unsubscribe" && resp.Pending; waited != tc.waits {
+				t.Errorf("%s answered pending %v and absent %v; want waiting %v, as absent:false on an unsubscribe and pending:true otherwise", tc.op, resp.Pending, resp.Absent, tc.waits)
 			}
 			if carried {
 				t.Errorf("%s answered lookAgainAt %q, want the field left out", tc.op, at)
