@@ -92,13 +92,13 @@ func TestSnapshot_PublishesNoHandoverWhenTheBlocksCheckFails(t *testing.T) {
 
 func TestSnapshot_AnswersAWaitAs200PendingWithItsDetailNoHandoverAndAProgressEvent(t *testing.T) {
 	block := newSnapshottingBlock("hnd_0001")
-	block.err = handler.Wait("the scratch copy of app-data is restoring with %s", guardSecret)
+	block.err = &handler.Waiting{Detail: "the scratch copy of app-data is restoring with " + guardSecret, LookAgainAt: heldRead.Until}
 	events := newFakeEventsServer(t)
 
 	status, resp := serveContinuity(t, block, snapshotManifest, "snapshot", map[string]any{"unit": "app-data", "secrets": guardSecrets(), "eventsCallback": map[string]any{"url": events.URL, "token": "events-tok"}})
 
-	if want := "the scratch copy of app-data is restoring with [REDACTED]"; status != http.StatusOK || !resp.Pending || !resp.Redrive || resp.StatusDetail != want || len(resp.Outputs) != 0 {
-		t.Errorf("a snapshot the block holds back answered %d, pending %v, redrive %v, statusDetail %q, outputs %v; want 200, pending and redrive, so the caller sends the snapshot again, statusDetail %q and no handover", status, resp.Pending, resp.Redrive, resp.StatusDetail, resp.Outputs, want)
+	if want := "the scratch copy of app-data is restoring with [REDACTED]"; status != http.StatusOK || !resp.Pending || !resp.Redrive || resp.StatusDetail != want || len(resp.Outputs) != 0 || !carries(resp.LookAgainAt, &heldRead.Until) {
+		t.Errorf("a snapshot the block holds back answered %d, pending %v, redrive %v, statusDetail %q, outputs %v, lookAgainAt %v; want 200, pending and redrive, so the caller sends the snapshot again, statusDetail %q, no handover, and lookAgainAt %v in UTC", status, resp.Pending, resp.Redrive, resp.StatusDetail, resp.Outputs, resp.LookAgainAt, want, heldRead.Until)
 	}
 	if got := events.recorded(); len(got) != 1 || got[0].Status != "progress" || got[0].Detail != resp.StatusDetail {
 		t.Errorf("a pending snapshot sent the events %+v, want one progress event carrying its statusDetail", got)
