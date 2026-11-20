@@ -111,22 +111,16 @@ func TestServe_AWaitJoinedWithAFailureAnswersTheFailure(t *testing.T) {
 var heldRead = &cloud.RateLimited{Until: time.Date(2026, time.November, 19, 20, 1, 0, 0, time.UTC)}
 
 func TestServe_AHeldReadAnswersPendingWithTheSecretOutputsAlreadyObservedPresent(t *testing.T) {
-	const deployArn = "arn:aws:iam::1:role/deploy"
+	deployed := map[string]string{"roleArn": "arn:aws:iam::1:role/deploy"}
 	for _, op := range []string{"subscribe", "upgrade", "validate"} {
 		t.Run(op, func(t *testing.T) {
-			obs := roleObservers(map[string]string{"deploy-role": deployArn, "audit-role": "arn:aws:iam::1:role/audit"})
+			obs := roleObservers(map[string]string{"deploy-role": deployed["roleArn"], "audit-role": "arn:aws:iam::1:role/audit"})
 			obs["ecr-push-role"] = &observer{err: fmt.Errorf("reading the role: %w", heldRead)}
 
 			status, resp := serveRoleBlock(t, context.Background(), op, obs)
 
-			if status != http.StatusOK || !resp.Pending || resp.StatusDetail != heldRead.Error() {
-				t.Fatalf("%s answered %d, pending %v, statusDetail %q; want 200, pending, %q", op, status, resp.Pending, resp.StatusDetail, heldRead.Error())
-			}
-			if want := map[string]string{"roleArn": deployArn}; !maps.Equal(resp.SecretOutputs, want) {
-				t.Errorf("SecretOutputs = %v, want %v: deploy-role was observed present before the read of ecr-push-role was held", resp.SecretOutputs, want)
-			}
-			if want := map[string]string{"roleArn": deployArn}; !maps.Equal(resp.ResourceSecretOutputs["deploy-role"], want) || len(resp.ResourceSecretOutputs) != 1 {
-				t.Errorf("ResourceSecretOutputs = %v, want deploy-role's %v alone", resp.ResourceSecretOutputs, want)
+			if status != http.StatusOK || !resp.Pending || resp.StatusDetail != heldRead.Error() || !maps.Equal(resp.SecretOutputs, deployed) || len(resp.ResourceSecretOutputs) != 1 || !maps.Equal(resp.ResourceSecretOutputs["deploy-role"], deployed) {
+				t.Errorf("%s answered %d, pending %v, statusDetail %q, secretOutputs %v, resourceSecretOutputs %v; want 200, pending, %q, and deploy-role's %v alone, since it was observed present before the read of ecr-push-role was held", op, status, resp.Pending, resp.StatusDetail, resp.SecretOutputs, resp.ResourceSecretOutputs, heldRead.Error(), deployed)
 			}
 		})
 	}
@@ -145,16 +139,13 @@ func TestServe_AnUnsubscribeWaitingOnARemovalAnswersEachResourcesObserveAndKeeps
 		obs  *observer
 		want func(*contract.CallOutcome) bool
 	}{
-		{"made unsubscribing, with the removal it reports", fixed(contract.Observation{State: contract.Present, Removing: &contract.Removing{WaitsOn: waitsOn}}),
-			func(o *contract.CallOutcome) bool {
-				return o.State == contract.Present && o.Removing != nil && o.Removing.WaitsOn == waitsOn
-			}},
-		{"with the failed read's error and no removing", &observer{err: fmt.Errorf("github answered 502")},
-			func(o *contract.CallOutcome) bool { return o.Error != "" && o.Removing == nil }},
-		{"unknown, with the held read's detail and no error", &observer{err: heldRead},
-			func(o *contract.CallOutcome) bool {
-				return o.State == contract.Unknown && o.StatusDetail == heldRead.Error() && o.Error == "" && o.Type == "aws.vpc"
-			}},
+		{"made unsubscribing, with the removal it reports", fixed(contract.Observation{State: contract.Present, Removing: &contract.Removing{WaitsOn: waitsOn}}), func(o *contract.CallOutcome) bool {
+			return o.State == contract.Present && o.Removing != nil && o.Removing.WaitsOn == waitsOn
+		}},
+		{"with the failed read's error and no removing", &observer{err: fmt.Errorf("github answered 502")}, func(o *contract.CallOutcome) bool { return o.Error != "" && o.Removing == nil }},
+		{"unknown, with the held read's detail and no error", &observer{err: heldRead}, func(o *contract.CallOutcome) bool {
+			return o.State == contract.Unknown && o.StatusDetail == heldRead.Error() && o.Error == "" && o.Type == "aws.vpc"
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			x := newHarness(t, removalWaitingBlock{}, func(c *handler.Config) { c.Observers = map[string]handler.Observer{"r": tc.obs} })
@@ -196,8 +187,7 @@ func (b cloudBlock) ObserveResource(ctx context.Context, _ contract.ResourceRef)
 
 func TestServe_AHeldHetznerCallAnswersAStepWaitingAndAValidateUnknownNamingInUTCWhenTheHoldEnds(t *testing.T) {
 	const endsUTC, token = "2026-11-19T20:01:00Z", "held-cloud-token"
-	at := time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
-	held := (&cloud.RateLimited{Until: at.Add(time.Minute)}).Error()
+	at, held := heldRead.Until.Add(-time.Minute), heldRead.Error()
 	for _, tc := range []struct{ name, op, calls string }{
 		{"a subscribe whose ensure is held answers waiting", "subscribe", "block"},
 		{"an upgrade whose ensure is held answers waiting", "upgrade", "block"},
