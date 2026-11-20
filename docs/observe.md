@@ -639,21 +639,23 @@ row's answer.
 
 A node report may carry a `state` member, an object holding every member a
 health judgement reads. A health judgement is the check of a resource that a
-new report starts. The member keeps what a judgement reads apart from what
-changes on every run, such as a log line, so two reports of an unchanged
-source can carry the same `state`. Every reader on this page takes its judged
-members from `state` when the report carries one, and so does every reader of
-a Docker host's report in `helpers/dockerhost`. A report without `state` is
-read whole, as the sections above describe. The name matches exactly, so a
+new report starts. The sender is the cluster or Docker host that writes the
+report, and a reader is a kit function that decodes it. The member keeps what
+a judgement reads apart from what changes on every run, such as a log line,
+so two reports from a sender where nothing changed can carry the same
+`state`. Every reader on this page takes its judged members from `state` when
+the report carries one, and so does every reader of a Docker host's report in
+the kit's `helpers/dockerhost` package. A report without `state` is read
+whole, as the sections above describe. The name matches exactly, so a
 top-level `State` is an ordinary member of a report without `state`.
 
 A sender that writes `state` follows four rules:
 
 | Rule | What it means for the sender |
 |---|---|
-| `state` holds every member a judgement reads | `subscriptionResources`, `subscriptionResourcesComplete`, `subscriptionResourceKinds` and `argocd` sit inside it, under the names and in the shape this page gives them |
-| `state` holds nothing that changes while the source stands still | It carries no log, command output, generated name, temporary path or time of one run |
-| No member is written both inside and outside `state` | A reader takes a judged member from `state` alone and never reads the copy beside it |
+| `state` holds every member a judgement reads | A cluster puts `subscriptionResources`, `subscriptionResourcesComplete`, `subscriptionResourceKinds` and `argocd` inside it. A Docker host puts its `host` member inside it, without the output the next paragraphs keep beside it. Each member keeps the name and shape it has in a report without `state` |
+| `state` holds nothing that changes while the sender stands still | It carries no log, command output, generated name, temporary path or time of one run |
+| No judged member is written both inside and outside `state` | A reader takes a judged member from `state` alone and never reads a copy beside it. Only a Docker host's container and release output sits beside `state` under the same `host` path |
 | What says when the report was made stays outside `state` | `madeAt` sits at the top level, beside `state`, and a reader never reads a `madeAt` inside it |
 
 The namespace report from
@@ -673,30 +675,51 @@ written with `state`, reads:
 ```
 
 A Docker host's report keeps each container's output beside `state`, because
-a log line changes on every run. A container's `logs` and `healthCheck` sit
-under `host.apps.<app>` at the top level, at the same place in the list as the
-container `state` lists under that app. A release's `output` sits under
-`host.releases.<app>`. `Report.AppContainers`, `SubscriptionLogs` and the
-database's observer in `helpers/dockerhost` join each one to the container or
-release `state` holds at that place, so they quote a log as they do from a
-report without `state`.
+a log line changes on every run. A container's `logs` and `healthCheck` sit in
+the list under `host.apps.<app>` at the top level of the report. Each entry
+there belongs to the container at the same place in the list under
+`state.host.apps.<app>`. A release command's `output` sits under
+`host.releases.<app>` at the top level, and belongs to the release command
+under `state.host.releases.<app>`. `Report.AppContainers`, `SubscriptionLogs`
+and the database's observer, `Database.ObserveResource`, join each one to its
+container or release command, so they quote a log as they do from a report
+without `state`. A container entry inside `state` has a `state` field of its
+own, which is Docker's state of that container and has nothing to do with the
+report's `state` member.
 
-The list beside `state` names one entry for each container `state` lists
-under that app, in the same order, or is left out. An app with no list beside
-`state` reads with no logs, as from a host release that sends none. A list of
-any other length fails the read with an error naming the state member, since
-the reader could no longer tell whose output is whose. A list in another order
-cannot be caught, because its entries carry no container name. A report whose
-one container keeps its log beside `state` reads:
+A host that writes `state` writes a list under `host.apps.<app>` for every
+app under `state.host.apps`, with one entry for each of that app's containers,
+in the same order. A reader checks only the length of each list:
+
+- A list of any other length fails every container read of the report, for
+  every app on the host, with an error naming the state member, since the
+  reader could no longer tell whose output is whose. The report is refused
+  whole, as a report without `state` is when one of its container entries
+  cannot be decoded.
+- An app whose list is left out reads with no logs, as from an
+  hcloud-docker-host version that sends no container output. Every
+  subscription on the host then reads from `SubscriptionLogs` that the host
+  must be upgraded, which is wrong advice for a host that writes `state`.
+- A list in another order cannot be caught, because its entries carry no
+  container name, so a container would quote another container's log.
+
+A report whose one container and one release command keep their output beside
+`state` reads:
 
 ```json
 {
-  "state": {"host": {"apps": {"shop": [
-    {"container": "shop-web", "subscription": "sub_shop", "image": "ghcr.io/acme/shop@sha256:9f00", "state": "exited"}
-  ]}}},
-  "host": {"apps": {"shop": [
-    {"logs": "PHP Fatal error: Uncaught PDOException\n"}
-  ]}}
+  "state": {"host": {
+    "apps": {"shop": [
+      {"container": "shop-web", "subscription": "sub_shop", "image": "ghcr.io/acme/shop@sha256:9f00", "state": "running", "health": "unhealthy"}
+    ]},
+    "releases": {"shop": {"subscription": "sub_shop", "container": "app-shop-release", "image": "ghcr.io/acme/shop@sha256:9f00", "exitCode": 0}}
+  }},
+  "host": {
+    "apps": {"shop": [
+      {"logs": "PHP Fatal error: Uncaught PDOException\n", "healthCheck": {"output": "curl: (7) Failed to connect to localhost port 8080"}}
+    ]},
+    "releases": {"shop": {"output": "Nothing to migrate.\n"}}
+  }
 }
 ```
 
