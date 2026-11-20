@@ -476,7 +476,24 @@ or `Ensure` for a block without it, returns one answers 200 with
 call's `progress` event repeats, as [Lifecycle events](#lifecycle-events)
 describes. The handler observes nothing on that call. The engine asks again,
 as it does for any pending answer, and the wait counts against the block's
-settle budget.
+settle budget. A resource `EnsureResources` returns beside the wait is
+recorded in the answer's `resources`, as it is beside a failure. A wait joined
+with another error, as `errors.Join` builds it, is no wait: the handler
+answers that error as it answers any other.
+
+An observer that returns a `*handler.Waiting` answers 200 as well, with that
+resource's observe `unknown` and the detail as its `statusDetail`. The call
+answers `pending:true`, or `absent:false` on an `unsubscribe`. A pending
+answer still carries the secret outputs of each provided resource observed present
+before the wait, as [What the answer carries](#what-the-answer-carries)
+describes. On a `validate`, a `PlanReplacements` or a `Converging` that returns
+one answers `pending:true` with every resource `unknown`. The kit's Hetzner
+Cloud client returns such a wait for each call it holds after Hetzner answers
+`429` for its rate limit, as [Holding calls after a Hetzner Cloud rate-limit
+refusal](helpers.md#holding-calls-after-a-hetzner-cloud-rate-limit-refusal)
+describes. That `429` is Hetzner's own answer, which the client turns into a
+wait. It never reaches the handler as a `*handler.Refused`, so the engine
+never reads it as a permanent refusal.
 
 `handler.WaitForSignal(format, args...)` builds the same wait for a call that
 changed nothing because it waits on what another subscription reports, such as
@@ -520,7 +537,9 @@ subscription, made with `Unsubscribing` set, so an observer
 can report the removal under way, as
 [A resource being removed](observe.md#a-resource-being-removed) describes. An
 observe that fails is recorded as that resource's error, and the answer still
-waits. `landing.Remove` returns this wait while its pull request waits on a
+waits. An observe that returns a `*handler.Waiting`, such as a Hetzner Cloud
+call the kit holds after a rate-limit refusal, records that resource `unknown`
+with the wait's detail instead, and no error. `landing.Remove` returns this wait while its pull request waits on a
 required check.
 
 When `Delete` returns any other error, the handler answers that error at once and

@@ -1,8 +1,8 @@
 package handler
 
 import (
+	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -45,7 +45,12 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 	case "subscribe", "upgrade":
 		reported, err := r.ensureBlock(ctx, included)
 		if w, ok := waiting(err); ok {
-			return r.withOwnSecrets(http.StatusOK, contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: safe.Scrub(w.Detail, r.secrets...)})
+			r.ensured(reported)
+			resp := contract.Response{Pending: true, Redrive: w.Redrive, StatusDetail: safe.Scrub(w.Detail, r.secrets...)}
+			if len(r.outcomes) > 0 {
+				resp.Resources = r.outcomes
+			}
+			return r.withOwnSecrets(http.StatusOK, resp)
 		}
 		if err != nil {
 			status, resp := r.h.errorResponse(err, r.secrets)
@@ -84,12 +89,15 @@ func (r *declaredRun) serveBlock(ctx context.Context, operation string) (int, co
 		}
 		return r.deleteEach(ctx)
 	case "validate":
+		r.resources = units(included, r.d.RecordedResources)
+		r.setRefs(nil)
 		replaces, planned, err := r.planReplacements(ctx)
+		if w, ok := waiting(err); ok {
+			return r.withOwnSecrets(r.converging(w.Detail, false))
+		}
 		if err != nil {
 			return r.h.errorResponse(err, r.secrets)
 		}
-		r.resources = units(included, r.d.RecordedResources)
-		r.setRefs(nil)
 		status, resp := r.withOwnSecrets(r.validateEach(ctx))
 		if status == http.StatusOK {
 			resp.Replaces = replaces
@@ -131,9 +139,25 @@ type OwnSecretsReporter interface {
 	EnsureResourcesOwning(ctx context.Context, d contract.Desired) (created []contract.CreatedResource, ownSecrets map[string]string, err error)
 }
 
+// waiting finds no wait in a join holding any error that does not wait, so a failure beside a held call is answered rather than hidden.
 func waiting(err error) (*Waiting, bool) {
-	var w *Waiting
-	return w, errors.As(err, &w)
+	switch e := err.(type) {
+	case *Waiting:
+		return e, true
+	case interface{ Unwrap() []error }:
+		var first *Waiting
+		for _, member := range e.Unwrap() {
+			w, ok := waiting(member)
+			if !ok {
+				return nil, false
+			}
+			first = cmp.Or(first, w)
+		}
+		return first, first != nil
+	case interface{ Unwrap() error }:
+		return waiting(e.Unwrap())
+	}
+	return nil, false
 }
 
 // ensureBlock returns what the ensure reported by resource name, beside the ensure's error when it made resources before failing, and none of them when one is refused.

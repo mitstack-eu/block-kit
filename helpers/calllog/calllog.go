@@ -1,4 +1,4 @@
-// Package calllog writes one log line for each outbound HTTP call a kit client makes, naming its subscription, method, host, route, answer and milliseconds, and never a query, header value or body.
+// Package calllog writes one log line for each outbound HTTP call a kit client makes, naming its subscription, method, host, route, answer, milliseconds and the response's RateLimit-Remaining figure, and never a query, any other header value or a body.
 package calllog
 
 import (
@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mitstack-eu/block-kit/helpers/safe"
@@ -43,14 +45,65 @@ func subscription(ctx context.Context) string {
 
 type Line struct {
 	Subscription, Method, Host, Route, Answer string
-	Took                                      time.Duration
+	// RateLimitRemaining is the response's RateLimit-Remaining header, set only when it reads as a whole number.
+	RateLimitRemaining string
+	Took               time.Duration
 }
 
 // Format renders the line with each field made safe to log and every secret scrubbed.
 func (l Line) Format(secrets ...string) string {
 	field := func(v string) string { return safe.LogSafe(v, secrets...) }
-	return fmt.Sprintf("calllog: subscription=%s method=%s host=%s route=%s answer=%s ms=%d",
+	line := fmt.Sprintf("calllog: subscription=%s method=%s host=%s route=%s answer=%s ms=%d",
 		field(l.Subscription), field(l.Method), field(l.Host), field(l.Route), field(l.Answer), l.Took.Milliseconds())
+	if l.RateLimitRemaining != "" {
+		line += " RateLimit-Remaining=" + field(l.RateLimitRemaining)
+	}
+	return line
+}
+
+type countsKey struct{}
+
+type counts struct {
+	mu     sync.Mutex
+	byHost map[string]int
+}
+
+// Counting returns ctx counting each call made under it by host, and a ctx already counting as it is, so a call is counted once.
+func Counting(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(countsKey{}).(*counts); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, countsKey{}, &counts{byHost: map[string]int{}})
+}
+
+func count(ctx context.Context, host string) {
+	c, ok := ctx.Value(countsKey{}).(*counts)
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.byHost[host]++
+}
+
+// Counted is the line naming ctx's subscription, verb and calls by host, and false when ctx counted no call.
+func Counted(ctx context.Context, verb string, secrets ...string) (string, bool) {
+	c, ok := ctx.Value(countsKey{}).(*counts)
+	if !ok {
+		return "", false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.byHost) == 0 {
+		return "", false
+	}
+	field := func(v string) string { return safe.LogSafe(v, secrets...) }
+	var line strings.Builder
+	fmt.Fprintf(&line, "calls: subscription=%s verb=%s", field(subscription(ctx)), field(verb))
+	for _, host := range slices.Sorted(maps.Keys(c.byHost)) {
+		fmt.Fprintf(&line, " %s=%d", field(host), c.byHost[host])
+	}
+	return line.String(), true
 }
 
 // Ended is the line a validate whose request ended writes, naming the resource it had reached.
@@ -115,15 +168,29 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	started := time.Now()
 	resp, err := next.RoundTrip(req)
 	line := Line{
-		Subscription: subscription(req.Context()),
-		Method:       req.Method,
-		Host:         Host(req.URL.Host),
-		Route:        Route(req.URL.EscapedPath(), t.fixed...),
-		Answer:       answer(req.Context(), resp, err),
-		Took:         time.Since(started),
+		Subscription:       subscription(req.Context()),
+		Method:             req.Method,
+		Host:               Host(req.URL.Host),
+		Route:              Route(req.URL.EscapedPath(), t.fixed...),
+		Answer:             answer(req.Context(), resp, err),
+		RateLimitRemaining: remaining(resp, err),
+		Took:               time.Since(started),
 	}
+	count(req.Context(), line.Host)
 	log.Print(line.Format(headerSecrets(req.Header)...))
 	return resp, err
+}
+
+// remaining keeps RateLimit-Remaining only as a whole number, since any other value could carry what a log line must not.
+func remaining(resp *http.Response, err error) string {
+	if err != nil || resp == nil {
+		return ""
+	}
+	n, parseErr := strconv.ParseUint(resp.Header.Get("RateLimit-Remaining"), 10, 63)
+	if parseErr != nil {
+		return ""
+	}
+	return strconv.FormatUint(n, 10)
 }
 
 func answer(ctx context.Context, resp *http.Response, err error) string {
