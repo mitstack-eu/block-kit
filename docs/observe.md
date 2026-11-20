@@ -676,9 +676,10 @@ A Docker host's report keeps each container's output beside `state`, because
 a log line changes on every run. A container's `logs` and `healthCheck` sit
 under `host.apps.<app>` at the top level, at the same place in the list as the
 container `state` lists under that app. A release's `output` sits under
-`host.releases.<app>`. `dockerhost.ReadReport` joins each one to the container
-or release `state` holds at that place. So `SubscriptionLogs` and the
-database's observer quote a log as they do from a report without `state`.
+`host.releases.<app>`. `Report.AppContainers`, `SubscriptionLogs` and the
+database's observer in `helpers/dockerhost` join each one to the container or
+release `state` holds at that place, so they quote a log as they do from a
+report without `state`.
 
 The list beside `state` names one entry for each container `state` lists
 under that app, in the same order, or is left out. An app with no list beside
