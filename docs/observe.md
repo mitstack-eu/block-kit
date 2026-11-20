@@ -729,6 +729,34 @@ top level. `observe.ReportState` in `observe/report_state.go` is the one
 function that picks the members a reader judges, so every reader applies one
 rule to both forms of a report.
 
+### Reading a report in your block
+
+A block that judges a list of its own from a cluster's report reads it
+through `observe.DecodeReport`, beside `ReportState` in the same file. The
+function decodes the members `ReportState` picks into the value you pass. It
+returns the report's top-level `madeAt`, which is nil when the report carries
+none. It never returns a `madeAt` from inside `state`. Your block then dates
+the report by the same rule as the kit's own readers, in both forms of a
+report. The kit's readers on this page call it too.
+
+A block that reads a report's CloudNativePG list writes:
+
+```go
+var body struct {
+	CloudNativePG []cnpgObject `json:"cloudNativePG"`
+}
+madeAt, err := observe.DecodeReport(report.Body, &body)
+if err != nil {
+	return fmt.Errorf("reading the node report received at %s: %w", report.ReceivedAt, err)
+}
+```
+
+Give the value no `madeAt` field of its own. A `madeAt` inside `state` would
+decode into it, and the rules above say a reader never reads one there.
+`DecodeReport` fails a `state` that is not an object, as `ReportState` does,
+and a body that is not an object. It also fails a top-level `madeAt` that is
+not a time, since then no reader can tell when the report was made.
+
 ## Listing what a subscription holds
 
 Every object a block creates carries the subscription's id as a tag, or the
