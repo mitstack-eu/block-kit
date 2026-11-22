@@ -1010,14 +1010,21 @@ The platform passes `credential` on unread and records only `id` and
 `expiresAt`, and it records nothing when `id` is left out, as for a link that
 expires on its own.
 
+The table below names one request secret by its role. The narrowed GitHub
+token is the value a lease request carries under `secrets.github.token`. The
+platform sends it only when the leased resource's type declares GitHub
+permissions, as a one-hour token narrowed to those permissions for this lease
+alone.
+
 | Case | Answer |
 |---|---|
 | The manifest does not list `lease` | 400, refusal class `lease-not-listed`, and the block is never called |
 | The request names no resource, or mints without a caller, or neither mints nor retires | 400 |
 | The lease holds no credential, a credential that is not a non-empty JSON object, or one whose strings are all empty | 500 |
 | The lease has no expiry, an expiry already passed, or one more than `contract.MaxLeaseLife`, 24 hours, ahead | 500 |
-| A string in the credential, or the `id`, equals a secret the request carried, other than the narrowed GitHub token in the credential | 500, naming where in the credential it sits, such as `credential.nested.key`, and never the value |
-| A string in the credential equals the narrowed GitHub token, the value under `secrets.github.token` | 200 |
+| A string in the credential equals a secret the request carried | 500, naming where in the credential it sits, such as `credential.nested.key`, and never the value |
+| The `id` equals a secret the request carried, the narrowed GitHub token included | 500 |
+| A string in the credential equals the narrowed GitHub token | 200, since this is the one request secret a credential may hold |
 
 A 500 carries no `lease`, so the platform records nothing for it. When the
 handler refuses a lease whose answer carried a handle (the `ID` of the
@@ -1030,16 +1037,14 @@ being answered.
 The secret check compares whole values only, so a signed link that names the key
 id that signed it passes.
 
-The narrowed GitHub token is the one request secret a credential may hold. The
-platform sends a GitHub token on a lease only when the leased resource's type
-declares GitHub permissions. That token is a one-hour token it narrowed to
-those permissions for this lease alone, so a block such as a runner capability
-can pass it on to register its runners.
-Every other secret still refuses the lease, the App id and owner sent beside
-the token included, and so does an `id` equal to the token. A request that
-also carries the token's value as another secret refuses it too, because the
-handler lets through only one copy of the value. `checkLeased` in
-`handler/lease.go` makes both checks.
+A credential may hold the narrowed GitHub token so that a block such as a
+runner capability can pass it on to register its runners. Every other secret
+the request carried still refuses the lease, the App id and owner sent beside
+the token included. The handler lets through only the one copy of the value
+under `secrets.github.token`. So when the request carries the same value a
+second time, say as an own secret, a credential holding it is refused.
+`checkLeased` in `handler/lease.go` runs the credential check and the `id`
+check.
 
 For example, a lease request carrying
 `{"secrets":{"github":{"token":"ghs_...","appId":"1234","owner":"acme"}}}` is
