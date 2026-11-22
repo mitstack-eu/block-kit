@@ -55,7 +55,7 @@ func (h *Handler) retireRefused(ctx context.Context, req contract.Request, refus
 	return nil
 }
 
-// checkLeased matches a secret by exact value, because a signed link that merely names the key id that signed it is not that key, and lets the credential hold the narrowed token, which the platform minted for this lease alone.
+// checkLeased matches a secret by exact value, because a signed link that merely names the key id that signed it is not that key, and lets the credential hold the narrowed token, which the platform narrowed for this lease alone.
 func checkLeased(l contract.Lease, now time.Time, secrets []string, narrowedToken string) error {
 	if len(l.Credential) == 0 {
 		return errors.New("it holds no credential")
