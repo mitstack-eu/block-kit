@@ -1022,7 +1022,7 @@ alone.
 | The request names no resource, or mints without a caller, or neither mints nor retires | 400 |
 | The lease holds no credential, a credential that is not a non-empty JSON object, or one whose strings are all empty | 500 |
 | The lease has no expiry, an expiry already passed, or one more than `contract.MaxLeaseLife`, 24 hours, ahead | 500 |
-| A string in the credential equals a secret the request carried | 500, naming where in the credential it sits, such as `credential.nested.key`, and never the value |
+| A string in the credential equals a secret the request carried, other than the narrowed GitHub token | 500, naming where in the credential it sits, such as `credential.nested.key`, and never the value |
 | The `id` equals a secret the request carried, the narrowed GitHub token included | 500 |
 | A string in the credential equals the narrowed GitHub token | 200, since this is the one request secret a credential may hold |
 
@@ -1042,7 +1042,8 @@ runner capability can pass it on to register its runners. Every other secret
 the request carried still refuses the lease, the App id and owner sent beside
 the token included. The handler lets through only the one copy of the value
 under `secrets.github.token`. So when the request carries the same value a
-second time, say as an own secret, a credential holding it is refused.
+second time, say as one of the block's own secrets (see "What the answer carries"),
+a credential holding it is refused.
 `checkLeased` in `handler/lease.go` runs the credential check and the `id`
 check.
 
