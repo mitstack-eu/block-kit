@@ -58,7 +58,7 @@ func leaseFields(extra map[string]any) map[string]any {
 
 const narrowedToken = "ghs-narrowed-for-this-lease-7c1"
 
-// githubSecrets are a lease request's secrets for a resource whose type declares GitHub permissions: the narrowed token, the App id and owner beside it, and two Hetzner secrets.
+// githubSecrets are the secrets the platform sends on a lease of a resource whose type declares GitHub permissions.
 var githubSecrets = map[string]any{
 	"github":  map[string]any{"token": narrowedToken, "appId": "app-id-4410", "owner": "acme-org"},
 	"hetzner": map[string]any{"apiToken": "hcloud-token-91a", "token": "hetzner-token-e27"},
@@ -130,7 +130,6 @@ func TestLease_RefusesALeaseThatIsNoLeaseWithoutRevealingASecret(t *testing.T) {
 		return &leasingBlock{blockResource: &blockResource{cloud: newFakeCloud()}, err: err}
 	}
 	github, narrowed := leaseFields(map[string]any{"secrets": githubSecrets}), `{"token":"`+narrowedToken+`"}`
-	alsoOwn := leaseFields(map[string]any{"secrets": githubSecrets, "ownSecrets": map[string]any{"runnerToken": narrowedToken}})
 	cases := []struct {
 		name, manifest string
 		block          *leasingBlock
@@ -158,7 +157,9 @@ func TestLease_RefusesALeaseThatIsNoLeaseWithoutRevealingASecret(t *testing.T) {
 		{"the GitHub App id beside the narrowed token", leaseManifest, newLeasingBlock(`{"appId":"app-id-4410"}`, soon), github, http.StatusInternalServerError, "credential.appId repeats"},
 		{"the GitHub owner beside the narrowed token", leaseManifest, newLeasingBlock(`{"owner":"acme-org"}`, soon), github, http.StatusInternalServerError, "credential.owner repeats"},
 		{"a token key under the hetzner connection", leaseManifest, newLeasingBlock(`{"token":"hetzner-token-e27"}`, soon), github, http.StatusInternalServerError, "credential.token repeats"},
-		{"the narrowed token the request also carries as an own secret", leaseManifest, newLeasingBlock(narrowed, soon), alsoOwn, http.StatusInternalServerError, "credential.token repeats"},
+		{"the narrowed token the request also carries as an own secret", leaseManifest, newLeasingBlock(narrowed, soon), leaseFields(map[string]any{"secrets": githubSecrets, "ownSecrets": map[string]any{"runnerToken": narrowedToken}}), http.StatusInternalServerError, "credential.token repeats"},
+		{"the narrowed token the request also carries under another connection", leaseManifest, newLeasingBlock(narrowed, soon),
+			leaseFields(map[string]any{"secrets": map[string]any{"github": map[string]any{"token": narrowedToken}, "hetzner": map[string]any{"token": narrowedToken}}}), http.StatusInternalServerError, "credential.token repeats"},
 		{"the narrowed token given as the handle", leaseManifest, &leasingBlock{blockResource: &blockResource{cloud: newFakeCloud()},
 			lease: contract.Lease{Credential: json.RawMessage(narrowed), ExpiresAt: soon, ID: narrowedToken}}, github, http.StatusInternalServerError, "its id repeats"},
 	}
@@ -187,12 +188,13 @@ func TestLease_RetiresACredentialItRefusesSoNoneIsLeftLiveAtTheProvider(t *testi
 		{"a credential that outlives a day", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ExpiresAt: time.Now().Add(48 * time.Hour), ID: "tok_9"}, nil, "ahead"},
 		{"a refused credential whose retire also fails", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ID: "tok_9"}, errors.New("the provider is down"), "the provider is down"},
 		{"a refused credential whose retire the block refuses by name", contract.Lease{Credential: json.RawMessage(`{"token":"t"}`), ID: "tok_9"}, handler.Refuse("already-gone", "the token is gone"), "no expiry"},
+		{"a credential repeating a Hetzner token beside the narrowed GitHub token", contract.Lease{Credential: json.RawMessage(`{"token":"hcloud-token-91a"}`), ExpiresAt: time.Now().Add(time.Hour), ID: "tok_9"}, nil, "credential.token repeats"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			block := &leasingBlock{blockResource: &blockResource{cloud: newFakeCloud()}, lease: tc.lease, retireErr: tc.retireErr}
 
-			status, resp := serveLease(t, block, leaseManifest, leaseFields(nil))
+			status, resp := serveLease(t, block, leaseManifest, leaseFields(map[string]any{"secrets": githubSecrets}))
 
 			if status != http.StatusInternalServerError || resp.Lease != nil || !strings.Contains(resp.Error, tc.want) {
 				t.Fatalf("status = %d, lease = %+v, error = %q; want 500, no lease and an error carrying %q", status, resp.Lease, resp.Error, tc.want)
