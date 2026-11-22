@@ -1555,6 +1555,8 @@ func TestBlockLevel_IssueIsRefusedUnlessACapabilityIssuesACredentialWithItsExpir
 		{"a credential with no value", capabilityManifest, newIssuingBlock(nil, issuedExpiry), app, http.StatusInternalServerError, "no value"},
 		{"a credential repeating a secret the request carried", capabilityManifest,
 			newIssuingBlock(map[string]string{"accessToken": "conn-key-9f2"}, issuedExpiry), withSecret, http.StatusInternalServerError, "accessToken"},
+		{"a credential repeating the GitHub token the request carried", capabilityManifest, newIssuingBlock(map[string]string{"accessToken": "ghs-installation-5d0"}, issuedExpiry),
+			map[string]any{"issueAppId": "app-shop", "secrets": map[string]any{"github": map[string]any{"token": "ghs-installation-5d0"}}}, http.StatusInternalServerError, "accessToken"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

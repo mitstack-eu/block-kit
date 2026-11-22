@@ -14,6 +14,12 @@ import (
 
 const classLeaseNotListed = "lease-not-listed"
 
+// The platform carries a GitHub token on a lease only as one narrowed to that lease, under this connection and key, since it never resolves the github connection's stored secrets for a lease.
+const (
+	narrowedTokenConnection = "github"
+	narrowedTokenKey        = "token"
+)
+
 func (h *Handler) lease(ctx context.Context, req contract.Request, secrets []string) (int, contract.Response) {
 	if h.leaser == nil {
 		return h.errorResponse(Refuse(classLeaseNotListed,
@@ -28,7 +34,7 @@ func (h *Handler) lease(ctx context.Context, req contract.Request, secrets []str
 	if asked.ID == "" {
 		return http.StatusOK, contract.Response{}
 	}
-	if err := checkLeased(minted, h.now(), secrets); err != nil {
+	if err := checkLeased(minted, h.now(), secrets, req.Secrets[narrowedTokenConnection][narrowedTokenKey]); err != nil {
 		err = fmt.Errorf("handler: the block's lease %q of %q: %w", asked.ID, asked.Resource, err)
 		return h.errorResponse(errors.Join(err, h.retireRefused(ctx, req, minted)), secrets)
 	}
@@ -49,8 +55,8 @@ func (h *Handler) retireRefused(ctx context.Context, req contract.Request, refus
 	return nil
 }
 
-// checkLeased matches a secret by exact value, because a signed link that merely names the key id that signed it is not that key.
-func checkLeased(l contract.Lease, now time.Time, secrets []string) error {
+// checkLeased matches a secret by exact value, because a signed link that merely names the key id that signed it is not that key, and lets the credential hold the narrowed token, which the platform narrowed for this lease alone.
+func checkLeased(l contract.Lease, now time.Time, secrets []string, narrowedToken string) error {
 	if len(l.Credential) == 0 {
 		return errors.New("it holds no credential")
 	}
@@ -69,13 +75,22 @@ func checkLeased(l contract.Lease, now time.Time, secrets []string) error {
 	if !holdsAValue(credential) {
 		return errors.New("its credential holds no value")
 	}
-	if path, repeated := secretValueIn(credential, "credential", secrets); repeated {
+	if path, repeated := secretValueIn(credential, "credential", withoutOneCopy(secrets, narrowedToken)); repeated {
 		return fmt.Errorf("its value at %s repeats a secret the request carried", path)
 	}
 	if l.ID != "" && slices.Contains(secrets, l.ID) {
 		return errors.New("its id repeats a secret the request carried")
 	}
 	return nil
+}
+
+// withoutOneCopy drops a single copy of value, so a value the request also carries as another secret still counts as that secret.
+func withoutOneCopy(secrets []string, value string) []string {
+	i := slices.Index(secrets, value)
+	if value == "" || i < 0 {
+		return secrets
+	}
+	return slices.Delete(slices.Clone(secrets), i, i+1)
 }
 
 // holdsAValue is true when a decoded JSON value has a string that is not empty somewhere inside it.

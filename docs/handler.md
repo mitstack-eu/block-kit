@@ -1010,13 +1010,21 @@ The platform passes `credential` on unread and records only `id` and
 `expiresAt`, and it records nothing when `id` is left out, as for a link that
 expires on its own.
 
+The table below names one request secret by its role. The narrowed GitHub
+token is the value a lease request carries under `secrets.github.token`. The
+platform sends it only when the leased resource's type declares GitHub
+permissions, as a one-hour token narrowed to those permissions for this lease
+alone.
+
 | Case | Answer |
 |---|---|
 | The manifest does not list `lease` | 400, refusal class `lease-not-listed`, and the block is never called |
 | The request names no resource, or mints without a caller, or neither mints nor retires | 400 |
 | The lease holds no credential, a credential that is not a non-empty JSON object, or one whose strings are all empty | 500 |
 | The lease has no expiry, an expiry already passed, or one more than `contract.MaxLeaseLife`, 24 hours, ahead | 500 |
-| A string in the credential, or the `id`, equals a secret the request carried | 500, naming where in the credential it sits, such as `credential.nested.key`, and never the value |
+| A string in the credential equals a secret the request carried, other than the narrowed GitHub token | 500, naming where in the credential it sits, such as `credential.nested.key`, and never the value |
+| The `id` equals a secret the request carried, the narrowed GitHub token included | 500 |
+| A string in the credential equals the narrowed GitHub token | 200, since this is the one request secret a credential may hold |
 
 A 500 carries no `lease`, so the platform records nothing for it. When the
 handler refuses a lease whose answer carried a handle (the `ID` of the
@@ -1026,8 +1034,25 @@ the credential. A retire that fails joins its error to the refusal, and a
 refusal the retire itself returns never changes the status of the refusal
 being answered.
 
-The last row compares whole values only, so a signed link that names the key
-id that signed it passes. The handler never replays a lease from the idempotency
+The secret check compares whole values only, so a signed link that names the key
+id that signed it passes.
+
+A credential may hold the narrowed GitHub token so that a block such as a
+runner capability can pass it on to register its runners. Every other secret
+the request carried still refuses the lease, the App id and owner sent beside
+the token included. The handler lets through only the one copy of the value
+under `secrets.github.token`. So when the request carries the same value a
+second time, say as one of the block's own secrets (see "What the answer carries"),
+a credential holding it is refused.
+`checkLeased` in `handler/lease.go` runs the credential check and the `id`
+check.
+
+For example, a lease request carrying
+`{"secrets":{"github":{"token":"ghs_...","appId":"1234","owner":"acme"}}}` is
+answered 200 when the block answers `{"credential":{"token":"ghs_..."}}`, and
+500 naming `credential.appId` when it answers `{"credential":{"appId":"1234"}}`.
+
+The handler never replays a lease from the idempotency
 cache, because a replayed credential may have expired, and it sends no
 lifecycle event for one.
 
