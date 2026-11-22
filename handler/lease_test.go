@@ -217,3 +217,87 @@ func TestLease_AcceptsACredentialWhoseOnlyValueIsInsideAList(t *testing.T) {
 		t.Errorf("status = %d, lease = %+v; want 200 and the lease, since a value inside a list is a value", status, resp.Lease)
 	}
 }
+
+const narrowedToken = "ghs-narrowed-for-this-lease-7c1"
+
+// githubLease is a lease request carrying the GitHub token the platform narrowed for it, beside the App id, the owner and two Hetzner secrets.
+func githubLease(extra map[string]any) map[string]any {
+	fields := leaseFields(map[string]any{"secrets": map[string]any{
+		"github":  map[string]any{"token": narrowedToken, "appId": "app-id-4410", "owner": "acme-org"},
+		"hetzner": map[string]any{"apiToken": "hcloud-token-91a", "token": "hetzner-token-e27"},
+	}})
+	for k, v := range extra {
+		fields[k] = v
+	}
+	return fields
+}
+
+func TestLease_PassesACredentialHoldingTheGitHubTokenThePlatformNarrowedForTheLease(t *testing.T) {
+	block := newLeasingBlock(`{"token":"`+narrowedToken+`"}`, time.Now().Add(time.Hour))
+
+	status, resp := serveLease(t, block, leaseManifest, githubLease(nil))
+
+	if status != http.StatusOK || resp.Lease == nil || string(resp.Lease.Credential) != string(block.lease.Credential) {
+		t.Errorf("status = %d, lease = %+v, error = %q; want 200 and %s as the block answered it", status, resp.Lease, resp.Error, block.lease.Credential)
+	}
+}
+
+func TestLease_RefusesEveryRequestSecretButTheNarrowedGitHubTokenAndRetiresTheHandle(t *testing.T) {
+	ownToken := githubLease(map[string]any{"ownSecrets": map[string]any{"runnerToken": narrowedToken}})
+	cases := []struct {
+		name, credential, id string
+		fields               map[string]any
+		want                 string
+	}{
+		{"a Hetzner token among the connection secrets", `{"token":"hcloud-token-91a"}`, "tok_1", githubLease(nil), "credential.token repeats"},
+		{"the GitHub App id sent beside the token", `{"appId":"app-id-4410"}`, "tok_1", githubLease(nil), "credential.appId repeats"},
+		{"the GitHub owner sent beside the token", `{"owner":"acme-org"}`, "tok_1", githubLease(nil), "credential.owner repeats"},
+		{"the narrowed token given as the handle", `{"token":"` + narrowedToken + `"}`, narrowedToken, githubLease(nil), "its id repeats"},
+		{"a token key under the hetzner connection", `{"token":"hetzner-token-e27"}`, "tok_1", githubLease(nil), "credential.token repeats"},
+		{"the narrowed token the block also holds as its own secret", `{"token":"` + narrowedToken + `"}`, "tok_1", ownToken, "credential.token repeats"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			block := &leasingBlock{blockResource: &blockResource{cloud: newFakeCloud()},
+				lease: contract.Lease{Credential: json.RawMessage(tc.credential), ExpiresAt: time.Now().Add(time.Hour), ID: tc.id}}
+
+			status, resp := serveLease(t, block, leaseManifest, tc.fields)
+
+			if status != http.StatusInternalServerError || resp.Lease != nil || !strings.Contains(resp.Error, tc.want) {
+				t.Fatalf("status = %d, lease = %+v, error = %q; want 500, no lease and an error carrying %q", status, resp.Lease, resp.Error, tc.want)
+			}
+			if len(block.requests) != 2 || !reflect.DeepEqual(block.requests[1].Retire, []string{tc.id}) {
+				t.Errorf("the block saw %+v, want the mint and then one request retiring %s", block.requests, tc.id)
+			}
+		})
+	}
+}
+
+func TestLease_TheGitHubTokenStillRefusesASubscribeOutputAndAnIssuedCredential(t *testing.T) {
+	fields := recordedAll()
+	fields["secrets"] = map[string]any{"github": map[string]any{"token": narrowedToken}}
+	obs := asObservers(blockObservers(standingCloud()))
+	obs["a"] = fixed(contract.Observation{State: contract.Present, Outputs: map[string]string{"leaked": narrowedToken}})
+	issuing := newIssuingBlock(map[string]string{"accessToken": narrowedToken}, issuedExpiry)
+
+	status, resp := serveBlock(t, blockCall{r: &blockResource{cloud: standingCloud()}, obs: obs, op: "subscribe", fields: fields})
+	wantRefusal(t, status, resp, "secret-in-output")
+	fields["issueAppId"] = "app-shop"
+	status, resp = serveBlock(t, blockCall{r: issuing, obs: asObservers(blockObservers(newFakeCloud())), op: "issue", fields: fields,
+		config: []func(*handler.Config){withManifest(capabilityManifest)}})
+
+	if status != http.StatusInternalServerError || resp.Credential != nil || !strings.Contains(resp.Error, "accessToken") {
+		t.Errorf("issue: status = %d, credential = %+v, error = %q; want 500 naming accessToken and no credential", status, resp.Credential, resp.Error)
+	}
+}
+
+func TestLease_RetiresTheHandlesItListsWhenTheRequestCarriesTheNarrowedToken(t *testing.T) {
+	block := newLeasingBlock(`{"token":"ignored-on-a-retire"}`, time.Now().Add(time.Hour))
+	fields := map[string]any{"resource": "scaleway.cockpit", "retire": []string{"tok_old_1"}, "secrets": map[string]any{"github": map[string]any{"token": narrowedToken}}}
+
+	status, resp := serveLease(t, block, leaseManifest, fields)
+
+	if status != http.StatusOK || resp.Lease != nil || len(block.requests) != 1 || !reflect.DeepEqual(block.requests[0].Retire, []string{"tok_old_1"}) {
+		t.Errorf("status = %d, lease = %+v, requests = %+v; want 200, no lease and one request retiring tok_old_1", status, resp.Lease, block.requests)
+	}
+}
