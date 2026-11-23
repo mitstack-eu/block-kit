@@ -32,18 +32,12 @@ func publishWorkflow(t *testing.T) map[string]string {
 
 func TestPublishBlockWorkflow_ScansEveryEventBeforePublish(t *testing.T) {
 	all := publishWorkflow(t)
-	field := func(path string) string {
-		if v, ok := all[path]; ok {
-			return v
-		}
-		return "<absent>"
-	}
 	step := func(job, key, value string) string { return strconv.FormatBool(stepWith(all, job, key, value)) }
 	cases := []struct{ name, got, want string }{
-		{"the secrets job carries no if, so every event scans", field("jobs.secrets.if"), "<absent>"},
-		{"the scripts job carries no if, so every event lints", field("jobs.scripts.if"), "<absent>"},
-		{"the secrets job reads contents alone", field("jobs.secrets.permissions.contents"), "read"},
-		{"the scripts job reads contents alone", field("jobs.scripts.permissions.contents"), "read"},
+		{"the secrets job carries no if, so every event scans", fieldOf(all, "jobs.secrets.if"), "<absent>"},
+		{"the scripts job carries no if, so every event lints", fieldOf(all, "jobs.scripts.if"), "<absent>"},
+		{"the secrets job reads contents alone", fieldOf(all, "jobs.secrets.permissions.contents"), "read"},
+		{"the scripts job reads contents alone", fieldOf(all, "jobs.scripts.permissions.contents"), "read"},
 		{"the secrets job checks the block out beside the kit", step("secrets", "with.path", "block"), "true"},
 		{"the secrets job checks out every commit the block's HEAD reaches", step("secrets", "with.fetch-depth", "0"), "true"},
 		{"the secrets job takes its scan from kit-ref", step("secrets", "with.ref", "${{ inputs.kit-ref }}"), "true"},
@@ -69,16 +63,9 @@ func TestPublishBlockWorkflow_APullRequestRunsThePublishScan(t *testing.T) {
 		}
 	}
 	for _, job := range []string{"conformance", "opentofu-conformance"} {
-		index := func(key, value string) int {
-			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(stepOf(all, job, key, value), "jobs."+job+".steps."), "."))
-			if err != nil {
-				return -1
-			}
-			return n
-		}
 		step := func(i int, key string) string { return all["jobs."+job+".steps."+strconv.Itoa(i)+"."+key] }
-		kit, moved, goAt := index("with.ref", "${{ inputs.kit-ref }}"), index("run", `mv block-kit "$RUNNER_TEMP/block-kit"`), index("with.go-version", "${{ inputs.go-version }}")
-		built, scanned := index("name", "Build the block image"), index("name", "Scan the block image")
+		kit, moved, goAt := stepAt(all, job, "with.ref", "${{ inputs.kit-ref }}"), stepAt(all, job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`), stepAt(all, job, "with.go-version", "${{ inputs.go-version }}")
+		built, scanned := stepAt(all, job, "name", "Build the block image"), stepAt(all, job, "name", "Scan the block image")
 		cases := []struct{ name, got, want string }{
 			{"the kit comes from kit-ref", step(kit, "with.repository"), "mitstack-eu/block-kit"},
 			{"the kit leaves the tree for RUNNER_TEMP before the image builds", strconv.FormatBool(kit >= 0 && kit < moved && moved < built), "true"},
@@ -116,26 +103,20 @@ const (
 
 func TestPublishBlockWorkflow_PublishesOnlyForACallerNamingARegistry(t *testing.T) {
 	all := publishWorkflow(t)
-	field := func(path string) string {
-		if v, ok := all[path]; ok {
-			return v
-		}
-		return "<absent>"
-	}
 	credentials := stepOf(all, "publish", "with.role-to-assume", "${{ vars.AWS_BLOCK_PUBLISH_ROLE_ARN }}")
 	if credentials == "" {
 		t.Fatal("publish has no step assuming the role vars.AWS_BLOCK_PUBLISH_ROLE_ARN names")
 	}
 	cases := []struct{ name, got, want string }{
-		{"ecr-repository is optional, so a block repository's ci.yml may name no registry", field("on.workflow_call.inputs.ecr-repository.required"), "false"},
+		{"ecr-repository is optional, so a block repository's ci.yml may name no registry", fieldOf(all, "on.workflow_call.inputs.ecr-repository.required"), "false"},
 		{"a caller naming no registry gets no publish on a push to main, and a caller naming one and holding its publish role publishes there as it does today",
-			field("jobs.publish.if"), "${{ !cancelled() && !failure() && inputs.ecr-repository != '' && " + onAPushToMain + " }}"},
-		{"a caller naming a registry still publishes only once every check passed", field("jobs.publish.needs"), everyCheck},
-		{"a caller naming a registry with no publish role fails at the credentials step, which carries no if", field(credentials + "if"), "<absent>"},
+			fieldOf(all, "jobs.publish.if"), "${{ !cancelled() && !failure() && inputs.ecr-repository != '' && " + onAPushToMain + " }}"},
+		{"a caller naming a registry still publishes only once every check passed", fieldOf(all, "jobs.publish.needs"), everyCheck},
+		{"a caller naming a registry with no publish role fails at the credentials step, which carries no if", fieldOf(all, credentials+"if"), "<absent>"},
 		{"a caller naming no registry gets the no-registry summary on a push to main where publish would have run",
-			field("jobs.no-registry.if"), "${{ !cancelled() && !failure() && inputs.ecr-repository == '' && " + onAPushToMain + " }}"},
-		{"the no-registry summary waits for every check, as publish does", field("jobs.no-registry.needs"), everyCheck},
-		{"the no-registry summary job is granted nothing, since it only writes the summary", field("jobs.no-registry.permissions"), "{}"},
+			fieldOf(all, "jobs.no-registry.if"), "${{ !cancelled() && !failure() && inputs.ecr-repository == '' && " + onAPushToMain + " }}"},
+		{"the no-registry summary waits for every check, as publish does", fieldOf(all, "jobs.no-registry.needs"), everyCheck},
+		{"the no-registry summary job is granted nothing, since it only writes the summary", fieldOf(all, "jobs.no-registry.permissions"), "{}"},
 	}
 	checkFields(t, "publish-block.yml", "", cases)
 }
@@ -661,21 +642,18 @@ func TestPublishBlockWorkflow_OnlyTheJobsThatBuildTheImageReadTheBlocksOwnPackag
 func TestPublishBlockWorkflow_RunsTheJobsHoldingACredentialOnTheCredentialRunnerACallerPasses(t *testing.T) {
 	all := publishWorkflow(t)
 	holders := []string{"attest", "base-image", "delivery", "platform-verdict", "publish"}
-	runners := map[bool]struct{ says, runsOn string }{
-		false: {"reads no secret and is granted no write, so it runs on runs-on for every caller", "${{ fromJSON(inputs.runs-on) }}"},
-		true:  {"reads a secret or is granted a write, so it runs on credential-runs-on where a caller passes it and on runs-on where a caller passes runs-on alone", "${{ fromJSON(inputs.credential-runs-on || inputs.runs-on) }}"},
-	}
-	_, defaulted := all["on.workflow_call.inputs.credential-runs-on.default"]
-	cases := []struct{ name, got, want string }{{"credential-runs-on is optional and has no default, so a caller passing runs-on alone calls the workflow as before", all["on.workflow_call.inputs.credential-runs-on.required"] + " " + strconv.FormatBool(defaulted), "false false"}}
+	says := map[bool]string{false: "reads no secret and is granted no write, so it runs on runs-on for every caller", true: "reads a secret or is granted a write, so it runs on credential-runs-on where a caller passes it and on runs-on where a caller passes runs-on alone"}
+	runsOn := map[bool]string{false: "${{ fromJSON(inputs.runs-on) }}", true: "${{ fromJSON(inputs.credential-runs-on || inputs.runs-on) }}"}
+	input := "on.workflow_call.inputs.credential-runs-on."
+	cases := []struct{ name, got, want string }{{"credential-runs-on is optional and has no default, so a caller passing runs-on alone calls the workflow as before", fieldOf(all, input+"required") + " " + fieldOf(all, input+"default"), "false <absent>"}}
 
 	for _, path := range slices.Sorted(maps.Keys(all)) {
 		if job, isJob := strings.CutPrefix(path, "jobs."); isJob && !strings.Contains(job, ".") {
-			holds := false
+			holds, named := false, slices.Contains(holders, job)
 			for key, v := range all {
 				holds = holds || strings.HasPrefix(key, path+".") && strings.Contains(v, "${{ secrets.") || strings.HasPrefix(key, path+".permissions.") && v == "write"
 			}
-			want := runners[slices.Contains(holders, job)]
-			cases = append(cases, struct{ name, got, want string }{job + " " + want.says, strconv.FormatBool(holds) + " " + all[path+".runs-on"], strconv.FormatBool(slices.Contains(holders, job)) + " " + want.runsOn})
+			cases = append(cases, struct{ name, got, want string }{job + " " + says[named], strconv.FormatBool(holds) + " " + fieldOf(all, path+".runs-on"), strconv.FormatBool(named) + " " + runsOn[named]})
 		}
 	}
 
