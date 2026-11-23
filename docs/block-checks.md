@@ -248,12 +248,27 @@ repository, mitstack-eu/mitstack, in `deploy/tofu/operators.tf` and
 `AWS_BLOCK_PUBLISH_ROLE_ARN` variable on your repository to the role's ARN,
 Amazon's identifier for it.
 
-`runs-on` names the runner every job of the workflow runs on, as a JSON list of
-runner labels. It is required and has no default, so each caller chooses its
-runner. The example runs every job on `ubuntu-latest`, GitHub's hosted runner,
-which is free for a public repository. Set the repository variable
+`runs-on` names the runner the workflow's jobs run on, as a JSON list of runner
+labels. It is required and has no default, so each caller chooses its runner.
+The example runs every job on `ubuntu-latest`, GitHub's hosted runner, which is
+free for a public repository. Set the repository variable
 `MITSTACK_CI_RUNS_ON` to such a list, as `["self-hosted", "linux"]`, to move
 every job onto your own runners.
+
+`credential-runs-on` is optional and names, in the same form, the runner of the
+five jobs that hold a credential. Those jobs are `base-image`, `delivery`,
+`platform-verdict`, `attest` and `publish`. Each one reads a secret, such as
+the platform token or the board token, or is granted a write, such as the
+identity token that signs a release. A runner pool shared with other
+repositories runs their jobs beside yours. This input lets your checks use
+such a pool while the jobs holding a credential run on a runner of their own.
+Leave it out and every job runs on `runs-on`.
+
+```yaml
+    with:
+      runs-on: '["self-hosted", "linux"]'
+      credential-runs-on: '["ubuntu-latest"]'
+```
 
 `ecr-repository` is optional, and the `publish` job runs only when you name
 one. Leave it out when mitstack holds no ECR repository for your block, as for
