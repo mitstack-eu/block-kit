@@ -122,9 +122,8 @@ on:
         type: string
         default: "1.26.11"
       runs-on:
-        required: false
+        required: true
         type: string
-        default: '["ubicloud-standard-2"]'
       opentofu-only:
         required: false
         type: boolean

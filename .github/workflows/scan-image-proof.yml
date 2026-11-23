@@ -23,7 +23,7 @@ permissions:
 jobs:
   real-provider:
     name: scan ${{ matrix.provider }} ${{ matrix.version }}
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubicloud-standard-2"]') }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
