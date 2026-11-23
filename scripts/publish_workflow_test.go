@@ -657,6 +657,31 @@ func TestPublishBlockWorkflow_OnlyTheJobsThatBuildTheImageReadTheBlocksOwnPackag
 	}
 }
 
+// A caller passing runs-on alone, as every released block's call does, runs every job there, since an omitted credential-runs-on is empty and the || falls through to runs-on. A caller passing both runs the five jobs that read a secret or are granted a write on credential-runs-on: base-image for an OpenTofu block, delivery and platform-verdict on a pull request, and attest and publish on a merge. conformance, opentofu-conformance, secrets, scripts and no-registry stay on runs-on.
+func TestPublishBlockWorkflow_RunsTheJobsHoldingACredentialOnTheCredentialRunnerACallerPasses(t *testing.T) {
+	all := publishWorkflow(t)
+	holders := []string{"attest", "base-image", "delivery", "platform-verdict", "publish"}
+	runners := map[bool]struct{ says, runsOn string }{
+		false: {"reads no secret and is granted no write, so it runs on runs-on for every caller", "${{ fromJSON(inputs.runs-on) }}"},
+		true:  {"reads a secret or is granted a write, so it runs on credential-runs-on where a caller passes it and on runs-on where a caller passes runs-on alone", "${{ fromJSON(inputs.credential-runs-on || inputs.runs-on) }}"},
+	}
+	_, defaulted := all["on.workflow_call.inputs.credential-runs-on.default"]
+	cases := []struct{ name, got, want string }{{"credential-runs-on is optional and has no default, so a caller passing runs-on alone calls the workflow as before", all["on.workflow_call.inputs.credential-runs-on.required"] + " " + strconv.FormatBool(defaulted), "false false"}}
+
+	for _, path := range slices.Sorted(maps.Keys(all)) {
+		if job, isJob := strings.CutPrefix(path, "jobs."); isJob && !strings.Contains(job, ".") {
+			holds := false
+			for key, v := range all {
+				holds = holds || strings.HasPrefix(key, path+".") && strings.Contains(v, "${{ secrets.") || strings.HasPrefix(key, path+".permissions.") && v == "write"
+			}
+			want := runners[slices.Contains(holders, job)]
+			cases = append(cases, struct{ name, got, want string }{job + " " + want.says, strconv.FormatBool(holds) + " " + all[path+".runs-on"], strconv.FormatBool(slices.Contains(holders, job)) + " " + want.runsOn})
+		}
+	}
+
+	checkFields(t, "publish-block.yml", "", cases)
+}
+
 // GitHub refuses to start a called job that asks for more than its caller grants, so every caller the docs show grants packages: read.
 func TestBlockChecksDoc_EveryCallerExampleGrantsPackagesRead(t *testing.T) {
 	raw, err := os.ReadFile("../docs/block-checks.md")
