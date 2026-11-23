@@ -637,7 +637,7 @@ as the publish job does:
 | Check | What it runs |
 |---|---|
 | `tofu fmt -check` | `tofu fmt -check -diff -recursive /module`, which fails on a file OpenTofu would reformat and prints the change |
-| `tofu test` | `tofu init` with no backend, then `tofu test` over the module's `.tftest.hcl` files |
+| `tofu test` | `opentofu-operator mark-secret-outputs`, which marks sensitive each module output that `resources.json` maps to an output your type calls secret, as every run of the operator does. Then `tofu init` with no backend, and `tofu test` over the module's `.tftest.hcl` files. It needs opentofu-operator 0.5.9 or later, and fails when your module marks a mapped output `sensitive` itself |
 | `block-verify` | The test binary the operator image carries, which runs the kit's guards over the module. Its `TestDeclaredResources` fails, for example, when `manifest.yaml` declares a resource that `resources.json` does not map to the module |
 
 block-verify judges an OpenTofu-only block's module as blockverify's Go

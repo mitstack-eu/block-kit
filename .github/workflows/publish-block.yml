@@ -500,12 +500,14 @@ jobs:
           IMAGE_ID: ${{ steps.image.outputs.id }}
         run: docker run --rm --entrypoint tofu "$IMAGE_ID" fmt -check -diff -recursive -no-color /module
 
+      # The operator first marks sensitive each output the block's types call
+      # secret, as every run of it does, so the tests read the outputs alike.
       - name: tofu test
         env:
           IMAGE_ID: ${{ steps.image.outputs.id }}
         run: |
           docker run --rm --entrypoint sh "$IMAGE_ID" -c \
-            'tofu -chdir=/module init -backend=false -input=false -no-color > /dev/null && tofu -chdir=/module test -no-color'
+            'opentofu-operator mark-secret-outputs && tofu -chdir=/module init -backend=false -input=false -no-color > /dev/null && tofu -chdir=/module test -no-color'
 
       # The record signs this output, of the very image a release pushes.
       - name: block-verify
