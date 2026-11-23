@@ -637,8 +637,46 @@ as the publish job does:
 | Check | What it runs |
 |---|---|
 | `tofu fmt -check` | `tofu fmt -check -diff -recursive /module`, which fails on a file OpenTofu would reformat and prints the change |
-| `tofu test` | `tofu init` with no backend, then `tofu test` over the module's `.tftest.hcl` files |
+| `tofu test` | `opentofu-operator mark-secret-outputs`, then `tofu init` with no backend, the place OpenTofu keeps state, which a test run does not need, then `tofu test` over the module's `.tftest.hcl` files, OpenTofu's own test files. The paragraphs below explain the first command |
 | `block-verify` | The test binary the operator image carries, which runs the kit's guards over the module. Its `TestDeclaredResources` fails, for example, when `manifest.yaml` declares a resource that `resources.json` does not map to the module |
+
+Here the module is your block's OpenTofu code, which the image holds at
+`/module`. `opentofu-operator` is the operator's own program, which the image
+carries. Its `mark-secret-outputs` command reads two files at your block
+repository's root.
+
+- You write `resources.json`, which maps each declared resource's outputs to
+  module outputs. Its format is in the section "How each output maps to a
+  declared resource" of opentofu-operator's
+  [`docs/inject-a-module.md`](https://github.com/mitstack-eu/opentofu-operator/blob/main/docs/inject-a-module.md).
+- `type-snapshot.json` is the platform's copy of the catalogue's types, and a
+  type marks an output `"secret": true` there. You fetch it with a personal
+  token from the console's API Tokens page, as the section "How to fetch the
+  type snapshot" of that doc explains:
+
+```bash
+curl -sSf https://api.mitstack.dev/v1/resource-types/snapshots/latest \
+  -H "Authorization: Bearer $MITSTACK_TOKEN" -o type-snapshot.json
+```
+
+The command then writes `zz_outputs_override.tf.json` into the module. For
+example, when `resources.json` maps a resource's `accessKey` to the module
+output `access_key` and the type marks `accessKey` secret, the file marks
+`access_key` sensitive to OpenTofu. The operator writes the same file before
+each of its own runs, so your tests read each output as production does, and
+a test can assert `issensitive(output.access_key)`.
+
+The command fails, and the `tofu test` check with it, when an `output` block
+your mapping names holds `sensitive = true`. The message names the file and
+the output. Delete that line, since the override sets it.
+
+The command needs opentofu-operator 0.5.9 or later. An older one does not
+know it and stops, so the check fails. Your `Dockerfile` already names the
+operator image by digest, and that digest is the one you replace. Each push to `main` in mitstack-eu/opentofu-operator tags
+the image `v` plus its version, such as `v0.5.9`, and the last line of its
+step "Push the operator image to ECR" reads
+`pushed: …/mitstack-opentofu-operator@sha256:<digest>`. Take the digest from
+the run that pushed 0.5.9 or a later version.
 
 block-verify judges an OpenTofu-only block's module as blockverify's Go
 operator suites judge a Go block's code. It comes from the operator image,

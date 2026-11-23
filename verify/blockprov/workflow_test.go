@@ -312,7 +312,7 @@ func TestWorkflow_EachJobRunsItsCommands(t *testing.T) {
 		{"conformance fetches the base commit through the kit's write-pr-base.sh", "conformance", "Write the base commit's manifest and the changed files", []string{`write-pr-base.sh" "$BASE_SHA" "$RUNNER_TEMP"`}},
 		{"OpenTofu conformance runs blockverify on the tree with --opentofu-only", "opentofu-conformance", "blockverify (standalone contract check)", []string{`run-blockverify.sh" "$RUNNER_TEMP/blockverify"`, "--opentofu-only"}},
 		{"OpenTofu conformance checks the module's format inside the block's image", "opentofu-conformance", "tofu fmt -check", []string{`--entrypoint tofu "$IMAGE_ID" fmt -check`}},
-		{"OpenTofu conformance runs the module's tests inside the block's image", "opentofu-conformance", "tofu test", []string{"tofu -chdir=/module test"}},
+		{"OpenTofu conformance runs the module's tests inside the block's image once the operator has marked the outputs the block's types call secret sensitive", "opentofu-conformance", "tofu test", []string{"'opentofu-operator mark-secret-outputs && tofu -chdir=/module init ", "tofu -chdir=/module test"}},
 		{"OpenTofu conformance runs the operator's block-verify inside the block's image", "opentofu-conformance", "block-verify", []string{`--entrypoint block-verify "$IMAGE_ID" -test.v`}},
 		{"OpenTofu conformance keeps block-verify's output, which the record signs", "opentofu-conformance", "block-verify", []string{"set -euo pipefail", `-test.v | tee "$RUNNER_TEMP/block-verify.txt"`}},
 		{"the base image job pulls through the kit's script", "base-image", "Pull the images the block's Dockerfile names in that registry", []string{`bash block-kit/scripts/base-images.sh pull "$REGISTRY" "$RUNNER_TEMP/base-images"`}},
