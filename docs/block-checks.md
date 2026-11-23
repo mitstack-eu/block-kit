@@ -214,6 +214,7 @@ jobs:
       block-id: hetzner-firewall
       ecr-repository: mitstack-hetzner-firewall
       kit-ref: v0.4.0
+      runs-on: ${{ vars.MITSTACK_CI_RUNS_ON || '["ubuntu-latest"]' }}
 ```
 
 The `permissions` block grants the most the workflow's jobs may use, because
@@ -246,6 +247,13 @@ repository, mitstack-eu/mitstack, in `deploy/tofu/operators.tf` and
 `deploy/tofu/block_publish.tf`. The maintainer then sets the
 `AWS_BLOCK_PUBLISH_ROLE_ARN` variable on your repository to the role's ARN,
 Amazon's identifier for it.
+
+`runs-on` names the runner every job of the workflow runs on, as a JSON list of
+runner labels. It is required and has no default, so each caller chooses its
+runner. The example runs every job on `ubuntu-latest`, GitHub's hosted runner,
+which is free for a public repository. Set the repository variable
+`MITSTACK_CI_RUNS_ON` to such a list, as `["self-hosted", "linux"]`, to move
+every job onto your own runners.
 
 `ecr-repository` is optional, and the `publish` job runs only when you name
 one. Leave it out when mitstack holds no ECR repository for your block, as for
@@ -570,6 +578,7 @@ jobs:
       block-id: opentofu-s3-bucket
       ecr-repository: mitstack-opentofu-s3-bucket
       kit-ref: <tag>
+      runs-on: ${{ vars.MITSTACK_CI_RUNS_ON || '["ubuntu-latest"]' }}
       opentofu-only: true
 ```
 
@@ -668,6 +677,7 @@ jobs:
       block-id: "@acme/billing-db"
       ecr-repository: mitstack-billing-db
       kit-ref: <tag>
+      runs-on: ${{ vars.MITSTACK_CI_RUNS_ON || '["ubuntu-latest"]' }}
       platform-verdict: true
       post-attestation: true
     secrets: inherit
@@ -721,6 +731,7 @@ jobs:
       block-id: billing-db
       ecr-repository: mitstack-billing-db
       kit-ref: <tag>
+      runs-on: ${{ vars.MITSTACK_CI_RUNS_ON || '["ubuntu-latest"]' }}
       record-api-url: https://api.mitstack.dev
 ```
 
