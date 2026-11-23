@@ -52,6 +52,13 @@
 # Every caller grants packages: read, since GitHub refuses to start a called
 # job that asks for more than its caller grants.
 #
+# Every job runs on the caller's `runs-on`, except the five that read a secret
+# or are granted a write: base-image, delivery, platform-verdict, attest and
+# publish. Those run on `credential-runs-on` where the caller passes it, so a
+# caller can send its checks to a shared runner pool while the jobs holding a
+# credential stay off it. A caller that passes `runs-on` alone runs every job
+# there.
+#
 # Two more jobs call the platform with the MITSTACK_API_TOKEN secret, each
 # only when the caller sets its input. `platform-verdict` asks for a dry-run
 # apply of manifest.yaml on a pull request, and `attest` posts blockverify's
@@ -121,10 +128,17 @@ on:
         required: false
         type: string
         default: "1.26.11"
-      # Every job's runner, as a JSON list of labels such as '["ubuntu-latest"]',
-      # with no default, so no caller lands on a paid runner it never chose.
+      # The runner of every job, as a JSON list of labels such as
+      # '["ubuntu-latest"]', with no default, so no caller lands on a paid
+      # runner it never chose.
       runs-on:
         required: true
+        type: string
+      # The runner of the five jobs that read a secret or are granted a write,
+      # in the form runs-on takes. A caller that passes none runs them on
+      # runs-on.
+      credential-runs-on:
+        required: false
         type: string
       opentofu-only:
         required: false
@@ -329,7 +343,7 @@ jobs:
   base-image:
     name: base image
     if: inputs.opentofu-only
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.credential-runs-on || inputs.runs-on) }}
     permissions:
       contents: read
       id-token: write
@@ -588,7 +602,7 @@ jobs:
 
   delivery:
     if: github.event_name == 'pull_request' && vars.TRACKER_BASE_URL != ''
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.credential-runs-on || inputs.runs-on) }}
     permissions:
       contents: read
     steps:
@@ -618,7 +632,7 @@ jobs:
   # shows the platform's own verdict before anything is published.
   platform-verdict:
     if: inputs.platform-verdict && github.event_name == 'pull_request'
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.credential-runs-on || inputs.runs-on) }}
     permissions:
       contents: read
     steps:
@@ -655,7 +669,7 @@ jobs:
   attest:
     needs: [conformance, secrets, scripts]
     if: inputs.post-attestation && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.credential-runs-on || inputs.runs-on) }}
     permissions:
       contents: read
     steps:
@@ -741,7 +755,7 @@ jobs:
   publish:
     needs: [conformance, opentofu-conformance, secrets, scripts]
     if: ${{ !cancelled() && !failure() && inputs.ecr-repository != '' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.credential-runs-on || inputs.runs-on) }}
     # contents: write cuts the release tag and actions: write starts the
     # publisher, so a caller grants both to the job calling this workflow.
     permissions:
