@@ -109,6 +109,7 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const moduleDryRun = "bash scripts/release-block-kit.sh --module " + rescueSSH + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
 	const moduleScan = "go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C " + rescueSSH + " -scan package ./..."
 	const healthz = "helpers/healthz"
+	const importCheck = "go run ./cmd/checkimports .\ngo run ./cmd/checkimports examples/hetzner-firewall"
 	const healthzDryRun = "bash scripts/release-block-kit.sh --module " + healthz + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
 	const planned = "steps.plan.outputs.planned != ''"
 	const copyCosign = `bash scripts/copy-tool.sh ghcr.io/sigstore/cosign/cosign:v2.5.3@sha256:f1946d0f30fc8e3777b02f2201e02efdba9fe38f4918162f937052fac98e083f /ko-app/cosign 056df4b41218fff47e879470554e01b0ba8e7608c1bec1e704c9dcded965f00f "$RUNNER_TEMP/bin/cosign"` +
@@ -156,6 +157,8 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 				stepAt(all, "release", "run", toolsImageTest) < stepAt(all, "release", "run", cutPinned)), "true"},
 		{"the test job builds the tools image, checks every file it holds against its pin, and runs the sign-in route in caddy:2", strconv.FormatBool(stepWith(all, "test", "run", buildToolsImage) && stepWith(all, "test", "run", "CADDY_IMAGE=caddy:2 go test -tags edgecaddy -count=1 -run '^TestEdge_' ./helpers/dockerhost")), "true"},
 		{"the test job vets and tests the example block, then runs blockverify on it", strconv.FormatBool(stepWith(all, "test", "run", "go -C examples/hetzner-firewall vet ./...\ngo -C examples/hetzner-firewall test ./...\ngo run ./verify/blockverify --standalone examples/hetzner-firewall")), "true"},
+		{"the test job refuses an import of the core module or of a block's module from the kit and from the example block", strconv.FormatBool(stepWith(all, "test", "run", importCheck)), "true"},
+		{"the import check carries no if, so a push to main runs it too", fieldOf(all, stepOf(all, "test", "run", importCheck)+"if"), "<absent>"},
 		{"the test job vets and tests the rescuessh module, which ./... leaves out", strconv.FormatBool(stepWith(all, "test", "run", "go -C "+rescueSSH+" vet ./...\ngo -C "+rescueSSH+" test ./...")), "true"},
 		{"the test job scans the packages the rescuessh module imports for known vulnerabilities", strconv.FormatBool(stepWith(all, "test", "run", moduleScan)), "true"},
 		{"the rescuessh scan carries no if, so a push to main runs it too", fieldOf(all, stepOf(all, "test", "run", moduleScan)+"if"), "<absent>"},
