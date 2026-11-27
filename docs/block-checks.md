@@ -437,13 +437,18 @@ rule, tests included, and fails on either of these imports:
 | A package of `github.com/mitstack/api`, the platform's core module | A block that compiles against the core breaks whenever the core changes |
 | A package of a module whose own `manifest.yaml` says `type: block` or `type: capability` | A block that compiles against another block depends on that block's code instead of on its declared outputs |
 
-The check reads a module's type from the top-level `type:` line of the
-`manifest.yaml` at its root, past a byte-order mark and a trailing comment.
-That line places a repository in its layer, so no list of blocks is kept
-anywhere. A module with no `manifest.yaml`, such as a kit, is neither.
+The check reads a module's type from the top-level `type` key of the
+`manifest.yaml` at its root, past a byte-order mark, quotes and a trailing
+comment. That line places a repository in its layer, so no list of blocks is
+kept anywhere. A module with no `manifest.yaml`, such as a kit, is neither.
+The check stops with exit 2 when that line holds no plain value it can read,
+such as a list, an anchor or a value on the next line, and names the line, so
+an unusual spelling never lets a block's import through.
 
 The check runs `go list` over each module's packages and their tests, and
-`go list` downloads any dependency it lacks. It skips the directories the `go`
+`go list` downloads any dependency it lacks. It stops with exit 2 when
+`go list` cannot load a package or one of its tests, such as a test that
+closes an import cycle. It skips the directories the `go`
 command skips: `testdata`, `vendor`, and any whose name starts with `.` or `_`.
 A file your default build leaves out, such as one behind a `//go:build
 integration` line, is still checked against the core module. Its other imports

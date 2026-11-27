@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,7 +20,6 @@ import (
 
 const coreModule = "github.com/mitstack/api"
 
-// listedPackage holds the fields of go list's JSON this check reads.
 type listedPackage struct {
 	ImportPath     string
 	Dir            string
@@ -75,7 +75,7 @@ func ignoredName(name string) bool {
 	return strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
 
-// moduleFiles lists the module's Go files itself, since go list names no file of a package whose every file the build constraints leave out.
+// moduleFiles walks the module itself, since go list's GoFiles, TestGoFiles and XTestGoFiles omit a file the build constraints leave out.
 func moduleFiles(dir string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -134,15 +134,18 @@ func listModule(dir string) (judgedModule, error) {
 		if _, ok := mod.reached[path]; !ok || mod.reached[path].Error != nil {
 			mod.reached[path] = p
 		}
-		if p.Module == nil || !p.Module.Main || p.ForTest != "" || strings.HasSuffix(path, ".test") || path != p.ImportPath {
+		if p.Module == nil || !p.Module.Main {
+			continue
+		}
+		selected := slices.Concat(p.GoFiles, p.CgoFiles, p.TestGoFiles, p.XTestGoFiles)
+		// go list also reports an error for a package whose every file the build constraints leave out, and the walk judges those files.
+		if p.Error != nil && (len(selected) > 0 || len(p.IgnoredGoFiles) == 0) && !slices.Contains(broken, p.Error.Err) {
+			broken = append(broken, p.Error.Err)
+		}
+		if p.ForTest != "" || strings.HasSuffix(path, ".test") || path != p.ImportPath {
 			continue
 		}
 		mod.path, mod.dir = p.Module.Path, p.Module.Dir
-		selected := slices.Concat(p.GoFiles, p.CgoFiles, p.TestGoFiles, p.XTestGoFiles)
-		// go list also reports an error for a package whose every file the build constraints leave out, and the walk judges those files.
-		if p.Error != nil && (len(selected) > 0 || len(p.IgnoredGoFiles) == 0) {
-			broken = append(broken, p.Error.Err)
-		}
 		rel, err := filepath.Rel(p.Module.Dir, p.Dir)
 		if err != nil {
 			return judgedModule{}, err
@@ -263,12 +266,18 @@ func judge(mod judgedModule, prefix string) (judgement, error) {
 	return j, nil
 }
 
-// manifestType reads only an unindented type: line, since an indented one belongs to another key, and gives "" for a module with no manifest.yaml.
+var (
+	typeKey    = regexp.MustCompile(`^(type|"type"|'type')[ \t]*:`)
+	plainValue = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+)
+
+// manifestType reads only an unindented type key, since an indented one belongs to another key, and gives "" for a module with no manifest.yaml.
 func manifestType(dir string) (string, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return "", fmt.Errorf("reading the module at %s: %w", dir, err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
+	path := filepath.Join(dir, "manifest.yaml")
+	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
@@ -276,11 +285,12 @@ func manifestType(dir string) (string, error) {
 		return "", err
 	}
 	text := strings.TrimPrefix(string(raw), "\ufeff")
-	for _, line := range strings.Split(text, "\n") {
-		value, ok := strings.CutPrefix(line, "type:")
-		if !ok {
+	for n, line := range strings.Split(text, "\n") {
+		key := typeKey.FindString(line)
+		if key == "" {
 			continue
 		}
+		value := line[len(key):]
 		// YAML starts a comment at a # that follows a space or a tab.
 		for i := 1; i < len(value); i++ {
 			if value[i] == '#' && (value[i-1] == ' ' || value[i-1] == '\t') {
@@ -288,7 +298,14 @@ func manifestType(dir string) (string, error) {
 				break
 			}
 		}
-		return strings.Trim(strings.TrimSpace(value), `"'`), nil
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
+			value = value[1 : len(value)-1]
+		}
+		if !plainValue.MatchString(value) {
+			return "", fmt.Errorf("%s:%d: %q holds no plain value this check can read, so it cannot tell whether the module is a block; write the line as type: block or type: capability", path, n+1, strings.TrimSpace(line))
+		}
+		return value, nil
 	}
 	return "", nil
 }

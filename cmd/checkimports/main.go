@@ -25,10 +25,11 @@ reaches mitstack over its HTTP API and reads another block's outcome from the
 outputs of a requirement its manifest declares, and code two blocks share
 belongs in a kit.
 
-A module's type is the value of the top-level type: line in the manifest.yaml
-at its root, read past a byte-order mark and a trailing comment. That line
-places a repository in its layer, so no list of blocks is kept here. A module
-with no manifest.yaml, such as a kit, is neither a block nor a capability.
+A module's type is the value of the top-level type key in the manifest.yaml
+at its root, read past a byte-order mark, quotes and a trailing comment. That
+line places a repository in its layer, so no list of blocks is kept here. A
+module with no manifest.yaml, such as a kit, is neither a block nor a
+capability.
 
 Every Go file of each module is judged, tests included. The walk skips the
 directories the go command skips: testdata, vendor, and any whose name starts
@@ -38,8 +39,9 @@ when go list loaded that package for another file, and the pass line counts
 the rest.
 
 Exit 0 when no import is refused, 1 when one is, and 2 on a usage error, when
-go list fails or cannot load a package of a module, or when an import's module
-cannot be found.
+go list fails or cannot load a package of a module or one of its tests, when
+an import's module cannot be found, or when a manifest's type line holds no
+plain value, such as a list or an anchor.
 
 `
 
