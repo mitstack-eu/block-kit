@@ -260,12 +260,22 @@ jobs:
         working-directory: block-kit
         run: go build -o "$RUNNER_TEMP/checkpolls" ./cmd/checkpolls
 
+      - name: Build checkimports
+        working-directory: block-kit
+        run: go build -o "$RUNNER_TEMP/checkimports" ./cmd/checkimports
+
       # blockverify judges `.` and the image builds from `.`, so the kit
       # checked out inside the block's tree must be gone before either reads
       # it, or the block is judged by the kit's own source. The image scan
       # runs the kit's scripts from where the checkout moves to.
       - name: Remove the kit checkout from the block tree
         run: mv block-kit "$RUNNER_TEMP/block-kit"
+
+      # go list finds each dependency where the block's tests left it, and
+      # every event runs the check, so a push meets it as a pull request does.
+      - name: Refuse an import of the core module or of another block's module
+        run: |
+          "$RUNNER_TEMP/checkimports" .
 
       # A block holding no testdata/rules/ passes this step without fetching promtool.
       - name: Run the block's alert rule tests with promtool

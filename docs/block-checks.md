@@ -297,7 +297,10 @@ reports the work done, as [Judging the waits a pull request
 adds](maintainers.md#judging-the-waits-a-pull-request-adds) explains. When
 your block holds alert rule tests under `testdata/rules/`, the job also runs
 them on every event, as [How a block's alert rules are
-tested](#how-a-blocks-alert-rules-are-tested) explains.
+tested](#how-a-blocks-alert-rules-are-tested) explains. On every event it also
+runs `checkimports`, which fails a block that imports the platform's core
+module or another block's module, as [How a block's imports are
+judged](#how-a-blocks-imports-are-judged) explains.
 
 A red verdict stops the `publish` job, so no image ships without a pass. On a
 push to your default branch, the conformance job builds your image and hands
@@ -419,6 +422,45 @@ each push to `main` that workflow does three things with the token:
 2. It runs `blockverify --standalone --json .` into `report.json`.
 3. It posts the report to `POST https://api.mitstack.dev/v1/blocks/{id}/attestations`,
    and the platform signs a passing report as the block's attestation.
+
+### How a block's imports are judged
+
+A block builds on a kit and never on the platform's code or on another block's
+code. It reaches mitstack over the platform's HTTP API. It reads another
+block's outcome from the outputs of a requirement its manifest declares, and
+code two blocks share belongs in a kit such as this one. `checkimports` holds
+every file of your module to that rule, tests included, and fails on either of
+these imports:
+
+| Import | Why it is refused |
+|---|---|
+| A package of `github.com/mitstack/api`, the platform's core module | A block that compiles against the core breaks whenever the core changes |
+| A package of a module whose own `manifest.yaml` says `type: block` or `type: capability` | A block that compiles against another block depends on that block's code instead of on its declared outputs |
+
+The check reads a module's type from the unindented `type:` line of the
+`manifest.yaml` at its root, the line that places a repository in its layer, so
+no list of blocks is kept anywhere. A module with no `manifest.yaml`, such as a
+kit, is neither. The check runs `go list` over your module's packages and
+their tests, which finds each dependency where your tests left it, so the
+`conformance` job runs it after `go test`. The kit's own `ci.yml` runs it on
+the kit and on `examples/hetzner-firewall` on every event.
+
+A refused import names its file and line, the module it belongs to and the
+fix, as in this line for a block importing the core:
+
+```text
+main.go:7: imports github.com/mitstack/api/contract, a package of the core module github.com/mitstack/api. A kit or an operator never builds on the core: delete the import and reach mitstack over its HTTP API.
+```
+
+Run it from your block's directory before you push. Replace `latest` with the
+tag your CI's `kit-ref` names to run the release CI runs:
+
+```sh
+go run github.com/mitstack-eu/block-kit/cmd/checkimports@latest .
+```
+
+It exits 0 when no import is refused, 1 when one is, and 2 when `go list`
+fails or cannot find an import's module, which `go mod download` fixes.
 
 ### How a block's alert rules are tested
 
