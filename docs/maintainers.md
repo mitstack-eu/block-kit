@@ -13,11 +13,12 @@ The kit's module is stdlib-only, with one exception. Its `go.mod` requires
 with, because hand-written cryptography is a security risk and this library is
 the Go team's own. That module builds on `golang.org/x/sys`, which `go.mod`
 lists as an indirect requirement. No other third-party dependency is ever
-added. The Robot
+added to it. The Robot
 rescue system's SSH session sits in a Go module of its own,
 `capabilities/hetzner/robot/rescuessh`, with its own `golang.org/x/crypto`
 requirement. The read-only S3 lister sits in another, `capabilities/s3store`,
-with its own requirement on the AWS SDK for Go's S3 client, and
+with its own requirement on the AWS SDK for Go's S3 client. That SDK is the
+kit's second dependency exception, which `CLAUDE.md` names, and
 [helpers.md](helpers.md#listing-what-an-s3-compatible-bucket-holds) describes
 what it does. From the repository's root:
 
