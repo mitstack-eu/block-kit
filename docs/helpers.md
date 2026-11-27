@@ -12,7 +12,7 @@ package has [a page of its own](gitops.md).
 | `helpers/safe` | Logs a value from a request, or calls an API whose host a request names |
 | `helpers/bounded` | Calls an API with its own HTTP client and reads the answer |
 | `helpers/calllog` | Calls an API with an HTTP client of its own, which then logs one line per call |
-| `helpers/callhold` | Calls a service that refuses calls sent too fast, and must hold every call on that credential until the pause ends |
+| `helpers/callhold` | Calls a service that refuses calls sent too fast, and must hold every call made with that API token or key pair until the pause ends |
 | `helpers/guardedhttp` | Is a capability operator that calls its vendor with an org's credential |
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/reqcache` | Wants a read repeated within one request to cost one call, for a source of its own that cannot change under the request |
@@ -2413,9 +2413,11 @@ doubles the pause up to `longest`. A credential is named by
 credential itself.
 
 Your client's `http.RoundTripper` asks before each call and reports its
-answer. In this one, built for a service that refuses with `429`, `next` is
-the transport that sends the call, and `YourHeldError` is your client's own
-error type, which carries when the pause ends:
+answer. The code below is the body of its `RoundTrip(req *http.Request)`
+method, for a service that refuses with `429`. The transport type holds the
+`*callhold.Holds` as `holds`, the credential as `token`, and the transport
+that sends the call as `next`. `YourHeldError` is your client's own type
+implementing `error`, which carries when the pause ends:
 
 ```go
 call, until, ok := holds.Admit(callhold.KeyOf(token))
@@ -2443,7 +2445,9 @@ the held error.
    ends, so your client returns at once and sends nothing.
 2. Once the pause ends, `Admit` lets one call out alone to test it. Every
    other call is refused at once with a zero `until` until that call is
-   answered.
+   answered. A zero `until` names no end, so your error should say the pause
+   is over but untested, as the Hetzner client's `RateLimited` does in the
+   next section.
 3. `Answered` ends the pause, since the service took the call.
 4. `Inconclusive` keeps the pause for the next call to test. A lost call or a
    server failure says nothing of the limit. Deferred, it does nothing once
@@ -2460,14 +2464,16 @@ the held error.
 
 A client for another service changes which answers count as what. An
 S3-compatible store's client reads the body of each `503` and calls `Refused`
-only when its code is `SlowDown`, with a `Retry-After` header moving the end
-through the function. It skips `Answered` for a `408` or a `429`, which some
-stores send while they still throttle, so the deferred `Inconclusive` keeps
-the pause.
+only when its code is `SlowDown`. Its function turns a `Retry-After` header's
+seconds into `now.Add(time.Duration(secs) * time.Second)` and returns that as
+the end. A `408` or a `429`, which some stores send while they still
+throttle, is neither `Answered` nor `Refused`, so the deferred `Inconclusive`
+keeps the pause.
 
 `callhold.Grow(first, ceiling, n)` is the doubling on its own: `first` doubled
 `n` times, never past `ceiling`, so an `n` of 0 gives `first`. The Hetzner
-client's `PollBackoff` uses it.
+client's `PollBackoff`, the wait between its asks about a running action,
+uses it.
 
 The holds live in the operator's memory, so a restarted operator learns of a
 limit again from its first refused call.
