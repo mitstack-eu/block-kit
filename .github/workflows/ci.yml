@@ -64,6 +64,15 @@ jobs:
         run: |
           go -C helpers/healthz vet ./...
           go -C helpers/healthz test ./...
+      # The S3 lister is a module of its own, so the kit's module stays
+      # stdlib-only while this one builds on the AWS SDK, and ./... leaves it
+      # out.
+      - name: Test the s3store module
+        run: |
+          go -C capabilities/s3store vet ./...
+          go -C capabilities/s3store test ./...
+      - name: Scan the s3store module's dependencies for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C capabilities/s3store -scan package ./...
       - run: bash scripts/release-block-kit_test.sh
       # The release job runs only after a merge, so a line it would refuse has
       # to fail here, in a check main requires, before it reaches main.
@@ -83,6 +92,12 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           bash scripts/release-block-kit.sh --module helpers/healthz --dry-run \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+      - name: Dry-run the s3store release over the pull request's commits
+        if: github.event_name == 'pull_request'
+        run: |
+          bash scripts/release-block-kit.sh --module capabilities/s3store --dry-run \
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}"
 
@@ -240,6 +255,9 @@ jobs:
       - name: Cut the healthz tag when the module changed
         shell: bash
         run: bash scripts/release-block-kit.sh --module helpers/healthz | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Cut the s3store tag when the module changed
+        shell: bash
+        run: bash scripts/release-block-kit.sh --module capabilities/s3store | tee -a "$GITHUB_STEP_SUMMARY"
 
   # This repository has no other mechanism that reaches the board, so a
   # ticket delivered here never reached Done. needs: [test, release] only

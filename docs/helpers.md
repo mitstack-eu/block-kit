@@ -38,6 +38,7 @@ package has [a page of its own](gitops.md).
 | `capabilities/github/landing` | Lands files in an app's repository, and must remove them at unsubscribe |
 | `capabilities/hetzner/cloud` | Creates Hetzner Cloud servers whose public address DNS records name, reads a server's `serverType` input, waits on the Cloud actions its calls start, or calls Hetzner Cloud through hcloud-go, Hetzner's Go client, and needs its calls held after Hetzner refuses one for its rate limit |
 | `capabilities/hetzner/robot` | Adopts a Hetzner dedicated server through Hetzner's Robot webservice |
+| `capabilities/s3store` | Lists the objects or folders an S3-compatible bucket holds, such as a backup's files |
 
 ## Keeping secrets out of logs and requests out of hosts
 
@@ -2610,3 +2611,132 @@ fake, so a test that changes the fake reads the change at once.
 a proxy the test puts in front of the fake. `fake.Calls(method, path)` counts the requests sent, and
 `fake.SetRateLimited(true)` answers every request `403 RATE_LIMIT_EXCEEDED`
 until it is set false.
+
+## Listing what an S3-compatible bucket holds
+
+A block that reads backups or other files from an S3-compatible store, such as
+Scaleway Object Storage or Hetzner Object Storage, lists them through
+`capabilities/s3store`. Its client only lists. It has no call that writes,
+deletes or presigns, and a test in the package fails if one is added.
+
+The package is the Go module
+`github.com/mitstack-eu/block-kit/capabilities/s3store`, released by its own
+tags such as `capabilities/s3store/v0.1.0`. It is a module of its own because
+it builds on the AWS SDK for Go, whose S3 client signs each call, and the kit's
+main module takes no such dependency. A block requires it beside whatever kit
+release it builds on.
+
+This program lists every object under one prefix and the folders at the
+bucket's top. It runs against any S3-compatible store once the four settings
+it reads are set:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/mitstack-eu/block-kit/capabilities/s3store"
+)
+
+func main() {
+	store, err := s3store.New(s3store.Config{
+		Endpoint:  "https://s3.fr-par.scw.cloud",
+		Region:    "fr-par",
+		Bucket:    os.Getenv("BUCKET"),
+		AccessKey: os.Getenv("ACCESS_KEY"),
+		SecretKey: os.Getenv("SECRET_KEY"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+
+	objects, err := store.List(ctx, s3store.Query{Prefix: os.Getenv("PREFIX")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, o := range objects {
+		fmt.Println(o.Key, o.Size, o.LastModified)
+	}
+
+	folders, err := store.ListFolders(ctx, "", "/")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(folders)
+}
+```
+
+The client addresses the bucket by path, as in
+`https://s3.fr-par.scw.cloud/backups`, so a bucket name holding a dot still
+matches the store's certificate. `New` refuses an endpoint that is not https,
+or that carries a user, a path or a query, and its refusal names neither the
+endpoint nor a key.
+
+### What each call returns
+
+`List` returns every object under `Query.Prefix`, each with its key, its size
+in bytes and the time it was last written. It follows the store's pages, which
+hold at most 1,000 objects each, until the last one. `Query.StartAfter` starts
+the listing after that key, so a block that knows its newest backup reads only
+the ones written after it. An empty prefix returns an empty list and no error.
+
+`ListFolders(ctx, prefix, delimiter)` returns the folders directly under
+`prefix`, each ending in `delimiter`, and no object. Over a bucket holding
+`db-1/base/2026-11-26/data.tar` and `db-1/base/2026-11-27/data.tar`, the call
+`ListFolders(ctx, "db-1/base/", "/")` returns `db-1/base/2026-11-26/` and
+`db-1/base/2026-11-27/`.
+
+Within one request, each listing is read once. Under the handler's request
+cache, as [Reading each thing once in a
+request](#reading-each-thing-once-in-a-request) describes, a second `List` of
+the same prefix returns the first one's answer and sends nothing.
+
+### What a call logs and what a refusal says
+
+Each call the store answers writes one `calllog` line, as [Logging each call a
+client makes](#logging-each-call-a-client-makes) describes, naming the
+subscription the call serves:
+
+```text
+calllog: subscription=sub_681cd5ccfbb0 method=GET host=s3.fr-par.scw.cloud route=/backups answer=200 ms=84
+```
+
+When the store refuses a listing, the error is an `*s3store.Error` holding the
+answer's status, the store's code, such as `AccessDenied`, and its message.
+The access key and the secret key are scrubbed from the message, even when the
+store's answer quotes them, and no key ever reaches a log line.
+
+### When the store asks the client to slow down
+
+A store answers `503 SlowDown` when a key sends calls faster than it allows.
+The client then pauses every call made with that key, in every client the
+operator holds, in the same steps as [Holding calls after a Hetzner Cloud
+rate-limit refusal](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal):
+
+1. The first SlowDown pauses the key for 30 seconds.
+2. While the pause stands, a call with that key answers at once with an
+   `*s3store.SlowDown` error and sends nothing.
+3. When the pause ends, the next call goes out alone. Any answer below 500
+   ends the pause, and another SlowDown pauses the key for twice as long, up
+   to 15 minutes. A call that gets no answer, or a server failure, keeps the
+   key paused for the next call to test.
+4. A `Retry-After` header in seconds on the SlowDown ends the pause sooner
+   when it names an earlier time.
+
+A call with another key still goes out during the pause. The SDK never sends
+a call again on its own, so a paused call is told when to come back instead
+of adding to the load the store asked to shed.
+
+`s3store.SlowDown` wraps a
+[`handler.Waiting`](handler.md#errors-refusals-and-panics), so the handler
+answers the lifecycle call as pending, with `lookAgainAt` set to the time the
+pause ends. Your code tells a paused call apart with
+`errors.Is(err, s3store.ErrSlowDown)`, and `errors.As` into a
+`*s3store.SlowDown` gives its `Until`. The pause lives in
+`capabilities/s3store/slowdown.go`, and `slowdown_test.go` beside it proves
+each step above.
