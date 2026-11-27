@@ -216,23 +216,67 @@ func TestList_OneRequestListsEachPrefixOnce(t *testing.T) {
 	}
 }
 
+func TestList_OneRequestNeverAnswersOneKeysListingWithAnotherKeysListing(t *testing.T) {
+	s := newStore(t)
+	fillPrefix(s, "db-1/base/", 3)
+	holds := s3store.NewHolds(time.Now)
+	allowed, refused := newClient(t, s, holds), clientWithKey(t, s, holds, "SCWREFUSEDACCESSKEY3")
+	ctx := reqcache.Snapshot(context.Background())
+
+	_, allowedErr := allowed.List(ctx, s3store.Query{Prefix: "db-1/base/"})
+	got, refusedErr := refused.List(ctx, s3store.Query{Prefix: "db-1/base/"})
+
+	if allowedErr != nil {
+		t.Fatalf("List with the store's key = %v; want the objects", allowedErr)
+	}
+	var refusal *s3store.Error
+	if !errors.As(refusedErr, &refusal) || refusal.Status != http.StatusForbidden || got != nil {
+		t.Errorf("List with a key the store refuses = %q, %v; want no objects and the store's 403, not the other key's listing", keysOf(got), refusedErr)
+	}
+}
+
+func TestList_AStoreThatRedirectsAListingIsNotFollowed(t *testing.T) {
+	s := newStore(t)
+	s.refuseWith(func(w http.ResponseWriter) bool {
+		if s.sent.Load() > 1 {
+			return false
+		}
+		w.Header().Set("Location", s.srv.URL+"/"+testBucket+"?list-type=2&prefix=db-1%2Fbase%2F")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		return true
+	})
+	c := newClient(t, s, s3store.NewHolds(time.Now))
+
+	got, err := c.List(context.Background(), s3store.Query{Prefix: "db-1/base/"})
+
+	if err == nil || got != nil {
+		t.Errorf("List = %q, %v; want no objects and an error, since a signed call is sent only to the endpoint it names", keysOf(got), err)
+	}
+	if sent := s.sent.Load(); sent != 1 {
+		t.Errorf("the store answered %d calls; want 1, the redirect unfollowed", sent)
+	}
+}
+
 func TestList_AListingTheStoreCutsShortWithNoWayOnIsAnErrorNotAShorterList(t *testing.T) {
 	cases := []struct {
-		name  string
-		token string
-		sent  int64
+		name string
+		// tokens are the continuation tokens the store names, page after page, starting again after the last.
+		tokens []string
+		sent   int64
 	}{
-		{"a cut-short page naming no continuation token", "", 1},
-		{"a cut-short page naming the token the call sent", "db-1/base/object-00000", 2},
+		{"a cut-short page naming no continuation token", []string{""}, 1},
+		{"a cut-short page naming the token the call sent", []string{"db-1/base/object-00000"}, 2},
+		{"a cut-short page naming a token an earlier page named", []string{"db-1/base/object-00000", "db-1/base/object-00001"}, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newStore(t)
 			s.refuseWith(func(w http.ResponseWriter) bool {
+				page := int(s.sent.Load()) - 1
 				writeXML(w, http.StatusOK, listResult{
 					Name: testBucket, Prefix: "db-1/base/", KeyCount: 1, MaxKeys: pageSize, IsTruncated: true,
 					Contents:              []listContent{{Key: "db-1/base/object-00000", LastModified: writtenAt.Format(time.RFC3339Nano), Size: 1}},
-					NextContinuationToken: tc.token,
+					NextContinuationToken: tc.tokens[page%len(tc.tokens)],
 				})
 				return true
 			})

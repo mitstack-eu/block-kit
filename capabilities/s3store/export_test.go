@@ -7,7 +7,10 @@ import (
 
 type Holds = holds
 
-const FirstPause = firstPause
+const (
+	FirstPause   = firstPause
+	LongestPause = longestPause
+)
 
 func NewHolds(now func() time.Time) *Holds { return newHolds(now) }
 

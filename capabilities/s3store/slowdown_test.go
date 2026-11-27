@@ -209,6 +209,28 @@ func TestList_A503WhoseAnswerCannotBeReadNamesThe503AndPausesNothing(t *testing.
 	}
 }
 
+func TestList_ASlowDownNamingALongerRetryAfterPausesThatLongUpToTheLongestPause(t *testing.T) {
+	for _, tc := range []struct {
+		retryAfter int
+		until      time.Time
+	}{
+		{120, slowedAt.Add(2 * time.Minute)},
+		{3600, slowedAt.Add(s3store.LongestPause)},
+	} {
+		t.Run(strconv.Itoa(tc.retryAfter), func(t *testing.T) {
+			s, slowing := slowStore(t, tc.retryAfter)
+			clock := &testClock{now: slowedAt}
+			c := newClient(t, s, s3store.NewHolds(clock.Now))
+
+			runPauseSteps(t, s, slowing, clock, []pauseStep{
+				{"the SlowDown pauses the key as long as its Retry-After asks, up to the longest pause", slowedAt, true, c, tc.until, 1},
+				{"a call a second before then waits, unsent", tc.until.Add(-time.Second), false, c, tc.until, 1},
+				{"the call at that time goes out and is answered", tc.until, false, c, time.Time{}, 2},
+			})
+		})
+	}
+}
+
 func TestList_ASlowDownNamingRetryAfterEndsThePauseThen(t *testing.T) {
 	s, slowing := slowStore(t, 3)
 	clock := &testClock{now: slowedAt}
