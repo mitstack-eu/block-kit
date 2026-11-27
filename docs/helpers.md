@@ -2821,26 +2821,29 @@ rate](#holding-calls-after-a-service-refuses-them-for-their-rate):
    `*s3store.SlowDown` error and sends nothing.
 3. When the pause ends, the next call goes out alone. Any answer below 500
    ends the pause, except `408` and `429`, which some stores send while they
-   still throttle. Another SlowDown pauses the key for twice as long, up to
-   15 minutes. A call that gets no answer, a server failure, a `408` or a
-   `429` keeps the key paused for the next call to test.
+   still throttle. Another SlowDown pauses the key for twice as long as the
+   pause before it, up to 15 minutes. A call that gets no answer, a server
+   failure, a `408` or a `429` keeps the key paused for the next call to
+   test.
 4. A `Retry-After` header in seconds on the SlowDown sets the pause to that
-   long instead, sooner or later than the step would, up to 15 minutes.
+   long instead, shorter or longer than steps 1 and 3 would set it, up to 15
+   minutes.
 
 A call with another access key still goes out during the pause. The SDK never sends
 a call again on its own, so a paused call is told when to come back instead
 of adding to the load the store asked to shed.
 
-`s3store.SlowDown` wraps a
-[`handler.Waiting`](handler.md#errors-refusals-and-panics), so the handler
-answers the lifecycle call as pending, with `lookAgainAt` set to the time the
-pause ends. `lookAgainAt` is the field of a pending answer that tells the
+`s3store.SlowDown` carries one field, `Until`, the time the pause ends. It
+wraps a [`handler.Waiting`](handler.md#errors-refusals-and-panics), so the
+handler answers the lifecycle call as pending, with `lookAgainAt` set to
+`Until`. `lookAgainAt` is the field of a pending answer that tells the
 platform when to call the block again. A call that another call's SlowDown
-refused just as that pause ended carries the zero `Until`, and its answer then
-has no `lookAgainAt`, so the platform calls again on its usual schedule. Your
-code tells a paused call apart with
+refused just as that pause ended carries an `Until` holding Go's zero time,
+and its answer then has no `lookAgainAt`, so the platform calls again on its
+usual schedule. Your code tells a paused call apart with
 `errors.Is(err, s3store.ErrSlowDown)`, and `errors.As` into a
 `*s3store.SlowDown` gives its `Until`. The pause itself lives in
-`helpers/callhold`. `capabilities/s3store/slowdown.go` decides which answers
+`helpers/callhold`, the kit's shared hold for calls a service refuses for
+their rate. `capabilities/s3store/slowdown.go` decides which answers
 are a SlowDown and how a `Retry-After` moves the pause's end, and
 `slowdown_test.go` beside it proves each step above.

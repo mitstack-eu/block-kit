@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 
+	"github.com/mitstack-eu/block-kit/helpers/callhold"
 	"github.com/mitstack-eu/block-kit/helpers/calllog"
 	"github.com/mitstack-eu/block-kit/helpers/reqcache"
 	"github.com/mitstack-eu/block-kit/helpers/safe"
@@ -86,7 +87,7 @@ func newClient(cfg Config, h *holds, base http.RoundTripper) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	account := sha256.Sum256([]byte(cfg.AccessKey))
+	account := callhold.KeyOf(cfg.AccessKey)
 	transport := &holdTransport{holds: h, key: account, next: calllog.Transport(base)}
 	// A redirect is answered, not followed, so a signed call never reaches a host other than the endpoint.
 	client := &http.Client{
