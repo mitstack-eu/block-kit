@@ -61,7 +61,6 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// callLines parses each calllog line in out into its fields.
 func callLines(out string) []map[string]string {
 	var lines []map[string]string
 	for _, line := range strings.Split(out, "\n") {
@@ -217,6 +216,42 @@ func TestList_OneRequestListsEachPrefixOnce(t *testing.T) {
 	}
 }
 
+func TestList_AListingTheStoreCutsShortWithNoWayOnIsAnErrorNotAShorterList(t *testing.T) {
+	cases := []struct {
+		name  string
+		token string
+		sent  int64
+	}{
+		{"a cut-short page naming no continuation token", "", 1},
+		{"a cut-short page naming the token the call sent", "db-1/base/object-00000", 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			s.refuseWith(func(w http.ResponseWriter) bool {
+				writeXML(w, http.StatusOK, listResult{
+					Name: testBucket, Prefix: "db-1/base/", KeyCount: 1, MaxKeys: pageSize, IsTruncated: true,
+					Contents:              []listContent{{Key: "db-1/base/object-00000", LastModified: writtenAt.Format(time.RFC3339Nano), Size: 1}},
+					NextContinuationToken: tc.token,
+				})
+				return true
+			})
+			c := newClient(t, s, s3store.NewHolds(time.Now))
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			got, err := c.List(ctx, s3store.Query{Prefix: "db-1/base/"})
+
+			if err == nil || got != nil || errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("List = %d objects, %v; want no objects and an error saying the listing did not go on", len(got), err)
+			}
+			if sent := s.sent.Load(); sent != tc.sent {
+				t.Errorf("the store answered %d calls; want %d", sent, tc.sent)
+			}
+		})
+	}
+}
+
 func TestNew_RefusesAConfigItCannotUse(t *testing.T) {
 	good := s3store.Config{Endpoint: "https://s3.example.test", Region: testRegion, Bucket: testBucket, AccessKey: testAccessKey, SecretKey: testSecretKey}
 	cases := []struct {
@@ -230,6 +265,8 @@ func TestNew_RefusesAConfigItCannotUse(t *testing.T) {
 		{"an empty region is refused", func(c *s3store.Config) { c.Region = "" }},
 		{"an empty bucket is refused", func(c *s3store.Config) { c.Bucket = "" }},
 		{"a bucket name S3 does not allow is refused", func(c *s3store.Config) { c.Bucket = "Backups/../x" }},
+		{"a bucket name holding the access key is refused without naming it", func(c *s3store.Config) { c.Bucket = testAccessKey }},
+		{"a bucket name holding the secret key is refused, though S3 allows its form", func(c *s3store.Config) { c.Bucket = testSecretKey }},
 		{"an empty access key is refused", func(c *s3store.Config) { c.AccessKey = "" }},
 		{"an empty secret key is refused", func(c *s3store.Config) { c.SecretKey = "" }},
 	}

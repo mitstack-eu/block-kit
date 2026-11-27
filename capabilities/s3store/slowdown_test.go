@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,7 +37,6 @@ func (c *testClock) set(now time.Time) {
 	c.now = now
 }
 
-// slowStore answers SlowDown while slowing is set, naming retryAfter seconds when it is above zero.
 func slowStore(t *testing.T, retryAfter int) (*store, *atomic.Bool) {
 	t.Helper()
 	s := newStore(t)
@@ -66,7 +66,7 @@ func clientWithKey(t *testing.T, s *store, holds *s3store.Holds, accessKey strin
 	return c
 }
 
-// pauseEnd is when the pause err reports ends, as its SlowDown and the handler.Waiting the kit's handler answers with both say, and false when err is no pause.
+// pauseEnd fails the test when the SlowDown and the handler.Waiting it wraps disagree about when the pause ends.
 func pauseEnd(t *testing.T, err error) (time.Time, bool) {
 	t.Helper()
 	var slow *s3store.SlowDown
@@ -132,6 +132,81 @@ func TestList_AStoreThatAnswers503SlowDownHoldsTheNextCallWithTheSameKeyUntilThe
 		{"the call once the second pause ends goes out and is answered", second, false, c, time.Time{}, 4},
 		{"the call after that answer goes out with no pause", second, false, c, time.Time{}, 5},
 	})
+}
+
+func TestList_AThrottlingAnswerToTheCallAfterAPauseKeepsThePauseGrowing(t *testing.T) {
+	for _, throttled := range []struct {
+		status int
+		code   string
+	}{{http.StatusTooManyRequests, "TooManyRequests"}, {http.StatusRequestTimeout, "RequestTimeout"}} {
+		t.Run(throttled.code, func(t *testing.T) {
+			s := newStore(t)
+			fillPrefix(s, "db-1/wal/", 3)
+			var answer atomic.Value
+			s.refuseWith(func(w http.ResponseWriter) bool {
+				switch answer.Load() {
+				case "SlowDown":
+					answerError(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.")
+				case throttled.code:
+					answerError(w, throttled.status, throttled.code, "Please reduce your request rate.")
+				default:
+					return false
+				}
+				return true
+			})
+			clock := &testClock{now: slowedAt}
+			c := newClient(t, s, s3store.NewHolds(clock.Now))
+			first := slowedAt.Add(s3store.FirstPause)
+			list := func(at time.Time, code string) error {
+				clock.set(at)
+				answer.Store(code)
+				_, err := c.List(context.Background(), s3store.Query{Prefix: "db-1/wal/"})
+				return err
+			}
+
+			if until, paused := pauseEnd(t, list(slowedAt, "SlowDown")); !paused || !until.Equal(first) {
+				t.Fatalf("the first SlowDown paused the key until %s (paused %t); want %s", until, paused, first)
+			}
+			var refused *s3store.Error
+			if err := list(first, throttled.code); !errors.As(err, &refused) || refused.Status != throttled.status {
+				t.Fatalf("the call once the pause ends = %v; want the store's %d refusal", err, throttled.status)
+			}
+			want := first.Add(2 * s3store.FirstPause)
+			if until, paused := pauseEnd(t, list(first, "SlowDown")); !paused || !until.Equal(want) {
+				t.Errorf("a SlowDown after the %d paused the key until %s (paused %t); want %s, twice the first pause, since a %d does not show the store answering again", throttled.status, until, paused, want, throttled.status)
+			}
+			if sent := s.sent.Load(); sent != 3 {
+				t.Errorf("%d calls reached the store; want 3", sent)
+			}
+		})
+	}
+}
+
+func TestList_A503WhoseAnswerCannotBeReadNamesThe503AndPausesNothing(t *testing.T) {
+	s := newStore(t)
+	fillPrefix(s, "db-1/wal/", 3)
+	var cut atomic.Bool
+	cut.Store(true)
+	s.refuseWith(func(w http.ResponseWriter) bool {
+		if !cut.Load() {
+			return false
+		}
+		w.Header().Set("Content-Length", "1000")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("<Error><Code>Slow"))
+		return true
+	})
+	c := newClient(t, s, s3store.NewHolds(time.Now))
+
+	_, err := c.List(context.Background(), s3store.Query{Prefix: "db-1/wal/"})
+
+	if err == nil || !strings.Contains(err.Error(), "503") || errors.Is(err, s3store.ErrSlowDown) {
+		t.Errorf("List = %v; want an error naming the 503 and no pause, since its code was never read", err)
+	}
+	cut.Store(false)
+	if _, err := c.List(context.Background(), s3store.Query{Prefix: "db-1/wal/"}); err != nil {
+		t.Errorf("the next List = %v; want it sent and answered", err)
+	}
 }
 
 func TestList_ASlowDownNamingRetryAfterEndsThePauseThen(t *testing.T) {
