@@ -30,6 +30,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: go run ./cmd/checkpolls -base "$BASE_SHA"
+      # A kit never builds on the core module or on a block. The check judges
+      # every module nested in the kit too, so the example block meets the
+      # rule publish-block.yml holds every block to.
+      - name: Refuse an import of the core module or of a block's module
+        run: go run ./cmd/checkimports .
       # Every event builds the tools image and checks each file it holds
       # against its pin, so a change that breaks it fails here, before a
       # release would publish it.

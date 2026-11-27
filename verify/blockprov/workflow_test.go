@@ -747,8 +747,8 @@ func TestWorkflow_JobsFetchThePublicKitWithNoCredential(t *testing.T) {
 		want    []string
 	}{
 		{"conformance", "<absent>", []string{
-			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "go vet", "Log in to ghcr.io with the job's token", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck", "Build checkpolls",
-			"Remove the kit checkout from the block tree", "Run the block's alert rule tests with promtool", "Write the base commit's manifest and the changed files", "Fail a pull request that adds a fixed sleep or a polling interval", "Judge the comments this pull request adds",
+			"actions/checkout", "Refuse a committed Trivy ignore or config file", "actions/setup-go", "go vet", "Log in to ghcr.io with the job's token", "go test", "Checkout block-kit", "Build blockverify", "Build commentcheck", "Build checkpolls", "Build checkimports",
+			"Remove the kit checkout from the block tree", "Refuse an import of the core module or of another block's module", "Run the block's alert rule tests with promtool", "Write the base commit's manifest and the changed files", "Fail a pull request that adds a fixed sleep or a polling interval", "Judge the comments this pull request adds",
 			"blockverify (standalone contract check)", "Upload blockverify report", "Build the block image", "Scan the block image", "Collect what the release signs", "Hand the release to the publish job",
 		}},
 		{"base-image", "write", []string{
