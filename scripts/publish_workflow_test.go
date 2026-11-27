@@ -201,6 +201,22 @@ func TestPublishBlockWorkflow_BothConformanceJobsRunTheBlocksRuleTestsWithTheKit
 	}
 }
 
+// The Go conformance job refuses a block's import of the core module or of another block's module on every event, with the check built from kit-ref and run once the kit checkout has left the block's tree.
+func TestPublishBlockWorkflow_TheGoConformanceJobRunsTheImportCheckOnEveryEvent(t *testing.T) {
+	all := publishWorkflow(t)
+	const job = "conformance"
+	built := stepAt(all, job, "run", `go build -o "$RUNNER_TEMP/checkimports" ./cmd/checkimports`)
+	moved := stepAt(all, job, "run", `mv block-kit "$RUNNER_TEMP/block-kit"`)
+	judged := stepAt(all, job, "run", `"$RUNNER_TEMP/checkimports" .`)
+	step := func(i int, key string) string { return fieldOf(all, "jobs."+job+".steps."+strconv.Itoa(i)+"."+key) }
+	cases := []struct{ name, got, want string }{
+		{"the check is built from the kit checkout, outside the block's tree", step(built, "working-directory"), "block-kit"},
+		{"the check judges the block once the kit checkout has left its tree, so the kit is not judged as a module nested in it", strconv.FormatBool(built >= 0 && moved >= 0 && built < moved && moved < judged), "true"},
+		{"the check carries no if, so every event runs it", step(judged, "if"), "<absent>"},
+	}
+	checkFields(t, "publish-block.yml", job+": ", cases)
+}
+
 // No job pushes to git, so no checkout writes the job's token into the tree where the block's own code and tests run.
 func TestPublishBlockWorkflow_EveryCheckoutKeepsNoToken(t *testing.T) {
 	raw := publishWorkflowText(t)

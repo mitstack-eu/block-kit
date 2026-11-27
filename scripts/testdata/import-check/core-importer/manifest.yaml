@@ -1,0 +1,6 @@
+apiVersion: mitstack/v1beta
+type: block
+metadata:
+  id: core-importer
+  name: Core importer
+  owner: acme
