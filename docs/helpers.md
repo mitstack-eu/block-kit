@@ -2812,8 +2812,9 @@ store's answer quotes them, and no key ever reaches a log line.
 
 A store answers `503 SlowDown` when an access key sends calls faster than it
 allows. The client then pauses every call made with that access key, in every
-client the operator holds, in the same steps as [Holding calls after a Hetzner Cloud
-rate-limit refusal](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal):
+client the operator holds, through the kit's shared hold described in [Holding
+calls after a service refuses them for their
+rate](#holding-calls-after-a-service-refuses-them-for-their-rate):
 
 1. The first SlowDown pauses the key for 30 seconds.
 2. While the pause stands, a call with that key answers at once with an
@@ -2839,6 +2840,7 @@ refused just as that pause ended carries the zero `Until`, and its answer then
 has no `lookAgainAt`, so the platform calls again on its usual schedule. Your
 code tells a paused call apart with
 `errors.Is(err, s3store.ErrSlowDown)`, and `errors.As` into a
-`*s3store.SlowDown` gives its `Until`. The pause lives in
-`capabilities/s3store/slowdown.go`, and `slowdown_test.go` beside it proves
-each step above.
+`*s3store.SlowDown` gives its `Until`. The pause itself lives in
+`helpers/callhold`. `capabilities/s3store/slowdown.go` decides which answers
+are a SlowDown and how a `Retry-After` moves the pause's end, and
+`slowdown_test.go` beside it proves each step above.

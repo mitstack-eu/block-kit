@@ -2,7 +2,6 @@ package s3store
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -10,16 +9,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mitstack-eu/block-kit/handler"
+	"github.com/mitstack-eu/block-kit/helpers/callhold"
 )
 
 // ErrSlowDown matches the error of a call the store answered 503 SlowDown, and of every call held unsent on that key after it.
 var ErrSlowDown = errors.New("the S3-compatible store asked this key's calls to slow down")
 
-// A SlowDown pauses its key for firstPause, doubled by each SlowDown in a row up to longestPause, or until the store's Retry-After, up to longestPause, when the SlowDown names one.
 const (
 	firstPause    = 30 * time.Second
 	longestPause  = 15 * time.Minute
@@ -45,52 +43,36 @@ func (e *SlowDown) Unwrap() error {
 	return &handler.Waiting{Detail: e.Error(), LookAgainAt: e.Until}
 }
 
-// holds keeps each paused key by a SHA-256 of the access key in the operator's memory, so a restarted operator learns of the pause again from its first refused call.
-type holds struct {
-	now    func() time.Time
-	mu     sync.Mutex
-	paused map[[sha256.Size]byte]*pause
-}
+type holds = callhold.Holds
 
-// pause's streak counts the SlowDown answers in a row before the one that set it, and probing is set while the one call sent once the pause ended has no answer yet.
-type pause struct {
-	until   time.Time
-	streak  int
-	probing bool
-}
-
-func newHolds(now func() time.Time) *holds {
-	return &holds{now: now, paused: map[[sha256.Size]byte]*pause{}}
-}
+func newHolds(now func() time.Time) *holds { return callhold.New(now, firstPause, longestPause) }
 
 // processHolds is shared by every client New returns, so all of an operator's calls with one key meet one pause.
 var processHolds = newHolds(time.Now)
 
 type holdTransport struct {
 	holds *holds
-	key   [sha256.Size]byte
+	key   callhold.Key
 	next  http.RoundTripper
 }
 
 // RoundTrip answers a call on a paused key with a SlowDown, unsent and unlogged, and sends any other through the call log, so a SlowDown answer's line reads its 503.
 func (t *holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	probe, err := t.holds.admit(t.key)
-	if err != nil {
+	call, until, ok := t.holds.Admit(t.key)
+	if !ok {
 		if req.Body != nil {
 			_ = req.Body.Close()
 		}
-		return nil, err
+		return nil, &SlowDown{Until: until}
 	}
-	if probe != nil {
-		defer t.holds.inconclusive(t.key, probe)
-	}
+	defer call.Inconclusive()
 	resp, err := t.next.RoundTrip(req)
 	switch {
 	case err != nil || resp.StatusCode > http.StatusServiceUnavailable:
 		return resp, err
 	case resp.StatusCode != http.StatusServiceUnavailable:
 		if answersAgain(resp.StatusCode) {
-			t.holds.answered(t.key, probe)
+			call.Answered()
 		}
 		return resp, nil
 	}
@@ -101,7 +83,12 @@ func (t *holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	case !slowDown:
 		return resp, nil
 	}
-	return nil, t.holds.refused(t.key, probe, resp.Header)
+	return nil, &SlowDown{Until: call.Refused(func(now, until time.Time) time.Time {
+		if wait, ok := retryAfter(resp.Header); ok {
+			return now.Add(wait)
+		}
+		return until
+	})}
 }
 
 // answersAgain reports whether status shows the store serving the key again, which no server failure does, nor a 408 or 429, since some stores throttle with those.
@@ -124,73 +111,6 @@ func readSlowDown(resp *http.Response) (bool, error) {
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(raw))
 	return false, nil
-}
-
-func (h *holds) admit(key [sha256.Size]byte) (probe *pause, err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	cur := h.paused[key]
-	switch {
-	case cur == nil:
-		return nil, nil
-	case cur.probing || h.now().Before(cur.until):
-		return nil, h.slowed(cur.until)
-	}
-	cur.probing = true
-	return cur, nil
-}
-
-func (h *holds) answered(key [sha256.Size]byte, probe *pause) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if probe != nil && h.paused[key] == probe {
-		delete(h.paused, key)
-	}
-}
-
-// inconclusive keeps the pause for the next call to test, since neither a lost call nor a server failure says the store answers again, and does nothing once answered has removed or refused has replaced the probe's pause.
-func (h *holds) inconclusive(key [sha256.Size]byte, probe *pause) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.paused[key] == probe {
-		probe.probing = false
-	}
-}
-
-// refused pauses key after a SlowDown, keeping a pause another call's SlowDown already started, since a call sent before it could otherwise shorten it.
-func (h *holds) refused(key [sha256.Size]byte, probe *pause, header http.Header) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if cur := h.paused[key]; cur != nil && cur != probe {
-		return h.slowed(cur.until)
-	}
-	streak := 0
-	if probe != nil {
-		streak = probe.streak + 1
-	}
-	now := h.now()
-	until := now.Add(grow(streak))
-	if wait, ok := retryAfter(header); ok {
-		until = now.Add(wait)
-	}
-	h.paused[key] = &pause{until: until, streak: streak}
-	return &SlowDown{Until: until}
-}
-
-func (h *holds) slowed(until time.Time) *SlowDown {
-	if !h.now().Before(until) {
-		return &SlowDown{}
-	}
-	return &SlowDown{Until: until}
-}
-
-// grow is firstPause doubled n times, stopping at longestPause so no count overflows.
-func grow(n int) time.Duration {
-	d := firstPause
-	for i := 0; i < n && d < longestPause; i++ {
-		d *= 2
-	}
-	return min(d, longestPause)
 }
 
 // retryAfter is the store's Retry-After in seconds, cut to longestPause so a store cannot stop a key's listings for longer.
