@@ -296,6 +296,112 @@ func TestList_AListingTheStoreCutsShortWithNoWayOnIsAnErrorNotAShorterList(t *te
 	}
 }
 
+func TestListUpTo_AListingReadsAtMostItsPagesAndSaysWhetherTheStoreHoldsMore(t *testing.T) {
+	cases := []struct {
+		name           string
+		objects, pages int
+		wantObjects    int
+		wantMore       bool
+		wantSent       int64
+	}{
+		{"2,500 objects read from at most two pages give the first 2,000 and more remain", 2500, 2, 2000, true, 2},
+		{"1,500 objects read from at most four pages give all of them and none remain", 1500, 4, 1500, false, 2},
+		{"exactly 1,000 objects read from one page give all of them and none remain", 1000, 1, 1000, false, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			fillPrefix(s, "db-1/base/", tc.objects)
+			c := newClient(t, s, s3store.NewHolds(time.Now))
+
+			got, more, err := c.ListUpTo(context.Background(), s3store.Query{Prefix: "db-1/base/"}, tc.pages)
+
+			if err != nil || len(got) != tc.wantObjects || more != tc.wantMore {
+				t.Fatalf("ListUpTo(%d pages) = %d objects, more %t, %v; want %d, more %t", tc.pages, len(got), more, err, tc.wantObjects, tc.wantMore)
+			}
+			if last := fmt.Sprintf("db-1/base/object-%05d", tc.wantObjects-1); got[len(got)-1].Key != last {
+				t.Errorf("the last object read is %s; want %s, the store's order kept", got[len(got)-1].Key, last)
+			}
+			if sent := s.sent.Load(); sent != tc.wantSent {
+				t.Errorf("the store answered %d calls; want %d", sent, tc.wantSent)
+			}
+		})
+	}
+}
+
+func TestListFoldersUpTo_1200FoldersReadFromOnePageGiveTheFirst1000AndSayMoreRemain(t *testing.T) {
+	s := newStore(t)
+	for i := range 1200 {
+		s.put(fmt.Sprintf("db-1/wals/%016d/segment", i), 1, writtenAt)
+	}
+	c := newClient(t, s, s3store.NewHolds(time.Now))
+
+	got, more, err := c.ListFoldersUpTo(context.Background(), "db-1/wals/", "/", 1)
+
+	if err != nil || len(got) != 1000 || !more || got[999] != fmt.Sprintf("db-1/wals/%016d/", 999) {
+		t.Errorf("ListFoldersUpTo(1 page) = %d folders, more %t, %v; want the first 1000 and more", len(got), more, err)
+	}
+	if sent := s.sent.Load(); sent != 1 {
+		t.Errorf("the store answered %d calls; want 1", sent)
+	}
+}
+
+func TestListUpTo_APageLimitBelowOneIsRefusedAndSendsNothing(t *testing.T) {
+	s := newStore(t)
+	fillPrefix(s, "db-1/base/", 3)
+	c := newClient(t, s, s3store.NewHolds(time.Now))
+
+	_, _, objectsErr := c.ListUpTo(context.Background(), s3store.Query{Prefix: "db-1/base/"}, 0)
+	_, _, foldersErr := c.ListFoldersUpTo(context.Background(), "db-1/", "/", 0)
+
+	if objectsErr == nil || foldersErr == nil || s.sent.Load() != 0 {
+		t.Errorf("a limit of 0 pages = %v and %v with %d calls; want both refused and nothing sent", objectsErr, foldersErr, s.sent.Load())
+	}
+}
+
+func TestListUpTo_OneRequestNeverAnswersACappedListingWithTheWholeListing(t *testing.T) {
+	s := newStore(t)
+	fillPrefix(s, "db-1/base/", 2500)
+	c := newClient(t, s, s3store.NewHolds(time.Now))
+	ctx := reqcache.Snapshot(context.Background())
+
+	whole, wholeErr := c.List(ctx, s3store.Query{Prefix: "db-1/base/"})
+	capped, more, cappedErr := c.ListUpTo(ctx, s3store.Query{Prefix: "db-1/base/"}, 1)
+	again, _, againErr := c.ListUpTo(ctx, s3store.Query{Prefix: "db-1/base/"}, 1)
+
+	if wholeErr != nil || cappedErr != nil || againErr != nil || len(whole) != 2500 || len(capped) != 1000 || !more || len(again) != 1000 {
+		t.Errorf("whole %d, capped %d (more %t), again %d, errors %v %v %v; want 2500, 1000 with more, 1000", len(whole), len(capped), more, len(again), wholeErr, cappedErr, againErr)
+	}
+	if sent := s.sent.Load(); sent != 4 {
+		t.Errorf("the store answered %d calls; want 4, three for the whole listing and one for the capped listing read once", sent)
+	}
+}
+
+func TestListUpTo_OneRequestNeverAnswersOneCapWithAListingOfAnotherCap(t *testing.T) {
+	s := newStore(t)
+	fillPrefix(s, "db-1/base/", 2500)
+	for i := range 1200 {
+		s.put(fmt.Sprintf("db-1/wals/%016d/segment", i), 1, writtenAt)
+	}
+	c := newClient(t, s, s3store.NewHolds(time.Now))
+	ctx := reqcache.Snapshot(context.Background())
+
+	one, oneMore, oneErr := c.ListUpTo(ctx, s3store.Query{Prefix: "db-1/base/"}, 1)
+	two, twoMore, twoErr := c.ListUpTo(ctx, s3store.Query{Prefix: "db-1/base/"}, 2)
+	folders, foldersMore, foldersErr := c.ListFoldersUpTo(ctx, "db-1/wals/", "/", 1)
+	allFolders, allFoldersErr := c.ListFolders(ctx, "db-1/wals/", "/")
+
+	if oneErr != nil || twoErr != nil || len(one) != 1000 || !oneMore || len(two) != 2000 || !twoMore {
+		t.Errorf("one page %d (more %t), two pages %d (more %t), errors %v %v; want 1000 and 2000, both with more", len(one), oneMore, len(two), twoMore, oneErr, twoErr)
+	}
+	if foldersErr != nil || allFoldersErr != nil || len(folders) != 1000 || !foldersMore || len(allFolders) != 1200 {
+		t.Errorf("capped folders %d (more %t), every folder %d, errors %v %v; want 1000 with more, then 1200", len(folders), foldersMore, len(allFolders), foldersErr, allFoldersErr)
+	}
+	if sent := s.sent.Load(); sent != 6 {
+		t.Errorf("the store answered %d calls; want 6, one and two for the capped objects, one and two for the folders", sent)
+	}
+}
+
 func TestNew_RefusesAConfigItCannotUse(t *testing.T) {
 	good := s3store.Config{Endpoint: "https://s3.example.test", Region: testRegion, Bucket: testBucket, AccessKey: testAccessKey, SecretKey: testSecretKey}
 	cases := []struct {

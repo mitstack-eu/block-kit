@@ -2785,13 +2785,24 @@ another host.
 `ListFolders(ctx, "db-1/base/", "/")` returns `db-1/base/2026-11-26/` and
 `db-1/base/2026-11-27/`.
 
-Within one `validate`, each listing is read once. `List` and `ListFolders`
-read through `reqcache.Viewed`, as [Reading each thing once in a
+`ListUpTo(ctx, query, pages)` returns `(objects, more, err)`, and
+`ListFoldersUpTo(ctx, prefix, delimiter, pages)` returns `(folders, more, err)`.
+Each reads at most `pages` pages, one call each, and `more` is `true` when the
+store holds more past the last page read. A block with a call budget for each
+health check uses them, so a folder of any size costs it a known number of
+calls. Over a prefix holding 2,500 objects, `ListUpTo(ctx, query, 2)` returns
+the first 2,000 in key order and `true`. A `pages` below 1 returns an error,
+and no call is sent.
+
+Within one `validate`, each listing is read once. All four calls read
+through `reqcache.Viewed`, as [Reading each thing once in a
 request](#reading-each-thing-once-in-a-request) describes. A second `List` of
 the same prefix and start key, with the same access key at the same endpoint
-and bucket, returns the first one's answer and sends nothing. Every other verb
-lists afresh on each call, as does any call whose context carries no request
-cache.
+and bucket, returns the first one's answer and sends nothing. `ListUpTo` and
+`ListFoldersUpTo` are cached under their page limit as well, so a listing of
+one page never answers a listing of two, nor the whole listing of its prefix.
+Every other verb lists afresh on each call, as does any call whose context
+carries no request cache.
 
 ### What a call logs and what a refusal says
 
