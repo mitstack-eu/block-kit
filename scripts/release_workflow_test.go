@@ -110,6 +110,9 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 	const moduleScan = "go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C " + rescueSSH + " -scan package ./..."
 	const healthz = "helpers/healthz"
 	const healthzDryRun = "bash scripts/release-block-kit.sh --module " + healthz + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
+	const s3store = "capabilities/s3store"
+	const s3storeDryRun = "bash scripts/release-block-kit.sh --module " + s3store + " --dry-run \\\n--base \"${{ github.event.pull_request.base.sha }}\" \\\n--head \"${{ github.event.pull_request.head.sha }}\""
+	const s3storeScan = "go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C " + s3store + " -scan package ./..."
 	const planned = "steps.plan.outputs.planned != ''"
 	const copyCosign = `bash scripts/copy-tool.sh ghcr.io/sigstore/cosign/cosign:v2.5.3@sha256:f1946d0f30fc8e3777b02f2201e02efdba9fe38f4918162f937052fac98e083f /ko-app/cosign 056df4b41218fff47e879470554e01b0ba8e7608c1bec1e704c9dcded965f00f "$RUNNER_TEMP/bin/cosign"` +
 		"\n" + `echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"`
@@ -166,6 +169,11 @@ func TestCIWorkflow_TestsGatesReleasesAndRecordsTheKit(t *testing.T) {
 		{"the test job dry-runs the healthz release over a pull request's base and head, on a pull request alone",
 			fieldOf(all, stepOf(all, "test", "run", healthzDryRun)+"if"), "github.event_name == 'pull_request'"},
 		{"the release job releases the healthz module by its own tags into the job summary", fieldOf(all, stepOf(all, "release", "run", `bash scripts/release-block-kit.sh --module `+healthz+` | tee -a "$GITHUB_STEP_SUMMARY"`)+"shell"), "bash"},
+		{"the test job vets and tests the s3store module, which ./... leaves out", strconv.FormatBool(stepWith(all, "test", "run", "go -C "+s3store+" vet ./...\ngo -C "+s3store+" test ./...")), "true"},
+		{"the test job scans the packages the s3store module imports for known vulnerabilities, on every event", strconv.FormatBool(stepWith(all, "test", "run", s3storeScan)) + " " + fieldOf(all, stepOf(all, "test", "run", s3storeScan)+"if"), "true <absent>"},
+		{"the test job dry-runs the s3store release over a pull request's base and head, on a pull request alone",
+			fieldOf(all, stepOf(all, "test", "run", s3storeDryRun)+"if"), "github.event_name == 'pull_request'"},
+		{"the release job releases the s3store module by its own tags into the job summary", fieldOf(all, stepOf(all, "release", "run", `bash scripts/release-block-kit.sh --module `+s3store+` | tee -a "$GITHUB_STEP_SUMMARY"`)+"shell"), "bash"},
 		{"the test job reports as test, the context branch protection requires", fieldOf(all, "jobs.test.name"), "test"},
 		{"the test job carries no if, so every event runs the check main requires", fieldOf(all, "jobs.test.if"), "<absent>"},
 		{"the release tests carry no if, so every event runs them", fieldOf(all, stepOf(all, "test", "run", "bash scripts/release-block-kit_test.sh")+"if"), "<absent>"},
