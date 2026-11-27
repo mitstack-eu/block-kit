@@ -2683,7 +2683,10 @@ endpoint nor a key.
 in bytes and the time it was last written. It follows the store's pages, which
 hold at most 1,000 objects each, until the last one. `Query.StartAfter` starts
 the listing after that key, so a block that knows its newest backup reads only
-the ones written after it. An empty prefix returns an empty list and no error.
+the ones written after it. A prefix holding no object returns an empty list
+and no error. A page the store marks as cut short, but with no continuation
+token or with the token the call already sent, fails the listing rather than
+returning part of it.
 
 `ListFolders(ctx, prefix, delimiter)` returns the folders directly under
 `prefix`, each ending in `delimiter`, and no object. Over a bucket holding
@@ -2722,9 +2725,10 @@ rate-limit refusal](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal):
 2. While the pause stands, a call with that key answers at once with an
    `*s3store.SlowDown` error and sends nothing.
 3. When the pause ends, the next call goes out alone. Any answer below 500
-   ends the pause, and another SlowDown pauses the key for twice as long, up
-   to 15 minutes. A call that gets no answer, or a server failure, keeps the
-   key paused for the next call to test.
+   ends the pause, except `408` and `429`, which some stores send while they
+   still throttle. Another SlowDown pauses the key for twice as long, up to
+   15 minutes. A call that gets no answer, a server failure, a `408` or a
+   `429` keeps the key paused for the next call to test.
 4. A `Retry-After` header in seconds on the SlowDown ends the pause sooner
    when it names an earlier time.
 

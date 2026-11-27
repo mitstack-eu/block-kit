@@ -1,4 +1,4 @@
-// s3store is a module of its own so that block-kit's main module stays stdlib-only while this one reuses the AWS SDK's S3 client and signer.
+// s3store is a module of its own so that block-kit's main module does not take on the AWS SDK, whose S3 client and signer this one reuses.
 module github.com/mitstack-eu/block-kit/capabilities/s3store
 
 go 1.26.0

@@ -94,7 +94,7 @@ func newClient(cfg Config, h *holds, base http.RoundTripper) (*Client, error) {
 	return &Client{api: api, endpoint: endpoint, bucket: cfg.Bucket, secrets: []string{cfg.AccessKey, cfg.SecretKey}}, nil
 }
 
-// validate returns the endpoint as scheme and host, and names no value in a refusal, since an endpoint's user part or a key could carry a secret.
+// validate returns the endpoint as scheme and host, and names no endpoint or key in a refusal, since an endpoint's user part or a key could carry a secret.
 func (cfg Config) validate() (string, error) {
 	u, err := url.Parse(cfg.Endpoint)
 	switch {
@@ -110,15 +110,17 @@ func (cfg Config) validate() (string, error) {
 		return "", errors.New("the store's endpoint must carry no path or query, since the bucket is addressed by path")
 	case cfg.Region == "":
 		return "", errors.New("the store's region is empty")
-	case !bucketName.MatchString(cfg.Bucket):
-		return "", fmt.Errorf("the bucket name %q is not one S3 allows", safe.LogValue(cfg.Bucket))
 	case cfg.AccessKey == "" || cfg.SecretKey == "":
 		return "", errors.New("the store's access key or secret key is empty")
+	case cfg.Bucket == cfg.AccessKey || cfg.Bucket == cfg.SecretKey:
+		return "", errors.New("the bucket name is one of the store's keys, so the settings are likely swapped")
+	case !bucketName.MatchString(cfg.Bucket):
+		return "", fmt.Errorf("the bucket name %q is not one S3 allows", safe.LogSafe(cfg.Bucket, cfg.AccessKey, cfg.SecretKey))
 	}
 	return u.Scheme + "://" + u.Host, nil
 }
 
-// List lists every object under q's prefix across the store's pages, once per request under reqcache, and an empty prefix as an empty list.
+// List lists every object under q's prefix across the store's pages, once per request under reqcache, and a prefix holding no object as an empty list.
 func (c *Client) List(ctx context.Context, q Query) ([]Object, error) {
 	key := objectsListing{c.endpoint, c.bucket, q.Prefix, q.StartAfter}
 	objects, err := reqcache.Viewed(ctx, key, func() ([]Object, error) { return c.listObjects(ctx, q) })
@@ -142,11 +144,16 @@ func (c *Client) listObjects(ctx context.Context, q Query) ([]Object, error) {
 	}
 	objects := []Object{}
 	pages := s3.NewListObjectsV2Paginator(c.api, input)
+	sent := ""
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
 		if err != nil {
 			return nil, c.failure(ctx, q.Prefix, err)
 		}
+		if err := stalled(page.IsTruncated, page.NextContinuationToken, sent); err != nil {
+			return nil, fmt.Errorf("%s: %w", c.where(q.Prefix), err)
+		}
+		sent = aws.ToString(page.NextContinuationToken)
 		for _, o := range page.Contents {
 			objects = append(objects, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
 		}
@@ -154,15 +161,34 @@ func (c *Client) listObjects(ctx context.Context, q Query) ([]Object, error) {
 	return objects, nil
 }
 
+// stalled refuses a page the store marked cut short with no continuation token, or with the token the call sent, since the SDK's paginator would end the first listing early and repeat the second forever.
+func stalled(truncated *bool, next *string, sent string) error {
+	if !aws.ToBool(truncated) {
+		return nil
+	}
+	switch aws.ToString(next) {
+	case "":
+		return errors.New("the store cut the listing short and named no continuation token, so the rest cannot be listed")
+	case sent:
+		return errors.New("the store cut the listing short and named the continuation token the call sent, so the listing would never end")
+	}
+	return nil
+}
+
 func (c *Client) listFolders(ctx context.Context, prefix, delimiter string) ([]string, error) {
 	input := &s3.ListObjectsV2Input{Bucket: aws.String(c.bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter)}
 	folders := []string{}
 	pages := s3.NewListObjectsV2Paginator(c.api, input)
+	sent := ""
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
 		if err != nil {
 			return nil, c.failure(ctx, prefix, err)
 		}
+		if err := stalled(page.IsTruncated, page.NextContinuationToken, sent); err != nil {
+			return nil, fmt.Errorf("%s: %w", c.where(prefix), err)
+		}
+		sent = aws.ToString(page.NextContinuationToken)
 		for _, p := range page.CommonPrefixes {
 			folders = append(folders, aws.ToString(p.Prefix))
 		}
@@ -170,15 +196,16 @@ func (c *Client) listFolders(ctx context.Context, prefix, delimiter string) ([]s
 	return folders, nil
 }
 
-// failure keeps a pause and a cancelled request as they are, and wraps no other SDK error, since its text can quote a store's answer that echoes a key.
+func (c *Client) where(prefix string) string {
+	return fmt.Sprintf("listing %q in bucket %s", safe.LogSafe(prefix, c.secrets...), safe.LogSafe(c.bucket, c.secrets...))
+}
+
+// failure keeps a pause, a refusal and a cancelled request as they are, and wraps no other SDK error, since its text can quote a store's answer that echoes a key.
 func (c *Client) failure(ctx context.Context, prefix string, err error) error {
-	where := fmt.Sprintf("listing %q in bucket %s", safe.LogSafe(prefix, c.secrets...), c.bucket)
+	where := c.where(prefix)
 	var slow *SlowDown
 	if errors.As(err, &slow) {
 		return slow
-	}
-	if ctx.Err() != nil {
-		return fmt.Errorf("%s: %w", where, ctx.Err())
 	}
 	var refusal smithy.APIError
 	if errors.As(err, &refusal) {
@@ -188,6 +215,9 @@ func (c *Client) failure(ctx context.Context, prefix string, err error) error {
 			refused.Status = answer.HTTPStatusCode()
 		}
 		return fmt.Errorf("%s: %w", where, refused)
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s: %w", where, ctx.Err())
 	}
 	return fmt.Errorf("%s: %s", where, safe.LogSafe(err.Error(), c.secrets...))
 }

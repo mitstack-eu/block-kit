@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -88,7 +89,7 @@ func (t *holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	case err != nil || resp.StatusCode > http.StatusServiceUnavailable:
 		return resp, err
 	case resp.StatusCode != http.StatusServiceUnavailable:
-		if resp.StatusCode < http.StatusInternalServerError {
+		if answersAgain(resp.StatusCode) {
 			t.holds.answered(t.key, probe)
 		}
 		return resp, nil
@@ -96,11 +97,16 @@ func (t *holdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	slowDown, err := readSlowDown(resp)
 	switch {
 	case err != nil:
-		return nil, err
+		return nil, fmt.Errorf("the store answered 503 and its answer could not be read: %w", err)
 	case !slowDown:
 		return resp, nil
 	}
 	return nil, t.holds.refused(t.key, probe, resp.Header)
+}
+
+// answersAgain reports whether status shows the store serving the key again, which no server failure does, nor a 408 or 429, since some stores throttle with those.
+func answersAgain(status int) bool {
+	return status < http.StatusInternalServerError && status != http.StatusRequestTimeout && status != http.StatusTooManyRequests
 }
 
 // readSlowDown reads a 503 answer's code, closing its body on a SlowDown and handing the read bytes back to the SDK otherwise.

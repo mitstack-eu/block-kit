@@ -64,9 +64,8 @@ jobs:
         run: |
           go -C helpers/healthz vet ./...
           go -C helpers/healthz test ./...
-      # The S3 lister is a module of its own, so the kit's module stays
-      # stdlib-only while this one builds on the AWS SDK, and ./... leaves it
-      # out.
+      # The S3 lister is a module of its own, so the kit's module does not
+      # take on the AWS SDK this one builds on, and ./... leaves it out.
       - name: Test the s3store module
         run: |
           go -C capabilities/s3store vet ./...
