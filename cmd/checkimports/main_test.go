@@ -126,6 +126,8 @@ func TestRun_RefusesAnImportOfABlockWhoseManifestTheKitWroteByHand(t *testing.T)
 	for _, c := range []struct{ name, manifest string }{
 		{"a byte-order mark before the type line", "\ufefftype: block\napiVersion: mitstack/v1beta\n"},
 		{"a tab before the type line's comment", "apiVersion: mitstack/v1beta\ntype: block\t# a block\n"},
+		{"a quoted type key", "apiVersion: mitstack/v1beta\n\"type\": block\n"},
+		{"a space before the type line's colon", "apiVersion: mitstack/v1beta\ntype : block\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			blk := module(t, "example.com/blk", nil, map[string]string{"manifest.yaml": c.manifest, "outputs/o.go": goFile("outputs")})
@@ -133,6 +135,42 @@ func TestRun_RefusesAnImportOfABlockWhoseManifestTheKitWroteByHand(t *testing.T)
 			stdout, stderr, code := run(dir)
 			wantRefused(t, stdout, stderr, code, "main.go:4: imports example.com/blk/outputs from example.com/blk, whose manifest.yaml says type: block.")
 		})
+	}
+}
+
+func TestRun_ExitsTwoOnAManifestWhoseTypeLineHoldsNoPlainValue(t *testing.T) {
+	for _, c := range []struct{ name, line string }{
+		{"a flow sequence", "type: [block]"},
+		{"an anchor", "type: &t block"},
+		{"a tag", "type: !!str block"},
+		{"the value on the next line", "type:\n  block"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			blk := module(t, "example.com/blk", nil, map[string]string{"manifest.yaml": "apiVersion: mitstack/v1beta\n" + c.line + "\n", "outputs/o.go": goFile("outputs")})
+			dir := module(t, "example.com/app", map[string]string{"example.com/blk": blk}, map[string]string{"main.go": goFile("main", "example.com/blk/outputs")})
+			stdout, stderr, code := run(dir)
+			if code != 2 {
+				t.Fatalf("exit %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, "manifest.yaml:2: ") || !strings.Contains(stderr, "write the line as type: block or type: capability") {
+				t.Errorf("stderr lacks the manifest line and the fix:\n%s", stderr)
+			}
+		})
+	}
+}
+
+func TestRun_ExitsTwoOnAnImportCycleOnlyATestCreates(t *testing.T) {
+	dir := module(t, "example.com/cyc", nil, map[string]string{
+		"a/a.go":      goFile("a"),
+		"a/a_test.go": goFile("a", "example.com/cyc/b"),
+		"b/b.go":      goFile("b", "example.com/cyc/a"),
+	})
+	stdout, stderr, code := run(dir)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "import cycle not allowed in test") {
+		t.Errorf("stderr lacks go list's reason:\n%s", stderr)
 	}
 }
 
