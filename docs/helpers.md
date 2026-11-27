@@ -2391,25 +2391,31 @@ hcloud-go returns the hold's error at once and the wait ends.
 The schedule lives beside the rate-limit hold in
 `capabilities/hetzner/cloud/ratelimit.go`, and `poll_test.go` checks each
 wait and the seven asks against hcloud-go's 120. The schedule and the hold
-grow by one rule, the `grow` function in the same file, which doubles a first
+grow by one rule, `callhold.Grow` in `helpers/callhold`, which doubles a first
 wait up to a ceiling: fifteen seconds for the schedule and an hour for the
 hold.
 
 ## Holding calls after a service refuses them for their rate
 
-A service that refuses calls sent too fast, as Hetzner Cloud does with `429`,
-expects the client to stop for a while rather than send again at once.
+A service that refuses calls sent too fast expects the client to stop for a
+while rather than send again at once. Hetzner Cloud refuses with HTTP `429`,
+"too many requests", and an S3-compatible store with `503 SlowDown`.
 `helpers/callhold` keeps that pause for every call made with one credential,
-in every client of the operator that shares one `*callhold.Holds`. The kit's
-Hetzner Cloud client is built on it, as the next section describes.
+in every client of your block's operator, the program that serves its
+lifecycle calls, that shares one `*callhold.Holds`. The kit's Hetzner Cloud
+client is built on it, as the next section describes.
 
-`callhold.New(now, first, longest)` returns the holds. `now` is the clock,
-`time.Now` in an operator and a clock your test moves in a test. A refusal
-holds the credential for `first`, and each refusal in a row doubles the pause
-up to `longest`. A credential is named by `callhold.KeyOf(credential)`, its
-SHA-256, so the holds never keep the credential itself.
+`callhold.New(now, first, longest)` returns the holds. `now` is a
+`func() time.Time`: `time.Now` in an operator, and a clock your test moves in
+a test. A refusal holds the credential for `first`, and each refusal in a row
+doubles the pause up to `longest`. A credential is named by
+`callhold.KeyOf(credential)`, its SHA-256, so the holds never keep the
+credential itself.
 
-Your client's transport asks before each call and reports its answer:
+Your client's `http.RoundTripper` asks before each call and reports its
+answer. In this one, built for a service that refuses with `429`, `next` is
+the transport that sends the call, and `YourHeldError` is your client's own
+error type, which carries when the pause ends:
 
 ```go
 call, until, ok := holds.Admit(callhold.KeyOf(token))
@@ -2425,14 +2431,19 @@ case resp.StatusCode != http.StatusTooManyRequests:
 	call.Answered()
 	return resp, nil
 }
+_ = resp.Body.Close()
 until = call.Refused(func(now, until time.Time) time.Time { return until })
 return nil, &YourHeldError{Until: until}
 ```
 
+The refused answer is closed and dropped, so your client's caller sees only
+the held error.
+
 1. `Admit` lets a call out, or answers `ok` false with the time the pause
    ends, so your client returns at once and sends nothing.
 2. Once the pause ends, `Admit` lets one call out alone to test it. Every
-   other call waits on that call's answer, and `until` is then the zero time.
+   other call is refused at once with a zero `until` until that call is
+   answered.
 3. `Answered` ends the pause, since the service took the call.
 4. `Inconclusive` keeps the pause for the next call to test. A lost call or a
    server failure says nothing of the limit. Deferred, it does nothing once
@@ -2440,12 +2451,23 @@ return nil, &YourHeldError{Until: until}
 5. `Refused` starts the next pause and returns its end. Its function receives
    the current time and the end the doubling gives, and returns the end to
    keep, so a client can move it to a time the service names, such as a
-   `Retry-After` header. A refusal of a call sent before another call's
-   refusal keeps that pause and returns its end, or the zero time once it has
-   passed.
+   `Retry-After` header. The function runs while the holds are locked, so it
+   must not call them. An end at or before the current time lets the next
+   call out at once to test the limit.
+6. Two calls can be refused for one pause, the later one sent before the
+   earlier refusal arrived. That later refusal keeps the pause already set
+   and returns its end, or the zero time once that end has passed.
+
+A client for another service changes which answers count as what. An
+S3-compatible store's client reads the body of each `503` and calls `Refused`
+only when its code is `SlowDown`, with a `Retry-After` header moving the end
+through the function. It skips `Answered` for a `408` or a `429`, which some
+stores send while they still throttle, so the deferred `Inconclusive` keeps
+the pause.
 
 `callhold.Grow(first, ceiling, n)` is the doubling on its own: `first` doubled
-`n` times, never past `ceiling`. The Hetzner client's `PollBackoff` uses it.
+`n` times, never past `ceiling`, so an `n` of 0 gives `first`. The Hetzner
+client's `PollBackoff` uses it.
 
 The holds live in the operator's memory, so a restarted operator learns of a
 limit again from its first refused call.

@@ -74,7 +74,7 @@ func (c Call) Inconclusive() {
 	}
 }
 
-// Refused holds the key for the pause its streak reaches, ending where adjust moves that end, and returns the end, keeping instead a hold another call's refusal already started, since a call sent before that refusal could otherwise shorten it.
+// Refused holds the key for the pause its streak reaches, ending where adjust, run under the holds' lock and so never calling them, moves that end, and returns the end, keeping instead a hold another call's refusal already started, since a call sent before that refusal could otherwise shorten it.
 func (c Call) Refused(adjust func(now, until time.Time) time.Time) time.Time {
 	h := c.holds
 	h.mu.Lock()
