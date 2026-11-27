@@ -271,8 +271,9 @@ jobs:
       - name: Remove the kit checkout from the block tree
         run: mv block-kit "$RUNNER_TEMP/block-kit"
 
-      # go list finds each dependency where the block's tests left it, and
-      # every event runs the check, so a push meets it as a pull request does.
+      # The check judges every module nested under `.`, so it runs once the
+      # kit checkout has left the tree and the kit is not judged as part of
+      # the block. Every event runs it, so a push meets it as a pull request does.
       - name: Refuse an import of the core module or of another block's module
         run: |
           "$RUNNER_TEMP/checkimports" .

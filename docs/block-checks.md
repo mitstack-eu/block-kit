@@ -429,21 +429,31 @@ A block builds on a kit and never on the platform's code or on another block's
 code. It reaches mitstack over the platform's HTTP API. It reads another
 block's outcome from the outputs of a requirement its manifest declares, and
 code two blocks share belongs in a kit such as this one. `checkimports` holds
-every file of your module to that rule, tests included, and fails on either of
-these imports:
+every Go file of your module and of each module nested in its tree to that
+rule, tests included, and fails on either of these imports:
 
 | Import | Why it is refused |
 |---|---|
 | A package of `github.com/mitstack/api`, the platform's core module | A block that compiles against the core breaks whenever the core changes |
 | A package of a module whose own `manifest.yaml` says `type: block` or `type: capability` | A block that compiles against another block depends on that block's code instead of on its declared outputs |
 
-The check reads a module's type from the unindented `type:` line of the
-`manifest.yaml` at its root, the line that places a repository in its layer, so
-no list of blocks is kept anywhere. A module with no `manifest.yaml`, such as a
-kit, is neither. The check runs `go list` over your module's packages and
-their tests, which finds each dependency where your tests left it, so the
-`conformance` job runs it after `go test`. The kit's own `ci.yml` runs it on
-the kit and on `examples/hetzner-firewall` on every event.
+The check reads a module's type from the top-level `type:` line of the
+`manifest.yaml` at its root, past a byte-order mark and a trailing comment.
+That line places a repository in its layer, so no list of blocks is kept
+anywhere. A module with no `manifest.yaml`, such as a kit, is neither.
+
+The check runs `go list` over each module's packages and their tests, and
+`go list` downloads any dependency it lacks. It skips the directories the `go`
+command skips: `testdata`, `vendor`, and any whose name starts with `.` or `_`.
+A file your default build leaves out, such as one behind a `//go:build
+integration` line, is still checked against the core module. Its other imports
+are checked against a block's module only when `go list` loaded that package
+for another file, and the pass line counts the rest.
+
+The `conformance` job runs the check once the kit checkout has left your
+block's tree, so the kit is not judged as part of your block. The kit's own
+`ci.yml` runs it on the kit's root on every event, which judges
+`examples/hetzner-firewall` as a nested module.
 
 A refused import names its file and line, the module it belongs to and the
 fix, as in this line for a block importing the core:
@@ -459,8 +469,9 @@ tag your CI's `kit-ref` names to run the release CI runs:
 go run github.com/mitstack-eu/block-kit/cmd/checkimports@latest .
 ```
 
-It exits 0 when no import is refused, 1 when one is, and 2 when `go list`
-fails or cannot find an import's module, which `go mod download` fixes.
+It exits 0 when no import is refused and 1 when one is. It exits 2 when `go
+list` fails, cannot load a package of a module, or cannot find an import's
+module. Requiring the module in your `go.mod` fixes the last one.
 
 ### How a block's alert rules are tested
 
