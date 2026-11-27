@@ -46,7 +46,7 @@ func module(t *testing.T, path string, deps map[string]string, files map[string]
 	var mod strings.Builder
 	fmt.Fprintf(&mod, "module %s\n\ngo 1.22\n", path)
 	for dep, depDir := range deps {
-		fmt.Fprintf(&mod, "\nrequire %s v0.0.0\n\nreplace %s => %s\n", dep, dep, depDir)
+		fmt.Fprintf(&mod, "\nrequire %s v0.0.0\n\nreplace %s => %q\n", dep, dep, depDir)
 	}
 	write(t, dir, map[string]string{"go.mod": mod.String()})
 	write(t, dir, files)
