@@ -425,40 +425,55 @@ each push to `main` that workflow does three things with the token:
 
 ### How a block's imports are judged
 
-A block builds on a kit and never on the platform's code or on another block's
-code. It reaches mitstack over the platform's HTTP API. It reads another
-block's outcome from the outputs of a requirement its manifest declares, and
-code two blocks share belongs in a kit such as this one. `checkimports` holds
-every Go file of your module and of each module nested in its tree to that
-rule, tests included, and fails on either of these imports:
+A block builds on a kit and never on the platform's code or on another
+module's code. It reaches mitstack over the platform's HTTP API. It reads
+another block's outcome from the outputs of a requirement its manifest
+declares, and code two blocks share belongs in a kit such as this one.
+`checkimports` holds every Go file of your module and of each module nested in
+its tree to that rule, tests included, and fails on either of these imports:
 
 | Import | Why it is refused |
 |---|---|
-| A package of `github.com/mitstack/api`, the platform's core module | A block that compiles against the core breaks whenever the core changes |
-| A package of a module whose own `manifest.yaml` says `type: block` or `type: capability` | A block that compiles against another block depends on that block's code instead of on its declared outputs |
+| A package of `github.com/mitstack/api`, the module path the platform's core declares in its `go.mod` | A block that compiles against the core breaks whenever the core changes |
+| A package of a module whose own `manifest.yaml` says `type: block` or `type: capability` | A block that compiles against another block or a capability depends on that module's code instead of on its declared outputs |
+
+A capability is a module that connects an org to a vendor, such as Sendcloud,
+as [The sections of a capability manifest](manifest.md#the-sections-of-a-capability-manifest)
+describes. The check exits 0 when no import is refused and 1 when one is. It
+exits 2 when it cannot judge the module, for the reasons the next two
+paragraphs give.
 
 The check reads a module's type from the top-level `type` key of the
-`manifest.yaml` at its root, past a byte-order mark, quotes and a trailing
-comment. That line places a repository in its layer, so no list of blocks is
-kept anywhere. A module with no `manifest.yaml`, such as a kit, is neither.
-The check stops with exit 2 when that line holds no plain value it can read,
-such as a list, an anchor or a value on the next line, and names the line, so
-an unusual spelling never lets a block's import through.
+`manifest.yaml` at its root. It reads past a byte-order mark, the invisible
+character some editors write at the start of a file, and past quotes and a
+trailing comment. That line places a repository in its layer, so no list of
+blocks is kept anywhere. A module with no `manifest.yaml`, such as a kit, is
+neither a block nor a capability. The check exits 2 when that line holds no
+plain value it can read, such as a list, an anchor or a value on the next
+line, and names the line, so an unusual spelling never lets a block's import
+through.
 
 The check runs `go list` over each module's packages and their tests, and
-`go list` downloads any dependency it lacks. It stops with exit 2 when
-`go list` cannot load a package or one of its tests, such as a test that
-closes an import cycle. It skips the directories the `go`
-command skips: `testdata`, `vendor`, and any whose name starts with `.` or `_`.
+`go list` downloads any dependency it lacks. It exits 2 when `go list` fails,
+cannot load a package or one of its tests, or cannot find an import's module.
+A test that closes an import cycle is one such failure, and requiring the
+missing module in your `go.mod` fixes the last one. The check skips the
+directories the `go` command skips: `testdata`, `vendor`, and any whose name
+starts with `.` or `_`.
+
 A file your default build leaves out, such as one behind a `//go:build
 integration` line, is still checked against the core module. Its other imports
 are checked against a block's module only when `go list` loaded that package
-for another file, and the pass line counts the rest.
+for some other file. When any import was checked against the core alone, the
+line a passing run prints says how many, as in this one:
 
-The `conformance` job runs the check once the kit checkout has left your
-block's tree, so the kit is not judged as part of your block. The kit's own
-`ci.yml` runs it on the kit's root on every event, which judges
-`examples/hetzner-firewall` as a nested module.
+```text
+checkimports: judged 2 imports in 2 files of example.com/app, and none reaches the core module or a block's module; 1 import in files the default build leaves out could only be checked against the core module, since go list loaded no package for it
+```
+
+The `conformance` job checks the kit out inside your block's tree to build
+its tools, then moves it out before this check runs, so the kit is never
+judged as part of your block.
 
 A refused import names its file and line, the module it belongs to and the
 fix, as in this line for a block importing the core:
@@ -467,16 +482,12 @@ fix, as in this line for a block importing the core:
 main.go:7: imports github.com/mitstack/api/contract, a package of the core module github.com/mitstack/api. A kit or an operator never builds on the core: delete the import and reach mitstack over its HTTP API.
 ```
 
-Run it from your block's directory before you push. Replace `latest` with the
-tag your CI's `kit-ref` names to run the release CI runs:
+Run it from your block's directory before you push, with `<tag>` replaced by
+the tag your CI's `kit-ref` names, so you run the release CI runs:
 
 ```sh
-go run github.com/mitstack-eu/block-kit/cmd/checkimports@latest .
+go run github.com/mitstack-eu/block-kit/cmd/checkimports@<tag> .
 ```
-
-It exits 0 when no import is refused and 1 when one is. It exits 2 when `go
-list` fails, cannot load a package of a module, or cannot find an import's
-module. Requiring the module in your `go.mod` fixes the last one.
 
 ### How a block's alert rules are tested
 
