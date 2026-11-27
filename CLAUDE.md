@@ -3,10 +3,15 @@
 Module path: `github.com/mitstack-eu/block-kit`.
 
 The kit is stdlib-only by design. No third-party dependency is ever added,
-however convenient one looks for a single call site. The one exception is
-`golang.org/x/crypto`, which `helpers/age` seals with, and the
-`golang.org/x/sys` it builds on: hand-written cryptography is a security risk,
-and this library is the Go team's own.
+however convenient one looks for a single call site. There are two
+exceptions.
+
+- `golang.org/x/crypto`, which `helpers/age` seals with, and the
+  `golang.org/x/sys` it builds on. Hand-written cryptography is a security
+  risk, and this library is the Go team's own.
+- The AWS SDK for Go, in the nested module `capabilities/s3store` alone. It is
+  the S3-protocol client the kit uses for S3-compatible stores such as
+  Scaleway, and it stays out of the main module.
 
 Test with `go vet ./... && go test ./...`.
 

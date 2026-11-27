@@ -13,16 +13,22 @@ The kit's module is stdlib-only, with one exception. Its `go.mod` requires
 with, because hand-written cryptography is a security risk and this library is
 the Go team's own. That module builds on `golang.org/x/sys`, which `go.mod`
 lists as an indirect requirement. No other third-party dependency is ever
-added. The Robot
+added to it. The Robot
 rescue system's SSH session sits in a Go module of its own,
 `capabilities/hetzner/robot/rescuessh`, with its own `golang.org/x/crypto`
-requirement. From the repository's root:
+requirement. The read-only S3 lister sits in another, `capabilities/s3store`,
+with its own requirement on the AWS SDK for Go's S3 client. That SDK is the
+kit's second dependency exception, which `CLAUDE.md` names, and
+[helpers.md](helpers.md#listing-what-an-s3-compatible-bucket-holds) describes
+what it does. From the repository's root:
 
 ```sh
 go vet ./... && go test ./...
 go -C capabilities/hetzner/robot/rescuessh test ./...
 go -C helpers/healthz test ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C capabilities/hetzner/robot/rescuessh -scan package ./...
+go -C capabilities/s3store vet ./... && go -C capabilities/s3store test ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -C capabilities/s3store -scan package ./...
 go -C examples/hetzner-firewall test ./...
 go run ./verify/blockverify --standalone examples/hetzner-firewall
 ```
@@ -47,12 +53,12 @@ against `caddy:2`, the image every Docker host's edge pulls:
 CADDY_IMAGE=caddy:2 go test -tags edgecaddy -run '^TestEdge_' ./helpers/dockerhost
 ```
 
-The rescuessh module, the healthz module and the example block are Go modules
-of their own, so `./...` leaves them out and CI tests each by itself. The
-healthz module is one so that an operator on any kit release can mount the
-health handler without moving its kit pin. CI also runs govulncheck over
-every package the rescuessh module imports, and a known vulnerability in any
-of them fails the run. That scan does not cover the kit's own module. The
+The rescuessh module, the healthz module, the s3store module and the example
+block are Go modules of their own, so `./...` leaves them out and CI tests each
+by itself. The healthz module is one so that an operator on any kit release can
+mount the health handler without moving its kit pin. CI also runs govulncheck
+over every package the rescuessh and s3store modules import, and a known
+vulnerability in any of them fails the run. That scan does not cover the kit's own module. The
 example's `go.mod`
 builds it against the kit in the same checkout. A test in `examples/` holds
 every README code fence whose lead-in links a file under `examples/` equal to
@@ -204,6 +210,10 @@ alone and follows the same rules as the kit's tags.
 The healthz module is released the same way, by tags such as
 `helpers/healthz/v0.1.0`. Its first tag is cut by hand too. After it, the
 release job runs `scripts/release-block-kit.sh --module helpers/healthz`.
+
+The s3store module is released the same way, by tags such as
+`capabilities/s3store/v0.1.0`. Its first tag is cut by hand too. After it, the
+release job runs `scripts/release-block-kit.sh --module capabilities/s3store`.
 
 The release job runs only after a merge, so a pull request carrying the line
 has to fail before it merges. The required `test` job in
