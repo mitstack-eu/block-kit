@@ -12,6 +12,7 @@ package has [a page of its own](gitops.md).
 | `helpers/safe` | Logs a value from a request, or calls an API whose host a request names |
 | `helpers/bounded` | Calls an API with its own HTTP client and reads the answer |
 | `helpers/calllog` | Calls an API with an HTTP client of its own, which then logs one line per call |
+| `helpers/callhold` | Calls a service that refuses calls sent too fast, and must hold every call on that credential until the pause ends |
 | `helpers/guardedhttp` | Is a capability operator that calls its vendor with an org's credential |
 | `helpers/events` | Reports progress during long work, or reads a platform route |
 | `helpers/reqcache` | Wants a read repeated within one request to cost one call, for a source of its own that cannot change under the request |
@@ -2394,6 +2395,61 @@ grow by one rule, the `grow` function in the same file, which doubles a first
 wait up to a ceiling: fifteen seconds for the schedule and an hour for the
 hold.
 
+## Holding calls after a service refuses them for their rate
+
+A service that refuses calls sent too fast, as Hetzner Cloud does with `429`,
+expects the client to stop for a while rather than send again at once.
+`helpers/callhold` keeps that pause for every call made with one credential,
+in every client of the operator that shares one `*callhold.Holds`. The kit's
+Hetzner Cloud client is built on it, as the next section describes.
+
+`callhold.New(now, first, longest)` returns the holds. `now` is the clock,
+`time.Now` in an operator and a clock your test moves in a test. A refusal
+holds the credential for `first`, and each refusal in a row doubles the pause
+up to `longest`. A credential is named by `callhold.KeyOf(credential)`, its
+SHA-256, so the holds never keep the credential itself.
+
+Your client's transport asks before each call and reports its answer:
+
+```go
+call, until, ok := holds.Admit(callhold.KeyOf(token))
+if !ok {
+	return nil, &YourHeldError{Until: until}
+}
+defer call.Inconclusive()
+resp, err := next.RoundTrip(req)
+switch {
+case err != nil || resp.StatusCode >= 500:
+	return resp, err
+case resp.StatusCode != http.StatusTooManyRequests:
+	call.Answered()
+	return resp, nil
+}
+until = call.Refused(func(now, until time.Time) time.Time { return until })
+return nil, &YourHeldError{Until: until}
+```
+
+1. `Admit` lets a call out, or answers `ok` false with the time the pause
+   ends, so your client returns at once and sends nothing.
+2. Once the pause ends, `Admit` lets one call out alone to test it. Every
+   other call waits on that call's answer, and `until` is then the zero time.
+3. `Answered` ends the pause, since the service took the call.
+4. `Inconclusive` keeps the pause for the next call to test. A lost call or a
+   server failure says nothing of the limit. Deferred, it does nothing once
+   `Answered` or `Refused` has run.
+5. `Refused` starts the next pause and returns its end. Its function receives
+   the current time and the end the doubling gives, and returns the end to
+   keep, so a client can move it to a time the service names, such as a
+   `Retry-After` header. A refusal of a call sent before another call's
+   refusal keeps that pause and returns its end, or the zero time once it has
+   passed.
+
+`callhold.Grow(first, ceiling, n)` is the doubling on its own: `first` doubled
+`n` times, never past `ceiling`. The Hetzner client's `PollBackoff` uses it.
+
+The holds live in the operator's memory, so a restarted operator learns of a
+limit again from its first refused call.
+
 ## Holding calls after a Hetzner Cloud rate-limit refusal
 
 Hetzner Cloud answers `429 rate_limit_exceeded` once a token's budget of calls
@@ -2496,8 +2552,9 @@ and returns a `*cloud.Holds` whose holds read the time from it. Its
 seconds, and answers `cloudtest.Refuse(w, http.StatusTooManyRequests,
 "rate_limit_exceeded", message)` stands in for Hetzner's refusal, where
 `message` is any text for the error body's `message` field. The hold
-lives in `capabilities/hetzner/cloud/ratelimit.go`, and `ratelimit_test.go`
-beside it proves each step above.
+lives in `capabilities/hetzner/cloud/ratelimit.go`, built on
+[`helpers/callhold`](#holding-calls-after-a-service-refuses-them-for-their-rate),
+and `ratelimit_test.go` beside it proves each step above.
 
 ## Adopting a Hetzner dedicated server
 
