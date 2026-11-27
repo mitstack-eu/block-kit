@@ -16,8 +16,10 @@ lists as an indirect requirement. No other third-party dependency is ever
 added. The Robot
 rescue system's SSH session sits in a Go module of its own,
 `capabilities/hetzner/robot/rescuessh`, with its own `golang.org/x/crypto`
-requirement. The S3 lister sits in another, `capabilities/s3store`, with its
-own requirement on the AWS SDK for Go's S3 client. From the repository's root:
+requirement. The read-only S3 lister sits in another, `capabilities/s3store`,
+with its own requirement on the AWS SDK for Go's S3 client, and
+[helpers.md](helpers.md#listing-what-an-s3-compatible-bucket-holds) describes
+what it does. From the repository's root:
 
 ```sh
 go vet ./... && go test ./...

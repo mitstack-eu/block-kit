@@ -2627,8 +2627,10 @@ main module takes no such dependency. A block requires it beside whatever kit
 release it builds on.
 
 This program lists every object under one prefix and the folders at the
-bucket's top. It runs against any S3-compatible store once the four settings
-it reads are set:
+bucket's top. It reads the bucket's name from `BUCKET`, the key pair from
+`ACCESS_KEY` and `SECRET_KEY`, and the prefix to list from `PREFIX`. It is set
+for Scaleway's Paris region, and another store needs its own `Endpoint` and
+`Region` in place of those two lines:
 
 ```go
 package main
@@ -2685,8 +2687,12 @@ hold at most 1,000 objects each, until the last one. `Query.StartAfter` starts
 the listing after that key, so a block that knows its newest backup reads only
 the ones written after it. A prefix holding no object returns an empty list
 and no error. A page the store marks as cut short, but with no continuation
-token or with the token the call already sent, fails the listing rather than
-returning part of it.
+token or with a token the listing already sent, fails the listing rather than
+returning part of it or asking for the same pages forever.
+
+The client sends each call only to the endpoint it was given. A store that
+answers with a redirect fails the listing, so a signed call never reaches
+another host.
 
 `ListFolders(ctx, prefix, delimiter)` returns the folders directly under
 `prefix`, each ending in `delimiter`, and no object. Over a bucket holding
@@ -2694,10 +2700,13 @@ returning part of it.
 `ListFolders(ctx, "db-1/base/", "/")` returns `db-1/base/2026-11-26/` and
 `db-1/base/2026-11-27/`.
 
-Within one request, each listing is read once. Under the handler's request
-cache, as [Reading each thing once in a
-request](#reading-each-thing-once-in-a-request) describes, a second `List` of
-the same prefix returns the first one's answer and sends nothing.
+Within one `validate`, each listing is read once. `List` and `ListFolders`
+read through `reqcache.Viewed`, as [Reading each thing once in a
+request](#reading-each-thing-once-in-a-request) describes. A second `List` of
+the same prefix and start key, with the same access key at the same endpoint
+and bucket, returns the first one's answer and sends nothing. Every other verb
+lists afresh on each call, as does any call whose context carries no request
+cache.
 
 ### What a call logs and what a refusal says
 
@@ -2716,9 +2725,9 @@ store's answer quotes them, and no key ever reaches a log line.
 
 ### When the store asks the client to slow down
 
-A store answers `503 SlowDown` when a key sends calls faster than it allows.
-The client then pauses every call made with that key, in every client the
-operator holds, in the same steps as [Holding calls after a Hetzner Cloud
+A store answers `503 SlowDown` when an access key sends calls faster than it
+allows. The client then pauses every call made with that access key, in every
+client the operator holds, in the same steps as [Holding calls after a Hetzner Cloud
 rate-limit refusal](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal):
 
 1. The first SlowDown pauses the key for 30 seconds.
@@ -2729,17 +2738,21 @@ rate-limit refusal](#holding-calls-after-a-hetzner-cloud-rate-limit-refusal):
    still throttle. Another SlowDown pauses the key for twice as long, up to
    15 minutes. A call that gets no answer, a server failure, a `408` or a
    `429` keeps the key paused for the next call to test.
-4. A `Retry-After` header in seconds on the SlowDown ends the pause sooner
-   when it names an earlier time.
+4. A `Retry-After` header in seconds on the SlowDown sets the pause to that
+   long instead, sooner or later than the step would, up to 15 minutes.
 
-A call with another key still goes out during the pause. The SDK never sends
+A call with another access key still goes out during the pause. The SDK never sends
 a call again on its own, so a paused call is told when to come back instead
 of adding to the load the store asked to shed.
 
 `s3store.SlowDown` wraps a
 [`handler.Waiting`](handler.md#errors-refusals-and-panics), so the handler
 answers the lifecycle call as pending, with `lookAgainAt` set to the time the
-pause ends. Your code tells a paused call apart with
+pause ends. `lookAgainAt` is the field of a pending answer that tells the
+platform when to call the block again. A call that another call's SlowDown
+refused just as that pause ended carries the zero `Until`, and its answer then
+has no `lookAgainAt`, so the platform calls again on its usual schedule. Your
+code tells a paused call apart with
 `errors.Is(err, s3store.ErrSlowDown)`, and `errors.As` into a
 `*s3store.SlowDown` gives its `Until`. The pause lives in
 `capabilities/s3store/slowdown.go`, and `slowdown_test.go` beside it proves

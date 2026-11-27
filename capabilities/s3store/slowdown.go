@@ -19,7 +19,7 @@ import (
 // ErrSlowDown matches the error of a call the store answered 503 SlowDown, and of every call held unsent on that key after it.
 var ErrSlowDown = errors.New("the S3-compatible store asked this key's calls to slow down")
 
-// A SlowDown pauses its key for firstPause, doubled by each SlowDown in a row up to longestPause, or until the store's Retry-After when that comes sooner.
+// A SlowDown pauses its key for firstPause, doubled by each SlowDown in a row up to longestPause, or until the store's Retry-After, up to longestPause, when the SlowDown names one.
 const (
 	firstPause    = 30 * time.Second
 	longestPause  = 15 * time.Minute
@@ -170,7 +170,7 @@ func (h *holds) refused(key [sha256.Size]byte, probe *pause, header http.Header)
 	}
 	now := h.now()
 	until := now.Add(grow(streak))
-	if wait, ok := retryAfter(header); ok && now.Add(wait).Before(until) {
+	if wait, ok := retryAfter(header); ok {
 		until = now.Add(wait)
 	}
 	h.paused[key] = &pause{until: until, streak: streak}
@@ -193,10 +193,11 @@ func grow(n int) time.Duration {
 	return min(d, longestPause)
 }
 
+// retryAfter is the store's Retry-After in seconds, cut to longestPause so a store cannot stop a key's listings for longer.
 func retryAfter(header http.Header) (time.Duration, bool) {
 	secs, err := strconv.ParseInt(header.Get("Retry-After"), 10, 64)
-	if err != nil || secs <= 0 || secs > int64(longestPause/time.Second) {
+	if err != nil || secs <= 0 {
 		return 0, false
 	}
-	return time.Duration(secs) * time.Second, true
+	return time.Duration(min(secs, int64(longestPause/time.Second))) * time.Second, true
 }

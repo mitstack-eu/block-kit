@@ -52,6 +52,7 @@ type Client struct {
 	api      *s3.Client
 	endpoint string
 	bucket   string
+	account  [sha256.Size]byte
 	secrets  []string
 }
 
@@ -66,9 +67,16 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("the store answered %d %s: %s", e.Status, e.Code, e.Message)
 }
 
-type objectsListing struct{ endpoint, bucket, prefix, startAfter string }
+// objectsListing and foldersListing carry the access key's hash, since two keys can see different objects in one bucket.
+type objectsListing struct {
+	account                              [sha256.Size]byte
+	endpoint, bucket, prefix, startAfter string
+}
 
-type foldersListing struct{ endpoint, bucket, prefix, delimiter string }
+type foldersListing struct {
+	account                             [sha256.Size]byte
+	endpoint, bucket, prefix, delimiter string
+}
 
 func New(cfg Config) (*Client, error) { return newClient(cfg, processHolds, nil) }
 
@@ -78,7 +86,14 @@ func newClient(cfg Config, h *holds, base http.RoundTripper) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport := &holdTransport{holds: h, key: sha256.Sum256([]byte(cfg.AccessKey)), next: calllog.Transport(base)}
+	account := sha256.Sum256([]byte(cfg.AccessKey))
+	transport := &holdTransport{holds: h, key: account, next: calllog.Transport(base)}
+	// A redirect is answered, not followed, so a signed call never reaches a host other than the endpoint.
+	client := &http.Client{
+		Timeout:       timeout,
+		Transport:     transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	api := s3.New(s3.Options{
 		BaseEndpoint: aws.String(endpoint),
 		Region:       cfg.Region,
@@ -86,12 +101,12 @@ func newClient(cfg Config, h *holds, base http.RoundTripper) (*Client, error) {
 		Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
 			return aws.Credentials{AccessKeyID: cfg.AccessKey, SecretAccessKey: cfg.SecretKey}, nil
 		}),
-		HTTPClient:                 &http.Client{Timeout: timeout, Transport: transport},
+		HTTPClient:                 client,
 		Retryer:                    aws.NopRetryer{},
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
-	return &Client{api: api, endpoint: endpoint, bucket: cfg.Bucket, secrets: []string{cfg.AccessKey, cfg.SecretKey}}, nil
+	return &Client{api: api, endpoint: endpoint, bucket: cfg.Bucket, account: account, secrets: []string{cfg.AccessKey, cfg.SecretKey}}, nil
 }
 
 // validate returns the endpoint as scheme and host, and names no endpoint or key in a refusal, since an endpoint's user part or a key could carry a secret.
@@ -122,7 +137,7 @@ func (cfg Config) validate() (string, error) {
 
 // List lists every object under q's prefix across the store's pages, once per request under reqcache, and a prefix holding no object as an empty list.
 func (c *Client) List(ctx context.Context, q Query) ([]Object, error) {
-	key := objectsListing{c.endpoint, c.bucket, q.Prefix, q.StartAfter}
+	key := objectsListing{c.account, c.endpoint, c.bucket, q.Prefix, q.StartAfter}
 	objects, err := reqcache.Viewed(ctx, key, func() ([]Object, error) { return c.listObjects(ctx, q) })
 	return slices.Clone(objects), err
 }
@@ -132,7 +147,7 @@ func (c *Client) ListFolders(ctx context.Context, prefix, delimiter string) ([]s
 	if delimiter == "" {
 		return nil, errors.New("listing folders needs a delimiter, such as /")
 	}
-	key := foldersListing{c.endpoint, c.bucket, prefix, delimiter}
+	key := foldersListing{c.account, c.endpoint, c.bucket, prefix, delimiter}
 	folders, err := reqcache.Viewed(ctx, key, func() ([]string, error) { return c.listFolders(ctx, prefix, delimiter) })
 	return slices.Clone(folders), err
 }
@@ -144,7 +159,7 @@ func (c *Client) listObjects(ctx context.Context, q Query) ([]Object, error) {
 	}
 	objects := []Object{}
 	pages := s3.NewListObjectsV2Paginator(c.api, input)
-	sent := ""
+	sent := map[string]bool{}
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
 		if err != nil {
@@ -153,7 +168,7 @@ func (c *Client) listObjects(ctx context.Context, q Query) ([]Object, error) {
 		if err := stalled(page.IsTruncated, page.NextContinuationToken, sent); err != nil {
 			return nil, fmt.Errorf("%s: %w", c.where(q.Prefix), err)
 		}
-		sent = aws.ToString(page.NextContinuationToken)
+		sent[aws.ToString(page.NextContinuationToken)] = true
 		for _, o := range page.Contents {
 			objects = append(objects, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
 		}
@@ -161,16 +176,17 @@ func (c *Client) listObjects(ctx context.Context, q Query) ([]Object, error) {
 	return objects, nil
 }
 
-// stalled refuses a page the store marked cut short with no continuation token, or with the token the call sent, since the SDK's paginator would end the first listing early and repeat the second forever.
-func stalled(truncated *bool, next *string, sent string) error {
+// stalled refuses a page the store marked cut short with no continuation token, or with a token an earlier call of the listing sent, since the SDK's paginator would end the first listing early and repeat the second forever.
+func stalled(truncated *bool, next *string, sent map[string]bool) error {
 	if !aws.ToBool(truncated) {
 		return nil
 	}
-	switch aws.ToString(next) {
-	case "":
+	token := aws.ToString(next)
+	switch {
+	case token == "":
 		return errors.New("the store cut the listing short and named no continuation token, so the rest cannot be listed")
-	case sent:
-		return errors.New("the store cut the listing short and named the continuation token the call sent, so the listing would never end")
+	case sent[token]:
+		return errors.New("the store cut the listing short and named a continuation token the listing already sent, so the listing would never end")
 	}
 	return nil
 }
@@ -179,7 +195,7 @@ func (c *Client) listFolders(ctx context.Context, prefix, delimiter string) ([]s
 	input := &s3.ListObjectsV2Input{Bucket: aws.String(c.bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter)}
 	folders := []string{}
 	pages := s3.NewListObjectsV2Paginator(c.api, input)
-	sent := ""
+	sent := map[string]bool{}
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
 		if err != nil {
@@ -188,7 +204,7 @@ func (c *Client) listFolders(ctx context.Context, prefix, delimiter string) ([]s
 		if err := stalled(page.IsTruncated, page.NextContinuationToken, sent); err != nil {
 			return nil, fmt.Errorf("%s: %w", c.where(prefix), err)
 		}
-		sent = aws.ToString(page.NextContinuationToken)
+		sent[aws.ToString(page.NextContinuationToken)] = true
 		for _, p := range page.CommonPrefixes {
 			folders = append(folders, aws.ToString(p.Prefix))
 		}
