@@ -377,6 +377,31 @@ func TestListUpTo_OneRequestNeverAnswersACappedListingWithTheWholeListing(t *tes
 	}
 }
 
+func TestListUpTo_OneRequestNeverAnswersOneCapWithAListingOfAnotherCap(t *testing.T) {
+	s := newStore(t)
+	fillPrefix(s, "db-1/base/", 2500)
+	for i := range 1200 {
+		s.put(fmt.Sprintf("db-1/wals/%016d/segment", i), 1, writtenAt)
+	}
+	c := newClient(t, s, s3store.NewHolds(time.Now))
+	ctx := reqcache.Snapshot(context.Background())
+
+	one, oneMore, oneErr := c.ListUpTo(ctx, s3store.Query{Prefix: "db-1/base/"}, 1)
+	two, twoMore, twoErr := c.ListUpTo(ctx, s3store.Query{Prefix: "db-1/base/"}, 2)
+	folders, foldersMore, foldersErr := c.ListFoldersUpTo(ctx, "db-1/wals/", "/", 1)
+	allFolders, allFoldersErr := c.ListFolders(ctx, "db-1/wals/", "/")
+
+	if oneErr != nil || twoErr != nil || len(one) != 1000 || !oneMore || len(two) != 2000 || !twoMore {
+		t.Errorf("one page %d (more %t), two pages %d (more %t), errors %v %v; want 1000 and 2000, both with more", len(one), oneMore, len(two), twoMore, oneErr, twoErr)
+	}
+	if foldersErr != nil || allFoldersErr != nil || len(folders) != 1000 || !foldersMore || len(allFolders) != 1200 {
+		t.Errorf("capped folders %d (more %t), every folder %d, errors %v %v; want 1000 with more, then 1200", len(folders), foldersMore, len(allFolders), foldersErr, allFoldersErr)
+	}
+	if sent := s.sent.Load(); sent != 6 {
+		t.Errorf("the store answered %d calls; want 6, one and two for the capped objects, one and two for the folders", sent)
+	}
+}
+
 func TestNew_RefusesAConfigItCannotUse(t *testing.T) {
 	good := s3store.Config{Endpoint: "https://s3.example.test", Region: testRegion, Bucket: testBucket, AccessKey: testAccessKey, SecretKey: testSecretKey}
 	cases := []struct {
