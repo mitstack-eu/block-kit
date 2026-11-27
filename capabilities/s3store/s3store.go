@@ -72,11 +72,22 @@ func (e *Error) Error() string {
 type objectsListing struct {
 	account                              [sha256.Size]byte
 	endpoint, bucket, prefix, startAfter string
+	pages                                int
 }
 
 type foldersListing struct {
 	account                             [sha256.Size]byte
 	endpoint, bucket, prefix, delimiter string
+	pages                               int
+}
+
+// everyPage is the page limit of a listing that follows the store's pages to the last.
+const everyPage = 0
+
+// listed is what one listing read, and whether the store holds more past the last page it read.
+type listed[T any] struct {
+	entries []T
+	more    bool
 }
 
 func New(cfg Config) (*Client, error) { return newClient(cfg, processHolds, nil) }
@@ -138,54 +149,91 @@ func (cfg Config) validate() (string, error) {
 
 // List lists every object under q's prefix across the store's pages, once per request under reqcache, and a prefix holding no object as an empty list.
 func (c *Client) List(ctx context.Context, q Query) ([]Object, error) {
-	key := objectsListing{c.account, c.endpoint, c.bucket, q.Prefix, q.StartAfter}
-	objects, err := reqcache.Viewed(ctx, key, func() ([]Object, error) { return c.listObjects(ctx, q) })
-	return slices.Clone(objects), err
+	objects, _, err := c.objects(ctx, q, everyPage)
+	return objects, err
+}
+
+// ListUpTo is List reading at most pages calls, and says whether the store holds more past the last page it read.
+func (c *Client) ListUpTo(ctx context.Context, q Query, pages int) ([]Object, bool, error) {
+	if err := pageLimit(pages); err != nil {
+		return nil, false, err
+	}
+	return c.objects(ctx, q, pages)
 }
 
 // ListFolders lists the folders directly under prefix, each a common prefix ending in delimiter, and no object.
 func (c *Client) ListFolders(ctx context.Context, prefix, delimiter string) ([]string, error) {
-	if delimiter == "" {
-		return nil, errors.New("listing folders needs a delimiter, such as /")
-	}
-	key := foldersListing{c.account, c.endpoint, c.bucket, prefix, delimiter}
-	folders, err := reqcache.Viewed(ctx, key, func() ([]string, error) { return c.listFolders(ctx, prefix, delimiter) })
-	return slices.Clone(folders), err
+	folders, _, err := c.folders(ctx, prefix, delimiter, everyPage)
+	return folders, err
 }
 
-func (c *Client) listObjects(ctx context.Context, q Query) ([]Object, error) {
+// ListFoldersUpTo is ListFolders reading at most pages calls, and says whether the store holds more past the last page it read.
+func (c *Client) ListFoldersUpTo(ctx context.Context, prefix, delimiter string, pages int) ([]string, bool, error) {
+	if err := pageLimit(pages); err != nil {
+		return nil, false, err
+	}
+	return c.folders(ctx, prefix, delimiter, pages)
+}
+
+func pageLimit(pages int) error {
+	if pages < 1 {
+		return fmt.Errorf("a listing capped at %d pages reads nothing; name at least one page", pages)
+	}
+	return nil
+}
+
+func (c *Client) objects(ctx context.Context, q Query, pages int) ([]Object, bool, error) {
+	key := objectsListing{c.account, c.endpoint, c.bucket, q.Prefix, q.StartAfter, pages}
+	got, err := reqcache.Viewed(ctx, key, func() (listed[Object], error) { return c.listObjects(ctx, q, pages) })
+	return slices.Clone(got.entries), got.more, err
+}
+
+func (c *Client) folders(ctx context.Context, prefix, delimiter string, pages int) ([]string, bool, error) {
+	if delimiter == "" {
+		return nil, false, errors.New("listing folders needs a delimiter, such as /")
+	}
+	key := foldersListing{c.account, c.endpoint, c.bucket, prefix, delimiter, pages}
+	got, err := reqcache.Viewed(ctx, key, func() (listed[string], error) { return c.listFolders(ctx, prefix, delimiter, pages) })
+	return slices.Clone(got.entries), got.more, err
+}
+
+func (c *Client) listObjects(ctx context.Context, q Query, pages int) (listed[Object], error) {
 	input := &s3.ListObjectsV2Input{Bucket: aws.String(c.bucket), Prefix: aws.String(q.Prefix)}
 	if q.StartAfter != "" {
 		input.StartAfter = aws.String(q.StartAfter)
 	}
 	objects := []Object{}
-	err := c.paginate(ctx, input, func(page *s3.ListObjectsV2Output) {
+	more, err := c.paginate(ctx, input, pages, func(page *s3.ListObjectsV2Output) {
 		for _, o := range page.Contents {
 			objects = append(objects, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
 		}
 	})
 	if err != nil {
-		return nil, err
+		return listed[Object]{}, err
 	}
-	return objects, nil
+	return listed[Object]{entries: objects, more: more}, nil
 }
 
-func (c *Client) paginate(ctx context.Context, input *s3.ListObjectsV2Input, each func(*s3.ListObjectsV2Output)) error {
+// paginate reads the listing's pages up to limit, or every page under everyPage, and reports whether the store holds more past the last page read.
+func (c *Client) paginate(ctx context.Context, input *s3.ListObjectsV2Input, limit int, each func(*s3.ListObjectsV2Output)) (bool, error) {
 	prefix := aws.ToString(input.Prefix)
 	pages := s3.NewListObjectsV2Paginator(c.api, input)
 	sent := map[string]bool{}
-	for pages.HasMorePages() {
+	for read := 0; pages.HasMorePages(); read++ {
+		if limit != everyPage && read == limit {
+			return true, nil
+		}
 		page, err := pages.NextPage(ctx)
 		if err != nil {
-			return c.failure(ctx, prefix, err)
+			return false, c.failure(ctx, prefix, err)
 		}
 		if err := stalled(page.IsTruncated, page.NextContinuationToken, sent); err != nil {
-			return fmt.Errorf("%s: %w", c.where(prefix), err)
+			return false, fmt.Errorf("%s: %w", c.where(prefix), err)
 		}
 		sent[aws.ToString(page.NextContinuationToken)] = true
 		each(page)
 	}
-	return nil
+	return false, nil
 }
 
 // stalled refuses a page the store marked cut short with no continuation token, or with a token an earlier call of the listing sent, since the SDK's paginator would end the first listing early and repeat the second forever.
@@ -203,18 +251,18 @@ func stalled(truncated *bool, next *string, sent map[string]bool) error {
 	return nil
 }
 
-func (c *Client) listFolders(ctx context.Context, prefix, delimiter string) ([]string, error) {
+func (c *Client) listFolders(ctx context.Context, prefix, delimiter string, pages int) (listed[string], error) {
 	input := &s3.ListObjectsV2Input{Bucket: aws.String(c.bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter)}
 	folders := []string{}
-	err := c.paginate(ctx, input, func(page *s3.ListObjectsV2Output) {
+	more, err := c.paginate(ctx, input, pages, func(page *s3.ListObjectsV2Output) {
 		for _, p := range page.CommonPrefixes {
 			folders = append(folders, aws.ToString(p.Prefix))
 		}
 	})
 	if err != nil {
-		return nil, err
+		return listed[string]{}, err
 	}
-	return folders, nil
+	return listed[string]{entries: folders, more: more}, nil
 }
 
 func (c *Client) where(prefix string) string {
