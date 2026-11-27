@@ -159,22 +159,33 @@ func (c *Client) listObjects(ctx context.Context, q Query) ([]Object, error) {
 		input.StartAfter = aws.String(q.StartAfter)
 	}
 	objects := []Object{}
+	err := c.paginate(ctx, input, func(page *s3.ListObjectsV2Output) {
+		for _, o := range page.Contents {
+			objects = append(objects, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return objects, nil
+}
+
+func (c *Client) paginate(ctx context.Context, input *s3.ListObjectsV2Input, each func(*s3.ListObjectsV2Output)) error {
+	prefix := aws.ToString(input.Prefix)
 	pages := s3.NewListObjectsV2Paginator(c.api, input)
 	sent := map[string]bool{}
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
 		if err != nil {
-			return nil, c.failure(ctx, q.Prefix, err)
+			return c.failure(ctx, prefix, err)
 		}
 		if err := stalled(page.IsTruncated, page.NextContinuationToken, sent); err != nil {
-			return nil, fmt.Errorf("%s: %w", c.where(q.Prefix), err)
+			return fmt.Errorf("%s: %w", c.where(prefix), err)
 		}
 		sent[aws.ToString(page.NextContinuationToken)] = true
-		for _, o := range page.Contents {
-			objects = append(objects, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
-		}
+		each(page)
 	}
-	return objects, nil
+	return nil
 }
 
 // stalled refuses a page the store marked cut short with no continuation token, or with a token an earlier call of the listing sent, since the SDK's paginator would end the first listing early and repeat the second forever.
@@ -195,20 +206,13 @@ func stalled(truncated *bool, next *string, sent map[string]bool) error {
 func (c *Client) listFolders(ctx context.Context, prefix, delimiter string) ([]string, error) {
 	input := &s3.ListObjectsV2Input{Bucket: aws.String(c.bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter)}
 	folders := []string{}
-	pages := s3.NewListObjectsV2Paginator(c.api, input)
-	sent := map[string]bool{}
-	for pages.HasMorePages() {
-		page, err := pages.NextPage(ctx)
-		if err != nil {
-			return nil, c.failure(ctx, prefix, err)
-		}
-		if err := stalled(page.IsTruncated, page.NextContinuationToken, sent); err != nil {
-			return nil, fmt.Errorf("%s: %w", c.where(prefix), err)
-		}
-		sent[aws.ToString(page.NextContinuationToken)] = true
+	err := c.paginate(ctx, input, func(page *s3.ListObjectsV2Output) {
 		for _, p := range page.CommonPrefixes {
 			folders = append(folders, aws.ToString(p.Prefix))
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	return folders, nil
 }
